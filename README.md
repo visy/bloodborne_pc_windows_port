@@ -339,7 +339,8 @@ before anyone is in the game):
   damage) per extra hunter; normal enemies get tougher too. Six values (boss / enemy health, damage,
   poise) on the *Enemy scaling* page.
 - **Names over party members**, in the game's own style, at any distance, with level, health,
-  deaths or ping (your choice; *Party name tags* turns them off). Party text steps aside while the
+  deaths or ping (your choice; *Party name tags* turns them off). A member standing behind your own
+  character has no tag until it steps out (walls do not hide tags). Party text steps aside while the
   game's own menus are open.
 - **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: `Tab` + `Q`,
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your

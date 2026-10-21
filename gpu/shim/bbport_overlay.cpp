@@ -2620,6 +2620,15 @@ void PartyHud() {
     const int overhead = BbSettings::Get().party_overhead.load();
     const ImVec2 display = viewport->Size;
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    // Our own body on screen (its physics position now, the board's as the fallback): a member
+    // behind it gets no tag (party_hud.h OwnBodyTagAlpha; walls still do not hide tags).
+    party::hud::ScreenBox me_box;
+    if (b.me_have_pos) {
+        float me[3] = {b.me_pos[0], b.me_pos[1], b.me_pos[2]};
+        coop::PartyHudChrPos(b.me_chr, b.me_pos, me);
+        me_box = party::hud::BodyBox(cam.view.data(), cam.proj.data(), me, display.x, display.y,
+                                     party::hud::kOwnBodyHalfWidth);
+    }
     for (int i = 0; i < b.count; ++i) {
         const party::hud::Companion& c = b.c[i];
         // Only a live chr here, alive, on our map, from a fresh board (a dead / re-spawned / removed
@@ -2659,6 +2668,22 @@ void PartyHud() {
         if ((u < 0.34f && v < 0.26f) || (u > 0.80f && v > 0.86f)) {
             continue;
         }
+        const float cover = party::hud::OwnBodyTagAlpha(
+            party::hud::BodyBox(cam.view.data(), cam.proj.data(), pos, display.x, display.y,
+                                party::hud::kMemberBodyHalfWidth),
+            me_box);
+        {
+            static bool behind_logged[party::kMaxVitals];
+            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
+            if (behind_logged[slot] != (cover <= 0.0f)) {
+                behind_logged[slot] = cover <= 0.0f;
+                std::printf("Party HUD: tag %s %s\n", c.name,
+                            cover <= 0.0f ? "hidden: behind this player's own character" : "out from behind this player");
+            }
+        }
+        if (cover <= 0.0f) {
+            continue;
+        }
         {   // Test aids: BB_PARTY_HUD_TAGLOG=1 logs the tag's distance / camera depth / anchor once a
             // second (plate measurements), BB_PARTY_HUD_TAGLOG=frame every frame with the chr position
             // used and the camera's age; BB_PARTY_HUD_TAG_HIDE=1 draws no tag (the game's plate alone).
@@ -2678,7 +2703,7 @@ void PartyHud() {
                 continue;
             }
         }
-        const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f;
+        const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f * cover;
         // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
         char label[96];
         const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';

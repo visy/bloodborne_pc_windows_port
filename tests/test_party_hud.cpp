@@ -200,6 +200,40 @@ static void Geometry() {
     assert(!(Near(c0[0], c1[0]) && Near(c0[1], c1[1]) && Near(c0[2], c1[2])) && Near(cx[0], 0.96f));
 }
 
+// Tags behind this player's own character (user decision 2026-10-21, arenaguest A1: three in a
+// line, the near member's tag on our own back): hidden; beside us, in front of us or close behind
+// us (within kOwnCoverDepthM): shown. Identity view, 90 degree projection, a 1280 x 720 display.
+static void OwnBodyCover() {
+    const float view[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    const float proj[4] = {1, 1, 0, 0};
+    const auto box = [&](float x, float z, float half) {
+        const float feet[3] = {x, -0.9f, z};
+        return hud::BodyBox(view, proj, feet, 1280, 720, half);
+    };
+    const hud::ScreenBox me = box(0, 3, hud::kOwnBodyHalfWidth);
+    assert(me.valid && Near(me.y0, 252) && Near(me.y1, 462) && Near(me.x0, 598) && Near(me.x1, 682) && Near(me.depth, 3));
+    const auto alpha = [&](float x, float z) { return hud::OwnBodyTagAlpha(box(x, z, hud::kMemberBodyHalfWidth), me); };
+    assert(Near(alpha(0, 8), 0.0f));     // straight behind us: hidden
+    assert(Near(alpha(0.4f, 8), 0.0f));  // still all behind our coat
+    const float half_out = alpha(0.5f, 8);  // 61 % covered: fading
+    assert(half_out > 0.5f && half_out < 0.8f);
+    assert(Near(alpha(0.6f, 8), 1.0f));  // mostly beside us: shown
+    assert(Near(alpha(3, 8), 1.0f));     // beside us: shown
+    assert(Near(alpha(0, 3.3f), 1.0f));  // right behind our back (as close as a hug): shown
+    assert(Near(alpha(0, 2), 1.0f));     // in front of us: shown
+    assert(Near(alpha(0, 60), 0.0f));    // far behind us, small: hidden too
+    assert(!box(0, -2, hud::kMemberBodyHalfWidth).valid && Near(alpha(0, -2), 1.0f));  // behind the camera
+    assert(Near(hud::OwnBodyTagAlpha(box(0, 8, 0.12f), hud::ScreenBox{}), 1.0f));      // our position unknown
+    hud::ScreenBox a, b;
+    a.valid = b.valid = true;
+    a.x1 = a.y1 = 10;
+    b.x0 = 5;
+    b.x1 = b.y1 = 20;
+    assert(Near(hud::CoveredFraction(a, b), 0.5f) && Near(hud::CoveredFraction(b, a), 50.0f / 300.0f));
+    b.x0 = 10;
+    assert(Near(hud::CoveredFraction(a, b), 0.0f));
+}
+
 // Overhead tags: only a live chr here, alive, on our map, from a fresh board (user report: health
 // bars floating in midair).
 static void Tags() {
@@ -356,6 +390,7 @@ int main() {
     GameMenuRule();
     StaleChr();
     Tags();
+    OwnBodyCover();
     GamePlate();
     SameWorldRules();
     ComposeBoard();

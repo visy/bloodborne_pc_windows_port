@@ -65,6 +65,8 @@ struct Board {
     float me_pos[3] = {0, 0, 0};
     float me_yaw = 0;     // facing (forward = (sin, 0, cos)): the direction fallback without a camera
     std::uint32_t me_map = 0;
+    std::uint64_t me_chr = 0;  // this player's PlayerIns: the overlay re-reads its position every
+                               // frame (the tags' own-body cover, OwnBodyTagAlpha)
     std::uint64_t seq = 0;  // +1 per Publish
     std::int64_t published_ms = 0;  // steady clock (ms) of the Publish: the game tick's freshness
 };
@@ -87,6 +89,7 @@ struct ComposeIn {
     bool me_have_pos = false;
     float me_pos[3] = {0, 0, 0};
     float me_yaw = 0;
+    std::uint64_t me_chr = 0;
     const RosterEntry* roster = nullptr;
     int roster_n = 0;
     const MemberVitals* vitals = nullptr;
@@ -206,6 +209,26 @@ struct ScreenPoint {
 };
 ScreenPoint WorldToScreen(const float view[12], const float proj[4], const float p[3], float w, float h,
                           float margin = 0.02f);
+/// A standing body's box on screen (pixels, y down), from its feet to kBodyHeightM above them,
+/// `half_width` of that screen height to each side of the feet-to-head line; `depth`: the camera
+/// depth of its middle. `valid` false when the feet or the head is behind the camera.
+struct ScreenBox {
+    bool valid = false;
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0, depth = 0;
+};
+constexpr float kBodyHeightM = 1.75f;
+ScreenBox BodyBox(const float view[12], const float proj[4], const float feet[3], float w, float h, float half_width);
+/// The part (0..1) of box `a`'s area that box `b` covers.
+float CoveredFraction(const ScreenBox& a, const ScreenBox& b);
+/// Tags hidden behind this player's own character (E2; user decision 2026-10-21, the arenaguest
+/// A1 case: three in a line, the near member's tag floated on our own back). A member at least
+/// kOwnCoverDepthM farther from the camera than we are, whose body box (kMemberBodyHalfWidth) our
+/// own (kOwnBodyHalfWidth: coat and arms) covers by more than kCoverFadeFrom, fades; by
+/// kCoverHidden its tag is gone. Only our own body counts: a member behind a wall keeps its tag.
+/// Returns the tag's alpha factor (1 shown .. 0 hidden); 1 when either box is not valid.
+constexpr float kOwnBodyHalfWidth = 0.2f, kMemberBodyHalfWidth = 0.12f;
+constexpr float kOwnCoverDepthM = 0.5f, kCoverFadeFrom = 0.5f, kCoverHidden = 0.8f;
+float OwnBodyTagAlpha(const ScreenBox& member, const ScreenBox& me);
 /// A party member's colour by slot (0 host .. 3), RGB 0..1: the same everywhere a member is drawn
 /// (tags now, I2 pings later). Slot outside 0..3: the game's cream.
 void MemberColour(int slot, float rgb[3]);

@@ -1101,16 +1101,17 @@ static void ping_combo(PadData *d) {
     l3_prev=l3;
     switch (state) {
     case 0:
-        if (tp && (bbgpu_ping_combo_enabled() || bbgpu_gather_combo_enabled())) {
-            state=1; click_until=0;
-            right=d->touch_count>0 && d->touches[0].x>=960;
-            break;
+        if (!tp || !(bbgpu_ping_combo_enabled() || bbgpu_gather_combo_enabled())) {
+            if (click_until) {
+                if (now<click_until) touch_click(d,right);
+                else click_until=0;
+            }
+            return;
         }
-        if (click_until) {
-            if (now<click_until) touch_click(d,right);
-            else click_until=0;
-        }
-        return;
+        state=1; click_until=0;
+        right=d->touch_count>0 && d->touches[0].x>=960;
+        /* the stick click pressed on the same sample (a director's tap) counts too */
+        /* fall through */
     case 1:
         if (r3_rise && bbgpu_ping_combo_enabled()) {
             state=2; combo_button=BTN_R3;

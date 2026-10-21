@@ -477,10 +477,15 @@ int main(void) {
     assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_L3)) && gathers==2);
     inject(path,"");
     assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.touch_count==0); /* no gestures click */
+    /* Both pressed on the same sample (the party director's host_press tap): a gather too. */
+    inject(path,"touchpad l3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_L3)) && gathers==3);
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
     /* A guest (or gathering off): touchpad + L3 is the game's. */
     gather_on=0;
     inject(path,"touchpad l3");
-    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_L3) && gathers==2);
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_L3) && gathers==3);
     inject(path,"");
     pad_read_state(1,&data);
     /* Button prompts in the runtime: the device used last (a scripted keyboard key, a scripted pad
