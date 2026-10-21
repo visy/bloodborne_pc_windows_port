@@ -157,6 +157,17 @@ std::vector<EmevdSkipRule> DollPlacementRules();
 /// True when an instruction (event, bank, id, entity, type) is one of those tests.
 bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int type); // 12100112-114
 
+/// The lower bath's shop messengers' rise / sink animation event (m21_00 12105040: messengers
+/// 2100211-2100213, waits for talk flag 12105041 ON, then OFF, then starts again). The flag is per
+/// player (the talk script of whoever opens the shop sets it in its own game; nothing clears it
+/// until a load) but the event's state is network-synced (packet 0x31): each game passed the
+/// other's wait, so while one player used the shop the event ping-ponged on every game in the
+/// session (rise, sink, rise ... every 2 s, with their sounds; live bathsync). Its 0x31 packets
+/// are dropped: each game animates them from its own player's talk. The Insight messenger's
+/// 12105043 is not one: it ends on a client (1003[101]) and the host's copy drives every game's
+/// (one rise when the host opens the shop, one sink when it closes; its talk clears 12105044).
+bool PerPlayerMessengerEvent(std::uint32_t event_id);
+
 /// The local character's record (PlayerGameData +0x90 level, +0x94 echoes, +0x84 Insight).
 struct PlayerRecord {
     int level = -1, echoes = -1, insight = -1;

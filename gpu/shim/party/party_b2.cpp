@@ -3994,21 +3994,17 @@ bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
 /// a lamp in another map: the host loads it alone. On by default since 0.7.0 (user decision): the
 /// reasons it was opt-in since playtest 1 are fixed - the guests' HostDead locks (K12, hostdead),
 /// the revived chr's hit bodies (the "hitbody" recipe step), pickups / prompts / lock-on / rally
-/// checked live (revivecheck). BB_PARTY_B2_HOST_REVIVE=0: the vanilla respawn load for the whole party.
+/// checked live (revivecheck). Off (bbport.ini party_host_revive=0, System > Deaths & revives;
+/// BB_PARTY_B2_HOST_REVIVE=0): the vanilla respawn load for the whole party. Live.
 bool HostReviveOn() {
-    static const bool on = [] {
-        const char* v = std::getenv("BB_PARTY_B2_HOST_REVIVE");
-        return !(v && v[0] == '0');
-    }();
-    return on;
+    return BbSettings::Get().party_host_revive.load();
 }
 
-/// BB_PARTY_HOST_LIMBO_REVIVE (default on; launcher: Party rules & sync): the guests killed the
-/// boss while the host lay dead in the fight: the host gets up in the arena, nobody loads. "0":
-/// the party's respawn load as before.
+/// The guests killed the boss while the host lay dead in the fight: the host gets up in the arena,
+/// nobody loads (default on; bbport.ini party_host_limbo_revive, System > Deaths & revives, the
+/// launcher's Party rules & sync; BB_PARTY_HOST_LIMBO_REVIVE). Off: the party's respawn load. Live.
 bool HostLimboReviveOn() {
-    static const bool on = !(std::getenv("BB_PARTY_HOST_LIMBO_REVIVE") && std::getenv("BB_PARTY_HOST_LIMBO_REVIVE")[0] == '0');
-    return on;
+    return BbSettings::Get().party_host_limbo_revive.load();
 }
 
 /// BB_PARTY_B2_REVIVE_RECIPE (diagnostics): which revive steps run (comma list).
@@ -4608,9 +4604,9 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3). On by default
         // again since revivecheck (2026-10-21 live, after the revive: hits taken, lock-on, rally,
         // Blood Vial, menu, lamp prompt and its menu, a treasure pickup with its item box, a party
-        // lamp travel). BB_PARTY_GUEST_REVIVE_INPLACE=0: every death takes the respawn load.
-        static const bool inplace = !(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE") &&
-                                      std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE")[0] == '0');
+        // lamp travel). Off (bbport.ini party_guest_revive_inplace=0, System > Deaths & revives;
+        // BB_PARTY_GUEST_REVIVE_INPLACE=0): every death takes the respawn load. Live.
+        const bool inplace = BbSettings::Get().party_guest_revive_inplace.load();
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
         double dist = std::numeric_limits<double>::quiet_NaN(), fell = 0;
