@@ -597,11 +597,12 @@ def phase_mk(only):
                      "host_use=1400@2%m24_00",                             # (h1) YES
                      "host_stick=%s@6%%m24_00!" % MK_OFF_LAMP,
                      "host_use=1400@2%m24_00",                             # (h2) NO
-                     "host_warp=%s@6%%m24_00" % MK_DREAM,                  # the party to the Dream
+                     "host_warp=%s@10%%m24_00" % MK_DREAM,                 # the party to the Dream
                      "host_lastlamp=%s@5%%m21_00^2" % MK_LAMP,
                      "host_use=100@2%m21_00"])                             # (h3) YES: the party back
     g1 = ",".join(["god",
-                   "guest_lastlamp=%s@1%%m21_00" % MK_LAMP,               # waits for the host's cases
+                   "guest_lastlamp=%s@1%%m24_00" % MK_LAMP,               # the party in the Cathedral Ward, then
+                   "guest_lastlamp=%s@1%%m21_00" % MK_LAMP,               # in the Dream with the host: its cases done
                    "guest_lastlamp=%s@12%%m24_00" % MK_LAMP,
                    "guest_use=1400@2%m24_00",                     # (1) the Bold Mark in the host's map
                    ] + _mk_to_dream() + ["guest_use=100@2%m21_00"]   # (2) the Hunter's Mark from the Dream
@@ -614,7 +615,7 @@ def phase_mk(only):
         watch=["--grey", "--watch", r"test: guest_use goods=mark@2,8", "--watch", r"a guest arrived; \d+ member task=back@1,4",
                "--watch", r"host: party move to lamp \d+ inside the loaded map=h1@1,4",
                "--watch", r"lamp \d+ \(host\): .*-> travel alone=h2@1,4",
-               "--watch", r"test: host_use goods 100 =h3@12,18"],
+               "--watch", r"test: host_use goods 100 =h3@30,36"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god",
               "0:BB_PARTY_SPLIT_TEST=" + ",".join(c[2] for c in MK_HOST_CASES),
               "1:BB_PARTY_TRAVEL_CHOICE=alone"],
@@ -1375,7 +1376,11 @@ def check_mk_host(v, L, guests_from):
         if not u:
             continue
         t = u[0]
-        end = (uses[k + 1][0] if k + 1 < len(uses) else guests_from) if here else min(t + 60, guests_from)
+        # in its own map: until the host's next step (the next walk or the travel to the Dream)
+        nxt = L.find(0, r"travel step \d+/\d+: host_(stick|warp)", t)
+        end = nxt[0] if here and nxt else t + 60
+        if guests_from > t:
+            end = min(end, guests_from)
         need(v, L, "mk %s: \"Travel with the party?\" asked" % name, 0,
              r"lamp %s: asking \"Travel with the party\?\"" % MK_LAMP, t, end)
         need(v, L, "mk %s: answered %s" % (name, answer), 0,
@@ -1385,11 +1390,13 @@ def check_mk_host(v, L, guests_from):
                 need(v, L, "mk %s: the host's in-world party move" % name, 0,
                      r"host: party move to lamp %s inside the loaded map: no load" % MK_LAMP, t, end)
                 for g in (1, 2):
-                    need(v, L, "mk %s: guest %d followed in-world" % (name, g), g,
-                         r"guest: followed the host inside the loaded map", t, end)
+                    f = need(v, L, "mk %s: guest %d follows in-world" % (name, g), g,
+                             r"guest: the host moved to lamp %s inside its map \(no load\); following" % MK_LAMP, t, end)
+                    need(v, L, "mk %s: guest %d warped beside it, no load" % (name, g), g,
+                         r"in-world warp \(the host's party move, lamp %s\): .*no load" % MK_LAMP, f or t, end)
             else:
-                need(v, L, "mk %s: the host's own in-world warp" % name, 0, r"in-world warp \(own move\).*no load", t, end)
-                none_of(v, L, "mk %s: the guests stay" % name, r"guest: (the host moved to lamp|followed the host)",
+                need(v, L, "mk %s: the host's own in-world warp" % name, 0, r"in-world warp \(own move, lamp %s\): .*no load" % MK_LAMP, t, end)
+                none_of(v, L, "mk %s: the guests stay" % name, r"guest: (the host moved to lamp|followed the host)|in-world warp \(the host's party move",
                         t, end, (1, 2))
             none_of(v, L, "mk %s: no load for anyone" % name, r"map \S+ -> ", t, end)
         else:
