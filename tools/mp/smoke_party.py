@@ -313,7 +313,8 @@ def check_s2(v, L, d: Path):
         need(v, L, "s2 boss kill reached guest 2", 2, r"host boss kill", k)
         need(v, L, "s2 the party stays after the boss (K10)", 0, r"K10: boss-clear leave suppressed", k)
         # The Cleric Beast's reward (lot 50000010, Sword Hunter Badge) is a key item: a summoned guest
-        # gets it owed to its own world (pard2, D4), not as a box; any other reward shows the box.
+        # gets it at once and owed to its own world too (items.md 10.3; pard2, D4); any other reward
+        # shows the box.
         ib = need(v, L, "s2 reward on the summoned guest (item box or owed key item)", 1,
                   r"item notice up on a summoned guest|lot 50000010 .*not given while summoned; waits for the own world|"
                   r"owed key item: lot 50000010", 0)
