@@ -3665,8 +3665,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         return;
     }
     // The grace waits for a host travel that would take this guest along (a wipe's death load, a
-    // limbo). With the host alive and no boss bar up nothing is coming: 2 s, not 8 (every guest
-    // death takes the respawn load since 0.6.9; the 8 s wait was most of the delay before it).
+    // limbo). With the host alive and no boss bar up nothing is coming: 2 s, not 8 (the 8 s wait
+    // was most of the delay before a guest's respawn, in place or by the 0.6.9 respawn load).
     const double grace = HostChrDown() || BossFightActive(nullptr) ? DeathGrace() : std::min(DeathGrace(), 2.0);
     if (now - at < grace || s.loading) {
         // The spectate starts at the hold in a boss fight, not after the grace (the guest's view
@@ -4559,9 +4559,12 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // 0.6.9, correct over seamless: every death takes the respawn load. A guest revived in place
         // could not be hit until its next load (enemy attacks passed through it; PR #6 report). The
         // cause: the death puts the chr's hit bodies on the dead collision layer; the revive's
-        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3).
-        // BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
-        static const bool inplace = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE"));
+        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3). On by default
+        // again since revivecheck (2026-10-21 live, after the revive: hits taken, lock-on, rally,
+        // Blood Vial, menu, lamp prompt and its menu, a treasure pickup with its item box, a party
+        // lamp travel). BB_PARTY_GUEST_REVIVE_INPLACE=0: every death takes the respawn load.
+        static const bool inplace = !(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE") &&
+                                      std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE")[0] == '0');
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
         double dist = std::numeric_limits<double>::quiet_NaN(), fell = 0;
