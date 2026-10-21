@@ -1750,7 +1750,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         return; // a stage request is pending
     }
     const TravelStep step = t.steps[t.next_step++];
-    t.armed = false;
+    // A flag write is instant and moves nobody: the chain stays armed, so a travel step after it
+    // still runs without another join (host_flag=1026:0@15,host_flag=1023@16,host_warp=2102961@18).
+    if (step.kind != TravelStep::HostFlag && step.kind != TravelStep::GuestFlag) {
+        t.armed = false;
+    }
     t.step_at = now;
     t.ran = true;
     t.last_kind = step.kind;

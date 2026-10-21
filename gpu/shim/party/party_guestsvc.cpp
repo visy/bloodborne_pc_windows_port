@@ -85,6 +85,10 @@ bool GuestServiceTalkAllowed(std::uint32_t talk, const std::string& extra) {
     return false;
 }
 
+bool GehrmanLastEvent(bool f1028, bool f1029, bool f1030) {
+    return f1028 || (f1029 && !f1030);
+}
+
 bool HeadstoneTalk(std::uint32_t talk) {
     return (talk >= 210000 && talk <= 210003) || talk == 210721;
 }
@@ -352,6 +356,8 @@ LampRequestGate g_lamp_gate;
 std::atomic<int> g_lamp_requests_made{0}; // guest: lamp warps turned into requests (tests)
 
 std::atomic<bool> g_gate{false};
+// Gehrman's ordinary talk for a guest (the tick: the gate is open and his last event is not up).
+std::atomic<bool> g_gehrman_talk{false};
 std::atomic<std::uint32_t> g_overrides{0};
 // Talk environments seen asking while the gate was open (discovery log, tick side).
 constexpr int kEnvSlots = 32;
@@ -431,7 +437,8 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // choice sets the lamp's flag; m21's event 12107000 (client end skipped, LampSkipRules) warps,
     // which becomes the guest's lamp request to the host (the party follows the host's warp).
     const bool headstone = g_lamps.load(std::memory_order_relaxed) && talk >= 210000 && talk <= 210003;
-    if (!headstone && !GuestServiceTalkAllowed(talk, g.extra)) {
+    const bool gehrman = talk == kGehrmanTalk && g_gehrman_talk.load(std::memory_order_relaxed);
+    if (!headstone && !gehrman && !GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
@@ -545,7 +552,8 @@ void LogEnv(std::uint64_t env) {
     std::uint32_t talk = 0;
     SafeGet(env + 0x10, &talk);
     Log("talk script t%u (environment %p) asks IsClientPlayer: %s; ids:%s; head:%s", talk, reinterpret_cast<void*>(env),
-        GuestServiceTalkAllowed(talk, g.extra) ? "allowed" : "kept vanilla", found.empty() ? " none" : found.c_str(),
+        GuestServiceTalkAllowed(talk, g.extra) || (talk == kGehrmanTalk && g_gehrman_talk.load()) ? "allowed" : "kept vanilla",
+        found.empty() ? " none" : found.c_str(),
         hex.c_str());
 }
 
@@ -2280,6 +2288,20 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
                 s.loading ? ", loading" : "");
         }
     }
+    {
+        // Gehrman (t210305): his ordinary talk is a guest's too; his last event (the ending choice)
+        // stays the host's. The flags are the host world's (1000-1999 come with the join snapshot
+        // and the mirror); an unreadable flag keeps him vanilla.
+        bool f1028 = true, f1029 = true, f1030 = false;
+        const bool read = open && ReadEventFlag(1028, &f1028) && ReadEventFlag(1029, &f1029) && ReadEventFlag(1030, &f1030);
+        const bool talk = read && !GehrmanLastEvent(f1028, f1029, f1030);
+        if (talk != g_gehrman_talk.exchange(talk, std::memory_order_relaxed) && open) {
+            Log("Gehrman (t210305): %s (flags 1028 %d, 1029 %d, 1030 %d)",
+                talk ? "a guest may talk to him (his ordinary lines)"
+                     : "kept vanilla for a guest (his last event: the ending choice is the host's)",
+                int(f1028), int(f1029), int(f1030));
+        }
+    }
     const double now = Now();
     bool doll_ready = true;
     std::uint32_t target = 0;
@@ -2407,6 +2429,23 @@ std::uint64_t GuestSvcFindChr(std::uint32_t id) {
 
 bool GuestSvcPromptUp(std::uint32_t* id) {
     return PromptUp(id);
+}
+
+bool GuestSvcOnlyPrompt(std::uint32_t id, std::uint32_t* other) {
+    std::uint32_t ids[256];
+    const int n = BbGameMenu::RecentLookups(400, ids, 256);
+    bool seen = false;
+    *other = 0;
+    for (int i = 0; i < n; ++i) {
+        if ((ids[i] >= 10010000 && ids[i] < 10020000) || (ids[i] >= 70000000 && ids[i] < 70010000)) {
+            if (ids[i] == id) {
+                seen = true;
+            } else if (!*other) {
+                *other = ids[i];
+            }
+        }
+    }
+    return seen && !*other;
 }
 
 bool GuestServicesOpen() {

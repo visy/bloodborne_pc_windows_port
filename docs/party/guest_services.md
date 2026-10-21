@@ -82,7 +82,7 @@ The filter allows by talk script id; the entity column is where the script is pl
 | 2100211, 2100215, 2100216 | t210691, t210694, t210695 | Bath Messengers: shops, sell | yes |
 | 2100218 | t210697 | dress-up messenger (attire for flags 6071..) | yes |
 | 2100219 | t210698 | Insight messenger (Insight shop) | yes |
-| 2100600 | t210305 | Gehrman (last event: the ending choice) | no |
+| 2100600 | t210305 | Gehrman: ordinary lines (72100120-72100129, 72100133-72100135); last event: the ending choice | yes, outside his last event (2.7) |
 | 2100800 | t210306 | (Gehrman / Doll death branch) | no |
 | 2100950.. | t210000-3 | headstones (travel) | no (lamp phase) |
 | 2100230, 2100231 | t210720, t210721 | Dream lamp / warp menus | no (lamp phase) |
@@ -104,7 +104,7 @@ saved, and continues at `0x203EECF` with the filtered eax. The filter answers 0 
   widens it for diagnostics).
 
 Everywhere else the game's own answer stands: quest NPCs in the host's world keep refusing guests,
-Gehrman's ending choice and the travel menus stay host-only. Nothing runs on the host (role 3: the
+Gehrman's ending choice (his last event, 2.7) and the travel menus stay host-only. Nothing runs on the host (role 3: the
 game already answers 0 there).
 
 Log lines (`Party guest services:`): `open: guest in the host's m21_00_00_00; level L, echoes E,
@@ -183,6 +183,24 @@ guest's level-up. party_flags.inc now has never_sync override rows (flag_tool.py
 12100112-12100118 (kneel, gesture, SFX, bow, surprise, gesture reaction), 72100100-72100102,
 72100105-72100108 (idle talk / bow / surprise triggers), 72100110 and 72100113 (talk state). Each
 player levels up at its own Doll; the key-item gift (72100112 / 72100114) is unchanged.
+
+### 2.7 Gehrman on a guest [data, R]
+
+Live (2-player session 2026-10-20, 0.6.9): in the host's Dream the guest could not talk to Gehrman;
+the host's talks played on the guest (shared lines), and each time the guest's prompt 10010200
+showed for 0.4 s and went (`talk script t210305 ... asks IsClientPlayer: kept vanilla`). Talk ESD
+`t210305.esd` (m21_00_00_00.talkesdbnd): StateMachine 1 runs machine 0x7FFFFFF7 while
+`IsClientPlayer() == 0` and the "client wait" machine 0x7FFFFFF8 while it is 1, so the whole talk is
+host-only, not only the choice. 0x7FFFFFF7 picks the last event (0x7FFFFFF5 -> 0x7FFFFFF4: Yes / No,
+72100130 submit / 72100131 refuse; its "attacked" branch 0x7FFFFFF3 sets 72100131) when **1028** is
+on or **1029** is on and **1030** off (m21 events 12100143 / 12100144 / 12100145); otherwise the
+ordinary talk 0x7FFFFFF6 (lines 1500000-1501300, flags 72100120-72100129 / 72100133-72100135, no
+choice). Fix: in the Dream gate the filter answers 0 for t210305 while the guest's flags 1028 / 1029 /
+1030 (the host's: global 1000-1999, join snapshot and mirror) say his last event is not up (the tick
+reads them; an unreadable flag keeps him vanilla). When the host's Dream reaches the last event the
+next IsClientPlayer answer is 1 again and machine 1 goes back to the client wait. 72100130 / 72100131
+stay never_sync and out of world actions. t210306 (the boss Gehrman's death lines, no menu) stays
+vanilla. Log: `Gehrman (t210305): a guest may talk to him (his ordinary lines) (flags ...)`.
 
 ## 3. Lamps and headstones (implemented, opt-in `BB_PARTY_GUEST_LAMPS=1` until run live)
 
