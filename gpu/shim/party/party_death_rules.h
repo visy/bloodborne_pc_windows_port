@@ -610,6 +610,53 @@ inline bool StayApartAtHostDeath(bool guest_dead, bool guest_idle, std::uint32_t
     return !guest_dead && guest_idle && host_area != 0 && own_area != 0 && host_area != own_area;
 }
 
+// ---- C3: the last guest down starts the wipe (player report 2026-10-21, Logarius) ----
+// The guest's HP 0 tells the host at once (member_down), so the wipe's respawn load comes while
+// this guest's death animation still runs; the game takes the death (PartyGhostDeath, ~8 s after
+// HP 0) only later. Followed at once, the load moved the dying body to the host's lamp, the death
+// was then taken there (its bloodstain at the lamp) and the held death revived it alone at its own
+// last lamp beside the arena. The follow waits for the death instead: the bloodstain where it
+// died, then one dead follow to the host's lamp with everyone.
+constexpr double kWipeDeathWait = 15.0;  ///< s; the dead watchdog takes the death at 11 s
+enum class WipeFollow { Now, WaitDeath, DeadFollow, TakeDeath };
+inline const char* WipeFollowName(WipeFollow w) {
+    return w == WipeFollow::Now ? "now" : w == WipeFollow::WaitDeath ? "wait for the death" : w == WipeFollow::DeadFollow ? "dead follow" : "take the death";
+}
+/// A guest at the host's death travel (`host_death`), its own chr's HP (`hp` -1 unknown), its
+/// death taken (held), `waited_s` since the travel came.
+inline WipeFollow PlanWipeFollow(bool host_death, int hp, bool death_taken, double waited_s) {
+    if (!host_death || hp != 0) {
+        return WipeFollow::Now;  // alive (or unknown): the follow as before
+    }
+    if (death_taken) {
+        return WipeFollow::DeadFollow;
+    }
+    return waited_s < kWipeDeathWait ? WipeFollow::WaitDeath : WipeFollow::TakeDeath;
+}
+/// A death taken (held) within kWipeArrivalWindow s after the guest arrived with the host's death
+/// load: part of that wipe, never a second death of its own. Up already: dropped (no revive at its
+/// own lamp); still down: revived at the host's lamp, where the party is.
+constexpr double kWipeArrivalWindow = 30.0;
+enum class AfterWipe { None, Drop, HostLamp };
+inline AfterWipe PlanHeldAfterWipe(double since_arrival_s, bool alive) {
+    if (!(since_arrival_s >= 0.0 && since_arrival_s < kWipeArrivalWindow)) {
+        return AfterWipe::None;
+    }
+    return alive ? AfterWipe::Drop : AfterWipe::HostLamp;
+}
+/// A dead guest waits for the host's wipe decision (no revive of its own) while the host's chr is
+/// down, at most kGuestHostDownHold s (a stale host chr must not hold the respawn for good; was 30 s,
+/// shorter than a long boss-fight spectate).
+constexpr double kGuestHostDownHold = 120.0;
+inline bool GuestWaitsForHostDown(bool host_down, double held_s) {
+    return host_down && held_s < kGuestHostDownHold;
+}
+/// The guest's bloodstain goes where it died (its HP 0 spot) when a load moved the body between
+/// its HP 0 and the death's record, never to the load's destination.
+inline bool StainAtDeathSpot(bool spot_known, bool loaded_since_hp0) {
+    return spot_known && loaded_since_hp0;
+}
+
 // ---- A11 (live a11c): the host's chr is not placed yet ----
 /// A joiner is put beside the host's chr only when that chr stands where the host is: a host
 /// whose first sync waits (a cutscene started as the guest loaded in) leaves its chr on the

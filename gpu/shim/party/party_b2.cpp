@@ -3474,6 +3474,28 @@ void StainFromRecordLocked(int slot, const char* why) {
     WriteStainLocked(slot);
 }
 
+// C3 (player report 2026-10-21, Logarius): the host's wipe load that came while this guest was
+// still dying (its HP 0 starts the wipe at once, the game takes the death ~8 s later): the follow
+// waits for the death (HeldDeathTick, deathrules::PlanWipeFollow). Under g_wipe_wait_mu.
+std::mutex g_wipe_wait_mu;
+TravelIntent g_wipe_wait_t;
+double g_wipe_wait_at = 0;              // when that travel came; 0 none
+std::atomic<double> g_wipe_arrived_at{0};  // the last arrival with the host's death load (a wipe)
+bool g_dead_at_host_travel = false;        // this guest was down at the host's travel (main thread)
+bool WipeFollowWaiting() {
+    std::lock_guard<std::mutex> lk(g_wipe_wait_mu);
+    return g_wipe_wait_at > 0;
+}
+// Where this guest's body lay at HP 0 when a load began before its death was taken (the bloodstain
+// goes there, never to the load's destination: deathrules::StainAtDeathSpot). Main thread.
+struct UntakenDeathSpot {
+    bool valid = false;
+    double at = 0;
+    u32 map = 0;
+    float pos[3] = {};
+};
+UntakenDeathSpot g_untaken_death;
+
 /// ERSC / single-player rule (design decision 3): a guest dying in the host's world drops its echoes
 /// into a bloodstain, as the host does. The game's own record 0x13D2910(SprjEventMan +0x80, chr, 1)
 /// (what SoloPlayDeath_2 calls) is used; in host-world mode (GSM +0x1592 == 0) it would place the
@@ -3501,6 +3523,23 @@ void GuestBloodstain() {
     SafeWrite(gsm + 0x1770, &gate, 1);
     FallStainToSafeSpot("a guest's death");  // fallsafe: before the party stain takes the spot
     const u64 rec = Field<u64>(Slot(kSlotGameData), 0x30);
+    {
+        // C3: a load moved the dying body before the game took its death (the report's stain lay at
+        // the host's lamp, 170 m from the arena): the record goes where it died.
+        UntakenDeathSpot& u = g_untaken_death;
+        const bool known = u.valid && Now() - u.at < 120.0 && rec;
+        if (deathrules::StainAtDeathSpot(known, u.valid)) {
+            float was[3] = {};
+            SafeRead(rec + 0x18, was, 12);
+            SafeWrite(rec, u.pos, 12);
+            SafeWrite(rec + 0x18, u.pos, 12);
+            SafeWrite(rec + 0x3c, &u.map, 4);
+            Log("guest: bloodstain: a load moved the body before its death was taken: the record moved from (%.1f, "
+                "%.1f, %.1f) to where it died (%.1f, %.1f, %.1f) map %#x", double(was[0]), double(was[1]),
+                double(was[2]), double(u.pos[0]), double(u.pos[1]), double(u.pos[2]), u.map);
+        }
+        u.valid = false;
+    }
     float pos[3] = {}, obj[3] = {};
     SafeRead(rec + 0x18, pos, 12);
     SafeRead(rec, obj, 12);  // the stain object's spot: the game's last safe ground spot
@@ -3540,6 +3579,7 @@ bool HoldGuestDeath() {
     }
     Log("guest: own death in the host's world held (%s)",
         phase != GuestPhase::Idle ? "the host's travel is in flight: it takes the guest along"
+        : WipeFollowWaiting()     ? "the host's wipe load waits for it: the party's respawn follows"
                                   : "waiting for a host travel");
     return true;
 }
@@ -3823,8 +3863,78 @@ bool GuestArenaRuleOn();
 bool LivingMemberHere(u64 me);
 bool GuestChaliceRevive(const GameSnapshot& s);
 bool GuestFallSafeRevive(const GameSnapshot& s);
+/// C3: the host's wipe load that waited for this guest's death (OnHostTravel) is followed now: a
+/// dead follow (the host's respawn records, one load to its lamp with the party) once the death is
+/// taken, or as before when the guest is up again. The host has re-synced after its own load by
+/// now: a fresh snapshot is asked for ("respawn", as a lone respawn; the host also removes the
+/// guest's dead chr where it lay). True while the wait goes on or the follow began.
+bool WipeFollowTick(const GameSnapshot& s, double now) {
+    TravelIntent t;
+    double since;
+    {
+        std::lock_guard<std::mutex> lk(g_wipe_wait_mu);
+        if (g_wipe_wait_at <= 0) {
+            return false;
+        }
+        t = g_wipe_wait_t;
+        since = g_wipe_wait_at;
+    }
+    if (!SessionUp()) {
+        std::lock_guard<std::mutex> lk(g_wipe_wait_mu);
+        g_wipe_wait_at = 0;
+        return false;
+    }
+    if (s.loading || !s.world_up || !s.player) {
+        return true;
+    }
+    const int hp = ChrHp(s.player);
+    const bool taken = g_death_held_at.load() > 0;
+    deathrules::WipeFollow plan = deathrules::PlanWipeFollow(true, hp, taken, now - since);
+    if (plan == deathrules::WipeFollow::WaitDeath) {
+        return true;
+    }
+    if (plan == deathrules::WipeFollow::TakeDeath) {
+        // Never taken (no death state): taken here, where it lies (its bloodstain there).
+        Log("guest: its death was not taken %.1f s after the host's wipe load came: taken now", now - since);
+        if (!HoldGuestDeath()) {
+            g_death_held_at = now;
+        }
+        plan = deathrules::WipeFollow::DeadFollow;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_wipe_wait_mu);
+        g_wipe_wait_at = 0;
+    }
+    const bool dead = plan == deathrules::WipeFollow::DeadFollow;
+    if (dead) {
+        g_death_held_at = 0;
+        g_dead_follow = true;
+        g_solo_respawn = false;
+    }
+    if (!BeginRejoin(t, true, false)) {
+        if (dead) {
+            g_dead_follow = false;
+            g_death_held_at = now - DeathGrace();  // the held death's usual way (HeldDeathTick)
+        }
+        Log("guest: the host's wipe load could not be followed now (a re-join runs); %s",
+            dead ? "the held death goes on" : "staying");
+        return false;
+    }
+    float p[3] = {0, 0, 0};
+    ChrPos(s.player, p);
+    char b[128];
+    std::snprintf(b, sizeof b, "{\"op\":\"respawn\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
+    Send(0, b);
+    Log("guest: %s %.1f s after the host's wipe load came: %s (%s); asked the host for a snapshot",
+        dead ? "own death taken" : "up again", now - since,
+        dead ? "follows it dead to the host's lamp with the party (one load)" : "follows it", DescribeTravel(t).c_str());
+    return true;
+}
 void HeldDeathTick(const GameSnapshot& s, double now) {
     LimboKillTick(s.loading || !s.world_up, now);
+    if (WipeFollowTick(s, now)) {
+        return;
+    }
     if (g_dead_follow.load() && !SessionUp()) {
         // The follow ended without an arrival (B1 fallback): the host's records stay, which is
         // where the fallback and the gather take the guest anyway.
@@ -3863,13 +3973,25 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         return;
     }
     static double limbo_logged = 0;
+    // C3 (player report 2026-10-21): a death taken right after this guest arrived with the host's
+    // wipe load belongs to that wipe: no second revive at its own last lamp (it stood beside the
+    // arena), the party's lamp instead.
+    const deathrules::AfterWipe after_wipe =
+        deathrules::PlanHeldAfterWipe(now - g_wipe_arrived_at.load(), s.player && ChrHp(s.player) > 0);
+    if (after_wipe == deathrules::AfterWipe::Drop) {
+        g_death_held_at = 0;
+        Log("guest: a death taken %.1f s after the party's respawn load: part of that wipe, up at the host's lamp "
+            "already (no revive of its own)", now - g_wipe_arrived_at.load());
+        return;
+    }
     {
         // C3: the host is down too: its death load (a wipe: one load for the whole party) takes
         // this guest along. Live parx deaths (3 players): the guest died 11 s before the host and
         // was revived in place while the host lay dead, 4 s before the party's respawn load.
         static double host_down_logged = 0;
-        // At most 30 s (a stale host chr must not hold the respawn for good).
-        if (now - at < 30.0 && HostChrDown()) {
+        // As long as the host is down, with a safety cap (a stale host chr must not hold the
+        // respawn for good; the old 30 s ran out in a long spectate): never a revive alone.
+        if (deathrules::GuestWaitsForHostDown(HostChrDown(), now - at)) {
             if (host_down_logged != at) {
                 host_down_logged = at;
                 Log("guest: dead while the host is down too: no revive; the host's death load takes it along");
@@ -3948,7 +4070,11 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
             Log("guest: died in the host's Chalice Dungeon: nobody alive here to get up beside; the death redirect "
                 "(not its own last lamp %u)", own);
         }
-        if (!boss && own_lamp && !dungeon) {
+        if (after_wipe == deathrules::AfterWipe::HostLamp) {
+            Log("guest: a death taken %.1f s after the party's respawn load: part of that wipe; the host's lamp %u "
+                "(not its own %u)", now - g_wipe_arrived_at.load(), party, own);
+        }
+        if (!boss && own_lamp && !dungeon && after_wipe == deathrules::AfterWipe::None) {
             if (GuestReviveInPlace(s, own, "its own last lamp")) {
                 return;
             }
@@ -4915,11 +5041,23 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
     static std::deque<std::pair<double, float>> hist;
     static bool was_dead = false;
     static u64 chr = 0;
+    static u32 last_map = 0;
     if (!s.world_up || s.loading || !s.player) {
+        if (was_dead && g_local_corpse.valid && Role() == RoleClient && g_last_hold_at.load() < g_local_death_at) {
+            // C3: a load begins while this guest is down and its death not taken yet: where it died
+            // (GuestBloodstain puts the record there when the death is taken after the load).
+            g_untaken_death.valid = true;
+            g_untaken_death.at = Now();
+            g_untaken_death.map = last_map;
+            std::memcpy(g_untaken_death.pos, g_local_corpse.pos, sizeof g_untaken_death.pos);
+            Log("guest: a load begins before its death was taken: its bloodstain stays where it died (%.1f, %.1f, "
+                "%.1f)", double(g_local_corpse.pos[0]), double(g_local_corpse.pos[1]), double(g_local_corpse.pos[2]));
+        }
         hist.clear();
         was_dead = false;
         return;
     }
+    last_map = s.map_id;
     if (s.player != chr) {
         chr = s.player;
         hist.clear();
@@ -4932,6 +5070,9 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
     const bool dead = ChrHp(s.player) <= 0;
     if (!dead) {
         g_alive_lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+        if (g_untaken_death.valid && now - g_untaken_death.at > 15.0) {
+            g_untaken_death.valid = false;  // up again and the death never taken: a later death is its own
+        }
     }
     if (!dead && !(Field<u64>(s.player, 0x1e1) & 0x10000)) {
         const float draw = Field<float>(s.player, 0x208);
@@ -7438,6 +7579,7 @@ void GuestTick(const GameSnapshot& s, double now) {
             st.screen_done = true;
             SaveOverlay();
             st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xf8, -1);
+            g_dead_at_host_travel = st.hp_before == 0 || g_dead_follow.load();
             if (st.hp_before <= 0) {
                 // Dead at the host's travel (a held death): back with full HP, as the host respawns.
                 st.hp_before = Field<int>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0xfc, -1);
@@ -7649,6 +7791,10 @@ void GuestTick(const GameSnapshot& s, double now) {
                         DescribeChr(s.player).c_str());
                 }
                 st.solo = false;
+                if (st.intent.kind == TravelKind::HostDeath && g_dead_at_host_travel) {
+                    g_wipe_arrived_at = now;  // C3: a death taken after this belongs to the wipe
+                }
+                g_dead_at_host_travel = false;
             }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
@@ -10348,6 +10494,23 @@ bool OnHostTravel(const TravelIntent& t) {
             NoteAway(0);
             Log("guest: the host died in %s, this guest is apart in %s: it respawns alone; staying here (no load)",
                 MapName(host).c_str(), MapName(g.map_id).c_str());
+            return true;
+        }
+        // C3 (player report 2026-10-21): this guest's HP 0 started the wipe, its death animation
+        // still runs and the game has not taken the death: followed now, the load moved the dying
+        // body to the host's lamp (the bloodstain there), and the death taken after it revived the
+        // guest alone at its own lamp beside the arena. The follow waits (WipeFollowTick).
+        if (idle && g.world_up && !g.loading && g.player &&
+            deathrules::PlanWipeFollow(true, ChrHp(g.player), g_death_held_at.load() > 0, 0.0) ==
+                deathrules::WipeFollow::WaitDeath) {
+            {
+                std::lock_guard<std::mutex> lk(g_wipe_wait_mu);
+                g_wipe_wait_t = t;
+                g_wipe_wait_at = Now();
+            }
+            Log("guest: the host's wipe load came while this guest is still dying (%s): it follows once its death is "
+                "taken (its bloodstain where it died), at most %.0f s", DescribeTravel(t).c_str(),
+                deathrules::kWipeDeathWait);
             return true;
         }
     }

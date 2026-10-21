@@ -646,6 +646,34 @@ int main() {
     CHECK(!SkipGuestHostDead(true, 6, 1, 0, 5));     // BB_PARTY_HOSTDEAD_SKIP=0: never
     CHECK(!SkipGuestHostDead(true, 6, 1, 3, 2));     // =3: the first two host deaths the game's
     CHECK(SkipGuestHostDead(true, 6, 1, 3, 3));
+    // C3, the last guest down starts the wipe (player report 2026-10-21, Logarius): its follow of
+    // the host's death load waits until its own death is taken.
+    CHECK(PlanWipeFollow(false, 0, false, 0.0) == WipeFollow::Now);     // not a host death travel
+    CHECK(PlanWipeFollow(true, 527, false, 0.0) == WipeFollow::Now);    // alive: follows at once
+    CHECK(PlanWipeFollow(true, -1, false, 0.0) == WipeFollow::Now);     // HP unknown: as before
+    CHECK(PlanWipeFollow(true, 0, false, 0.1) == WipeFollow::WaitDeath);  // the report: dying at the travel
+    CHECK(PlanWipeFollow(true, 0, false, 8.6) == WipeFollow::WaitDeath);  // the game's death ~8.6 s after HP 0
+    CHECK(PlanWipeFollow(true, 0, true, 8.6) == WipeFollow::DeadFollow);  // taken: one dead follow
+    CHECK(PlanWipeFollow(true, 0, true, 0.0) == WipeFollow::DeadFollow);  // taken before the travel (s1 wipe)
+    CHECK(PlanWipeFollow(true, 0, false, kWipeDeathWait) == WipeFollow::TakeDeath);  // never taken: safety
+    CHECK(PlanWipeFollow(true, 0, false, 60.0) == WipeFollow::TakeDeath);
+    CHECK(std::string(WipeFollowName(WipeFollow::WaitDeath)) == "wait for the death");
+    // A death taken after the wipe's arrival is part of the wipe: no revive at its own lamp.
+    CHECK(PlanHeldAfterWipe(5.0, true) == AfterWipe::Drop);         // the report: up at the host's lamp already
+    CHECK(PlanHeldAfterWipe(5.0, false) == AfterWipe::HostLamp);    // still down: the host's lamp, not its own
+    CHECK(PlanHeldAfterWipe(0.0, false) == AfterWipe::HostLamp);
+    CHECK(PlanHeldAfterWipe(kWipeArrivalWindow, false) == AfterWipe::None);  // a later death of its own
+    CHECK(PlanHeldAfterWipe(-1.0, false) == AfterWipe::None);       // no wipe arrival (never: now - 0 is large)
+    CHECK(PlanHeldAfterWipe(1e9, true) == AfterWipe::None);
+    // A dead guest waits for the host's decision as long as the host is down (64.5 s in the report).
+    CHECK(GuestWaitsForHostDown(true, 64.5));
+    CHECK(GuestWaitsForHostDown(true, 0.0));
+    CHECK(!GuestWaitsForHostDown(true, kGuestHostDownHold));         // a stale host chr: not for good
+    CHECK(!GuestWaitsForHostDown(false, 1.0));                       // the host is up: its own rules
+    // The bloodstain where the guest died, not at the load's destination.
+    CHECK(StainAtDeathSpot(true, true));
+    CHECK(!StainAtDeathSpot(true, false));   // the usual death: the game's own record
+    CHECK(!StainAtDeathSpot(false, true));   // HP 0 spot unknown
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

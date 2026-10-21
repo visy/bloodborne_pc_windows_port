@@ -130,6 +130,20 @@ def phase_s1(only):
         "guest_die@20%m24_01~",               # 14 s after the host's death in the fight: the wipe
     ])
     g2 = "guest_die@26%m24_01~"                # the headless guest: down too (everyone down: a wipe)
+    if only and "wipe_late" in only:
+        # Late-death wipe (player report 2026-10-21, Logarius): guest 2 down 10 s after the host,
+        # guest 1 fights on and is the last one down 40 s after the host. Its HP 0 starts the wipe
+        # while its death animation runs: it must follow the one respawn load to the host's lamp
+        # (its bloodstain in the arena), with no revive of its own after it. No Leave / death
+        # before (guest 1 keeps its 5000 echoes for the stain); the travel once both guests are in.
+        host = ",".join(["host_warp=2412953@8^2", "host_die@6%m24_01~"])
+        g1 = ",".join([
+            "echoes=5000",
+            "guest_obj=2411810@20%m24_01",
+            "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
+            "guest_die@46%m24_01~",               # 40 s after the host's death: the last one down
+        ])
+        g2 = "guest_die@16%m24_01~"
     return dict(
         name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -801,12 +815,12 @@ PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, 
           "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
-          "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
+          "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
-              "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
+              "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
@@ -824,6 +838,8 @@ GROUP_UNTIL = {
     "boss": ["1:cutscene 24010010"],
     "host_death": ["0:spectating: following", "1:Party HUD: slot 0 spectating"],
     "wipe": [WIPE_UNTIL],
+    # guest 1 back from the late wipe's respawn load (then the hold: no revive of its own after it)
+    "wipe_late": [r"1:travel step \d+/\d+: guest_die[\s\S]*arrived in the host world \(flow 4\)"],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
@@ -849,7 +865,7 @@ GROUP_UNTIL = {
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
-GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
+GROUP_HOLD = {"host_death": 10, "wipe_late": 15}  # wipe_late: a held death's grace + the game's death state  # the spectate on every screen (the guests' panels: "Spectating")
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
 
@@ -1069,7 +1085,48 @@ def check_s1(v, L):
             need(v, L, "s1 host limbo: guest 1's panel shows the host spectating", 1,
                  r"Party HUD: slot 0 spectating", sp - 2)
     need(v, L, "s1 wipe: the party respawns together", 0, WIPE_RX, hd or 0)
+    if WIPE_LATE_RUN:
+        check_wipe_late(v, L, hd)  # the wipe_late chain (no Leave, guest 1 down last)
     check_common(v, L, "s1")
+
+
+WIPE_LATE_RUN = False  # --only wipe_late: s1 ran the late-death wipe chain
+GASCOIGNE_ARENA = (-48.76, -40.92, 72.44)  # the intro's trigger box, in the arena
+
+
+def check_wipe_late(v, L, hd):
+    """Late-death wipe (player report 2026-10-21): guest 1 is the last one down, 40 s after the host;
+    one respawn load for everyone, its bloodstain in the arena, no revive of its own after the load."""
+    need(v, L, "s1 late wipe: guest 2 down", 2, r"travel step \d+/\d+: guest_die", hd or 0)
+    g1 = need(v, L, "s1 late wipe: guest 1 down last", 1, r"travel step \d+/\d+: guest_die", hd or 0)
+    if g1 is None or hd is None:
+        return
+    v.step("s1 late wipe: guest 1 down >= 30 s after the host", g1 - hd >= 30, "%.1f s after" % (g1 - hd))
+    wipes = L.all(0, WIPE_RX, hd)
+    v.step("s1 late wipe: one wipe (one respawn load)", len(wipes) == 1, "%d wipe line(s)" % len(wipes))
+    w = wipes[0][0] if wipes else g1
+    v.step("s1 late wipe: the wipe after guest 1's death", w >= g1 - 1, "wipe +%.1f s, death +%.1f s" % (w, g1))
+    need(v, L, "s1 late wipe: guest 1 follows once its death is taken", 1,
+         r"follows it dead to the host's lamp|held death goes with the host's travel|"
+         r"own death in the host's world held \(the host's travel is in flight", g1 - 1)
+    st = L.find(1, r"party stain \(death in the host's world\): \d+ Blood Echoes at", g1 - 1)
+    if st:
+        m = re.search(r"at \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)", st[1])
+        p = [float(x) for x in m.groups()] if m else [1e9] * 3
+        d = sum((a - b) ** 2 for a, b in zip(p, GASCOIGNE_ARENA)) ** 0.5
+        v.step("s1 late wipe: guest 1's bloodstain in the arena", d < 60, "%.1f m from the arena: %s" % (d, st[1][:120]))
+    else:
+        v.step("s1 late wipe: guest 1's bloodstain in the arena", False, "no party stain line after +%.1f s" % g1)
+    arr = need(v, L, "s1 late wipe: guest 1 arrives with the respawn load", 1, r"arrived in the host world \(flow 4\)", g1)
+    if arr is None:
+        return
+    loads = L.all(1, r"Loading: begins", g1 - 1)
+    v.step("s1 late wipe: guest 1 took one load", len(loads) == 1, "%d load(s) after its death" % len(loads))
+    need(v, L, "s1 late wipe: guest 1 placed beside the host", 1,
+         r"placed beside the host after the death follow|arrived by the host's own travel; placed beside", arr - 1)
+    none_of(v, L, "s1 late wipe: no revive of its own after the load", r"died alone: revived|revived at its own last lamp|"
+            r"died alone \(no host travel|guest death redirect runs", arr, insts=(1,))
+    need(v, L, "s1 late wipe: host re-join done", 0, r"host: re-join done", arr - 2)
 
 
 def check_arena(v, L, k):
@@ -1738,6 +1795,8 @@ def main():
     a = ap.parse_args()
     RUN_ROOT[0] = a.root
     only = {g.strip() for g in a.only.split(",") if g.strip()}
+    global WIPE_LATE_RUN
+    WIPE_LATE_RUN = "wipe_late" in only
     bad = only - set(GROUPS)
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
