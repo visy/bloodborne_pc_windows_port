@@ -569,7 +569,22 @@ def run(a):
     idle_rx = re.compile(r"^(Party|Net): ")
     idle_limit = a.idle
     last_party_count, last_party_change = -1, time.time()
+    # Unplanned crash in a scripted run (--until): run.bat restarts the game, but a restarted game takes
+    # BB_PARTY_DIRECTOR_TEST_RESTART as its chain (smoke s2: "none"), so its steps never run and the
+    # run would idle to its cap (live: a startup crash on Windows' commit limit, s2 waited ~7 min).
+    # End it at once with the reason instead.
+    crash_rx = re.compile(r"the game exited with -?\d+ \(a crash\); restart \d+ of")
+    planned_kills = [0] * a.count
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
+        if until:
+            for i in range(a.count):
+                if len(crash_rx.findall(log_text(i, starts[i]))) > planned_kills[i]:
+                    verdict = verdict or ("UNPLANNED CRASH: instance %d crashed and was restarted at %.0f s (see its "
+                                          "out\\crash_*.log); its test chain does not run again"
+                                          % (i, time.time() - t0))
+            if verdict:
+                print(verdict, flush=True)
+                break
         if time.time() - t0 > lease and time.time() - last_lease_check > 5:
             last_lease_check = time.time()
             try:
@@ -596,6 +611,7 @@ def run(a):
                 plan_marks = list(marks)
                 print("[harness +%.1f s] crash %d of %d: instance %d" % (time.time() - ts0, plan_next, len(plan), inst),
                       flush=True)
+                planned_kills[inst] += 1
                 crash_instance(a.root, inst)
         if idle_limit > 0:
             # Distinct party lines with numbers blanked: periodic status/roster/state lines repeat
