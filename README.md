@@ -264,7 +264,9 @@ before anyone is in the game):
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared
-  between all players (Root Chalices, which a ritual uses up, stay each player's own).
+  between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's
+  lamps work with a party (back to the Dream together); a guest who dies in the dungeon gets up
+  beside the party, and a guest who ends up outside it is summoned back in (System > Chalice Dungeons).
 
 **Bosses, cutscenes and endings**
 

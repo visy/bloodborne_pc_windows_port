@@ -710,13 +710,84 @@ def phase_kw(only):
     )
 
 
+# Phase cl (chalamp, ~5 min, 2 players): the lamps of a Chalice Dungeon in a party (a tester's report:
+# the lamps could be lit but did nothing; a guest's death sent it to its own lamp in the Dream and it
+# could not get back in; the host's death left it at a spot it could not leave). The host Continues
+# inside the Pthumeru dungeon (fixture chalice_pthumeru_inside: layer 1 boss dead, in its boss room);
+# guest 1 (the default save) is summoned in by the quick join. (1) The host lights the boss room's
+# lamp (object 2901952, return point 2902952). (2) Guest 1 dies: up again beside the host, no load,
+# still in the dungeon. (3) The host dies: up again at the lamp it lit (not the template spot 80 m
+# away). (4) The host uses that lamp: "Return to the Hunter's Dream", the party travels (both in
+# m21_00). (5) From the Dream, the altar's awaken warp to that lamp (host_lamp, what the altar's
+# EMEVD runs): the host enters alone, guest 1 is summoned back into the dungeon.
+CL_FIXTURE = Path(r"E:\games\bbport\test_saves\chalice_pthumeru_inside\savedata")
+CL_DEFAULT = Path(r"E:\games\bbport\test_saves\savedata")
+CL_LAMP_OBJ = "2901952"   # the layer 1 boss room's lamp object (its return point 2902952)
+CL_LAMP = "2902952"
+CL_UNTIL = r"0:travel step (\d+)/\1: "  # the host's last step (back in the dungeon, guest 1 summoned)
+
+
+def _cl_saves(root: Path, src: Path):
+    """inst0's test save (instances.py copies it to savedata_party with --fresh-saves)."""
+    dst = root / "inst0" / "user" / "savedata"
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dst)
+
+
+def prep_chalamp(root: Path):
+    if not CL_FIXTURE.is_dir():
+        sys.exit("chalamp: the fixture %s is missing (docs/party/test_saves.md)" % CL_FIXTURE)
+    _cl_saves(root, CL_FIXTURE)
+    print("[smoke] chalamp: inst0 starts from %s" % CL_FIXTURE, flush=True)
+
+
+def post_chalamp(root: Path):
+    _cl_saves(root, CL_DEFAULT)  # the other phases' host starts from the default save again
+
+
+def _cl_lamp_use():
+    """At the lit lamp: Cross (the first press after the stand only brings its prompt up, live cl3 / cl4),
+    Cross (the Dream question), Left (YES; it opens on NO), Cross."""
+    return ["host_obj=%s:1.2:0@2%%m29" % CL_LAMP_OBJ, "host_press=0x4000@4%m29!", "host_press=0x4000@3%m29!",
+            "host_press=0x80@2%m29!", "host_press=0x4000@1%m29!"]
+
+
+def phase_cl(only):
+    host = ",".join(["log_pos", "watch_text=amp/Dream/Hunter",
+                     "host_obj=%s:1.2:0@12%%m29" % CL_LAMP_OBJ,    # (1) light the boss room's lamp
+                     "host_press=0x4000@2%m29!",
+                     "host_press=0@30%m29!",                       # (2) guest 1's death meanwhile
+                     "host_move=-60:31.4:-90.8@2%m29",             # off the lamp, then (3) the death
+                     "host_die@3%m29",
+                     "host_press=0@15%m29!",
+                     ] + _cl_lamp_use() + [                        # (4) the lamp: to the Dream
+                     "host_lamp=%s@15%%m21" % CL_LAMP,             # (5) the altar's warp back in
+                     "host_press=0@40%m29!"])                      # guest 1 summoned back in: the end
+    g1 = ",".join(["guest_die@25%m29"])
+    watch = []
+    for rx, tag in ((r"lamp spot: Chalice Dungeon lamp", "lit"), (r"up again beside the nearest living member", "gup"),
+                    (r"host revive #\d+: after", "hrev"), (r"Chalice Dungeon lamp: answered 0", "lamp"),
+                    (r"map .* -> m21_00", "dream"), (r"travel step \d+/\d+: host_lamp", "back")):
+        watch += ["--watch", "%s=%s@1,4" % (rx, tag)]
+    return dict(
+        name="cl", seconds=330, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
+        env=["BB_PARTY_TRAVEL_CHOICE=party"],
+        watch=watch,
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        crash=[],
+        until=[CL_UNTIL],
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -724,7 +795,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl "}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -758,6 +829,8 @@ GROUP_UNTIL = {
     # the host awake in the cell (its last step) and both guests in m28_00
     "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
     "story_warp": [KW_UNTIL],
+    # the host back in the dungeon from the Dream, ~40 s after (guest 1 summoned back in)
+    "chalamp": [CL_UNTIL],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
@@ -872,6 +945,8 @@ def run_phase(a, ph, out: Path):
         (root / "noreap").unlink()
     except OSError:
         pass
+    if ph.get("post"):
+        ph["post"](root)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1554,12 +1629,41 @@ def check_kw(v, L):
     check_common(v, L, "kw")
 
 
+def check_cl(v, L):
+    need(v, L, "cl join: guest 1 summoned into the dungeon", 1, r"map .* -> m29_00")
+    need(v, L, "cl host lit the boss room's lamp (its spot seen)", 0,
+         r"lamp spot: Chalice Dungeon lamp %s lit / used" % CL_LAMP)
+    gd = need(v, L, "cl guest 1 death", 1, r"travel step \d+/\d+: guest_die")
+    if gd:
+        need(v, L, "cl guest 1 up beside the host, no load", 1, r"up again beside the nearest living member", gd)
+        none_of(v, L, "cl guest 1 never to its own lamp outside",
+                r"travels alone to its own last lamp|died alone: revived, then", gd, 1e9, (1,))
+    hd = need(v, L, "cl host death", 0, r"travel step \d+/\d+: host_die")
+    if hd:
+        need(v, L, "cl host revives at the lit lamp's spot", 0,
+             r"host death taken: .*revive at lamp %s \(-4\d\.\d, 3[01]\.\d" % CL_LAMP, hd)
+        none_of(v, L, "cl host: no template spot for a dungeon lamp", r"lamp spot: lamp 29\d+ from the game data",
+                hd, 1e9, (0,))
+    need(v, L, "cl host's dungeon lamp opens (talk answered)", 0,
+         r"talk t2901\d\d asks IsMultiplayerInProgress \(Chalice Dungeon lamp: answered 0")
+    dream = need(v, L, "cl host: the lamp takes it to the Dream", 0, r"map .* -> m21_00", hd or 0)
+    if dream:
+        need(v, L, "cl guest 1 to the Dream with the party", 1, r"map .* -> m21_00", dream - 5)
+        back = need(v, L, "cl host back in the dungeon at the lamp", 0, r"map .* -> m29_00", dream)
+        if back:
+            need(v, L, "cl guest 1 summoned back into the dungeon", 1, r"map .* -> m29_00", back)
+    none_of(v, L, "cl no GPU device lost / guest fault",
+            r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
+    check_common(v, L, "cl")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
-          "fl": lambda v, L, d: check_fl(v, L)}
+          "fl": lambda v, L, d: check_fl(v, L),
+          "cl": lambda v, L, d: check_cl(v, L)}
 
 
 def main():
@@ -1568,7 +1672,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -1581,7 +1685,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
