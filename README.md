@@ -300,7 +300,8 @@ before anyone is in the game):
 
 - The Doll (level up), shops, the workbench, storage, the Memory Altar (runes, covenants), lamps and
   headstones all work for guests. A guest can rest alone (lamp, "No"), level up and shop in the
-  Dream and come back while the others play on.
+  Dream and come back while the others play on. Shop stock is per player: one-of-a-kind items
+  (armour sets, the Insight shop's attire) bought by one player stay in stock for the others.
 - **Talk to NPCs.** Guests can talk to NPCs in the host's world; quest steps are shared by the whole
   party, and NPCs look solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
