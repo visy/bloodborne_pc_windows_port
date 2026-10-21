@@ -1757,6 +1757,21 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // Leave, the host's Leave, a kick), then presses S s after it went out (or after the
         // previous step, the later). Back in by itself before that: the step is done without a press.
         const TravelStep& step = t.steps[t.next_step];
+        if (step.args == "now") {
+            // guest_rejoin:now@S[%MAP]: the press S s after the previous step, in the world, also while
+            // still in the session (a guest apart from a host in a Chalice Dungeon, chalamp).
+            const bool map_ok = step.map.empty() || MapName(s.map_id).find(step.map) != std::string::npos;
+            if (!t.ran || !s.world_up || s.loading || !map_ok || Seconds(t.step_at, now) < step.delay) {
+                return;
+            }
+            ++t.next_step;
+            t.step_at = now;
+            t.last_kind = step.kind;
+            ::party::status::RequestRejoin();
+            Log("test: travel step %zu/%zu: %s: Party > Rejoin pressed now (%s)", t.next_step, t.steps.size(),
+                TravelStepName(step.kind), Describe(s).c_str());
+            return;
+        }
         const bool went_out = t.left_at != Clock::time_point{} && (!t.ran || t.left_at > t.step_at);
         if (joined) {
             if (!went_out) {
@@ -3508,6 +3523,10 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (step.kind == TravelStep::HostLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
+                }
+                if ((step.kind == TravelStep::GuestRejoin || step.kind == TravelStep::HostRejoin) &&
+                    item.find(":now") != std::string::npos) {
+                    step.args = "now";  // guest_rejoin:now@S: press it even while still in the session
                 }
                 if (step.kind == TravelStep::HostLastLamp || step.kind == TravelStep::GuestLastLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));

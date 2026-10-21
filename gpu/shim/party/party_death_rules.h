@@ -262,12 +262,31 @@ inline FallReviveStep PlanFallReviveStep(bool death_taken, bool body_far_below, 
     return FallReviveStep::Revive;
 }
 /// Where a fall death (off a ledge or out of the world) gets up outside a boss arena's revive (user
-/// rule): on its last safe floor in the party's world with no load when that spot is kept and the
-/// in-place revive is on (a guest: System > Deaths & revives; the host: its revive in place); else
-/// the respawn as before (Respawn: the lamp, a load if needed). Never at the bottom of the fall.
-enum class FallRespawn { SafeFloor, Respawn };
-inline FallRespawn PlanFallRespawn(bool fall_death, bool safe_ok, bool inplace_on) {
-    return fall_death && safe_ok && inplace_on ? FallRespawn::SafeFloor : FallRespawn::Respawn;
+/// decision 2026-10-21: at a lamp, so the walk back stays the penalty; its bloodstain stays on its
+/// last safe floor). In place with no load: its own last lamp when that is in the loaded map; a
+/// guest otherwise the host's last lamp in the party's map (beside it). Never a load for a fall (a
+/// respawn load after a death out of the world lands in the Hunter's Dream, as single player does):
+/// with neither lamp in the loaded map, its last safe floor. `inplace_on` off (a guest's System >
+/// Deaths & revives) or no fall: the respawn as before.
+enum class FallRespawn { OwnLamp, HostLamp, SafeFloor, Respawn };
+inline const char* FallRespawnName(FallRespawn f) {
+    return f == FallRespawn::OwnLamp    ? "its own last lamp"
+           : f == FallRespawn::HostLamp ? "the host's last lamp"
+           : f == FallRespawn::SafeFloor ? "its last safe floor (no lamp in the loaded map)"
+                                         : "the respawn as before";
+}
+inline FallRespawn PlanFallRespawn(bool fall_death, bool inplace_on, bool own_lamp_here, bool host_lamp_here, bool safe_ok,
+                                   bool host_role) {
+    if (!fall_death || !inplace_on) {
+        return FallRespawn::Respawn;
+    }
+    if (own_lamp_here) {
+        return FallRespawn::OwnLamp;
+    }
+    if (!host_role && host_lamp_here) {
+        return FallRespawn::HostLamp;
+    }
+    return safe_ok ? FallRespawn::SafeFloor : FallRespawn::Respawn;
 }
 enum class LiesRevive { WhereItLies, SafeFloor, Load };
 inline LiesRevive PlanLiesRevive(bool fall_death, bool safe_ok) {
@@ -560,6 +579,37 @@ inline bool TalkStateFlag(std::uint32_t id) {
 /// 2902952 put it 80 m from that lamp, at the template's spot); their spot is the one seen there.
 inline bool LampTableSpotTrusted(std::uint32_t lamp) {
     return lamp / 100000 != 29;
+}
+/// A guest still in the host's session but apart from it, in a map outside the Chalice Dungeon the host
+/// is in (user decision 2026-10-21, option b). Only the summon's quick join enters a dungeon, so:
+/// after a death or a forced trip (a death respawn, a scripted warp or kidnap, a host travel it could
+/// not follow) it goes home after `kChaliceApartWait` s and the summon brings it back (SendHome); a
+/// guest that CHOSE to leave (alone at a lamp or headstone, its own Hunter's Mark) stays out (Stay:
+/// a one-time notice, Party > Rejoin brings it back). `rule_on`: party_chalice_rejoin.
+enum class ChaliceApart { Wait, SendHome, Stay };
+constexpr double kChaliceApartWait = 6.0;
+inline ChaliceApart PlanChaliceApart(bool rule_on, bool chosen, double apart_s) {
+    if (!rule_on || chosen) return ChaliceApart::Stay;
+    return apart_s >= kChaliceApartWait ? ChaliceApart::SendHome : ChaliceApart::Wait;
+}
+/// Party > Rejoin pressed by a guest: true when it must first leave the session to its own world (it is
+/// still a session client, apart, while the host is in a Chalice Dungeon): the bell's summon then
+/// quick-joins it in. Outside the session the Rejoin rings as before.
+inline bool ChaliceRejoinLeavesFirst(bool in_session, bool apart, bool host_in_dungeon) {
+    return in_session && apart && host_in_dungeon;
+}
+/// A summoned guest's boss clear (Lua BlockClear2 0x13849A0: PREY SLAUGHTERED, the clear bonus
+/// echoes, Insight 4680) that runs within `kStaleBossClearS` of its arrival in the host's world is a
+/// boss that was already dead there (chalamp cl6 / cl8: re-summoned into a cleared Chalice Dungeon,
+/// the boss came up alive for a moment and its defeat paid 1995 echoes and +1 Insight each time).
+/// A guest never arrives into a running boss fight (the host's summon waits for the fight's end,
+/// A11), so a real kill is never that early: the first real kill pays everyone as before.
+constexpr double kStaleBossClearS = 15.0;
+inline bool StaleBossClear(bool summoned_guest, double since_arrival_s) {
+    return summoned_guest && since_arrival_s >= 0 && since_arrival_s < kStaleBossClearS;
+}
+inline const char* ChaliceApartNotice() {
+    return "The host is in a Chalice Dungeon: Party > Rejoin to go back";
 }
 constexpr double kLampOriginWindow = 10.0;  ///< s from a lamp's flag to its warp (the event waits ~3-4 s)
 enum class LampOrigin { Own, Other };

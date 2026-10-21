@@ -229,17 +229,21 @@ int main() {
         CHECK(PlanLiesRevive(false, false) == LiesRevive::WhereItLies);
         CHECK(PlanLiesRevive(true, true) == LiesRevive::SafeFloor);
         CHECK(PlanLiesRevive(true, false) == LiesRevive::Load);
-        // Outside an arena revive: a fall with a safe spot gets up there in place (no load).
-        CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);
-        CHECK(PlanFallRespawn(true, false, true) == FallRespawn::Respawn);
-        CHECK(PlanFallRespawn(true, true, false) == FallRespawn::Respawn);
-        CHECK(PlanFallRespawn(false, true, true) == FallRespawn::Respawn);
+        // Outside an arena revive (user decision): a fall gets up at a lamp in the loaded map, no load.
+        CHECK(PlanFallRespawn(true, true, true, true, true, false) == FallRespawn::OwnLamp);
+        CHECK(PlanFallRespawn(true, true, false, true, true, false) == FallRespawn::HostLamp);   // guest: the host's
+        CHECK(PlanFallRespawn(true, true, false, true, true, true) == FallRespawn::SafeFloor);   // the host: no "host lamp"
+        CHECK(PlanFallRespawn(true, true, true, false, true, true) == FallRespawn::OwnLamp);
+        CHECK(PlanFallRespawn(true, true, false, false, true, false) == FallRespawn::SafeFloor); // never a load (Dream)
+        CHECK(PlanFallRespawn(true, true, false, false, false, false) == FallRespawn::Respawn);
+        CHECK(PlanFallRespawn(true, false, true, true, true, false) == FallRespawn::Respawn);    // in-place revive off
+        CHECK(PlanFallRespawn(false, true, true, true, true, false) == FallRespawn::Respawn);   // no fall: as before
         {
             // The sequence of a death out of the world: HP 0 (the game's death plays), the death taken
             // (held), the body moved up, a settle, the revive in place - and no load.
             double t = 0;
             CHECK(PlanFallReviveStep(false, true, false, false, t) == FallReviveStep::Wait);  // dying
-            CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);              // taken: no load
+            CHECK(PlanFallRespawn(true, true, true, true, true, false) == FallRespawn::OwnLamp); // taken: no load
             CHECK(PlanFallReviveStep(true, true, false, false, t) == FallReviveStep::MoveBody);
             int frames = 0;
             for (t = 0; PlanFallReviveStep(true, true, true, true, t) == FallReviveStep::Wait; t += 1.0 / 30) ++frames;
@@ -354,6 +358,21 @@ int main() {
     // A Chalice Dungeon's lamps stand where the generated layout puts them, not at the table's spot.
     CHECK(LampTableSpotTrusted(2412952) && LampTableSpotTrusted(2102950) && LampTableSpotTrusted(3602952));
     CHECK(!LampTableSpotTrusted(2902950) && !LampTableSpotTrusted(2902952) && !LampTableSpotTrusted(2902959));
+    // Option b (2026-10-21): death / forced -> home and summoned; chosen -> stays; rule off -> stays.
+    CHECK(PlanChaliceApart(true, false, 2.0) == ChaliceApart::Wait);
+    CHECK(PlanChaliceApart(true, false, kChaliceApartWait) == ChaliceApart::SendHome);
+    CHECK(PlanChaliceApart(true, true, 600.0) == ChaliceApart::Stay);
+    CHECK(PlanChaliceApart(false, false, 600.0) == ChaliceApart::Stay);
+    // Rejoin into a dungeon: leave the session first only when still in it, apart, host in a dungeon.
+    CHECK(ChaliceRejoinLeavesFirst(true, true, true));
+    CHECK(!ChaliceRejoinLeavesFirst(false, true, true) && !ChaliceRejoinLeavesFirst(true, false, true) &&
+          !ChaliceRejoinLeavesFirst(true, true, false));
+    CHECK(std::string(ChaliceApartNotice()) == "The host is in a Chalice Dungeon: Party > Rejoin to go back");
+    // A re-summoned guest never gets a dead boss's clear again; a real kill (later) pays as before.
+    CHECK(StaleBossClear(true, 0.5) && StaleBossClear(true, 14.9));
+    CHECK(!StaleBossClear(true, 15.0) && !StaleBossClear(true, 300.0));
+    CHECK(!StaleBossClear(false, 0.5));        // the host's own clear
+    CHECK(!StaleBossClear(true, -1.0));         // no arrival seen yet: as before
     // The dungeon lamps' "Return to the Hunter's Dream" flags (m29 event 12907020) are lamp flags.
     CHECK(LampTriggerFlag(72900100) && LampTriggerFlag(72900108));
     CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag

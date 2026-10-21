@@ -478,10 +478,32 @@ died was sent to the Hunter's Dream and could not get back in until the host res
   (bbport.ini `party_chalice_rejoin`, System > Chalice Dungeons, launcher; default on) it gets up beside the
   nearest living member, no load (`guest: died in the host's Chalice Dungeon ...: up again beside the nearest
   living member`); and `ChaliceApartTick`: a guest still in the session but apart in a map outside area 29
-  while the host's roster map is in area 29 leaves the session after 6 s (`chalice: this guest is apart ...`),
-  so its bell's summon quick-joins it in again.
-* **Smoke `chalamp`** (phase cl, host fixture `chalice_pthumeru_inside`, guest the default save; cl5 16/16):
+  while the host's roster map is in area 29. **User decision (option b)**, `deathrules::PlanChaliceApart`:
+  after a death or a forced trip (a death respawn, a scripted warp / kidnap, a host travel it could not
+  follow) it leaves the session after 6 s (`chalice: this guest is apart ...`) and its bell's summon
+  quick-joins it in again; after its OWN choice (party_split `Carry` alone at a lamp / headstone, its own
+  Hunter's Mark: `NoteChosenApart`, `chalice: the guest's own choice ...`) it stays out with a one-time
+  notice "The host is in a Chalice Dungeon: Party > Rejoin to go back". Party > Rejoin then leaves the
+  session first (`ChaliceRejoinPressed`, `deathrules::ChaliceRejoinLeavesFirst`: still a session client,
+  apart, host in a dungeon), and the bell's summon brings it in. A death clears the choice; so does the
+  host leaving its dungeon (a later host trip into one is then a forced trip) or the guest back in it.
+  Party > Leave was already a choice (out of the session, no bell until Rejoin).
+* **Smoke `chalamp`** (phase cl, host fixture `chalice_pthumeru_inside`, guest the default save; cl5 16/16;
+  with option b's case cl8 23/23: guest 1's lamp to the Dream answered alone (`BB_PARTY_TRAVEL_CHOICE=alone`
+  on it) -> stays out with the notice 20 s, no send-home -> `guest_rejoin:now` (new: the press while still
+  in the session) -> home first -> summoned into the dungeon):
   light 2901952, guest death (up beside the host), host death (revive at (-49.4, 30.5, -93.4)), the lamp to the
   Dream (both in m21_00, party travel), `host_lamp=2902952` from the Dream (the altar's warp: host in alone,
   the guest apart -> home -> summoned back, both in m29 at the lamp). Not run live: a guest's own use of a
   dungeon lamp (its talk answers 0, `t290112 asks IsClientPlayer (Chalice Dungeon lamp: answered 0)`).
+* **A boss paid once (0.7.1, cl9)**: cl6 / cl8 showed every re-summon into the cleared dungeon paying the
+  layer boss again (`boss clear on this game (BlockClear2): boss 2900100, clear bonus 1995`, Insight 6 -> 7).
+  Cause (verified): `ChaliceLeaveSession` used a bare BeginLeave, so an apart guest stayed in its
+  host-world-mode alone load (load mode 1, no chalice slot bit: `slot -1`); the next summon's SetLoadMode(1)
+  found mode 1 already and carried no slot record, the area-29 flags read as none, the boss came up alive,
+  died at once and its defeat ran on the guest. Fix: the game's own leave with the load home
+  (`coop::LeaveGameSession`, OnLeave_Limit): cl9 shows `load mode 0` at home, `slot 0's record ... carried
+  over` at each re-summon, `kill seen: entity 2900100 ... (paid 0)`, no clear. Guard behind it:
+  BlockClear2 (0x13849A0) returns at once on a summoned guest within 15 s of its arrival
+  (`deathrules::StaleBossClear`; a guest never arrives into a running boss fight), log `boss clear of boss N
+  skipped on this guest`; it did not need to fire in cl9.

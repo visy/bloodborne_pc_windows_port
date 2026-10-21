@@ -446,6 +446,7 @@ std::atomic<bool> g_title_continuing{false};  // the director's AutoContinue is 
 std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
 std::atomic<bool> g_title_home_now{false};
 std::atomic<bool> g_chalice_bail{false};  // the guest left a host's dungeon it loaded without the dungeon
+std::atomic<bool> g_chalice_chosen{false};  // this guest's own choice took it away (NoteChosenApart)
 
 bool SendHomeVeto(u64 site) {
     const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
@@ -517,6 +518,26 @@ int HostDeadSkipFrom() {
         return v && v[0] ? std::max(0, std::atoi(v)) : 1;
     }();
     return from;
+}
+
+// A summoned guest's stale boss clear (deathrules::StaleBossClear): BlockClear2 0x13849A0 (state,
+// ctx, args; args +0x14 the boss entity) returns at once, as its own early exit (args +8) does: no
+// PREY SLAUGHTERED, no clear bonus, no Insight 4680, no next state. `g_load_end_at`: the end of this
+// game's last load (the b2 tick, beside ChaliceApartTick), < 0 none seen yet.
+void* g_block_clear_orig = nullptr;
+std::atomic<double> g_load_end_at{-1};
+BB_COOP_SYSV void BlockClear2Hook(u64 state, u64 ctx, u64 args) {
+    if (g_on.load() && Role() == RoleClient) {
+        const double at = g_load_end_at.load();
+        const double since = at < 0 ? -1 : Now() - at;
+        if (deathrules::StaleBossClear(true, since)) {
+            Log("boss clear of boss %u skipped on this guest: %.1f s after its arrival (the boss was dead in the host's "
+                "world already: no banner, no clear echoes, no Insight)", Field<u32>(args, 0x14), since);
+            return;
+        }
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64, u64);
+    reinterpret_cast<Fn>(g_block_clear_orig)(state, ctx, args);
 }
 
 BB_COOP_SYSV void HostDeadHook(u64 ctx, u64 state) {
@@ -3573,6 +3594,7 @@ bool HoldGuestDeath() {
     }
     g_death_held_at = Now();
     g_last_hold_at = g_death_held_at.load();
+    g_chalice_chosen = false;  // a death is never a choice: back to the dungeon by the summon
     GuestBloodstain();
     Send(0, "{\"op\":\"member_down\"}");  // the host counts its members down (C2: a wipe while it is down)
     if (phase != GuestPhase::Idle) {
@@ -4630,15 +4652,24 @@ u32 g_local_hitfilter_alive = 0;
 bool HostFallDeath(u64 chr);
 bool SafeFloorSpot(LampSpot* out, u32 map, const char* what);
 void ReviveHost(const GameSnapshot& s) {
-    // fallsafe (user rule): a fall death (off a ledge, or out of the world) gets up on its last safe
-    // floor, where its bloodstain is, not at the lamp.
+    // fallsafe (user decision): a fall death (off a ledge, or out of the world) gets up at its lamp
+    // like any death when that lamp is in the loaded map (its bloodstain stays on its last safe
+    // floor); with the lamp elsewhere, on that safe floor, no load (a load after a death out of the
+    // world lands in the Hunter's Dream). HostDeathIntercept takes such a death even without a lamp here.
+    const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+    const LampSpot& ls = g_lamp_spot;
+    const bool lamp_here = ls.valid && ls.lamp == lamp && (ls.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
+    const deathrules::FallRespawn f =
+        deathrules::PlanFallRespawn(HostFallDeath(s.player), true, lamp_here, false, g_local_safe.valid, true);
     LampSpot sp;
-    if (deathrules::PlanFallRespawn(HostFallDeath(s.player), g_local_safe.valid, true) == deathrules::FallRespawn::SafeFloor &&
-        SafeFloorSpot(&sp, s.map_id, "host revive on its last safe floor (a fall)")) {
-        Log("host death: a fall: up on its last safe floor (%.1f, %.1f, %.1f), not at the lamp", double(sp.pos[0]),
-            double(sp.pos[1]), double(sp.pos[2]));
+    if (f == deathrules::FallRespawn::SafeFloor && SafeFloorSpot(&sp, s.map_id, "host revive on its last safe floor (a fall)")) {
+        Log("host death: a fall, its lamp %u not in the loaded map: up on its last safe floor (%.1f, %.1f, %.1f), no load",
+            lamp, double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]));
         ReviveLocal(s, sp, true);
         return;
+    }
+    if (f == deathrules::FallRespawn::OwnLamp) {
+        Log("host death: a fall: up at its lamp %u (no load); its bloodstain on its last safe floor", lamp);
     }
     ReviveLocal(s, g_lamp_spot, true);
 }
@@ -5142,22 +5173,9 @@ void PendingReviveTick(const GameSnapshot& s, double now) {
     r.resuming = true;
     ReviveLocal(s, r.sp, r.host);
     r.resuming = false;
-    if (r.host) {
-        // A chr out of the world revived by ReviveLocal alone died again one frame later (live
-        // r6-r10, the host, also with invincibility). The game's own safe-spot warp-and-revive
-        // 0x13CBAD0(10000) last (warp onto PlayerIns +0x400's spot, HP via 0x18BCD40, Idle_wild,
-        // its vfunc +0xA8 reset, ChrCtrl death bits): the game's way back from a fall. Host only:
-        // on a guest it calls BeginLeaveSession (+0x13CBD0F, live r12: the summoned guest left the
-        // host's world 33 ms later, then woke in the Dream).
-        float g[4], gr[4];
-        const bool have = GameSafeSpot(s.player, g, gr);
-        reinterpret_cast<void(BB_COOP_SYSV*)(u32, u64)>(Guest(0x13cbad0))(10000u, 0);
-        float at2[3] = {};
-        ChrPos(s.player, at2);
-        Log("%s revive: the game's safe-spot revive 0x13CBAD0 too (its spot %s (%.1f, %.1f, %.1f)); now hp %d at (%.1f, "
-            "%.1f, %.1f)", r.host ? "host" : "guest", have ? "" : "unknown", double(g[0]), double(g[1]), double(g[2]),
-            ChrHp(s.player), double(at2[0]), double(at2[1]), double(at2[2]));
-    }
+    // Not the game's own safe-spot revive 0x13CBAD0 as well: it calls BeginLeaveSession at +0x13CBD0F
+    // (live r12 / r14: a guest left the host's world, a host closed its room and sent its guests home).
+    // The settle before the revive (PlanFallReviveStep) is what keeps the new life.
     u32 f = 0;
     if (SafeRead(s.player + 0x1e1, &f, 4) && !(f & (1u << 14))) {
         f |= 1u << 14;
@@ -5373,12 +5391,14 @@ bool GuestChaliceRevive(const GameSnapshot& s) {
     return false;
 }
 
-/// Guest, main thread (fallsafe, user rule): its held death was a fall - off a ledge, or out of the
-/// world into the kill plane - outside a boss arena's revive: it gets up on its last safe floor in
-/// the host's world (where its bloodstain is), no load. A respawn load after a death out of the
-/// world landed in the Hunter's Dream (live r6-r10: the destination was the lamp's map at the load's
-/// start, the arrival m21), so no load for a fall. False: no fall, no safe spot kept, or the in-place
-/// revive is off (System > Deaths & revives): the respawn as before.
+/// Guest, main thread (fallsafe, user decision): its held death was a fall - off a ledge, or out of
+/// the world into the kill plane - outside a boss arena's revive: it gets up at its own last lamp
+/// when that is in the loaded map, else at the host's last lamp there (beside it), in place with no
+/// load (deathrules::PlanFallRespawn); its bloodstain stays on its last safe floor. Never a load for
+/// a fall: a respawn load after a death out of the world landed in the Hunter's Dream (live r6-r10:
+/// the destination was the lamp's map at the load's start, the arrival m21); with neither lamp in
+/// the loaded map, its last safe floor. False: no fall, or the in-place revive is off (System >
+/// Deaths & revives): the respawn as before.
 bool GuestFallSafeRevive(const GameSnapshot& s) {
     if (!s.player) {
         return false;
@@ -5386,16 +5406,34 @@ bool GuestFallSafeRevive(const GameSnapshot& s) {
     float at[3] = {0, 0, 0};
     const bool known = ChrPos(s.player, at) && std::isfinite(at[1]);
     const bool fell = LocalFallDeath(s.player, known ? double(at[1]) : std::numeric_limits<double>::quiet_NaN());
-    if (deathrules::PlanFallRespawn(fell, g_local_safe.valid, BbSettings::Get().party_guest_revive_inplace.load()) !=
-        deathrules::FallRespawn::SafeFloor) {
+    const u32 stage = Field<u32>(s.player, 0x3f8);
+    auto here = [&](u32 lamp, float rs[4]) {
+        return lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs);
+    };
+    const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528), host = GuestDeathRedirectLamp();
+    float own_rs[4] = {}, host_rs[4] = {};
+    const deathrules::FallRespawn f = deathrules::PlanFallRespawn(
+        fell, BbSettings::Get().party_guest_revive_inplace.load(), here(own, own_rs), here(host, host_rs), g_local_safe.valid,
+        false);
+    if (f == deathrules::FallRespawn::Respawn) {
         return false;
     }
     LampSpot sp;
-    SafeFloorSpot(&sp, s.map_id, "guest revive on its last safe floor (a fall)");
-    Log("guest: died from a fall (HP 0 at (%.1f, %.1f, %.1f), the body now at (%.1f, %.1f, %.1f)): up on its last safe "
-        "floor (%.1f, %.1f, %.1f) in the host's world, no load; its echoes in its bloodstain there",
+    if (f == deathrules::FallRespawn::SafeFloor) {
+        SafeFloorSpot(&sp, s.map_id, "guest revive on its last safe floor (a fall, no lamp in the loaded map)");
+    } else {
+        const float* rs = f == deathrules::FallRespawn::OwnLamp ? own_rs : host_rs;
+        sp.valid = true;
+        sp.lamp = f == deathrules::FallRespawn::OwnLamp ? own : host;
+        sp.map = ids::EntityMap(sp.lamp);
+        sp.pos[0] = rs[0], sp.pos[1] = rs[1], sp.pos[2] = rs[2], sp.pos[3] = 1.0f;
+        sp.rot[1] = rs[3] * 3.14159265f / 180.0f;
+    }
+    Log("guest: died from a fall (HP 0 at (%.1f, %.1f, %.1f), the body now at (%.1f, %.1f, %.1f)): up at %s %u (%.1f, %.1f, "
+        "%.1f) in the host's world, no load; its bloodstain on its last safe floor (%.1f, %.1f, %.1f)",
         double(g_local_corpse.pos[0]), double(g_local_corpse.pos[1]), double(g_local_corpse.pos[2]), double(at[0]),
-        double(at[1]), double(at[2]), double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]));
+        double(at[1]), double(at[2]), deathrules::FallRespawnName(f), sp.lamp, double(sp.pos[0]), double(sp.pos[1]),
+        double(sp.pos[2]), double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]));
     ReviveLocal(s, sp, false);
     return true;
 }
@@ -8884,12 +8922,32 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
 /// e.g. the respawn at its own lamp in the Dream) while the host is in a Chalice Dungeon. No travel
 /// brings it back (a dungeon is entered only by the summon's quick join: the host's travels there
 /// are "not followed"), and its game's send-home is dropped while apart, so it stood there until the
-/// host restarted (a tester's report). After a few steady seconds it leaves the session like a
-/// send-home (its own world, one load); the bell's summon then brings it into the dungeon.
+/// host restarted (a tester's report). User decision (option b, deathrules::PlanChaliceApart): after
+/// a death or a forced trip it leaves the session after a few steady seconds like a send-home (its own
+/// world, one load) and the bell's summon brings it into the dungeon; a guest that chose to leave
+/// (NoteChosenApart) stays out with a one-time notice until Party > Rejoin (ChaliceRejoinPressed).
 /// bbport.ini party_chalice_rejoin (BB_PARTY_CHALICE_REJOIN=0: stays apart, as before).
+std::atomic<bool> g_chalice_apart{false};   // main thread's last read: apart from a host in a dungeon
+void ChaliceLeaveSession(const char* why) {
+    g_chalice_bail = !g_title_joined.load();
+    if (g_title_joined.load()) g_title_home_now = true;
+    // The game's own leave with the load home (OnLeave_Limit: the pre-summon spot, BeginLeave, the
+    // return load): its own world in load mode 0, its own chalice slot bit again. A bare BeginLeave
+    // (before) left an apart guest in its host-world-mode alone load, still in load mode 1 with no
+    // slot bit: the next summon carried no slot record, the dungeon's flags read as none and the
+    // dead layer boss came up alive and paid its clear again (chalamp cl8).
+    const bool own = coop::LeaveGameSession();
+    Log("chalice: %s: leaving the session to its own world (%s); the summon brings it into the host's dungeon", why,
+        own ? "the game's own leave and load home" : "session leave only");
+    if (!own) {
+        using Fn = u8(BB_COOP_SYSV*)(u64);
+        reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    }
+}
+
 void ChaliceApartTick(const GameSnapshot& s, double now) {
     static double since = 0;
-    static bool left = false;
+    static bool left = false, noticed = false;
     int host_state = -1;
     u32 host_map = 0;
     coop::MemberRoster(0, &host_state, &host_map);
@@ -8898,27 +8956,74 @@ void ChaliceApartTick(const GameSnapshot& s, double now) {
         std::lock_guard<std::mutex> lk(S().mu);
         phase = S().gphase;
     }
-    const bool apart = Role() == RoleClient && s.session_role == RoleClient && s.world_up && !s.loading &&
-                       s.map_id != 0xffffffffu && s.map_id != 0 && ((s.map_id >> 24) & 0xff) != 29 &&
-                       dsummon::ChaliceMap(host_map) && phase == GuestPhase::Idle && g_death_held_at.load() <= 0 &&
-                       !g_dead_follow.load() && BbSettings::Get().party_chalice_rejoin.load();
+    const bool client = Role() == RoleClient && s.session_role == RoleClient;
+    const bool steady = s.world_up && !s.loading && s.map_id != 0xffffffffu && s.map_id != 0;
+    const bool host_dungeon = dsummon::ChaliceMap(host_map);
+    // The choice holds only while the host is in its dungeon and this guest is away from it; a guest
+    // that chose to go before the host entered is then a host travel it could not follow (forced).
+    // "Back in the dungeon" ends it only after it was away (the choice is made inside the dungeon).
+    static bool away_since_choice = false;
+    if (!g_chalice_chosen.load()) away_since_choice = false;
+    if (steady && client && ((s.map_id >> 24) & 0xff) != 29) away_since_choice = true;
+    if (steady && (!client || !host_dungeon || (((s.map_id >> 24) & 0xff) == 29 && away_since_choice)) &&
+        g_chalice_chosen.exchange(false)) {
+        Log("chalice: the guest's own choice to stay out is over (%s)",
+            !client ? "out of the session" : !host_dungeon ? "the host left its dungeon" : "back in the dungeon");
+    }
+    const bool apart = client && steady && ((s.map_id >> 24) & 0xff) != 29 && host_dungeon &&
+                       phase == GuestPhase::Idle && g_death_held_at.load() <= 0 && !g_dead_follow.load();
+    g_chalice_apart = apart;
     if (!apart) {
         since = 0;
+        noticed = false;
         if (s.loading || s.session_role != RoleClient) left = false;
         return;
     }
     if (since == 0) since = now;
-    if (left || now - since < 6.0) return;
+    const deathrules::ChaliceApart plan = deathrules::PlanChaliceApart(BbSettings::Get().party_chalice_rejoin.load(),
+                                                                       g_chalice_chosen.load(), now - since);
+    if (plan == deathrules::ChaliceApart::Stay) {
+        if (!noticed && g_chalice_chosen.load()) {
+            noticed = true;
+            Log("chalice: this guest chose to leave the host's Chalice Dungeon (%s, the host in %s): it stays out; "
+                "notice shown, Party > Rejoin brings it back", MapName(s.map_id).c_str(), MapName(host_map).c_str());
+            party::status::SetAlert(deathrules::ChaliceApartNotice());
+        }
+        return;
+    }
+    if (left || plan != deathrules::ChaliceApart::SendHome) return;
     left = true;
-    Log("chalice: this guest is apart in %s while the host is in its Chalice Dungeon (%s) for %.1f s: leaving the "
-        "session to its own world; the summon brings it into the dungeon",
-        MapName(s.map_id).c_str(), MapName(host_map).c_str(), now - since);
-    g_chalice_bail = !g_title_joined.load();
-    if (g_title_joined.load()) g_title_home_now = true;
-    using Fn = u8(BB_COOP_SYSV*)(u64);
-    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    char why[160];
+    std::snprintf(why, sizeof why, "this guest is apart in %s while the host is in its Chalice Dungeon (%s) for %.1f s",
+                  MapName(s.map_id).c_str(), MapName(host_map).c_str(), now - since);
+    ChaliceLeaveSession(why);
     party::status::SetLastEvent("The host is in a Chalice Dungeon: back to your world, the summon brings you in");
 }
+
+} // namespace
+
+void NoteChosenApart(const char* why) {
+    if (Role() != RoleClient) return;
+    g_chalice_chosen = true;
+    Log("chalice: the guest's own choice (%s): while the host is in a Chalice Dungeon it stays out until Party > "
+        "Rejoin", why);
+}
+
+bool ChaliceRejoinPressed() {
+    if (!g_on.load() || Role() != RoleClient) return false;
+    int host_state = -1;
+    u32 host_map = 0;
+    coop::MemberRoster(0, &host_state, &host_map);
+    if (!deathrules::ChaliceRejoinLeavesFirst(true, g_chalice_apart.load(), dsummon::ChaliceMap(host_map))) {
+        return false;
+    }
+    g_chalice_chosen = false;
+    ChaliceLeaveSession("Party > Rejoin while apart from the host's Chalice Dungeon");
+    party::status::SetLastEvent("Rejoining the host's Chalice Dungeon: the summon brings you in");
+    return true;
+}
+
+namespace {
 
 void DirectSummonEvent(int from_slot, const std::string& body) {
     switch (dsummon::KindOf(body)) {
@@ -9777,6 +9882,12 @@ void Init() {
                       &ChrPreStepHook, "remote chr stale map hit guard (0x18CB0E0)")) {
         Log("remote chr stale map hit guard: NOT installed (bytes differ)");
     }
+    // The stale boss clear on a summoned guest (BlockClear2's entry: push rbp; mov rbp, rsp; push r15).
+    if (!ReplacePrologue(0x13849a0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&BlockClear2Hook),
+                         &g_block_clear_orig, "B2 stale boss clear (BlockClear2 0x13849A0)")) {
+        g_block_clear_orig = nullptr;
+        Log("stale boss clear guard: NOT installed (bytes differ)");
+    }
     // K12: the guest's HostDead state (push rbp; mov rbp, rsp; push r15: 6 bytes, position-independent).
     if (!ReplacePrologue(kHostDeadState, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&HostDeadHook),
                          &g_hostdead_orig, "B2 K12 guest HostDead state (0x1381870)")) {
@@ -10135,6 +10246,13 @@ void Tick(const GameSnapshot& s) {
     DirectSummonTick(s, now);
     ChaliceEmptyWorldTick(s, now);
     ChaliceApartTick(s, now);
+    {
+        // The end of this game's last load (BlockClear2Hook's arrival clock).
+        static bool was_up = false;
+        const bool up = s.world_up && !s.loading;
+        if (up && !was_up) g_load_end_at = now;
+        was_up = up;
+    }
     if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);

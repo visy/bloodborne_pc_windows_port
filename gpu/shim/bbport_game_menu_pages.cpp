@@ -1398,8 +1398,8 @@ void DefineAll() {
     AddPage("Chalice Dungeons", "Подземелья Чаши", "Deaths and getting back in, in a party's Chalice Dungeon (bbport)",
             "Смерти и возвращение в Подземелье Чаши группы (bbport)");
     own(&Values::party_chalice_rejoin, "Stay in Chalice Dungeons", "Остаться в Чаше",
-        "Guest in a Chalice Dungeon: a death gets you up at the host's lamp there; away, the summon brings you back",
-        "Гость в Чаше: после смерти вы у фонаря хоста там; ушли - призыв вернёт вас обратно");
+        "Guest: out of the host's dungeon by a death or forced trip, you are summoned back. Left by choice: Rejoin",
+        "Гость: вне подземелья хоста после смерти или переноса - призыв вернёт. Ушли сами: Вернуться");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.
