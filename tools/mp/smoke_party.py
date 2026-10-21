@@ -503,6 +503,7 @@ LF_FAR = "-158.10:-41.72:16.93"    # 130 m from the Tomb of Oedon lamp: m24_00 s
 LF_BACK = "-36.8:-40.75:84.3"      # the lamp (m24_00 streams in again)
 LF_LIFT = "2401102"                # Cathedral Ward <-> lower Cathedral Ward lift car
 LF_CAR_LOW = "24.28:-45.3:194.17"  # region 2402059 (the up event's switch): in the car at the bottom
+LF_LOW_SIDE = "30.11:-45.6:197.56:0.82"  # 1 m in front of the bottom lever 2401103 (MSB (29.37, -45.71, 196.88))
 LF_FLAGS = "12400827/12400828/12410285"  # lift position / busy, the ladder lever's event (ladder down)
 LF_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
@@ -523,8 +524,11 @@ def phase_lf(only):
         # which is at the TOP with the car at the bottom: the guest fell the 48 m shaft through the
         # region, the up event ran with nobody in the car and the guest stayed at the bottom; god mode
         # and the flags-only checks hid it.)
-        "guest_obj=2401103:1.0:0@8%m24_0",                 # beside the car at the bottom (m24_00 / m24_01)
-        "guest_move=%s@3%%m24_0" % LF_CAR_LOW,             # into the car: up it goes
+        # beside the car at the bottom (1 m in front of its bottom lever 2401103), by the game's own
+        # in-world warp: the bare chr warp put the guest there before the floor's collision was in and it
+        # fell through (liftfix run 2); then a few seconds for the car object to be active
+        "guest_move=%s:native@8%%m24_0" % LF_LOW_SIDE,
+        "guest_move=%s@4%%m24_0" % LF_CAR_LOW,             # into the car: up it goes
         "guest_obj=2401104:1.0:0@0.5%%m24_0?obj=%s:32" % LF_LIFT,  # out at the top on the arrival
         "guest_press=0@10!",                               # (in m24_00 there: no map condition)
     ])

@@ -337,6 +337,8 @@ struct Test {
     Clock::time_point flag_since{};  // the next step's "?FLAG=V" condition met (its clock)
     Clock::time_point near_since{};  // the next step's "?near=X:Y:Z:R" condition met (its clock)
     Clock::time_point obj_since{};   // the next step's "?obj=ENTITY:ANIM" condition met (its clock)
+    std::size_t near_step = ~std::size_t(0), obj_step = ~std::size_t(0);  // the step those two were met for:
+                                     // latched (an arrival's stopped animation lasts a few frames only)
     int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
     int coop_rises[8] = {};          // how often the count rose to >= N (index N), since the start
     Clock::time_point step_at{}; // the last step's run, for "back after" times
@@ -1869,36 +1871,40 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.flag_since = {};
     }
     // "?near=X:Y:Z:R": the same, on another party member's position (the party link's vitals).
-    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_near) {
+    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_near &&
+        !(t.near_since != Clock::time_point{} && t.near_step == t.next_step)) {
         const TravelStep& ns = t.steps[t.next_step];
         float d = 0;
         if (!MemberNear(ns.near_pos, ns.near_r, &d)) {
             t.near_since = {};
             return;
         }
-        if (t.near_since == Clock::time_point{}) {
+        if (t.near_since == Clock::time_point{} || t.near_step != t.next_step) {
             t.near_since = now;
+            t.near_step = t.next_step;
             Log("test: travel step %zu (%s): a party member %.1f m from (%.2f, %.2f, %.2f) now; its delay counts from "
                 "here", t.next_step + 1, TravelStepName(ns.kind), double(d), double(ns.near_pos[0]), double(ns.near_pos[1]),
                 double(ns.near_pos[2]));
         }
-    } else {
+    } else if (!(t.next_step < t.steps.size() && t.steps[t.next_step].wait_near)) {
         t.near_since = {};
     }
     // "?obj=ENTITY:ANIM": the same, on a map object's animation (stopped).
-    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj) {
+    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj &&
+        !(t.obj_since != Clock::time_point{} && t.obj_step == t.next_step)) {
         const TravelStep& os = t.steps[t.next_step];
         worldact::ObjAnimState a;
         if (!worldact::ReadObjAnim(os.wait_obj, &a) || a.anim != os.wait_obj_anim || a.playing) {
             t.obj_since = {};
             return;
         }
-        if (t.obj_since == Clock::time_point{}) {
+        if (t.obj_since == Clock::time_point{} || t.obj_step != t.next_step) {
             t.obj_since = now;
+            t.obj_step = t.next_step;
             Log("test: travel step %zu (%s): object %d stopped at anim %d now; its delay counts from here", t.next_step + 1,
                 TravelStepName(os.kind), os.wait_obj, os.wait_obj_anim);
         }
-    } else {
+    } else if (!(t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj)) {
         t.obj_since = {};
     }
     if (t.next_step < t.steps.size() &&

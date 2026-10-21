@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace coop::liftrules {
@@ -79,6 +80,46 @@ inline const std::vector<Lift>& Lifts() {
         {13601106u, 13604100u, 13601107u, 3601100},  // Fishing Hamlet (DLC)
     };
     return lifts;
+}
+
+/// liftfix: the lift events whose ride ends once the LOCAL player has left the car (3[2] on entity
+/// 10000, "outside"): Cainhurst's (12500076 down / 12500077 up) and the Nightmare of Mensis' library
+/// lift (12601352). Every other lift waits until ALL players are out (3[7]). In a party every game
+/// runs its copy and the game's own sync passes a condition for every copy once one copy passes it
+/// (live, EMEVD traces of both games: the guest's copy went past its "outside" wait 0.1 s after the
+/// host's while the guest stood in the car, then its start wait at once): the copy of a player who is
+/// not in the car ends every game's ride the moment the car arrives, with the rider still in it, and
+/// the restarted copy sees the rider in its start region and sends the car straight back - the rider
+/// rides back and forth until it steps out at the right moment (the 0.7.1 full smoke: 5-6 rides for 3;
+/// liftfix run 2: 15 for 3). Their end checks become the all-players check of the other lifts.
+constexpr std::int32_t kLocalEndRideEvents[] = {12500076, 12500077, 12601352};
+inline bool LocalEndRideEvent(std::int32_t event_id) {
+    for (const std::int32_t e : kLocalEndRideEvents) {
+        if (e == event_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// liftfix: instruction (bank, id) with `args` (`size` bytes) of event `event_id` is such an end check
+/// (3[2]: s8 group, u8 state 0 = outside, s32 entity 10000 = the local player, s32 region): it becomes
+/// 3[7] (s8 group, u8 state, s32 region): the region moves to +4. True when `args` was changed (the
+/// caller then writes id 7). Start checks (state 1, inside) stay the local player's.
+inline bool LocalEndToAllPlayers(std::int32_t event_id, std::int32_t bank, std::int32_t id, std::uint8_t* args,
+                                 std::uint32_t size) {
+    if (bank != 3 || id != 2 || size < 12 || !LocalEndRideEvent(event_id) || args[1] != 0) {
+        return false;
+    }
+    std::int32_t entity = 0, region = 0;
+    std::memcpy(&entity, args + 4, 4);
+    std::memcpy(&region, args + 8, 4);
+    if (entity != 10000 || region <= 0) {
+        return false;
+    }
+    std::memcpy(args + 4, &region, 4);
+    std::memset(args + 8, 0, 4);
+    return true;
 }
 
 /// The lift whose position flag is `pos`, or nullptr.
@@ -146,9 +187,10 @@ inline bool HoldMirrorFlip(const Lift& l, std::int32_t car_anim) {
 /// liftfix: a guest's world mirror holds a replaying lift's position flag back (progress::SetMirrorHold:
 /// the host's flip waits) while this game's copy of a ride has not written its own end yet: its car
 /// shows a ride animation (the copy reads the flag once its player left the car) or an end animation
-/// still plays (the copy writes the flag when it stops). Released, the host's value goes in when it
-/// still differs, and LiftReplayTick moves the car to that end: the host's world decides, after the
-/// guest's own copy is done with the flag.
+/// still plays (the copy writes the flag when it stops). Released, the copy's own end stands (the
+/// mirror's image may still hold the host's end of the ride before - live run 2 wrote that stale end
+/// back over the guest's own); a later change of the host's goes in as usual, and a guest's end that
+/// differs from the host's world goes up as its ride report (GuestLiftReport).
 inline bool MirrorHold(const Lift& l, std::int32_t car_anim, bool playing) {
     const CarPhase p = PhaseOf(l, car_anim);
     return p == CarPhase::riding || ((p == CarPhase::at_on || p == CarPhase::at_off) && playing);

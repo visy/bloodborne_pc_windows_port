@@ -389,10 +389,10 @@ public:
     /// F5 test aid (BB_PARTY_DESYNC_TEST, party_desync.h): flips one byte of the image (not the
     /// overlay) so the next digest differs. Returns the key, -1 without an image.
     int TestCorrupt();
-    /// liftfix: while flag `id` is held, Apply leaves its overlay bit as it is and keeps a host
-    /// change of it pending; the release applies it (the next Apply), unless the overlay has the
-    /// host's value by then. A lift's position flag while this game's own copy of a ride has not
-    /// read it yet (liftrules::MirrorHold).
+    /// liftfix: while flag `id` is held, Apply leaves its overlay bit as it is (a full copy too); at
+    /// the release the overlay's value stands and the image's value counts as applied (no write), so
+    /// only a later host change of it goes in. A lift's position flag while this game's own copy of
+    /// a ride has not written its end yet (liftrules::MirrorHold).
     void Hold(u32 id, bool on);
     bool Held(u32 id) const { return held_.count(id) != 0; }
 

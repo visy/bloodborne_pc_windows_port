@@ -4,6 +4,7 @@
 #include "party/party_lift_rules.h"
 
 #include <cstdio>
+#include <cstring>
 #include <set>
 
 using namespace coop::liftrules;
@@ -108,6 +109,34 @@ int main() {
     CHECK(GuestLiftReport(false, true, false, 1) == GuestReport::send);   // the ride back down
     CHECK(GuestLiftReport(true, false, false, 0) == GuestReport::send);   // and up again
     CHECK(GuestLiftReport(false, false, false, -1) == GuestReport::same);
+
+    // The ride ends that wait for the local player alone (Cainhurst, the library lift) become the
+    // all-players check of every other lift: 3[2] (group, state, entity, region) -> 3[7] (group,
+    // state, region at +4). The library lift's end (12601352 [25]): group 5, outside, 10000, 2602241.
+    {
+        std::uint8_t a[12] = {0x05, 0x00, 0, 0, 0x10, 0x27, 0, 0, 0x01, 0xb5, 0x27, 0x00};
+        CHECK(LocalEndToAllPlayers(12601352, 3, 2, a, sizeof a));
+        std::int32_t region = 0, rest = -1;
+        std::memcpy(&region, a + 4, 4);
+        std::memcpy(&rest, a + 8, 4);
+        CHECK(a[0] == 5 && a[1] == 0 && region == 2602241 && rest == 0);
+        // its start checks (inside, OR groups -1 / -2) stay the local player's
+        std::uint8_t start[12] = {0xff, 0x01, 0, 0, 0x10, 0x27, 0, 0, 0x01, 0xb5, 0x27, 0x00};
+        CHECK(!LocalEndToAllPlayers(12601352, 3, 2, start, sizeof start) && start[4] == 0x10);
+        // Cainhurst's end (12500076 [12]: group 0, outside, 10000, 2502001)
+        std::uint8_t c[12] = {0x00, 0x00, 0, 0, 0x10, 0x27, 0, 0, 0x71, 0x2d, 0x26, 0x00};
+        CHECK(LocalEndToAllPlayers(12500076, 3, 2, c, sizeof c));
+        std::memcpy(&region, c + 4, 4);
+        CHECK(region == 2502001);
+        // not a listed event, not 3[2], another entity, already rewritten, short args: untouched
+        std::uint8_t o[12] = {0x05, 0x00, 0, 0, 0x10, 0x27, 0, 0, 0x01, 0xb5, 0x27, 0x00};
+        CHECK(!LocalEndToAllPlayers(12410322, 3, 2, o, sizeof o) && !LocalEndToAllPlayers(12601352, 3, 7, o, sizeof o));
+        CHECK(!LocalEndToAllPlayers(12601352, 3, 2, o, 8));
+        std::uint8_t e[12] = {0x05, 0x00, 0, 0, 0x11, 0x27, 0, 0, 0x01, 0xb5, 0x27, 0x00};  // entity 10001
+        CHECK(!LocalEndToAllPlayers(12601352, 3, 2, e, sizeof e));
+        CHECK(!LocalEndToAllPlayers(12601352, 3, 2, a, sizeof a));  // the rewritten bytes again: entity 2602241
+        CHECK(LocalEndRideEvent(12500077) && !LocalEndRideEvent(12410323) && !LocalEndRideEvent(0));
+    }
 
     if (g_fail) {
         std::printf("%d check(s) failed\n", g_fail);
