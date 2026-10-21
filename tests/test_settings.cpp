@@ -64,7 +64,7 @@ int main() {
     BbSettings::Load();
     assert(s.party_rendezvous);
     s.party_rendezvous = true;
-    BbSettings::Save();  // System > Party rules: saved to the ini
+    BbSettings::Save();  // System > Party members: saved to the ini
     assert(bb_test_setenv("BB_PARTY_RENDEZVOUS", "") == 0);
     BbSettings::Load();
     assert(s.party_rendezvous);  // from the ini now
