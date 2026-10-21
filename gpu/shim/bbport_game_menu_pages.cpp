@@ -1142,14 +1142,14 @@ void DefineAll() {
                "Хост встаёт у своего фонаря без экрана загрузки для группы (решает хост)"},
               {"The host decides; off: the whole party gets the respawn loading screen at its death",
                "Решает хост; выкл.: при его смерти вся группа видит экран загрузки"});
-    host_rule(&Values::party_host_limbo_revive, "Host up after boss kill", "Хост встаёт после босса",
-              AddText("Dead in a boss fight the guests win: you get up in the arena, nobody loads. Host's",
-                      "Погибли в бою, а гости убили босса: вы встаёте на арене без загрузки. Решает хост"),
+    host_rule(&Values::party_host_limbo_revive, "Up after boss kill", "Встать после босса",
+              AddText("Dead in a boss fight the others win: you get up in the arena, no load. Host's",
+                      "Погибли в бою, а другие убили босса: вы встаёте на арене без загрузки. Решает хост"),
               [] { return ps::HostRuleOn(ps::HostRule::HostLimboRevive); },
-              {"The host, dead in a boss fight you win, gets up in the arena; nobody loads (host decides)",
-               "Хост, погибший в бою с боссом, которого вы убили, встаёт на арене без загрузки (решает хост)"},
-              {"The host decides; off: a boss kill after its death brings the party's respawn load",
-               "Решает хост; выкл.: после победы над боссом без хоста - загрузка возрождения"});
+              {"Dead in a boss fight the others win: you get up in the arena, no load (host decides)",
+               "Погибли в бою, а другие убили босса: вы встаёте на арене без загрузки (решает хост)"},
+              {"The host decides; off: a boss kill after a death brings the respawn load / the host's lamp",
+               "Решает хост; выкл.: после победы над боссом - загрузка возрождения / фонарь хоста"});
     own(&Values::party_guest_respawn, "Respawn at host's lamp", "Возврат к фонарю хоста",
         "While you are a guest: a death brings you back at the host's lamp, not home. Next start",
         "Пока вы гость: после смерти вы у фонаря хоста, а не дома. Со следующего запуска");

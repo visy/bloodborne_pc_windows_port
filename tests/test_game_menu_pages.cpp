@@ -432,7 +432,7 @@ static void RulesPages() {
         return out;
     };
     using V = std::vector<std::u16string>;
-    const V deaths = {u"Rot on death", u"Guest gets up, no load", u"Host gets up, no load", u"Host up after boss kill",
+    const V deaths = {u"Rot on death", u"Guest gets up, no load", u"Host gets up, no load", u"Up after boss kill",
                       u"Respawn at host's lamp", u"Refill vials, bullets"};
     const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests use lamps", u"Guests use Hunter's Mark",
                      u"Open world"};
@@ -479,7 +479,7 @@ static void RulesPages() {
     ps::SetRole(ps::Role::Host);
     s.party_host_limbo_revive = true; // EverySettingSaved changed every row once
     P::Load();
-    const P::Row& limbo = RowNamed(PageNamed(u"Deaths & revives"), u"Host up after boss kill");
+    const P::Row& limbo = RowNamed(PageNamed(u"Deaths & revives"), u"Up after boss kill");
     assert(s.party_host_limbo_revive && *P::Byte(limbo.field) == 1);
     *P::Byte(limbo.field) = 0;
     Advance(16);

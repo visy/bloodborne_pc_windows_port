@@ -158,6 +158,32 @@ constexpr double kArenaCorpseRise = 4.0;   ///< m (height) from the followed mem
 inline bool ArenaReviveAtCorpse(bool corpse_known, bool fall_death, double horiz_m, double dy_m) {
     return corpse_known && !fall_death && horiz_m <= kArenaCorpseNear && std::fabs(dy_m) <= kArenaCorpseRise;
 }
+/// PR #6's wait after a limbo's boss died: its bar still up over the dead chr (the game's defeat
+/// event, which saves the defeat flag, has not run), or less than 3 s since the bar went; at most
+/// 20 s from the moment the boss was gone.
+inline bool DefeatPending(double since_gone_s, bool bar_dying) {
+    return since_gone_s < 20.0 && (bar_dying || since_gone_s < 3.0);
+}
+
+// ---- A guest's boss-fight limbo ends (its held death; user request 2026-10-21) ----
+// The boss is gone while a guest lay dead in the fight. Killed (not a bar that just went), the
+// switch on (BB_PARTY_HOST_LIMBO_REVIVE, the host's arena revive's) and a living member here:
+// once the defeat is saved (DefeatPending) the guest gets up in the arena, no load, its stain stays
+// where it fell. Otherwise its respawn at the host's lamp as before. A wipe never gets here (the
+// host's death load takes the guest along first).
+enum class GuestLimboEnd { Lamp, Wait, ArenaRevive };
+inline const char* GuestLimboEndName(GuestLimboEnd g) {
+    return g == GuestLimboEnd::Lamp ? "the host's lamp" : g == GuestLimboEnd::Wait ? "wait for the defeat" : "arena revive";
+}
+inline GuestLimboEnd PlanGuestLimboEnd(bool boss_killed, bool switch_on, bool defeat_pending, bool member_here) {
+    if (!boss_killed || !switch_on) {
+        return GuestLimboEnd::Lamp;
+    }
+    if (defeat_pending) {
+        return GuestLimboEnd::Wait;
+    }
+    return member_here ? GuestLimboEnd::ArenaRevive : GuestLimboEnd::Lamp;
+}
 
 // ---- The host's record of members that are down (issue #4 item 6) ----
 // A member's "member_down" notice is sent once per HP-0 period, so the record must last until the
