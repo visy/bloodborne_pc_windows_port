@@ -159,6 +159,10 @@ bool RotSlotChanged(int active_slot, int current_slot);
 /// costs +10 %" from the stacks per kind (party_rot.txt's order: health, stamina, stamina cost,
 /// rally, discovery); empty without stacks.
 std::string DescribeRot(const int kind[kRotFileKinds], bool russian);
+/// The parts of DescribeRot, for a HUD that colours each effect: "Rot 3/5: " (empty without rot)
+/// and one effect ("max HP -20 %"; empty when that kind has no stacks).
+std::string DescribeRotHead(const int kind[kRotFileKinds], bool russian);
+std::string DescribeRotEffect(int k, int stacks, bool russian);
 
 /// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
 std::string DescribeHp(int percent, bool russian);
