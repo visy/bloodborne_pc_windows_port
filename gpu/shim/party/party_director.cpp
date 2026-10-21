@@ -1481,7 +1481,7 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
 /// BehaviorParam_PC row whose refType (+0x9) 2 = SpEffect refId (+0xC), else the goods refId (+0x0)
 /// when SpEffectParam has that row; that SpEffect is applied (Madman's Knowledge 1500: +1 Insight)
 /// and a game save is requested. Not consumed. Insight / save changes show in the state lines.
-void UseGoodsForTest(const char* what, std::uint32_t goods) {
+void UseGoodsForTest(const char* what, std::uint32_t goods, bool take) {
     const int owned = GoodsCount(goods);
     const bool given = owned <= 0 && GiveGoods(goods, 1);
     const std::uint64_t row = GameParamRow("EquipParamGoods", "EQUIP_PARAM_GOODS_ST", goods);
@@ -1508,7 +1508,14 @@ void UseGoodsForTest(const char* what, std::uint32_t goods) {
         "SpEffect %d %s; Insight %d -> %d", what, goods, owned, given ? ", one given" : "", row ? "found" : "MISSING",
         ref, behavior, beh ? "found" : "missing", unsigned(ref_type), beh_ref, effect, ok ? "applied" : "NOT applied",
         insight0, ReadGameState(false).insight);
-    if (ok) RequestGameSave("item use test");
+    if (take) {
+        // host_use=GOODS:take: the item is used up as the game's own use of an isConsume item
+        // takes it (the Gold Pendant / Tear Stone become a blood gem): one fewer held.
+        const int before = GoodsCount(goods);
+        const bool gone = before > 0 && GiveGoods(goods, -1);
+        Log("test: %s goods %u used up: held %d -> %d%s", what, goods, before, GoodsCount(goods), gone ? "" : " (NOT taken)");
+    }
+    if (ok || take) RequestGameSave("item use test");
 }
 
 /// The die test step (host_die / guest_die, BB_PARTY_TEST_DIE_ON_DOWN): this player dies now.
@@ -1871,7 +1878,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const bool left = LeaveGameSession();
         Log("test: guest_home: the game's own leave %s (%s)", left ? "run" : "NOT available", Describe(s).c_str());
     } else if (step.kind == TravelStep::HostUse || step.kind == TravelStep::GuestUse) {
-        UseGoodsForTest(TravelStepName(step.kind), static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10)));
+        UseGoodsForTest(TravelStepName(step.kind), static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10)),
+                        step.args.find(":take") != std::string::npos);
     } else if (step.kind == TravelStep::HostMark || step.kind == TravelStep::GuestMark) {
         if (step.args == "lua") {
             std::int64_t r = -1;

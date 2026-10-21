@@ -901,6 +901,7 @@ static void test_key_catchup() {
     key.max_num = 1;
     key.max_storage = 0;
     key.goods_type = 1;
+    key.usable = 0;  // a key: no use from the menu
     CHECK(KeyCatchupNeeded({key}));
     LotSlotState held = key;
     held.owned = 1;
@@ -908,20 +909,61 @@ static void test_key_catchup() {
     LotSlotState unknown = key;
     unknown.owned = -1;
     CHECK(!KeyCatchupNeeded({unknown}));
-    // 0.6.2: unique goods with goodsType 0 (Amelia's 4001, badges) are caught up too: a summoned
-    // guest no longer gives them (their held count reads 0 there).
+    // 0.6.2 - 0.6.9 caught up every unique goods item, Amelia's Gold Pendant 4001 too (goodsType 0,
+    // maxNum 1, used from the menu: it becomes a blood gem). 0.6.9 playtest 2: the host's pendant
+    // came back after every own-world load once used. Usable unique goods are never caught up.
     LotSlotState pendant = key;
     pendant.id = 4001;
     pendant.goods_type = 0;
-    CHECK(KeyCatchupNeeded({pendant}));
+    pendant.usable = 1;
+    CHECK(!KeyCatchupNeeded({pendant}));
+    CHECK(!KeyRegiveAllowed(pendant));
     pendant.owned = 1;
     CHECK(!KeyCatchupNeeded({pendant}));
+    LotSlotState tear = pendant;  // Tear Stone 4301 (lot 14000): the same
+    tear.id = 4301;
+    tear.owned = 0;
+    CHECK(!KeyCatchupNeeded({tear}));
+    LotSlotState chalice = key;  // a chalice (goodsType 6, unique, not used from the menu)
+    chalice.id = 6109;
+    chalice.goods_type = 6;
+    CHECK(KeyRegiveAllowed(chalice) && KeyCatchupNeeded({chalice}));
+    LotSlotState unknown_use = key;  // the param row could not be read: never given again
+    unknown_use.usable = -1;
+    CHECK(!KeyRegiveAllowed(unknown_use) && !KeyCatchupNeeded({unknown_use}));
+    CHECK(!KeyCatchupNeeded({key, pendant}));  // one usable slot keeps the whole lot out
     LotSlotState vial_slot = key;
     vial_slot.goods_type = 0;
     vial_slot.max_num = 20;
     vial_slot.max_storage = 600;
     CHECK(!KeyCatchupNeeded({vial_slot}));
     CHECK(!KeyCatchupNeeded({}));
+    // Summoned: a key that is never used up is given now (and owed: a dropped copy comes back at
+    // home); a usable unique item waits for the own world (a copy used while summoned would read 0
+    // at home and come back).
+    CHECK(SummonedKeyGiveNow({key}));
+    CHECK(SummonedKeyGiveNow({chalice}));
+    CHECK(!SummonedKeyGiveNow({pendant}));
+    CHECK(!SummonedKeyGiveNow({key, pendant}));
+    CHECK(!SummonedKeyGiveNow({unknown_use}));
+    LotSlotState ritual = key;  // Ritual Blood: stackable with storage, not KeyGoods at all
+    ritual.id = 7000;
+    ritual.max_num = 99;
+    ritual.max_storage = 600;
+    ritual.goods_type = 2;
+    CHECK(SummonedKeyGiveNow({ritual}) && !KeyRegiveAllowed(ritual));
+    // Owed lots at home. Given while summoned: only a key that is never used up, and only at 0.
+    CHECK(OwedGiveAllowed(true, true, key, 0));
+    CHECK(!OwedGiveAllowed(true, true, key, 1));
+    CHECK(!OwedGiveAllowed(true, true, key, -1));
+    CHECK(!OwedGiveAllowed(true, true, pendant, 0));   // used while summoned: never back
+    CHECK(!OwedGiveAllowed(true, true, ritual, 0));
+    // Deferred (never given): once, when none is held and the lot's done flag is not in the save.
+    CHECK(OwedGiveAllowed(false, false, pendant, 0));  // the first give of a deferred pendant
+    CHECK(!OwedGiveAllowed(false, false, pendant, 1));
+    CHECK(!OwedGiveAllowed(false, true, pendant, 0));  // the award gave it (and it was used): no
+    CHECK(!OwedGiveAllowed(false, true, key, 0));
+    CHECK(OwedGiveAllowed(false, false, ritual, 3));   // stackable goods of a deferred lot
     // party_summoned_gives.txt entries belong to the character (save slot) they were given to.
     CHECK(SummonedGiveForSlot(1, 1));
     CHECK(!SummonedGiveForSlot(1, 0));
