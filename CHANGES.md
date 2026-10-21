@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Changed: a summoned guest sees its own key items**: in the host's world the Key Items tab used to be empty after every loading screen (the game shows a visiting hunter a separate, empty key list and keeps your own one aside). The guest now sees its own keys, badges and tools there, and a key item the host's world hands it is given at once and stays, with one copy in the save (before, giving one there could write the key twice into the save). `BB_PARTY_KEY_VIEW=0` brings back the game's empty view; `BB_PARTY_KEY_RESTORE` is gone.
+
 ## 0.7.0 (Windows port 0.7.0, party co-op round after the second playtest)
 
 - **Added: saves from shadPS4 and other regions load as they are**: a save in shadPS4's layout (`SPRJ0005\sce_sys\param.sfo` inside the folder) is taken in at the next start, and our port now also writes that `param.sfo`, so the same save folder opens in shadPS4 again. When the folder the game reads has no save but another user id or another region's Bloodborne folder has one (e.g. an EU save with a US game), it is copied in (the original stays); a save copied one folder too deep or too shallow is named in the log. How to bring a save over: docs/SAVES.md.

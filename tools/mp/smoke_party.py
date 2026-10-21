@@ -665,6 +665,29 @@ def check_arena(v, L, k):
     none_of(v, L, "s2 arena: no loading screen for guest 2", r"load started", dead, hit or up + 60, (2,))
 
 
+def check_key_saves(v):
+    """Each guest's party save on disk (save_decode.py): no key item in two stacks (the saved and the
+    summoned key section are both written; items.md 10.6 / 10.7)."""
+    sys.path.insert(0, str(REPO / "tools" / "party"))
+    import save_decode  # noqa: E402
+    seen, bad = [], []
+    for i in (1, 2):
+        for f in sorted((Path(RUN_ROOT[0]) / f"inst{i}" / "user" / "savedata_party").rglob("userdata00[0-9][0-9]")):
+            try:
+                sv = save_decode.Save.read(f)
+            except (OSError, ValueError):
+                continue
+            ks = sv.key_sections()
+            if ks is None:
+                continue
+            dup = sv.duplicate_keys()
+            seen.append("inst%d %s: %d saved + %d summoned" % (i, f.name, len(ks[0]), len(ks[1])))
+            if dup:
+                bad.append("inst%d %s: %s" % (i, f.name, ",".join(map(str, dup))))
+    v.step("s2 key items: one stack each in the guests' saves on disk", bool(seen) and not bad,
+           ("DUPLICATE " + "; ".join(bad)) if bad else "; ".join(seen[:4]) or "no guest save decoded")
+
+
 def check_s2(v, L, d: Path):
     need(v, L, "s2 join: 3 players", 0, r"cooperators [01] -> 2")
     tr = need(v, L, "s2 party lamp travel to the Cleric Beast", 0, r"travel step \d+/\d+: host_warp to lamp 2412952")
@@ -695,20 +718,19 @@ def check_s2(v, L, d: Path):
     none_of(v, L, "s2 item box: no 'Unable to acquire' box on guest 1", r"text shows: \"Unable to acquire", 0, 1e9, (1,))
     none_of(v, L, "s2 item box: no Pebble left on the ground (no give counted as Full)",
             r"lot 2100000 .*(Full|skip .*while summoned)", 0, 1e9, (1,))
-    # Key items (items.md 10.5). The test save used Amelia's Gold Pendant (4001): 0.6.2 - 0.6.9 gave it
-    # back at every own-world load. After the travel the host holds its keys; summoned, a guest's key
-    # section reads empty (the game's own view), and at home the save's keys are back, one stack each.
+    # Key items (items.md 10.5, 10.7). The test save used Amelia's Gold Pendant (4001): 0.6.2 - 0.6.9
+    # gave it back at every own-world load. After the travel the host holds its keys, and so does a
+    # summoned guest (0.7.1: the own key section is shown at every host-world load); at home the
+    # save's keys are there, one stack each, in memory and on disk.
     none_of(v, L, "s2 key item: a used-up item is not given back", r"(catch-up|owed lot|given again).*goods 4001")
     none_of(v, L, "s2 key item: no duplicate stack", r"DUPLICATE STACK")
     if tr is not None:
         need(v, L, "s2 key items after the travel (host)", 0, r"key goods held: .*4000 x1,(?: 4001 x0,)?.*map m24_01", tr)
-        # BB_PARTY_KEY_RESTORE=1 (off by default: it duplicates keys in the save): a summoned guest's
-        # key items are put back right after each host-world load.
-        if L.find(1, r"summoned key items (put back|all held) after the load"):
-          need(v, L, "s2 key items put back on the summoned guest after the travel", 1,
-               r"summoned key items (put back|all held) after the load \(pass 1", tr)
-          need(v, L, "s2 key items held by the summoned guest after the travel", 1,
-               r"key goods held: .*4000 x1,.*4114 x1,.*map m24_01.*load mode 1", tr)
+        need(v, L, "s2 key items: the own key section shown on the summoned guest", 1,
+             r"summoned load: the own key section is shown \([1-9]", tr)
+        need(v, L, "s2 key items held by the summoned guest after the travel", 1,
+             r"key goods held: .*4000 x1,.*4114 x1,.*map m24_01.*load mode 1", tr)
+    check_key_saves(v)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     if lv is not None:
         need(v, L, "s2 key items back at home after the travels (guest)", 1,
