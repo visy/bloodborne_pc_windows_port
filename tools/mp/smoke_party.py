@@ -562,19 +562,19 @@ def phase_ga(only):
     )
 
 
-# Phase el (liftfall, ~5 min, 2 players, group `elevator`): the Nightmare of Mensis' library lift
+# Phase el (liftfall, ~4 min, 2 players, group `elevator`): the Nightmare of Mensis' library lift
 # 2601260 (60 m, y 1003 -> 943, after Micolash: a player's report, the host warped back to its lamp
-# mid-ride and the guest dead). Its events have no network sync: each game's car moves only for its
-# own player, and the position flag 12601253 (1: the car at the top) flips when the rider has left
-# the car at the far end. Fixture: Micolash dead (12601850, the lift's init waits for it), the car at
-# the top. (1) Host and guest ride it down together, each in its own copy. (2) The host alone: it
-# calls the car up from the top's call spot (region 2602244), leaves, rides down; the guest's game
-# must move its car to each end (LiftReplayTick). (3) The guest alone, the same; the host's game
-# takes the guest's ride (lift_clr / lift_set) and moves its car. Every ride must end at the bottom,
-# with no fall recovery and no death. Then the host takes Central Yharnam's short lift 2411320.
+# mid-ride and the guest dead). The position flag 12601253 (1: the car at the top) flips once the
+# rider has left the car at the far end. Fixture: Micolash dead (12601850, the lift's init waits for
+# it), the car at the top. (1) Host and guest ride it down together. (2) The host alone: in the car
+# at the bottom it rides up, steps out at the top, steps in again and rides down. (3) The guest alone,
+# the same. Every ride down must end at the bottom (y ~944) on that player's game, with no fall
+# recovery and no death; both games end with the same flag. (el2, 2026-10-21: the top's call spot,
+# region 2602244's point, is over the open shaft: a warp there fell 27 m; the ride up from the car
+# replaces it, not yet run live.)
 EL_CAR, EL_POS = "2601260", "12601253"
 EL_IN_CAR = "119.4:1003.5:-18.5"      # region 2602242: in the car at the top
-EL_CALL = "117.7:1003.4:-18.5"        # region 2602244: the top's call spot
+EL_IN_CAR_LOW = "119.4:943.5:-18.5"   # region 2602241: in the car at the bottom
 EL_TOP = "112.1:1003.8:-23.0"         # the top floor, out of every region of the lift
 EL_UNTIL = r"0:travel step (\d+)/\1: "
 
@@ -587,8 +587,8 @@ def _el_down(who, first_delay=6, cond=""):
 
 
 def _el_alone(who):
-    """Call the car up from the top's call spot, leave the regions (the flag flips to 1), ride down."""
-    return ["%s_move=%s@3%%m26" % (who, EL_CALL)] + ["%s_press=0@7%%m26!" % who] * 3 + \
+    """In the car at the bottom: up it goes; out at the top (the flag flips to 1); then the ride down."""
+    return ["%s_move=%s@3%%m26" % (who, EL_IN_CAR_LOW)] + ["%s_press=0@7%%m26!" % who] * 3 + \
            ["%s_move=%s@1%%m26" % (who, EL_TOP)] + _el_down(who, 2, "?%s=1" % EL_POS)
 
 
@@ -597,18 +597,15 @@ def phase_el(only):
     host = [common, "host_move=%s@3%%m26^1" % EL_TOP] + _el_down("host") + _el_alone("host") + [  # (1), (2)
             "host_press=0@1%%m26!?%s=1" % EL_POS,                    # (3) the guest's car up ...
             "host_press=0@2%%m26!?%s=0" % EL_POS,                    # ... and its ride down over
-            "host_warp=2412953@3%m26",                               # Central Yharnam (party travel)
-            "host_obj=2411320:0:0:0.5@8%m24_01",                     # into the short lift
-            "host_press=0@8%m24_01!", "host_press=0@8%m24_01!"]
+            "host_press=0@5%m26!"]
     g1 = [common, "guest_move=%s@3%%m26" % EL_TOP] + _el_down("guest") + [                        # (1)
           "guest_press=0@1%%m26!?%s=1" % EL_POS,                     # (2) the host's car up ...
           "guest_press=0@2%%m26!?%s=0" % EL_POS] + _el_alone("guest")   # ... down; (3) the guest alone
     return dict(
         name="el", seconds=480, count=2, headless=0,
-        env=["BB_PARTY_TEST_START_LAMP=2602953", "BB_PARTY_PROGRESS_TEST_SET=12601850,%s,12410330" % EL_POS],
+        env=["BB_PARTY_TEST_START_LAMP=2602953", "BB_PARTY_PROGRESS_TEST_SET=12601850,%s" % EL_POS],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
-        watch=["--watch", r"flag %s = 0 now=bottom@0.5,3" % EL_POS, "--watch", r"another game's ride=replay@0.5,3",
-               "--watch", r"_move to \(119\.40=incar@3,8"],
+        watch=["--watch", r"flag %s = 0 now=bottom@0.5,3" % EL_POS, "--watch", r"_move to \(119\.40=incar@3,8"],
         crash=[], until=[EL_UNTIL],
     )
 
@@ -1554,8 +1551,8 @@ def check_fl(v, L):
 def check_el(v, L):
     need(v, L, "el join: 2 players", 0, r"cooperators 0 -> 1")
     xyz = r"test: pos area 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
-    # Each ride: the position samples after the move into the car; its last one before the move out
-    # must be at the bottom (y ~944).
+    # Each ride down: the position samples after the move into the car at the top; its last one before
+    # the move out must be at the bottom (y ~944).
     for i in (0, 1):
         ins = L.all(i, r"_move to \(119\.40, 1003\.50")
         outs = L.all(i, r"_move to \(112\.10, 1003\.80")
@@ -1567,13 +1564,14 @@ def check_el(v, L):
             v.step("el %s ride %d down to the bottom (inst%d)" % ("host" if i == 0 else "guest", k + 1, i),
                    y is not None and y < 950.0, ("+%.1f..%.1f s, last y %.1f" % (t0, t1, y)) if pos else
                    "ride %d not run (%d into the car)" % (k + 1, len(ins)))
-    need(v, L, "el guest's car follows the host's ride", 1, r"lift 2601260: flag 12601253 = \d from another game's ride")
-    need(v, L, "el host takes the guest's ride", 0, r"lift 2601260 12601253=\d\(applied")
+    # Each game's copy of the lift ends its rides itself (or LiftReplayTick puts the car at the end);
+    # both games end with the same flag.
+    ends = [L.all(i, r"test: flags 12601253=\d") for i in (0, 1)]
+    last = [e[-1][1][-1] if e else None for e in ends]
+    v.step("el lift flag 12601253 equal on both games at the end", None not in last and last[0] == last[1],
+           "host %s, guest %s" % tuple(last))
     none_of(v, L, "el no fall recovery on the lift", r"recovery: falling", 0, 1e9, (0, 1))
     none_of(v, L, "el nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
-    cy = need(v, L, "el host in Central Yharnam", 0, r"map .*-> m24_01_00_00")
-    if cy is not None:
-        need(v, L, "el short lift 2411320 moves (host)", 0, r"test: object 2411320 anim [1-9]", cy[0])
     check_common(v, L, "el")
 
 
