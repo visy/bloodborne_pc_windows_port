@@ -79,6 +79,11 @@ CLERIC_CLEAR = "12411700,12411701,12411702,12411703,12414700,12414701,12414223,7
 # + the boss reward's ledger flag (lot 50000010, Sword Hunter Badge): given again at the kill, so the
 # summoned guest gets an item box (its OK row, pard3)
 CLERIC_CLEAR_REWARD = CLERIC_CLEAR + ",60009036"
+# A treasure lot of one Pebble (goods 1230, maxNum 20, maxRepositoryNum 99 at EquipParamGoods +0x48)
+# and its flag (cleared so the host's award rolls it).
+PEBBLE_LOT, PEBBLE_FLAG = "2100000", "52100000"
+STORAGE_GIVE = (r"lot 2100000 .*goods 1230 x1 \(held 20 -> 20, past the maximum: the game's give list, "
+                r"storage room (\d+) -> (\d+)")
 GASCOIGNE_TRIGGER = "-48.76:-40.92:72.44"  # region 2412815 (the intro's trigger box)
 CLERIC_TRIGGER_HOST = "-136.5:-26.6:52.8"   # region 2412805 (first fight)
 CLERIC_SPOT_GUEST = "-134.6:-26.6:54.7"
@@ -129,6 +134,8 @@ def phase_s2(only):
         "host_kill=2410800@25%m24_01",                            # the boss kill (its defeat path), after guest 2's death
     ])
     g1 = ",".join([
+        "goods=1230:20",                    # Pebbles at their inventory maximum (20): the host's Pebble goes to storage
+        "watch_text=Unable to acquire",     # the game's "inventory or storage max" box: must not show
         "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
         "guest_press=0x4000@29%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
         "guest_leave@10%m24_01",            # Leave right after the kill (no load between), then Rejoin
@@ -157,9 +164,12 @@ def phase_s2(only):
     ])
     return dict(
         name="s2", seconds=480,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD, "BB_PARTY_TEST_INVINCIBLE=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD + "," + PEBBLE_FLAG, "BB_PARTY_TEST_INVINCIBLE=1"],
         watch=["--watch", "up again in the arena=arena@1,4", "--watch", r"travel step \d+/\d+: guest_chr=hits@6,10"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
+              # the host's own award of a Pebble treasure lot (host-only, 20 s after the join): the
+              # summoned guest at its Pebble maximum gets it into its storage (items.md 10.4)
+              "0:BB_PARTY_ITEMS_HOST_TEST=" + PEBBLE_LOT,
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
               "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@25", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
               "2:BB_PARTY_DIRECTOR_TEST_RESTART=none"],
@@ -241,12 +251,12 @@ PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
-          "host_leave": "s2", "rules": "rules"}
+          "host_leave": "s2", "keyitems": "s2", "rules": "rules"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
-              "wipe": r"wipe", "kill": r"boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
+              "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
-              "host_crash": r"host crash", "host_leave": r"host Leave", "rules": r"^rules"}
+              "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules"}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -261,8 +271,10 @@ GROUP_UNTIL = {
     "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
-    "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010"],
+    "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
+                "1:" + STORAGE_GIVE],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
+    "keyitems": [r"1:key goods held: .*load mode 0\)"],  # guest 1 back in its own world after the Leave
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
@@ -470,11 +482,34 @@ def check_s2(v, L, d: Path):
         # shows the box.
         ib = need(v, L, "s2 reward on the summoned guest (item box or owed key item)", 1,
                   r"item notice up on a summoned guest|lot 50000010 .*not given while summoned; waits for the own world|"
-                  r"owed key item: lot 50000010", 0)
+                  r"owed key item: lot 50000010|gave .*lot 50000010 .*while summoned", 0)
         if ib is not None and L.find(1, r"item notice up on a summoned guest", k):
             need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
     check_arena(v, L, k)
+    # Goods past the inventory maximum land in the storage (items.md 10.4: the +0x48 storage limit
+    # and the give list), one in, no "Unable to acquire" box and nothing left on the ground.
+    sg = L.find(1, STORAGE_GIVE)
+    if sg is None:
+        need(v, L, "s2 item box: a Pebble past the maximum lands in the storage", 1, STORAGE_GIVE)
+    else:
+        m = re.search(STORAGE_GIVE, sg[1])
+        a, b = int(m.group(1)), int(m.group(2))
+        v.step("s2 item box: a Pebble past the maximum lands in the storage", b == a - 1,
+               "+%.1f s inst1: storage room %d -> %d" % (sg[0], a, b))
+    none_of(v, L, "s2 item box: no 'Unable to acquire' box on guest 1", r"text shows: \"Unable to acquire", 0, 1e9, (1,))
+    none_of(v, L, "s2 item box: no Pebble left on the ground (no give counted as Full)",
+            r"lot 2100000 .*(Full|skip .*while summoned)", 0, 1e9, (1,))
+    # Key items (items.md 10.5). The test save used Amelia's Gold Pendant (4001): 0.6.2 - 0.6.9 gave it
+    # back at every own-world load. After the travel the host holds its keys; summoned, a guest's key
+    # section reads empty (the game's own view), and at home the save's keys are back, one stack each.
+    none_of(v, L, "s2 key item: a used-up item is not given back", r"(catch-up|owed lot|given again).*goods 4001")
+    none_of(v, L, "s2 key item: no duplicate stack", r"DUPLICATE STACK")
+    if tr is not None:
+        need(v, L, "s2 key items after the travel (host)", 0, r"key goods held: .*4000 x1, 4001 x0,.*map m24_01", tr)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
+    if lv is not None:
+        need(v, L, "s2 key items back at home after the travels (guest)", 1,
+             r"key goods held: .*4000 x1, 4001 x0,.*4114 x1,.*load mode 0\)", lv)
     rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
     if rj is not None:
         back = need(v, L, "s2 Rejoin after the kill: back in", 0, r"cooperators 1 -> 2", rj)

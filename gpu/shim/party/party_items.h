@@ -386,6 +386,9 @@ struct LotSlotState {
     int max_num = -1;                     ///< goods: EquipParamGoods maxNum; -1 unknown
     int max_storage = -1;                 ///< goods: EquipParamGoods maxRepositoryNum; -1 unknown
     int goods_type = -1;                  ///< goods: EquipParamGoods goodsType (1 key item); -1 unknown
+    int usable = -1;                      ///< goods: 1 the player can use it from the menu (refId >= 0 or
+                                          ///< goodsUseAnim != 0: Gold Pendant, Tear Stone, vials), 0 not
+                                          ///< (keys, badges, workshop tools); -1 unknown
 };
 enum class LotFit : std::uint8_t {
     Give,  ///< nothing in the way: award it
@@ -394,13 +397,19 @@ enum class LotFit : std::uint8_t {
            ///< with a blocking "inventory or storage max" dialog
 };
 const char* LotFitName(LotFit f);
+/// EquipParamGoods (EQUIP_PARAM_GOODS_ST, 1.09) limits of a goods row (at least kGoodsRowBytes
+/// bytes) into `s`: maxNum s16 +0x36, goodsType u8 +0x3A, maxRepositoryNum s16 +0x48 - the offset
+/// the game's own storage cap reads (0x15813A0: `*(short*)(row + 0x48)`; Pebble 20 / 99), and
+/// `usable` from refId s32 +0x00 / goodsUseAnim u8 +0x3E (KeyRegiveAllowed).
+constexpr std::size_t kGoodsRowBytes = 0x4A;
+void GoodsLimitsFromRow(const std::uint8_t* row, LotSlotState* s);
 /// Owned / Full when any goods slot would be refused (the whole lot is then skipped: one refused
 /// item opens the blocking dialog); `why` names the slot. Unknown counts (-1) never refuse.
 LotFit ClassifyLotFit(const std::vector<LotSlotState>& slots, std::string* why = nullptr);
 /// A ledger skip that looks wrong (#16): the ledger says the lot was given, yet the player holds
-/// none of its items and they are unique goods (maxNum 1, no storage: keys, badges), which the game
-/// never takes away. The guest then gets it after all (a duplicate unique key is harmless; a
-/// missing Oedon Tomb Key blocks the game).
+/// none of its items and they are unique goods (maxNum 1, no storage: keys, badges). The guest gets
+/// it after all only when the items are never used up (KeyCatchupNeeded: a missing Oedon Tomb Key
+/// blocks the game; a used Gold Pendant must not come back).
 bool LedgerSkipSuspicious(const std::vector<LotSlotState>& slots);
 /// verify_c6 (live): a summoned guest's inventory never shows its key items (EquipParamGoods
 /// goodsType 1: Oedon Tomb Key 4000, 4114, Old Hunter Bell 4312, ...): the game leaves them out of
@@ -440,10 +449,27 @@ bool RepeatSummonedGiveAllowed(const std::vector<LotSlotState>& slots);
 /// May the own world give one more of this goods slot now? Not a KeyGoods item already held
 /// (`held` > 0), and never with an unknown count (-1) for KeyGoods.
 bool KeyGiveAllowedHeld(const LotSlotState& s, int held);
-/// A lot to catch up in the own world: every slot unique goods not held (LedgerSkipSuspicious),
-/// all of them KeyGoods by definition (0.6.2: badges and goodsType 0 unique rewards too, since a
-/// summoned guest no longer gives them). Own-world reads only: summoned, keys read 0.
+/// May a held count of 0 be read as "lost" for this slot, so that it is given again? Only for
+/// KeyGoods the player cannot use up: not usable from the menu (keys, badges, workshop tools,
+/// chalices; `usable` 0). A usable unique item at 0 was most likely used: the Gold Pendant and the
+/// Tear Stone turn into a blood gem when used (0.6.9 playtest 2: a host's Gold Pendant came back
+/// after every load, one more gem each time). Unknown (-1): no.
+bool KeyRegiveAllowed(const LotSlotState& s);
+/// A lot to catch up in the own world: every slot unique goods not held (LedgerSkipSuspicious)
+/// and every slot one that is never used up (KeyRegiveAllowed). 0.6.2 - 0.6.9 caught up any
+/// unique goods, so a used Gold Pendant (Amelia's ledger lot 50000001) was given back at the next
+/// own-world load. Own-world reads only: summoned, keys read 0.
 bool KeyCatchupNeeded(const std::vector<LotSlotState>& slots);
+/// May a summoned guest give these key goods now (and owe them to the own world, where a copy the
+/// game dropped is given again)? Only when every KeyGoods slot is KeyRegiveAllowed; a usable unique
+/// item (Gold Pendant) waits for the own world as before 0.7.0 (a copy given now and used while
+/// summoned would come back at home).
+bool SummonedKeyGiveNow(const std::vector<LotSlotState>& slots);
+/// Own world, a lot owed to this save slot (party_owed_lots.txt): give this goods slot? `given`:
+/// the lot was given while summoned (its done flag is in the save; a copy may have been dropped):
+/// only a KeyRegiveAllowed item reading 0. Not given (deferred): never when the lot's done flag is
+/// in the save now (the award or another path gave it), else one only when none is held.
+bool OwedGiveAllowed(bool given, bool done_flag_set, const LotSlotState& s, int held);
 /// party_summoned_gives.txt is one file per user folder, shared by every character in the save
 /// slots: an entry given to the character in save slot `entry_slot` is re-given only to that one
 /// (-1 on either side = unknown: an older file or an unreadable slot; given as before).
