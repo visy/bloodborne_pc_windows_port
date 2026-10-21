@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+## 0.7.0 (Windows port 0.7.0, party co-op round after the second playtest)
+
 - **Added: saves from shadPS4 and other regions load as they are**: a save in shadPS4's layout (`SPRJ0005\sce_sys\param.sfo` inside the folder) is taken in at the next start, and our port now also writes that `param.sfo`, so the same save folder opens in shadPS4 again. When the folder the game reads has no save but another user id or another region's Bloodborne folder has one (e.g. an EU save with a US game), it is copied in (the original stays); a save copied one folder too deep or too shallow is named in the log. How to bring a save over: docs/SAVES.md.
 - **Fixed: a save copied over the party save no longer inherits the old party character's state**: the party's rot, guest bloodstain, prologue reading, owed gestures and items and story replay queue are kept per save slot, so a character copied into a slot the old party character used got them. The game now notices another character (or an older save) in a slot and drops the old one's entries.
 - **Fixed: one failed join no longer blocks every later summon**: when a guest's join to the host failed (a timeout over the Internet, a blocked port, a crash while joining), the host's game kept trying to summon that guest's new sign every 30 s, and every other join to the host was turned away for minutes with "the host's game is summoning a sign". A sign summon that brings nobody in within 10 s no longer holds the others back, and a guest turned away for it asks again a moment later instead of waiting for its next bell.
