@@ -801,8 +801,17 @@ crypto::Key key_of_pw(const char* pw) {
     std::uint8_t secret[8] = {9, 8, 7, 6, 5, 4, 0, 0};
     return crypto::relay_key(crypto::derive_party_key(pw, secret));
 }
-Router::Mac mac(const crypto::Key& k) {
-    return [k](const std::uint8_t* d, std::size_t n, std::uint8_t out[16]) { crypto::mac16(k, d, n, out); };
+Router::Pake pake(const crypto::Key& k) {
+    Router::Pake p;
+    p.generator = [k](const std::uint8_t sid[16], std::uint8_t g[32]) { crypto::cpace_generator(k, sid, g); };
+    p.x25519 = [](const std::uint8_t sc[32], const std::uint8_t pt[32], std::uint8_t out[32]) {
+        return crypto::x25519(sc, pt, out);
+    };
+    p.hash = [](const std::uint8_t* d, std::size_t n, std::uint8_t out[32]) {
+        const crypto::Key h = crypto::blake2b256(d, n);
+        std::memcpy(out, h.data(), 32);
+    };
+    return p;
 }
 Router::KeyedMac kmac() {
     return [](const std::uint8_t key[32], const std::uint8_t* d, std::size_t n, std::uint8_t out[16]) {
@@ -849,10 +858,10 @@ RelayResult relay_run(nat::Type ht, nat::Type mt, nat::Type gt, bool punch, cons
         }
         if (!m_heard_host && M.game_in > 0) {
             m_heard_host = true;  // its link is up: it serves
-            M.router.serve(true, hp.addr, hp.port, mac(mkey), "Member", {}, mk);
+            M.router.serve(true, hp.addr, hp.port, pake(mkey), "Member", {}, mk);
         }
         if (net.now == 1500) {
-            G.router.relay_use(mp.addr, mp.port, hp.addr, hp.port, mac(gkey), net.t());
+            G.router.relay_use(mp.addr, mp.port, hp.addr, hp.port, pake(gkey), net.t());
             G.stream = G.mux.connect(hp, net.t(), 8000);
         }
         net.step();
@@ -943,9 +952,11 @@ static void sec_pump(std::vector<Wire>& out, std::uint32_t from_addr, std::uint1
 
 // A guest's handshake with a member over a direct wire; returns the guest's state.
 static Router::ClientState sec_handshake(Router& g, std::uint32_t ga, Router& m, std::uint32_t ma, std::uint16_t P,
-                                         std::uint32_t ha, const Router::Mac& mac, rudp::Clock::time_point t,
+                                         std::uint32_t ha, const Router::Pake& pake, rudp::Clock::time_point t,
                                          int* code = nullptr) {
-    g.relay_use(ma, P, ha, P, mac, t);
+    g.set_keyed_mac(sim3::kmac());
+    m.set_keyed_mac(sim3::kmac());
+    g.relay_use(ma, P, ha, P, pake, t);
     std::vector<Wire> go, mo;
     for (int k = 0; k < 3; ++k) {
         g.poll(t, &go);
@@ -979,32 +990,119 @@ static void test_member_relay_security() {
     for (Router* r : {&m, &g, &h}) r->set_keyed_mac(sim3::kmac());
 
     // Not serving: a refusal, smaller than the hello (no amplification); Q2 too.
-    CHECK(sec_handshake(g, G, m, M, P, H, sim3::mac(good), t0) == Router::ClientState::Refused);
-    m.serve(true, H, P, sim3::mac(good), "Hunter1", th, mk);
+    CHECK(sec_handshake(g, G, m, M, P, H, sim3::pake(good), t0) == Router::ClientState::Refused);
+    m.serve(true, H, P, sim3::pake(good), "Hunter1", th, mk);
     {
         std::vector<Wire> go, mo;
-        g.relay_use(M, P, H, P, sim3::mac(good), t0);
+        g.relay_use(M, P, H, P, sim3::pake(good), t0);
         g.poll(t0, &go);
         CHECK(go.size() == 1 && go[0].data.size() == Router::kQ1Size);
         sec_pump(go, G, P, m, M, t0, &mo);
         CHECK(mo.size() == 1 && mo[0].data.size() <= Router::kQ1Size);
     }
-    // M2: an impostor (another key) answers the hello: its Q2 proof fails, the guest never sends Q3.
+    // N1: the member's answer to a stranger's hello is its PAKE point only (51 bytes): nothing in
+    // it can be checked against a password guess (no MAC, no proof).
+    {
+        std::vector<Wire> go, mo;
+        g.relay_use(M, P, H, P, sim3::pake(other), t0);  // a stranger with a guessed password
+        g.poll(t0, &go);
+        sec_pump(go, G, P, m, M, t0, &mo);
+        CHECK(mo.size() == 1 && mo[0].data.size() == 51 && mo[0].data[2] == 2);
+        // The same hello from a guest with the right password gets the same kind of answer.
+        Router gr;
+        gr.set_keyed_mac(sim3::kmac());
+        gr.relay_use(M, P, H, P, sim3::pake(good), t0);
+        std::vector<Wire> go2, mo2;
+        gr.poll(t0, &go2);
+        sec_pump(go2, G, nbo(9400), m, M, t0, &mo2);
+        CHECK(mo2.size() == 1 && mo2[0].data.size() == 51);
+    }
+    // An impostor member (another password): the guest's confirmation fails there (one online guess
+    // for the impostor, no offline test), and no welcome the impostor can make is accepted.
     {
         Router imp, g2;
-        imp.serve(true, H, P, sim3::mac(other), "Impostor", {}, Router::new_member_key());
-        g2.relay_use(M, P, H, P, sim3::mac(good), t0);
+        imp.set_keyed_mac(sim3::kmac());
+        g2.set_keyed_mac(sim3::kmac());
+        imp.serve(true, H, P, sim3::pake(other), "Impostor", {}, Router::new_member_key());
+        int code = 0;
+        CHECK(sec_handshake(g2, G, imp, M, P, H, sim3::pake(good), t0, &code) == Router::ClientState::Refused &&
+              code == Router::kWrongKey);
+        // A hand-made welcome with any tag: ignored.
+        Router g3;
+        g3.set_keyed_mac(sim3::kmac());
+        g3.relay_use(M, P, H, P, sim3::pake(good), t0);
         std::vector<Wire> go, io;
-        g2.poll(t0, &go);
+        g3.poll(t0, &go);
         sec_pump(go, G, P, imp, M, t0, &io);
-        CHECK(io.size() == 1);
-        sec_pump(io, M, P, g2, G, t0, &go);
-        CHECK(go.empty());  // no proof handed to an impostor
-        CHECK(g2.relay_state() == Router::ClientState::Handshake);
+        sec_pump(io, M, P, g3, G, t0, &go);  // Q2 -> the guest's Q3
+        CHECK(go.size() == 1 && go[0].data[2] == 3 && go[0].data.size() == 99);
+        std::vector<Wire> fake{Wire{}};
+        fake[0].addr = G;
+        fake[0].data = {0xfc, 'Q', 4};
+        fake[0].data.insert(fake[0].data.end(), go[0].data.begin() + 3, go[0].data.begin() + 19);  // cn
+        fake[0].data.insert(fake[0].data.end(), {0, 0, 0, 7, 3, 'I', 'm', 'p'});
+        fake[0].data.resize(fake[0].data.size() + 16, 0x33);
+        std::vector<Wire> none;
+        sec_pump(fake, M, P, g3, G, t0, &none);
+        CHECK(g3.relay_state() == Router::ClientState::Handshake);
+    }
+    // A low-order point as the guest's Ya: the member's X25519 gives zero, the confirmation fails.
+    {
+        std::vector<Wire> q{Wire{}};
+        q[0].addr = M;
+        q[0].data = {0xfc, 'Q', 1};
+        q[0].data.resize(19, 9);
+        q[0].data.resize(19 + 32, 0);  // Ya = 0 (low order)
+        q[0].data.resize(Router::kQ1Size, 0);
+        std::vector<Wire> ans;
+        sec_pump(q, X, nbo(9555), m, M, t0, &ans);
+        CHECK(ans.size() == 1);
+        std::vector<Wire> q3{Wire{}};
+        q3[0].addr = M;
+        q3[0].data = {0xfc, 'Q', 3};
+        q3[0].data.resize(19, 9);
+        q3[0].data.resize(51, 0);
+        q3[0].data.insert(q3[0].data.end(), ans[0].data.begin() + 19, ans[0].data.begin() + 51);
+        q3[0].data.resize(99, 0);
+        std::vector<Wire> r3;
+        sec_pump(q3, X, nbo(9555), m, M, t0, &r3);
+        CHECK(r3.size() == 1 && r3[0].data[2] == 5 && r3[0].data[19] == Router::kWrongKey);
+        clock_ms += 61000;  // that wrong proof does not count against the tests below
+    }
+    // The PAKE transcript: a full handshake on the wire, then its Q3 replayed by an observer from
+    // another address: the member's point is bound to the guest's endpoint, so nothing comes back.
+    {
+        Router gt, mt;
+        gt.set_keyed_mac(sim3::kmac());
+        mt.set_keyed_mac(sim3::kmac());
+        mt.serve(true, H, P, sim3::pake(good), "T", {}, Router::new_member_key());
+        gt.relay_use(M, P, H, P, sim3::pake(good), t0);
+        std::vector<Wire> q1, q2, q3, q4;
+        gt.poll(t0, &q1);
+        CHECK(q1.size() == 1 && q1[0].data[2] == 1);
+        const Wire w1 = q1[0];
+        sec_pump(q1, G, P, mt, M, t0, &q2);
+        CHECK(q2.size() == 1 && q2[0].data[2] == 2);
+        sec_pump(q2, M, P, gt, G, t0, &q3);
+        CHECK(q3.size() == 1 && q3[0].data[2] == 3);
+        const Wire w3 = q3[0];
+        sec_pump(q3, G, P, mt, M, t0, &q4);
+        CHECK(q4.size() == 1 && q4[0].data[2] == 4);
+        std::vector<Wire> none;
+        sec_pump(q4, M, P, gt, G, t0, &none);
+        CHECK(gt.relay_state() == Router::ClientState::Ready);
+        // Q1 / Q3 carry the guest's point, Q2 the member's, Q3 / Q4 a 16-byte confirmation each.
+        CHECK(w1.data.size() == Router::kQ1Size && w3.data.size() == 99);
+        std::vector<Wire> rp{w3}, ans;
+        sec_pump(rp, X, P, mt, M, t0, &ans);
+        CHECK(ans.empty());
+        rp = {w3};
+        sec_pump(rp, G, nbo(9999), mt, M, t0, &ans);  // the guest's address, another port
+        CHECK(ans.empty());
     }
     // The real handshake.
     std::string name;
-    CHECK(sec_handshake(g, G, m, M, P, H, sim3::mac(good), t0) == Router::ClientState::Ready);
+    CHECK(sec_handshake(g, G, m, M, P, H, sim3::pake(good), t0) == Router::ClientState::Ready);
     g.relay_state(&name);
     CHECK(name == "Hunter1" && m.served().size() == 1);
 
@@ -1189,9 +1287,11 @@ static void test_member_relay_security() {
     {
         Router mm, gg;
         mm.set_keyed_mac(sim3::kmac());
-        mm.serve(true, H, P, sim3::mac(good), "M", {}, mk);
+        gg.set_keyed_mac(sim3::kmac());
+        mm.set_keyed_mac(sim3::kmac());
+        mm.serve(true, H, P, sim3::pake(good), "M", {}, mk);
         // Capture the guest's first Q3.
-        gg.relay_use(M, P, H, P, sim3::mac(good), t0);
+        gg.relay_use(M, P, H, P, sim3::pake(good), t0);
         std::vector<Wire> go, mo;
         gg.poll(t0, &go);
         sec_pump(go, G, P, mm, M, t0, &mo);
@@ -1203,10 +1303,10 @@ static void test_member_relay_security() {
         CHECK(gg.relay_state() == Router::ClientState::Ready);
         // A second handshake 1 s later (live session): not replaced.
         Router g3;
-        CHECK(sec_handshake(g3, G, mm, M, P, H, sim3::mac(good), at(1000)) != Router::ClientState::Ready);
+        CHECK(sec_handshake(g3, G, mm, M, P, H, sim3::pake(good), at(1000)) != Router::ClientState::Ready);
         // A fresh handshake once quiet (a restarted guest): a new session.
         Router g4;
-        CHECK(sec_handshake(g4, G, mm, M, P, H, sim3::mac(good), at(20000)) == Router::ClientState::Ready);
+        CHECK(sec_handshake(g4, G, mm, M, P, H, sim3::pake(good), at(20000)) == Router::ClientState::Ready);
         // Replaying the first handshake's Q3 later (that session is gone): no new session, no welcome.
         std::vector<Wire> t{q3old};
         std::vector<Wire> rep;
@@ -1224,17 +1324,21 @@ static void test_member_relay_security() {
         for (int i = 0; i < 7; ++i) {
             Router bad;
             int c = 0;
-            if (sec_handshake(bad, X, m, M, P, H, sim3::mac(sim3::key_of_pw("guess")), t0, &c) ==
+            if (sec_handshake(bad, X, m, M, P, H, sim3::pake(sim3::key_of_pw("guess")), t0, &c) ==
                 Router::ClientState::Refused) {
                 if (c == Router::kWrongKey) ++refusals;
                 if (c == Router::kLockedOut) ++lockouts;
             }
         }
-        // The impostor check stops the guess before its proof: the member's Q2 proof fails for the
-        // guesser's key, so no Q3 is ever sent.
-        CHECK(refusals == 0 && lockouts == 0);
+        // Each guess is one online try at the member, counted: 5 free, then the lockout.
+        CHECK(refusals == 6 && lockouts == 1);
+        clock_ms += 31000 * 4;  // let that lockout and its doubling pass
+        throttle = AuthThrottle{};
         // A guesser that ignores the member's proof (a hand-made Q3) is still counted and locked out.
         int wrong = 0, locked = 0;
+        std::uint8_t base[32] = {9}, sc[32], ya[32];
+        for (int i = 0; i < 32; ++i) sc[i] = static_cast<std::uint8_t>(i * 7 + 1);
+        crypto::x25519(sc, base, ya);
         for (int i = 0; i < 7; ++i) {
             std::array<std::uint8_t, 16> cn{};
             cn[0] = static_cast<std::uint8_t>(i + 1);
@@ -1242,6 +1346,7 @@ static void test_member_relay_security() {
             h1[0].addr = M;
             h1[0].data = {0xfc, 'Q', 1};
             h1[0].data.insert(h1[0].data.end(), cn.begin(), cn.end());
+            h1[0].data.insert(h1[0].data.end(), ya, ya + 32);
             h1[0].data.resize(Router::kQ1Size);
             std::vector<Wire> q2;
             sec_pump(h1, X, P, m, M, t0, &q2);
@@ -1250,8 +1355,9 @@ static void test_member_relay_security() {
             q3[0].addr = M;
             q3[0].data = {0xfc, 'Q', 3};
             q3[0].data.insert(q3[0].data.end(), cn.begin(), cn.end());
-            q3[0].data.insert(q3[0].data.end(), q2[0].data.begin() + 19, q2[0].data.begin() + 35);
-            q3[0].data.resize(51, 0x5a);  // a guessed proof
+            q3[0].data.insert(q3[0].data.end(), ya, ya + 32);
+            q3[0].data.insert(q3[0].data.end(), q2[0].data.begin() + 19, q2[0].data.begin() + 51);
+            q3[0].data.resize(99, 0x5a);  // a guessed confirmation
             std::vector<Wire> ans;
             sec_pump(q3, X, P, m, M, t0, &ans);
             if (ans.size() == 1 && ans[0].data[2] == 5) {
@@ -1262,28 +1368,29 @@ static void test_member_relay_security() {
         CHECK(wrong == 6 && locked == 1);
         Router right;
         int c = 0;
-        CHECK(sec_handshake(right, X, m, M, P, H, sim3::mac(good), t0, &c) == Router::ClientState::Refused &&
+        CHECK(sec_handshake(right, X, m, M, P, H, sim3::pake(good), t0, &c) == Router::ClientState::Refused &&
               c == Router::kLockedOut);
         clock_ms += 31000;  // the lockout ends
         Router right2;
-        CHECK(sec_handshake(right2, X, m, M, P, H, sim3::mac(good), t0) == Router::ClientState::Ready);
+        CHECK(sec_handshake(right2, X, m, M, P, H, sim3::pake(good), t0) == Router::ClientState::Ready);
     }
     // At most kMaxSessions guests per member.
     {
         Router mm;
-        mm.serve(true, H, P, sim3::mac(good), "M", {}, mk);
+        mm.set_keyed_mac(sim3::kmac());
+        mm.serve(true, H, P, sim3::pake(good), "M", {}, mk);
         int ready = 0, full = 0;
         for (int i = 0; i < 6; ++i) {
             Router gg;
             int c = 0;
-            const auto st = sec_handshake(gg, ip(198, 51, 100, 100 + i), mm, M, P, H, sim3::mac(good), t0, &c);
+            const auto st = sec_handshake(gg, ip(198, 51, 100, 100 + i), mm, M, P, H, sim3::pake(good), t0, &c);
             ready += st == Router::ClientState::Ready;
             full += st == Router::ClientState::Refused && c == Router::kFull;
         }
         CHECK(ready == static_cast<int>(Router::kMaxSessions) && full == 2);
     }
     // A member that is not serving any more forwards nothing.
-    m.serve(false, 0, 0, nullptr, {}, {}, {});
+    m.serve(false, 0, 0, {}, {}, {}, {});
     g.outgoing(H, P, dgram, 5, at(400), &gout);
     sec_pump(gout, G, P, m, M, at(400), &mout);
     CHECK(mout.empty());
@@ -1313,45 +1420,172 @@ static void test_ipv6_keys() {
         std::uint16_t p3 = 0;
         CHECK(r.key_of(e1, &a3, &p3) && a3 == host);
     }
-    // M1: one /64 counts as one address for lockouts, and holds at most kMaxV6Per64 keys.
+    // M1 / N4: lockouts count a whole /56 as one address, looked up by the full key (address and
+    // port: two keys may share an address).
     {
         Router r;
         r.set_ipv6(true);
+        r.set_key_hash_for_tests([](const Ip6&) { return 77u; });  // every key on one address, other ports
         std::uint32_t a1 = 0, a2 = 0, a3 = 0;
-        std::uint16_t p = 0;
-        CHECK(r.key_of(Ep6{ip6("2001:db8:aa:bb::1"), nbo(9307)}, &a1, &p));
-        CHECK(r.key_of(Ep6{ip6("2001:db8:aa:bb:ffff::7"), nbo(9307)}, &a2, &p));
-        CHECK(r.key_of(Ep6{ip6("2001:db8:aa:cc::1"), nbo(9307)}, &a3, &p));
-        CHECK(a1 != a2 && r.throttle_key(a1) == r.throttle_key(a2) && r.throttle_key(a1) != r.throttle_key(a3));
-        CHECK(r.throttle_key(ip(198, 51, 100, 1)) == ip(198, 51, 100, 1));
-        CHECK(!bbnet::udp::is_synthetic(r.throttle_key(a1)));  // a group key is never a peer's key
-        // Rotating interface ids in one /64: lock-out by its group, the next address waits too.
+        std::uint16_t p1 = 0, p2 = 0, p3 = 0;
+        CHECK(r.key_of(Ep6{ip6("2001:db8:aa:bb::1"), nbo(9307)}, &a1, &p1));
+        CHECK(r.key_of(Ep6{ip6("2001:db8:aa:bc:ffff::7"), nbo(9307)}, &a2, &p2));  // same /56, another /64
+        CHECK(r.key_of(Ep6{ip6("2001:db8:ab:cc::1"), nbo(9308)}, &a3, &p3));       // another /56
+        CHECK(r.throttle_key(a1, p1) == r.throttle_key(a2, p2));
+        CHECK(r.throttle_key(a1, p1) != r.throttle_key(a3, p3));
+        CHECK(r.throttle_key(ip(198, 51, 100, 1), nbo(9307)) == ip(198, 51, 100, 1));
+        CHECK(!bbnet::udp::is_synthetic(r.throttle_key(a1, p1)));  // a group key is never a peer's key
+        // Rotating addresses in one /56: locked out by its group, the next address waits too.
         AuthThrottle at;
-        for (int i = 0; i < 6; ++i) at.Fail(r.throttle_key(a1), 0);
-        CHECK(at.Locked(r.throttle_key(a2), 1));
-        CHECK(!at.Locked(r.throttle_key(a3), 1));
-        int got = 2;
-        for (int i = 0; i < 60; ++i) {
+        for (int i = 0; i < 6; ++i) at.Fail(r.throttle_key(a1, p1), 0);
+        CHECK(at.Locked(r.throttle_key(a2, p2), 1));
+        CHECK(!at.Locked(r.throttle_key(a3, p3), 1));
+    }
+    // N2: a /56 floods the table; a party member's (trusted) key and a bound one are never evicted,
+    // and a newcomer from elsewhere still gets a key.
+    {
+        Router r;
+        r.set_ipv6(true);
+        std::uint32_t ta = 0, ba = 0;
+        std::uint16_t tp = 0, bp = 0;
+        const Ep6 member{ip6("2001:db8:77:7701::5"), nbo(9307)};  // in the attacker's /48
+        CHECK(r.key_of(member, &ta, &tp));
+        r.mark_trusted(ta, tp);
+        CHECK(r.bind_v6(ip(203, 0, 113, 50), nbo(9307), Ep6{ip6("2001:db8:77:7702::9"), nbo(9307)}, true));
+        int got = 0;
+        for (int i = 0; i < 2000; ++i) {  // 2000 sources over 250 /64s of 2001:db8:77:7700::/56
             char t[64];
-            std::snprintf(t, sizeof t, "2001:db8:aa:bb:1:2:3:%x", i + 16);
+            std::snprintf(t, sizeof t, "2001:db8:77:77%02x::%x", i % 250, i / 250 + 16);
             std::uint32_t a = 0;
-            std::uint16_t pp = 0;
-            got += r.key_of(Ep6{ip6(t), nbo(9307)}, &a, &pp);
+            std::uint16_t p = 0;
+            got += r.key_of(Ep6{ip6(t), nbo(9307)}, &a, &p);
         }
-        CHECK(got == static_cast<int>(Router::kMaxV6Per64));
-        std::uint32_t a4 = 0;
-        CHECK(r.key_of(Ep6{ip6("2001:db8:aa:dd::1"), nbo(9307)}, &a4, &p));  // another /64: fine
-        // A packet from a full /64's newcomer is dropped, not given a key.
+        CHECK(got == 2000);  // each stranger evicts an older stranger of its prefix
+        std::uint32_t a = 0;
+        std::uint16_t p = 0;
+        CHECK(r.known_key(member, &a, &p) && a == ta && p == tp);           // the member kept its key
+        CHECK(r.v6_of(ip(203, 0, 113, 50), nbo(9307), nullptr, nullptr));  // the bound one too
+        int in48 = 0;
+        for (int i = 0; i < 2000; ++i) {
+            char t[64];
+            std::snprintf(t, sizeof t, "2001:db8:77:77%02x::%x", i % 250, i / 250 + 16);
+            in48 += r.known_key(Ep6{ip6(t), nbo(9307)}, &a, &p);
+        }
+        CHECK(in48 + 1 <= static_cast<int>(Router::kMaxV6Per48));  // the /48 holds at most its cap
+        CHECK(r.key_of(Ep6{ip6("2001:db8:99::1"), nbo(9307)}, &a, &p));  // another network: served
+        // The trusted member's traffic still gets in.
         Wire in;
         in.v6 = true;
-        in.addr6 = ip6("2001:db8:aa:bb:9:9:9:9");
-        in.port = nbo(9307);
+        in.addr6 = member.addr;
+        in.port = member.port;
         in.data = {1, 2, 3};
         std::vector<std::uint8_t> d;
         std::uint32_t sa;
         std::uint16_t sp;
         std::vector<Wire> o;
-        CHECK(!r.incoming(in, rudp::Clock::now(), &d, &sa, &sp, &o));
+        CHECK(r.incoming(in, rudp::Clock::now(), &d, &sa, &sp, &o) && sa == ta);
+    }
+    // N3: a V frame naming a key of the host's own IPv6 table (a peer it reaches directly) is refused.
+    {
+        Router h;
+        h.set_ipv6(true);
+        h.set_keyed_mac(sim3::kmac());
+        h.accept_relayed(true);
+        const Router::MemberKey mk = Router::new_member_key();
+        const std::uint32_t M = ip(192, 0, 2, 50);
+        h.set_member_key(mk, M, "Hunter1");
+        std::uint32_t ka = 0;
+        std::uint16_t kp = 0;
+        CHECK(h.key_of(Ep6{ip6("2001:db8:5::5"), nbo(9307)}, &ka, &kp));  // a direct IPv6 peer
+        auto vf = [&](std::uint32_t ga, std::uint16_t gp, std::uint64_t ctr) {
+            std::vector<std::uint8_t> f{0xfc, 'V', 1};
+            for (int i = 3; i >= 0; --i) f.push_back(static_cast<std::uint8_t>(mk.id >> (8 * i)));
+            for (int i = 7; i >= 0; --i) f.push_back(static_cast<std::uint8_t>(ctr >> (8 * i)));
+            f.insert(f.end(), reinterpret_cast<const std::uint8_t*>(&ga), reinterpret_cast<const std::uint8_t*>(&ga) + 4);
+            f.insert(f.end(), reinterpret_cast<const std::uint8_t*>(&gp), reinterpret_cast<const std::uint8_t*>(&gp) + 2);
+            const std::size_t at = f.size();
+            f.resize(f.size() + 16);
+            f.push_back(0x42);
+            std::vector<std::uint8_t> msg(f.begin(), f.begin() + static_cast<std::ptrdiff_t>(at));
+            msg.push_back(0x42);
+            sim3::kmac()(mk.key.data(), msg.data(), msg.size(), f.data() + at);
+            Wire w;
+            w.addr = M;
+            w.port = nbo(9307);
+            w.data = f;
+            return w;
+        };
+        std::vector<std::uint8_t> d;
+        std::uint32_t sa;
+        std::uint16_t sp;
+        std::vector<Wire> o;
+        CHECK(!h.incoming(vf(ka, kp, 1), rudp::Clock::now(), &d, &sa, &sp, &o));
+        CHECK(h.incoming(vf(ip(198, 51, 100, 3), nbo(9307), 2), rudp::Clock::now(), &d, &sa, &sp, &o));
+    }
+    // N5: a key id another member registered cannot be taken over.
+    {
+        Router h;
+        h.set_keyed_mac(sim3::kmac());
+        h.accept_relayed(true);
+        const Router::MemberKey mk = Router::new_member_key();
+        h.set_member_key(mk, ip(192, 0, 2, 50), "Hunter1");
+        Router::MemberKey stolen = mk;
+        stolen.key[0] ^= 0xff;
+        h.set_member_key(stolen, ip(192, 0, 2, 66), "Hunter3");
+        bool refused = false;
+        for (const std::string& n : h.take_notes()) refused |= n.find("refused") != std::string::npos;
+        CHECK(refused);
+        // Hunter1's frames still pass under its own key (and not Hunter3's).
+        std::vector<std::uint8_t> f{0xfc, 'V', 1};
+        for (int i = 3; i >= 0; --i) f.push_back(static_cast<std::uint8_t>(mk.id >> (8 * i)));
+        for (int i = 7; i >= 0; --i) f.push_back(static_cast<std::uint8_t>(i == 0 ? 5 : 0));
+        const std::uint32_t ga = ip(198, 51, 100, 4);
+        const std::uint16_t gp = nbo(9307);
+        f.insert(f.end(), reinterpret_cast<const std::uint8_t*>(&ga), reinterpret_cast<const std::uint8_t*>(&ga) + 4);
+        f.insert(f.end(), reinterpret_cast<const std::uint8_t*>(&gp), reinterpret_cast<const std::uint8_t*>(&gp) + 2);
+        const std::size_t at = f.size();
+        f.resize(f.size() + 16);
+        f.push_back(0x42);
+        std::vector<std::uint8_t> msg(f.begin(), f.begin() + static_cast<std::ptrdiff_t>(at));
+        msg.push_back(0x42);
+        sim3::kmac()(mk.key.data(), msg.data(), msg.size(), f.data() + at);
+        Wire w;
+        w.addr = ip(192, 0, 2, 50);
+        w.port = nbo(9307);
+        w.data = f;
+        std::vector<std::uint8_t> d;
+        std::uint32_t sa;
+        std::uint16_t sp;
+        std::vector<Wire> o;
+        CHECK(h.incoming(w, rudp::Clock::now(), &d, &sa, &sp, &o) && sa == ga);
+    }
+    // N6: a flood of nonce frames from one network keeps one slot; the host's nonce still arrives.
+    {
+        Router r;
+        r.set_ipv6(true);
+        std::array<std::uint8_t, 16> host_nonce{};
+        host_nonce[0] = 0x99;
+        std::vector<std::uint8_t> d;
+        std::uint32_t sa;
+        std::uint16_t sp;
+        std::vector<Wire> o;
+        for (int i = 0; i < 500; ++i) {
+            std::array<std::uint8_t, 16> junk{};
+            junk[1] = static_cast<std::uint8_t>(i);
+            char t[64];
+            std::snprintf(t, sizeof t, "2001:db8:66:%x::%x", i % 200, i + 1);
+            Wire w = Router::nonce_wire(Ep6{ip6("2001:db8::5"), nbo(9307)}, junk);
+            w.addr6 = ip6(t);
+            r.incoming(w, rudp::Clock::now(), &d, &sa, &sp, &o);
+            if (i == 250) {
+                Wire hw = Router::nonce_wire(Ep6{ip6("2001:db8::5"), nbo(9307)}, host_nonce);
+                hw.addr6 = ip6("2001:db8:1::1");  // the host
+                r.incoming(hw, rudp::Clock::now(), &d, &sa, &sp, &o);
+            }
+        }
+        const auto got = r.take_nonces();
+        CHECK(got.size() == 2);
+        CHECK(std::find(got.begin(), got.end(), host_nonce) != got.end());
     }
     // M3: the host's nonce reaches the member over IPv6 only.
     {

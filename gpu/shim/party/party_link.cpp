@@ -1372,7 +1372,7 @@ struct PartyLink::Impl {
             {
                 std::uint32_t ip = 0;
                 std::memcpy(&ip, c->peer_ip.data(), 4);
-                if (cfg.throttle_key) ip = cfg.throttle_key(ip);  // an IPv6 /64 counts as one address
+                if (cfg.throttle_key) ip = cfg.throttle_key(ip, htons(c->peer_port));  // an IPv6 /64 counts as one address
                 std::int64_t wait_ms = 0;
                 bool global = false;
                 if (cfg.auth_throttle && auth_throttle.Locked(ip, now_ms(), &wait_ms, &global)) {
@@ -1429,7 +1429,7 @@ struct PartyLink::Impl {
                 if (cfg.password.empty() || !crypto::equal32(by_password.data(), proof)) {
                     std::uint32_t ip = 0;
                     std::memcpy(&ip, c->peer_ip.data(), 4);
-                    if (cfg.throttle_key) ip = cfg.throttle_key(ip);
+                    if (cfg.throttle_key) ip = cfg.throttle_key(ip, htons(c->peer_port));
                     const std::uint64_t global_before = auth_throttle.global_lockouts();
                     if (cfg.auth_throttle && auth_throttle.Fail(ip, now_ms())) {
                         std::int64_t wait_ms = 0;
@@ -1451,7 +1451,7 @@ struct PartyLink::Impl {
             {
                 std::uint32_t ip = 0;
                 std::memcpy(&ip, c->peer_ip.data(), 4);
-                if (cfg.throttle_key) ip = cfg.throttle_key(ip);
+                if (cfg.throttle_key) ip = cfg.throttle_key(ip, htons(c->peer_port));
                 auth_throttle.Success(ip);
             }
             admit(c);

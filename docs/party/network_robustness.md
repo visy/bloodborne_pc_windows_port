@@ -313,8 +313,9 @@ IPv4 endpoints only and need no change:
   link (`net6_echo`), and against the member's own room address, and
   sends the table to everyone (`net6_table`), so guest pairs probe IPv6 before the host relay.
 - **Member relay**: frames `[0xfc][type]` on the party port. The stuck guest G and the member M
-  first run a handshake keyed by the party key (G: `Q1` nonce -> M: `Q2` nonce, stateless -> G:
-  `Q3` proof -> M: `Q4` session + its own proof and name; `Q5` refusal). Then G sends everything
+  first run a PAKE (CPace on X25519; the generator from the party's relay key and G's nonce): G:
+  `Q1` its point -> M: `Q2` its point (stateless) -> G: `Q3` its confirmation -> M: `Q4` session,
+  name and its confirmation; `Q5` refusal. Then G sends everything
   for the host as `T` (session) to M; M forwards it as `V` (G's endpoint as M sees it) to the host;
   the host answers G's endpoint with `v` to M, and M passes it on as `t`. The host presents G at its
   endpoint as seen by M, and G sees the host at the host's own address: the link's AUTH, the room
@@ -344,9 +345,16 @@ IPv4 endpoints only and need no change:
   keys that are loopback (unless the member is: tests), unspecified, multicast, broadcast or the host's
   own are refused. Synthetic keys are SipHash-2-4 under a per-process random key (local to each PC; the
   host hands them out in records and `net6_table`); a clash probes for a free key and never evicts a
-  live or bound entry; 32 keys per /64. The link's and the relay's lockouts count an IPv6 /64 as one
-  address (`LinkConfig::throttle_key`). The member proves the party key first (Q2), so a guest never
-  sends its proof to an impostor. A member's IPv6 endpoint enters `net6_table` only after a nonce the
+  bound entry; 32 keys per /64 and 64 per /48, a full prefix or table evicting its oldest stranger
+  (never a party member's key, `mark_trusted`, nor a bound one); a guest key that is a key of the
+  host's own IPv6 table is refused. The link's and the relay's lockouts count an IPv6 /56 as one
+  address, looked up by the full key (`LinkConfig::throttle_key`). Second review (N1): the relay
+  handshake is a PAKE, so no message gives a stranger, an eavesdropper or an impostor member an
+  offline password test (the first fix, a member proof in Q2, was itself one); each handshake is one
+  online guess, counted by the member's lockout (an impostor member gets one guess per guest that
+  dials it, uncounted on the guest's side). Relay key ids are not taken over by another member; the
+  IPv6 nonces keep one slot per source /48 and one echo event per tick, and a repeated `net6` does not
+  restart the host's tries. A member's IPv6 endpoint enters `net6_table` only after a nonce the
   host sent there came back over its link (`net6_echo`). Nonces, session ids and salts from
   BCryptGenRandom; a replayed or recent handshake never replaces a live session; each session is
   capped at 300 datagrams and 128 KB/s. The host's IPv6 address in the code is a temporary privacy

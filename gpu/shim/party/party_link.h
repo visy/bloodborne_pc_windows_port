@@ -257,8 +257,9 @@ struct LinkConfig {
     // turns it off (its random handshakes come from 127.0.0.1 like its real members).
     bool auth_throttle = true;
     // Host: the address a peer's wrong passwords count under (F2 0.7.1: an IPv6 peer's /64, from the
-    // party port's route table; net/party_route.h throttle_key). Unset: the peer's own address.
-    std::function<std::uint32_t(std::uint32_t ip)> throttle_key;
+    // party port's route table, a /56 by the peer's key; net/party_route.h throttle_key). Unset: the
+    // peer's own address.
+    std::function<std::uint32_t(std::uint32_t ip, std::uint16_t port)> throttle_key;  // port: network order
 };
 
 // What differs between the host's and a guest's game (bbport build, eboot.bin, game params,

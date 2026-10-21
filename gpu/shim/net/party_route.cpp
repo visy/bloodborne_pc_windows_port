@@ -121,11 +121,11 @@ bool open(const Router::KeyedMac& kmac, const std::uint8_t* key, const std::vect
     return equal16(want, f.data() + hdr - 16);
 }
 
-constexpr std::size_t kQ2 = 51, kQ3 = 51, kQ5 = 22;  // frame sizes (Q1: Router::kQ1Size; Q4: 40 + name)
-constexpr const char* kLabelNonce = "bbport relay nonce v1";
-constexpr const char* kLabelAuth = "bbport relay auth v1";
-constexpr const char* kLabelOk = "bbport relay ok v1";
-constexpr const char* kLabelMember = "bbport relay member v1";
+constexpr std::size_t kQ2 = 51, kQ3 = 99, kQ5 = 22;  // frame sizes (Q1: Router::kQ1Size; Q4: 40 + name)
+constexpr const char* kLabelScalar = "bbport cpace member scalar v1";
+constexpr const char* kLabelIsk = "bbport cpace isk v1";
+constexpr const char* kLabelConfirmA = "bbport cpace confirm guest v1";
+constexpr const char* kLabelConfirmB = "bbport cpace confirm member v1";
 
 }  // namespace
 
@@ -357,25 +357,28 @@ std::uint32_t addr_of_host(std::uint32_t host_order) {
     std::memcpy(&a, b, 4);
     return a;
 }
-bool same64(const Ip6& a, const Ip6& b) { return std::memcmp(a.b.data(), b.b.data(), 8) == 0; }
+bool same_prefix(const Ip6& a, const Ip6& b, std::size_t bytes) { return std::memcmp(a.b.data(), b.b.data(), bytes) == 0; }
 }  // namespace
 
-std::uint32_t Router::group_of_locked(std::uint32_t addr) const {
+std::uint32_t Router::group_of_locked(std::uint32_t addr, std::uint16_t port) const {
     if (!is_synthetic(addr)) return addr;
-    for (const auto& [key, v] : v6_by_key_) {
-        if (static_cast<std::uint32_t>(key) != addr) continue;
-        std::uint8_t in[9];
-        in[0] = 'g';
-        std::memcpy(in + 1, v.e6.addr.b.data(), 8);  // the /64
-        const auto h = static_cast<std::uint32_t>(siphash24(hash_key_.data(), in, sizeof in)) & 0x07ffffffu;
-        return addr_of_host(0xf8000000u | h);  // 248/5: never a key
-    }
-    return addr;
+    auto it = v6_by_key_.find(k(addr, port));
+    if (it == v6_by_key_.end()) return addr;
+    std::uint8_t in[8];
+    in[0] = 'g';
+    std::memcpy(in + 1, it->second.e6.addr.b.data(), 7);  // the /56: a home or a small site
+    const auto h = static_cast<std::uint32_t>(siphash24(hash_key_.data(), in, sizeof in)) & 0x07ffffffu;
+    return addr_of_host(0xf8000000u | h);  // 248/5: never a key
 }
 
-std::uint32_t Router::throttle_key(std::uint32_t addr) const {
+std::uint32_t Router::throttle_key(std::uint32_t addr, std::uint16_t port) const {
     std::lock_guard<std::mutex> lk(mu_);
-    return group_of_locked(addr);
+    return group_of_locked(addr, port);
+}
+
+void Router::mark_trusted(std::uint32_t addr, std::uint16_t port) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (auto it = v6_by_key_.find(k(addr, port)); it != v6_by_key_.end()) it->second.trusted = true;
 }
 
 bool Router::bind_v6(std::uint32_t ka, std::uint16_t kp, const Ep6& e6, bool route) {
@@ -453,34 +456,27 @@ bool Router::key_of_locked(const Ep6& e6, std::uint32_t* addr, std::uint16_t* po
         if (auto v = v6_by_key_.find(it->second); v != v6_by_key_.end()) v->second.seen = now;
         return true;
     }
-    // Caps: per /64 (an attacker owns its whole /64) and in all. Only a synthetic entry quiet for
-    // 5 min makes room; a live or bound one is never evicted.
-    const auto stale = [&](const V6& v) { return v.synthetic && now - v.seen > std::chrono::minutes(5); };
-    std::size_t in64 = 0;
-    auto oldest64 = v6_by_key_.end(), oldest = v6_by_key_.end();
-    for (auto i = v6_by_key_.begin(); i != v6_by_key_.end(); ++i) {
-        if (!i->second.synthetic) continue;
-        if (same64(i->second.e6.addr, e6.addr)) {
-            ++in64;
-            if (oldest64 == v6_by_key_.end() || i->second.seen < oldest64->second.seen) oldest64 = i;
+    // Caps (N2): per /64 and per /48 (an attacker may own a whole prefix) and in all. A full prefix
+    // or table evicts its oldest untrusted synthetic entry (a stranger's, never a party member's or a
+    // bound one), else the newcomer is dropped.
+    auto make_room = [&](std::size_t prefix_bytes, std::size_t cap) {
+        std::size_t count = 0;
+        auto oldest = v6_by_key_.end();
+        for (auto i = v6_by_key_.begin(); i != v6_by_key_.end(); ++i) {
+            if (!i->second.synthetic) continue;
+            if (prefix_bytes && !same_prefix(i->second.e6.addr, e6.addr, prefix_bytes)) continue;
+            ++count;
+            if (!i->second.trusted && (oldest == v6_by_key_.end() || i->second.seen < oldest->second.seen)) oldest = i;
         }
-        if (oldest == v6_by_key_.end() || i->second.seen < oldest->second.seen) oldest = i;
-    }
-    auto evict = [&](decltype(oldest) i) {
-        key_by_v6_.erase(i->second.e6);
-        v6_by_key_.erase(i);
+        if (count < cap) return true;
+        if (oldest == v6_by_key_.end()) return false;
+        key_by_v6_.erase(oldest->second.e6);
+        v6_by_key_.erase(oldest);
+        return true;
     };
-    if (in64 >= kMaxV6Per64) {
-        if (oldest64 == v6_by_key_.end() || !stale(oldest64->second)) return false;
-        if (oldest == oldest64) oldest = v6_by_key_.end();
-        evict(oldest64);
-    }
-    if (v6_by_key_.size() >= kMaxV6) {
-        if (oldest == v6_by_key_.end() || !stale(oldest->second)) return false;
-        evict(oldest);
-    }
-    // A clash with any entry (live, bound or stale) is never resolved by eviction: the newcomer
-    // probes for the next free key.
+    if (!make_room(8, kMaxV6Per64) || !make_room(6, kMaxV6Per48)) return false;
+    if (v6_by_key_.size() >= kMaxV6 && !make_room(0, kMaxV6)) return false;
+    // A clash with any entry is never resolved by eviction: the newcomer probes for the next free key.
     const std::uint32_t h = hash27(e6.addr);
     for (std::uint32_t i = 0; i < 32; ++i) {
         const std::uint32_t a = addr_of_host(0xf0000000u | ((h + i) & 0x07ffffffu));
@@ -511,7 +507,11 @@ Wire Router::nonce_wire(const Ep6& to, const std::array<std::uint8_t, 16>& nonce
 
 std::vector<std::array<std::uint8_t, 16>> Router::take_nonces() {
     std::lock_guard<std::mutex> lk(mu_);
-    std::vector<std::array<std::uint8_t, 16>> v(nonces_.begin(), nonces_.end());
+    std::vector<std::array<std::uint8_t, 16>> v;
+    for (const auto& [g, nonce] : nonces_) {
+        (void)g;
+        v.push_back(nonce);
+    }
     nonces_.clear();
     return v;
 }
@@ -609,23 +609,30 @@ bool Router::incoming(const Wire& from, RClock::time_point now, std::vector<std:
     return on_frame(sa, sp, from.v6, *data, now, src_addr, src_port, out, via_relay);
 }
 
-void Router::server_nonce(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, std::int64_t minute,
-                          std::uint8_t out[16]) const {
+// The member's per-guest secret scalar (stateless: recomputed at Q3 from the salt, the guest's
+// endpoint, its nonce and point, and the minute).
+void Router::member_scalar(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, const std::uint8_t* ya_pub,
+                           std::int64_t minute, std::uint8_t out[32]) const {
     std::vector<std::uint8_t> m;
-    append(m, kLabelNonce);
+    append(m, kLabelScalar);
     m.insert(m.end(), sv_salt_.begin(), sv_salt_.end());
     put_key(m, a, p);
     m.insert(m.end(), cn, cn + 16);
+    m.insert(m.end(), ya_pub, ya_pub + 32);
     put32(m, static_cast<std::uint32_t>(minute));
-    sv_mac_(m.data(), m.size(), out);
+    sv_pake_.hash(m.data(), m.size(), out);
 }
 
-void Router::member_proof(const Mac& mac, const std::uint8_t* cn, const std::uint8_t* sn, std::uint8_t out[16]) const {
+// ISK = H(label || cn || Ya || Yb || K): the session's key for both confirmations.
+void Router::session_key(const Pake& pk, const std::uint8_t* cn, const std::uint8_t* ya, const std::uint8_t* yb,
+                         const std::uint8_t* kk, std::uint8_t out[32]) {
     std::vector<std::uint8_t> m;
-    append(m, kLabelMember);
+    append(m, kLabelIsk);
     m.insert(m.end(), cn, cn + 16);
-    m.insert(m.end(), sn, sn + 16);
-    mac(m.data(), m.size(), out);
+    m.insert(m.end(), ya, ya + 32);
+    m.insert(m.end(), yb, yb + 32);
+    m.insert(m.end(), kk, kk + 32);
+    pk.hash(m.data(), m.size(), out);
 }
 
 bool Router::valid_guest_key(std::uint32_t ga, std::uint16_t gp, std::uint32_t member_src) const {
@@ -635,6 +642,9 @@ bool Router::valid_guest_key(std::uint32_t ga, std::uint16_t gp, std::uint32_t m
     if (a0 == 0 || (a0 >= 224 && a0 < 240) || a0 >= 248) return false;  // unspecified, multicast, reserved, broadcast
     if (a0 == 127 && !member_lb) return false;                            // loopback: a local test only
     if (own_addrs_.count(ga) && !member_lb) return false;                 // never one of our own addresses
+    // A key of our own IPv6 table (a peer we reach directly, or another one's synthetic key): a
+    // member's guest never speaks for it (N3).
+    if (v6_by_key_.count(k(ga, gp))) return false;
     return true;
 }
 
@@ -644,18 +654,24 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
     const std::size_t n = d.size();
     const std::uint8_t type = d[1];
     if (type == 'N') {  // the host checks our IPv6 endpoint: echoed over the link (net6_echo)
-        if (v6 && n == 18 && nonces_.size() < 8) {
-            std::array<std::uint8_t, 16> nonce;
-            std::memcpy(nonce.data(), d.data() + 2, 16);
-            nonces_.push_back(nonce);
-        }
+        if (!v6 || n != 18) return false;
+        auto it = v6_by_key_.find(k(sa, sp));
+        if (it == v6_by_key_.end()) return false;
+        // One slot per source /48 (N6: a flood from one network keeps one slot; the latest wins), at
+        // most kMaxNonceSlots; the guest's tick drains them four times a second.
+        std::uint64_t g48 = 0;
+        for (int i = 0; i < 6; ++i) g48 = g48 << 8 | it->second.e6.addr.b[static_cast<std::size_t>(i)];
+        if (!nonces_.count(g48) && nonces_.size() >= kMaxNonceSlots) return false;
+        std::array<std::uint8_t, 16> nonce;
+        std::memcpy(nonce.data(), d.data() + 2, 16);
+        nonces_[g48] = nonce;
         return false;
     }
     if (type == 'Q' && n >= 3 + 16) {
         const std::uint8_t sub = d[2];
         const std::uint8_t* cn = d.data() + 3;
         const std::int64_t minute = std::chrono::duration_cast<std::chrono::minutes>(now.time_since_epoch()).count();
-        const std::uint32_t tkey = group_of_locked(sa);  // an IPv6 /64 counts as one address
+        const std::uint32_t tkey = group_of_locked(sa, sp);  // an IPv6 /56 counts as one address
         auto refuse = [&](std::uint8_t code, int wait_s) {
             std::vector<std::uint8_t> f{kRouteMagic, 'Q', 5};
             f.insert(f.end(), cn, cn + 16);
@@ -665,32 +681,38 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             f.push_back(static_cast<std::uint8_t>(w));
             wire_to(sa, sp, std::move(f), out);
         };
-        if (sub == 1 && n >= kQ1Size) {  // a guest's hello at the member
+        if (sub == 1 && n >= kQ1Size) {  // a guest's hello: its point Ya
             if (!serving_) {
                 refuse(kNotServing, 0);
                 return false;
             }
-            std::uint8_t sn[16], proof[16];
-            server_nonce(sa, sp, cn, minute, sn);
-            member_proof(sv_mac_, cn, sn, proof);
+            // Each hello costs two X25519 operations: a global budget against floods.
+            if (!q1_budget_.take(1, now)) return false;
+            const std::uint8_t* ya = d.data() + 19;
+            std::uint8_t g[32], yb_s[32], yb[32];
+            sv_pake_.generator(cn, g);
+            member_scalar(sa, sp, cn, ya, minute, yb_s);
+            if (!sv_pake_.x25519(yb_s, g, yb)) return false;
+            // Q2 is the member's point only: nothing in it can be checked against a password guess.
             std::vector<std::uint8_t> f{kRouteMagic, 'Q', 2};
             f.insert(f.end(), cn, cn + 16);
-            f.insert(f.end(), sn, sn + 16);
-            f.insert(f.end(), proof, proof + 16);
+            f.insert(f.end(), yb, yb + 32);
             wire_to(sa, sp, std::move(f), out);
             return false;
         }
-        if (sub == 3 && n == kQ3) {  // its proof
+        if (sub == 3 && n == kQ3) {  // the guest's confirmation: proves it holds the party key
             if (!serving_) {
                 refuse(kNotServing, 0);
                 return false;
             }
-            const std::uint8_t* sn = d.data() + 19;
-            std::uint8_t want[16];
+            const std::uint8_t* ya = d.data() + 19;
+            const std::uint8_t* yb = d.data() + 51;
+            std::uint8_t g[32], yb_s[32], want_yb[32];
+            sv_pake_.generator(cn, g);
             bool fresh = false;
             for (std::int64_t m = minute; m >= minute - 1 && !fresh; --m) {
-                server_nonce(sa, sp, cn, m, want);
-                fresh = equal16(want, sn);
+                member_scalar(sa, sp, cn, ya, m, yb_s);
+                fresh = sv_pake_.x25519(yb_s, g, want_yb) && std::memcmp(want_yb, yb, 32) == 0;
             }
             if (!fresh) return false;  // stale or not ours: the guest says hello again
             std::int64_t remaining = 0;
@@ -698,13 +720,16 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 refuse(kLockedOut, static_cast<int>((remaining + 999) / 1000));
                 return false;
             }
-            std::vector<std::uint8_t> m;
-            append(m, kLabelAuth);
-            m.insert(m.end(), cn, cn + 16);
-            m.insert(m.end(), sn, sn + 16);
-            std::uint8_t proof[16];
-            sv_mac_(m.data(), m.size(), proof);
-            if (!equal16(proof, d.data() + 35)) {
+            std::uint8_t kk[32], isk[32], confirm[16];
+            const bool point_ok = sv_pake_.x25519(yb_s, ya, kk);  // a low-order Ya gives zero: refused
+            if (point_ok) {
+                session_key(sv_pake_, cn, ya, yb, kk, isk);
+                std::vector<std::uint8_t> m;
+                append(m, kLabelConfirmA);
+                m.insert(m.end(), cn, cn + 16);
+                kmac_(isk, m.data(), m.size(), confirm);
+            }
+            if (!point_ok || !equal16(confirm, d.data() + 83)) {
                 if (sv_throttle_.fail) sv_throttle_.fail(tkey);
                 note("member relay: a wrong party key from " + key_text(sa, sp) + " (refused)");
                 refuse(kWrongKey, 0);
@@ -755,13 +780,12 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             f.push_back(static_cast<std::uint8_t>(name.size()));
             f.insert(f.end(), name.begin(), name.end());
             std::vector<std::uint8_t> ok;
-            append(ok, kLabelOk);
+            append(ok, kLabelConfirmB);
             ok.insert(ok.end(), cn, cn + 16);
-            ok.insert(ok.end(), sn, sn + 16);
             put32(ok, it->second.id);
             ok.insert(ok.end(), name.begin(), name.end());
             std::uint8_t tag[16];
-            sv_mac_(ok.data(), ok.size(), tag);
+            kmac_(isk, ok.data(), ok.size(), tag);
             f.insert(f.end(), tag, tag + 16);
             wire_to(sa, sp, std::move(f), out);
             return false;
@@ -770,33 +794,31 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
         if (cl_.st != ClientState::Handshake || sa != cl_.m_addr || sp != cl_.m_port ||
             std::memcmp(cn, cl_.cn.data(), 16) != 0)
             return false;
-        if (sub == 2 && n == kQ2) {
-            // The member proves the party key first: an impostor never gets our proof (offline guessing).
-            std::uint8_t want[16];
-            member_proof(cl_.mac, cn, d.data() + 19, want);
-            if (!equal16(want, d.data() + 35)) {
-                if (!cl_.impostor_noted)
-                    note("member relay: " + key_text(cl_.m_addr, cl_.m_port) +
-                         " does not know our party key (not a party member): no proof sent");
-                cl_.impostor_noted = true;
-                return false;
-            }
-            std::memcpy(cl_.sn.data(), d.data() + 19, 16);
-            cl_.have_sn = true;
+        if (sub == 2 && n == kQ2 && !cl_.have_isk) {
+            std::memcpy(cl_.yb.data(), d.data() + 19, 32);
+            std::uint8_t kk[32];
+            if (!cl_.pake.x25519(cl_.ya_s.data(), cl_.yb.data(), kk)) return false;  // a low-order point
+            session_key(cl_.pake, cl_.cn.data(), cl_.ya.data(), cl_.yb.data(), kk, cl_.isk.data());
+            cl_.have_isk = true;
             client_send_auth(now, out);
-        } else if (sub == 4 && n >= 3 + 16 + 4 + 1 + 16 && cl_.have_sn) {
+        } else if (sub == 4 && n >= 3 + 16 + 4 + 1 + 16 && cl_.have_isk) {
             const std::uint32_t session = get32(d.data() + 19);
             const std::size_t nl = d[23];
             if (n != 24 + nl + 16 || nl > 16) return false;
             std::vector<std::uint8_t> ok;
-            append(ok, kLabelOk);
+            append(ok, kLabelConfirmB);
             ok.insert(ok.end(), cl_.cn.begin(), cl_.cn.end());
-            ok.insert(ok.end(), cl_.sn.begin(), cl_.sn.end());
             put32(ok, session);
             ok.insert(ok.end(), d.begin() + 24, d.begin() + 24 + static_cast<std::ptrdiff_t>(nl));
             std::uint8_t tag[16];
-            cl_.mac(ok.data(), ok.size(), tag);
-            if (!equal16(tag, d.data() + 24 + nl)) return false;  // not a party member: ignored
+            kmac_(cl_.isk.data(), ok.data(), ok.size(), tag);
+            if (!equal16(tag, d.data() + 24 + nl)) {  // not a party member: its welcome is ignored
+                if (!cl_.impostor_noted)
+                    note("member relay: " + key_text(cl_.m_addr, cl_.m_port) +
+                         " does not know our party key (not a party member)");
+                cl_.impostor_noted = true;
+                return false;
+            }
             cl_.session = session;
             cl_.name = clean_name(d.data() + 24, nl);
             cl_.st = ClientState::Ready;
@@ -931,6 +953,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
 void Router::client_send_hello(RClock::time_point now, std::vector<Wire>* out) {
     std::vector<std::uint8_t> f{kRouteMagic, 'Q', 1};
     f.insert(f.end(), cl_.cn.begin(), cl_.cn.end());
+    f.insert(f.end(), cl_.ya.begin(), cl_.ya.end());
     f.resize(kQ1Size, 0);
     cl_.next_send = now + std::chrono::milliseconds(500);
     wire_to(cl_.m_addr, cl_.m_port, std::move(f), out);
@@ -938,20 +961,20 @@ void Router::client_send_hello(RClock::time_point now, std::vector<Wire>* out) {
 
 void Router::client_send_auth(RClock::time_point now, std::vector<Wire>* out) {
     std::vector<std::uint8_t> m;
-    append(m, kLabelAuth);
+    append(m, kLabelConfirmA);
     m.insert(m.end(), cl_.cn.begin(), cl_.cn.end());
-    m.insert(m.end(), cl_.sn.begin(), cl_.sn.end());
-    std::uint8_t proof[16];
-    cl_.mac(m.data(), m.size(), proof);
+    std::uint8_t confirm[16];
+    kmac_(cl_.isk.data(), m.data(), m.size(), confirm);
     std::vector<std::uint8_t> f{kRouteMagic, 'Q', 3};
     f.insert(f.end(), cl_.cn.begin(), cl_.cn.end());
-    f.insert(f.end(), cl_.sn.begin(), cl_.sn.end());
-    f.insert(f.end(), proof, proof + 16);
+    f.insert(f.end(), cl_.ya.begin(), cl_.ya.end());
+    f.insert(f.end(), cl_.yb.begin(), cl_.yb.end());
+    f.insert(f.end(), confirm, confirm + 16);
     cl_.next_send = now + std::chrono::milliseconds(500);
     wire_to(cl_.m_addr, cl_.m_port, std::move(f), out);
 }
 
-void Router::relay_use(std::uint32_t ma, std::uint16_t mp, std::uint32_t ha, std::uint16_t hp, Mac mac,
+void Router::relay_use(std::uint32_t ma, std::uint16_t mp, std::uint32_t ha, std::uint16_t hp, Pake pake,
                        RClock::time_point now) {
     std::lock_guard<std::mutex> lk(mu_);
     cl_ = Client{};
@@ -960,8 +983,22 @@ void Router::relay_use(std::uint32_t ma, std::uint16_t mp, std::uint32_t ha, std
     cl_.m_port = mp;
     cl_.h_addr = ha;
     cl_.h_port = hp;
-    cl_.mac = std::move(mac);
+    cl_.pake = std::move(pake);
     secure_random(cl_.cn.data(), 16);
+    // Our PAKE point Ya = ya * g(relay key, cn).
+    std::uint8_t g[32];
+    secure_random(cl_.ya_s.data(), 32);
+    bool ok = static_cast<bool>(kmac_) && cl_.pake.generator && cl_.pake.x25519 && cl_.pake.hash;
+    if (ok) {
+        cl_.pake.generator(cl_.cn.data(), g);
+        ok = cl_.pake.x25519(cl_.ya_s.data(), g, cl_.ya.data());
+    }
+    if (!ok) {
+        cl_.st = ClientState::Refused;
+        cl_.code = kTimeout;
+        note("member relay: no PAKE here (no keys): not asking the member");
+        return;
+    }
     cl_.started = now;
     cl_.next_send = now;
     note("member relay: asking the member at " + key_text(ma, mp) + " to relay for us to the host " + key_text(ha, hp));
@@ -990,7 +1027,7 @@ bool Router::relay_member(std::uint32_t* addr, std::uint16_t* port) const {
     return true;
 }
 
-void Router::serve(bool on, std::uint32_t ha, std::uint16_t hp, Mac mac, std::string own_name, Throttle throttle,
+void Router::serve(bool on, std::uint32_t ha, std::uint16_t hp, Pake pake, std::string own_name, Throttle throttle,
                    const MemberKey& key) {
     std::lock_guard<std::mutex> lk(mu_);
     if (!on) {
@@ -1011,7 +1048,8 @@ void Router::serve(bool on, std::uint32_t ha, std::uint16_t hp, Mac mac, std::st
     serving_ = true;
     sv_h_addr_ = ha;
     sv_h_port_ = hp;
-    sv_mac_ = std::move(mac);
+    sv_pake_ = std::move(pake);
+    if (!sv_pake_.generator || !sv_pake_.x25519 || !sv_pake_.hash) serving_ = false;
     sv_name_ = std::move(own_name);
     sv_throttle_ = std::move(throttle);
     sv_key_ = key;
@@ -1041,6 +1079,11 @@ void Router::accept_relayed(bool on) {
 void Router::set_member_key(const MemberKey& key, std::uint32_t ip, const std::string& member) {
     std::lock_guard<std::mutex> lk(mu_);
     if (!key.id || !ip) return;
+    // An id another member registered: refused (N5: no take-over by a colliding or copied id).
+    if (auto same = members_.find(key.id); same != members_.end() && same->second.name != member) {
+        note("member relay: " + member + "'s relay key id is another member's: refused");
+        return;
+    }
     for (auto i = members_.begin(); i != members_.end();) {  // its earlier key goes, with its routes
         if (i->second.name == member && i->first != key.id) {
             for (auto r = host_routes_.begin(); r != host_routes_.end();)
@@ -1114,7 +1157,7 @@ void Router::poll(RClock::time_point now, std::vector<Wire>* out) {
             cl_.code = kTimeout;
             note("member relay: no answer from the member at " + key_text(cl_.m_addr, cl_.m_port));
         } else if (now >= cl_.next_send) {
-            if (cl_.have_sn) client_send_auth(now, out);
+            if (cl_.have_isk) client_send_auth(now, out);
             else client_send_hello(now, out);
         }
     } else if (cl_.st == ClientState::Ready && now - cl_.last_sent > kKeepalive) {

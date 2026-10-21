@@ -1688,7 +1688,7 @@ void start_host(LinkConfig cfg) {
     if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", port);
 
     // F2 (0.7.1): wrong passwords from IPv6 peers count per /64 (the route table's throttle key).
-    cfg.throttle_key = [](std::uint32_t ip) { return bbnet::p2p_router().throttle_key(ip); };
+    cfg.throttle_key = [](std::uint32_t ip, std::uint16_t port) { return bbnet::p2p_router().throttle_key(ip, port); };
     auto* link = new PartyLink(cfg, make_callbacks(true));
     attach_udp_path(link);
     if (const char* gc = env("BB_PARTY_GUEST_CODES")) add_guest_code_text(gc);

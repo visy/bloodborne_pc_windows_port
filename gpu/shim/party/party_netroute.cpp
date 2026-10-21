@@ -127,8 +127,18 @@ void log(const std::string& line) {
 bool relay_on() { return BbSettings::Get().party_member_relay.load(); }
 bool ipv6_on() { return BbSettings::Get().party_ipv6.load(); }
 
-udp::Router::Mac mac_for(const crypto::Key& k) {
-    return [k](const std::uint8_t* d, std::size_t n, std::uint8_t out[16]) { crypto::mac16(k, d, n, out); };
+// The relay handshake's PAKE (CPace on X25519) under the party's relay key (N1: no offline oracle).
+udp::Router::Pake pake_for(const crypto::Key& k) {
+    udp::Router::Pake p;
+    p.generator = [k](const std::uint8_t sid[16], std::uint8_t g[32]) { crypto::cpace_generator(k, sid, g); };
+    p.x25519 = [](const std::uint8_t sc[32], const std::uint8_t pt[32], std::uint8_t out[32]) {
+        return crypto::x25519(sc, pt, out);
+    };
+    p.hash = [](const std::uint8_t* d, std::size_t n, std::uint8_t out[32]) {
+        const crypto::Key h = crypto::blake2b256(d, n);
+        std::memcpy(out, h.data(), 32);
+    };
+    return p;
 }
 
 // V / v frames: BLAKE2b-128 under the member's own relay key.
@@ -180,7 +190,7 @@ void apply_locked(const netpath::Step& st) {
             break;
         }
         const netpath::Candidate& m = c[static_cast<std::size_t>(st.relay)];
-        r.relay_use(m.addr, m.port, s.host_addr, s.host_port, mac_for(s.rkey), Clock::now());
+        r.relay_use(m.addr, m.port, s.host_addr, s.host_port, pake_for(s.rkey), Clock::now());
         g_hint.store(2);
         break;
     }
@@ -318,6 +328,13 @@ void host_tick() {
     }
     if (!table_json.empty()) link->send_event(kBroadcast, kNet6TableEvent, table_json);
 
+    // Party members' own IPv6 keys are never evicted to make room for strangers (N2).
+    for (const RosterEntry& r : roster) {
+        std::uint32_t ip = 0;
+        std::uint16_t port = 0;
+        if (r.slot != kHostSlot && r.connected && link->member_endpoint(r.slot, &ip, &port) && udp::is_synthetic(ip))
+            bbnet::p2p_router().mark_trusted(ip, port);
+    }
     // Guests a member relays for: logged once each, and on the host's Network line.
     const std::vector<udp::Router::HostRoute> routes = bbnet::p2p_router().host_routes();
     std::string relayed;
@@ -389,7 +406,7 @@ void guest_tick(bool* serving, std::size_t* served_n, bool* net6_sent, bool* dia
         // A fresh key for our V / v frames each time we start serving, given to the host over our
         // encrypted party link (H1: nobody else can speak for us, even from our address).
         const udp::Router::MemberKey mk = want ? udp::Router::new_member_key() : udp::Router::MemberKey{};
-        r.serve(want, ha, hp, mac_for(k), name, throttle(), mk);
+        r.serve(want, ha, hp, pake_for(k), name, throttle(), mk);
         if (want) {
             json::Value v = json::Value::make_object();
             char id[16];
@@ -400,9 +417,12 @@ void guest_tick(bool* serving, std::size_t* served_n, bool* net6_sent, bool* dia
         }
     }
     // The host's IPv6 nonces (M3): echoed over the link, proving the IPv6 endpoint is ours.
-    for (const auto& nonce : r.take_nonces()) {
+    // One event for all of them (N6: a flood of strangers' nonces costs one event per tick).
+    if (const auto nonces = r.take_nonces(); !nonces.empty()) {
+        json::Value list = json::Value::make_array();
+        for (const auto& nonce : nonces) list.push(hex_of(nonce.data(), nonce.size()));
         json::Value v = json::Value::make_object();
-        v.set("Nonce", hex_of(nonce.data(), nonce.size()));
+        v.set("Nonces", std::move(list));
         link->send_event(0, kNet6EchoEvent, json::dump(v, 0));
     }
     // The DHT option: while our link is down for 10 s, members that relay are looked up there.
@@ -591,7 +611,7 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
         for (;;) {
             const Env e = env_copy();
             if (e.stopping && e.stopping()) {
-                bbnet::p2p_router().serve(false, 0, 0, nullptr, {}, {}, {});
+                bbnet::p2p_router().serve(false, 0, 0, {}, {}, {}, {});
                 return;
             }
             guest_tick(&serving, &served, &net6_sent, &dialed);
@@ -733,17 +753,26 @@ bool OnEvent(bool host, int slot, const std::string& name, const std::string& bo
         pd.e6 = e6;
         udp::secure_random(pd.nonce.data(), pd.nonce.size());
         std::lock_guard<std::mutex> lk(S().mu);
+        // The same endpoint again keeps its nonce and its tries (N6: no reset by repeated net6).
+        auto it = S().net6_pending.find(slot);
+        if (it != S().net6_pending.end() && it->second.e6 == e6) return true;
         if (S().net6_pending.size() < 16) S().net6_pending[slot] = pd;
         return true;
     }
     if (host && name == kNet6EchoEvent) {
-        std::array<std::uint8_t, 16> nonce{};
-        if (!unhex(str_of(v, "Nonce"), nonce.data(), nonce.size())) return true;
+        const json::Value* list = v.find("Nonces");
+        if (!list || list->type != json::Value::Type::Array) return true;
         std::lock_guard<std::mutex> lk(S().mu);
         auto it = S().net6_pending.find(slot);
-        if (it != S().net6_pending.end() && it->second.nonce == nonce && !it->second.verified) {
-            it->second.verified = true;
-            log("IPv6: slot " + std::to_string(slot) + " owns " + ep6_text(it->second.e6) + " (our nonce came back)");
+        int k = 0;
+        for (const json::Value& e : list->array) {
+            if (++k > 64 || it == S().net6_pending.end() || it->second.verified) break;
+            std::array<std::uint8_t, 16> nonce{};
+            if (e.type != json::Value::Type::String || !unhex(e.string, nonce.data(), nonce.size())) continue;
+            if (it->second.nonce == nonce) {
+                it->second.verified = true;
+                log("IPv6: slot " + std::to_string(slot) + " owns " + ep6_text(it->second.e6) + " (our nonce came back)");
+            }
         }
         return true;
     }
@@ -809,7 +838,7 @@ bool OnEvent(bool host, int slot, const std::string& name, const std::string& bo
 }
 
 void Stop() {
-    bbnet::p2p_router().serve(false, 0, 0, nullptr, {}, {}, {});
+    bbnet::p2p_router().serve(false, 0, 0, {}, {}, {}, {});
     bbnet::p2p_router().relay_stop();
 }
 
