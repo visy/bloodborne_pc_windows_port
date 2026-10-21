@@ -394,6 +394,11 @@ enum class LotFit : std::uint8_t {
            ///< with a blocking "inventory or storage max" dialog
 };
 const char* LotFitName(LotFit f);
+/// EquipParamGoods (EQUIP_PARAM_GOODS_ST, 1.09) limits of a goods row (at least kGoodsRowBytes
+/// bytes) into `s`: maxNum s16 +0x36, goodsType u8 +0x3A, maxRepositoryNum s16 +0x48 - the offset
+/// the game's own storage cap reads (0x15813A0: `*(short*)(row + 0x48)`; Pebble 20 / 99).
+constexpr std::size_t kGoodsRowBytes = 0x4A;
+void GoodsLimitsFromRow(const std::uint8_t* row, LotSlotState* s);
 /// Owned / Full when any goods slot would be refused (the whole lot is then skipped: one refused
 /// item opens the blocking dialog); `why` names the slot. Unknown counts (-1) never refuse.
 LotFit ClassifyLotFit(const std::vector<LotSlotState>& slots, std::string* why = nullptr);
