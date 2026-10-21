@@ -366,7 +366,12 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   host's while it stood in the car, then its start wait in the same frame; 15 rides for 3; the 0.7.1
   full smoke had 5-6 for 3). Their end checks become the all-players check on every game at the first
   dispatch (`liftrules::LocalEndToAllPlayers`, `WorldactRewriter`: id 2 -> 7, the region to +4; start
-  checks stay the local player's). `tools/party/lift_tool.py check GAME` lists the local-end rides of
+  checks stay the local player's). The id stays in the loaded script, but every run of the event copies
+  its argument bytes afresh (run 3: the second ride's 3[07] read 10000 as its region and never ended), so
+  the region is moved on every dispatch; the id and the log line once per instruction and map load
+  (run 4: four lines per game, eight later 3[07] dispatches). Installed with the party on only (the
+  worldact init, before any map loads, so no event runs yet); alone in a party session 3[7] sees one
+  player, as vanilla. `tools/party/lift_tool.py check GAME` lists the local-end rides of
   the game data and compares them with `kLocalEndRideEvents`.
 * **The flag hold (liftfix, fixed):** a guest's copy reads the flag to pick its end once its player is
   out of the car, so the host's flip must not reach it before. 0.7.1 put the flip back while the player
@@ -390,6 +395,12 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   (`occupied`). Smoke group `elevator` (phase el: a guest ride with the host's copy ending first, a host
   ride with the guest's ending first, a guest who stays 2 s in the car; per ride both games' flag and car
   end, the rider's ride bit all the way, vertical speed).
+* Riding together (liftfix, live run 4, smoke group `lifts_together`, phase lt): host and guest on
+  Central Yharnam's lift 2411320 (a platform; its end waits for every player), each placed on the car by
+  the game's own in-world warp (the host 0.75 m beside the trigger box, the guest into it once the host
+  stood there), down and back up: both rode the whole way (16-17 samples each with the ride bit, at the
+  far end on arrival), the same flags and car end on both games after each ride, no fall, no recovery.
+  Run 4: el 22/22, lf 16/16, lt 16/16.
 * The lf smoke's guest ride (lifts071) never was one: the guest was put on the car object's root, which
   stays at the TOP while the car is at the bottom; it fell the 48 m shaft through the switch region, the
   up event ran with nobody in the car and the guest died at the shaft's foot (god mode does not stop a
