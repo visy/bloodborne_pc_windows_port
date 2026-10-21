@@ -125,6 +125,9 @@ std::uint32_t QuickItemId(int slot, bool* selected = nullptr);
 /// (+0), so call it after the item is held. False (nothing queued) when the code differs, there
 /// is no list / free node or the item is not in the inventory.
 bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count);
+/// The same entry with a null handle, as the talk scripts' item notice (ESD command 0x41) pushes it
+/// for an item that is no inventory entry (a gesture's goods 800..822).
+bool ShowItemGetNotice(std::uint32_t type_bits, std::uint32_t id, int count);
 /// Entries in the item-get dialog's live list (*0x553B1C0 +8); -1 without the list.
 int ItemGetEntries();
 /// The dialog's confirm check can fire (0x16D86E0: player chr flag +0x41 bit 7 clear and the
