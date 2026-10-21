@@ -165,10 +165,12 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   an area-29 map). A member whose own ritual dungeon was selected (slot 1..) loaded m255 and was
   sent home (live: `slot 1's record holds no dungeon`). party_chalice retargets that one read to
   the quick-joined slot while its record holds a dungeon (`map load: the quick-joined slot 0's
-  dungeon, not the current slot 1's`); the member's save keeps its own selection. In load mode 1
-  the record is also written under the current slot (the load-mode-1 storage only carries the slot
-  bit), so later loads in the host's world find it, and that copy is never uploaded as the
-  member's own ritual.
+  dungeon, not the current slot 1's`); the member's save keeps its own selection. The retarget
+  stays on for the later loads in the host's world (load mode 1 with the dungeon carried), and an
+  own-world load (load mode 0) ends it, also after a quick join that never loaded. Nothing is
+  written under the current slot: the slot records are not part of the load-mode-1 storage, and a
+  copy written there replaced the member's own slot-1 dungeon in its save after a summoned save
+  (live test); only the quick-joined slot's own record is carried.
 * So what the party needs is that **get_details_info finds the host's dungeon**: the host's game
   uploads it when it performs the ritual / resumes it online (helper steps 5-6, ChannelUpload), and
   the board keeps it. **Our rule** (FromApi::sign_get): a host whose sign query is in area 29 gets
