@@ -421,8 +421,10 @@ int SummonedRegiveCount(int expect, int now, int count);
 bool KeyGoods(const LotSlotState& s);
 /// Any KeyGoods slot in `slots`.
 bool LotHasKeyGoods(const std::vector<LotSlotState>& slots);
-/// May a summoned guest give these items now? Never when one is KeyGoods: the grant waits for the
-/// own world (Apply / the key-item catch-up), which reads the real held count first.
+/// May a summoned guest give these items without more? Not when one is KeyGoods: such a grant is
+/// given and also owed to the own world (the key-item catch-up reads the real held count there and
+/// gives it again only if missing; the game puts the saved key section back at home), or with
+/// BB_PARTY_KEY_ITEMS_SUMMONED=0 only waits for the own world.
 bool SummonedGiveAllowed(const std::vector<LotSlotState>& slots);
 /// P2: a repeatable NPC gift (ItemSource::Repeat) may also be given while summoned when its unique
 /// goods are consumables (goodsType 0: Blood of Arianna / Adella, Iosefka's Blood Vial, maxNum 1):

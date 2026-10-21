@@ -28,6 +28,7 @@
 #include "party/party_ping.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
+#include "party/seamless_rules.h"
 #include "party/world_warper.h"
 #include "bbport_camera.h"
 #include "imgui.h"
@@ -2568,13 +2569,35 @@ void PartyHud() {
         int kind[party::status::kRotKinds];
         party::status::Rot(kind);
         const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
-        const std::string rot = coop::balance::DescribeRot(kind, ru);
-        if (!rot.empty()) {
+        const std::string head = coop::balance::DescribeRotHead(kind, ru);
+        if (!head.empty()) {
+            // Each effect in its own colour: max HP red as the HP bar, max stamina green as the
+            // stamina bar, stamina costs amber, rally orange, item discovery pale blue.
+            static const ImVec4 kEffect[party::status::kRotKinds] = {
+                ImVec4(0.86f, 0.30f, 0.27f, 0.95f), ImVec4(0.46f, 0.76f, 0.40f, 0.95f),
+                ImVec4(0.88f, 0.74f, 0.34f, 0.95f), ImVec4(0.96f, 0.56f, 0.24f, 0.95f),
+                ImVec4(0.58f, 0.72f, 0.92f, 0.95f)};
             ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
             ImGui::PushFont(game_font, 14.0f);
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
-            ImGui::TextColored(ImVec4(0.74f, 0.52f, 0.40f, 0.95f), "%s", rot.c_str());
-            ImGui::PopTextWrapPos();
+            const float x0 = ImGui::GetCursorPosX();
+            // While a boss bar is up only "Rot N/5": the full line can wrap to three lines and the
+            // taller panel would cover the boss's name and the left end of its bar.
+            const bool compact = coop::BossBarShown();
+            ImGui::TextColored(ImVec4(0.74f, 0.52f, 0.40f, 0.95f), "%s",
+                               compact ? head.substr(0, head.find(':')).c_str() : head.c_str());
+            bool first = true;
+            for (int k = 0; k < party::status::kRotKinds && !compact; ++k) {
+                const std::string e = coop::balance::DescribeRotEffect(k, kind[k], ru);
+                if (e.empty()) continue;
+                const std::string part = first ? e : ", " + e;
+                first = false;
+                // The next effect on the same line while it fits the panel, else on a new one.
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(part.c_str()).x > x0 + width) {
+                    ImGui::NewLine();
+                }
+                ImGui::TextColored(kEffect[k], "%s", part.c_str());
+            }
             ImGui::PopFont();
         }
     }
