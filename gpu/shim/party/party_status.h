@@ -96,7 +96,7 @@ void SetShareLamps(bool on);
 bool ShareLamps();
 /// The host's other rules in force (party_balance; the host's values on a guest once its rules
 /// arrived, else this player's own), for the menus' read-only lines on a guest.
-enum class HostRule { Rot, HostRevive, HostLimboRevive, Count };
+enum class HostRule { Rot, HostRevive, HostLimboRevive, KillRecord, NpcMirror, Gather, Count };
 void SetHostRule(HostRule rule, bool on);
 bool HostRuleOn(HostRule rule);
 /// C4: this player's rot stacks per kind (party_balance; health, stamina, stamina cost, rally,
@@ -109,12 +109,12 @@ void Rot(int kind[kRotKinds]);
 bool Enabled();
 
 // --- commands: UI -> party code ---
-enum class CommandType : std::uint8_t { Leave, Rejoin, Kick, AddGuestCode, NewCode, Gather };
+enum class CommandType : std::uint8_t { Leave, Rejoin, Kick, AddGuestCode, NewCode, Gather, AddRelayCode };
 const char* CommandName(CommandType type);
 
 struct Command {
     CommandType type = CommandType::Leave;
-    std::string name;  // Kick: the member's name; AddGuestCode: the code text
+    std::string name;  // Kick: the member's name; AddGuestCode / AddRelayCode: the code text
 };
 
 void RequestLeave();
@@ -137,6 +137,9 @@ bool RequestCopyGuestCode();
 /// Host: queues the guest code(s) on the clipboard (the host then punches towards each). False
 /// when the clipboard holds no BBG1 text. `got` (optional): the text.
 bool RequestAddGuestCodeFromClipboard(std::string* got = nullptr);
+/// Guest (F2, 0.7.1): queues a member's guest code on the clipboard: a member that may relay for us
+/// when the host cannot be reached directly ("Join through a member"). False when it holds no BBG1.
+bool RequestAddRelayCodeFromClipboard(std::string* got = nullptr);
 /// The director, once a frame: true and *out filled while commands are queued (FIFO; at most 16
 /// kept, a repeated Leave / Rejoin / Kick of the same name is coalesced).
 bool PopCommand(Command* out);

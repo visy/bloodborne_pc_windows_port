@@ -87,6 +87,55 @@ int main() {
     v.members = 2;
     CHECK(PlanHostDeath(v) == HostDeathPlan::PartyLoad);  // one of two guests down: not a wipe
 
+    {
+        // kidnap071 (a player report): the Snatcher's kidnap moves the host's respawn to the Gaol
+        // (common 9421 -> 2802959, m28) at its death; with the revive on (0.7.0 default) that was a
+        // lone load and the guests stayed. A scripted death warp is always the party's load.
+        HostDeathView k;
+        k.members = 2;
+        k.revive_opt_in = true;
+        k.lamp_here = false;
+        CHECK(PlanHostDeath(k) == HostDeathPlan::AloneLoad);  // a plain lamp in another map: alone
+        k.scripted_warp = true;
+        CHECK(PlanHostDeath(k) == HostDeathPlan::PartyLoad);
+        k.lamp_here = true;
+        CHECK(PlanHostDeath(k) == HostDeathPlan::PartyLoad);  // never the revive in place either
+        k.alone_opt = false;
+        k.revive_opt_in = false;
+        CHECK(PlanHostDeath(k) == HostDeathPlan::PartyLoad);
+        k.down_reported = 2;
+        CHECK(PlanHostDeath(k) == HostDeathPlan::Wipe);       // a wipe stays a wipe (also everyone's load)
+        k.down_reported = 0;
+        k.boss_fight = true;
+        CHECK(PlanHostDeath(k) == HostDeathPlan::BossLimbo);  // a fight's limbo first ...
+        DownView kd;
+        kd.members = 2;
+        kd.down_for = 2;
+        kd.limbo = true;
+        kd.revive_opt_in = true;
+        kd.scripted_warp = true;
+        CHECK(PlanDownTick(kd) == DownTick::PartyLoad);       // ... then the party's load, not alone
+        kd.lamp_here = true;
+        CHECK(PlanDownTick(kd) == DownTick::PartyLoad);
+        kd.boss_killed = true;
+        kd.member_here = true;
+        CHECK(PlanDownTick(kd) == DownTick::ArenaRevive);     // the boss killed: up in the arena as before
+
+        // Which deaths are scripted warps.
+        CHECK(KidnapDeath(kGaolReturnPoint, false, false));   // 9421 ran: the record is the Gaol
+        CHECK(KidnapDeath(2402950, true, false));             // 9420 set, 9421 not yet run
+        CHECK(!KidnapDeath(kGaolReturnPoint, true, true));    // woke there already (9423): a plain death
+        CHECK(!KidnapDeath(2402950, false, false));
+        // 9404 (the first death with Insight): the record moved from a Cathedral Ward lamp
+        // (m24_00) to the Dream (m21_00) between the last frame alive and the funnel.
+        CHECK(RespawnMovedAtDeath(2402950, 2102961, 0x1500, 0x1800));
+        CHECK(!RespawnMovedAtDeath(2402950, 2402950, 0x1800, 0x1800));  // unchanged
+        CHECK(!RespawnMovedAtDeath(2402950, 2402951, 0x1800, 0x1800));  // moved within the map
+        CHECK(!RespawnMovedAtDeath(0, 2102961, 0x1500, 0x1800));        // never seen alive: unknown
+        CHECK(!RespawnMovedAtDeath(0xffffffffu, 2102961, 0x1500, 0x1800));
+        CHECK(ScriptedDeathWarp(true, false) && ScriptedDeathWarp(false, true) && !ScriptedDeathWarp(false, false));
+    }
+
     // While the host is down: recount at every frame (bug 18).
     DownView d;
     d.members = 1;

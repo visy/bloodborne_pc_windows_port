@@ -13,6 +13,7 @@
 #include "party_status.h"
 #include "seamless_rules.h"
 #include "../bbport_game_menu_pages.h"
+#include "../bbport_settings.h"
 
 #include <atomic>
 #include <chrono>
@@ -296,7 +297,7 @@ void GuestTick(const GameSnapshot& s, party::PartyLink* link, const std::vector<
         }
         Log("guest: round %u: the host gathers the party (host in %s at (%.1f, %.1f, %.1f))", a.round, MapName(a.map).c_str(),
             double(a.pos[0]), double(a.pos[1]), double(a.pos[2]));
-        if (!Enabled()) {
+        if (!party::status::HostRuleOn(party::status::HostRule::Gather)) {  // the host's rule (late)
             Refuse(link, a, Refusal::Off);
             continue;
         }
@@ -421,15 +422,23 @@ void GuestTick(const GameSnapshot& s, party::PartyLink* link, const std::vector<
 } // namespace
 
 bool Enabled() {
-    static const bool on = [] {
-        const char* v = std::getenv("BB_PARTY_GATHER");
-        return !(v && v[0] == '0');
-    }();
-    return on;
+    return BbSettings::Get().party_gather.load();
 }
 
 void RequestFromMenu() {
     g_request = true;
+}
+
+bool HotkeyAvailable() {
+    if (!Enabled()) return false;
+    const party::status::Board b = party::status::Snapshot();
+    return b.enabled && b.role == party::status::Role::Host && b.state != party::status::State::Off;
+}
+
+bool RequestFromHotkey(const char* source) {
+    if (!HotkeyAvailable()) return false;
+    Log("Gather the party: %s pressed", source ? source : "hotkey");
+    return party::status::RequestGather();  // the menu row's path: the same refusals and notices
 }
 
 void OnEvent(int slot, const std::string& body) {
@@ -470,3 +479,11 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
 }
 
 } // namespace coop::gather
+
+extern "C" int bbgpu_gather_combo_enabled(void) {
+    return coop::gather::HotkeyAvailable() ? 1 : 0;
+}
+
+extern "C" void bbgpu_gather_request(const char* source) {
+    coop::gather::RequestFromHotkey(source);
+}

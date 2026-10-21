@@ -33,6 +33,7 @@
 #include "party_hud.h"
 #include "party_status.h"
 #include "party_guestvals_rules.h"
+#include "party_remote_show_rules.h"
 #include "party_ping.h"
 #include "party_flow.h"
 #include "../bbport_camera.h"
@@ -1449,6 +1450,10 @@ void ProbeTick(const GameSnapshot& s) {
     const bool loading = s.loading || !s.world_up;
     if (loading && !st.was_loading) {
         st.player_before = s.player;
+        // A4: a load began, so the join start did load; its SprjLuaEventMan does not outlive the
+        // load (live: the watchdog fired as a 15 s join load ended, flow still 2, and the stale
+        // object faulted at +0x1339920).
+        g_join_lua = 0;
         Log("load started: blobs %s", DescribeBlobs().c_str());
         Log("load started: local PlayerIns %#llx, role %d, flow %d; tasks:%s; presence %s", ull(s.player), Role(),
             Field<int>(Slot(kSlotFlow), 0x84, -1), DescribeTasks().c_str(), DescribePresence().c_str());
@@ -2360,25 +2365,52 @@ void RemoteVisibleTick(double now) {
         // chr +0x1E0 bit 20: set on every drawn player chr (local and remote, both games), clear on
         // the invisible re-created one ("the health bar but no model", live vis3 render probe:
         // 0x00009800 vs 0x00109800). Put back.
+        // Never before the member's first data (party_remote_show_rules.h): that data brings the draw
+        // bit itself and the game's own fade-in follows. Logged once per such chr (how long the
+        // data took, and that the game drew it).
+        float p[3] = {};
+        const bool awaits = !ChrPos(c, p) || coop::remote_show::AwaitsFirstData(ChrHp(c), p);
+        const u32 f = Field<u32>(c, 0x1e0);
+        // chr -> {first seen without its member's data, when the data came}
+        static std::map<u64, std::pair<double, double>> built_at;
+        if (awaits) {
+            built_at.emplace(c, std::make_pair(now, 0.0));
+            continue;
+        }
+        if (auto b = built_at.find(c); b != built_at.end()) {
+            if (b->second.second == 0) {
+                b->second.second = now;
+            }
+            if (f & 0x100000u) {
+                Log("remote chr %#llx (handle %x, mode %d): its member's data after %.1f s, drawn by the game %.1f s "
+                    "later%s", ull(c), Field<u32>(c, 8), t.mode, b->second.second - b->second.first,
+                    now - b->second.second, party::runtime().restarted() ? " [crash-restarted game]" : "");
+                built_at.erase(b);
+            }
+        }
         // A chr of a task we rewound: shown as at a load's end (the root cause, above).
         if (auto it = g_rewound.find(t.task); it != g_rewound.end()) {
             g_rewound.erase(it);
+            built_at.erase(c);
             ShowLikeInGameStart(c, "re-created by a rewind");
             continue;
         }
         // Safety net: any other remote chr without the draw bit 4 s after we first saw it so.
         static std::map<u64, double> hidden_since;
-        const u32 f = Field<u32>(c, 0x1e0);
         if (f && !(f & 0x100000u)) {
             auto h = hidden_since.emplace(c, now).first;
-            if (now - h->second >= 4.0) {
+            if (coop::remote_show::SafetyNetShows(awaits, false, now - h->second)) {
                 hidden_since.erase(h);
+                built_at.erase(c);
                 Log("remote chr %#llx (mode %d): no draw bit for 4 s (safety net); enterleave%s", ull(c), t.mode,
                     DescribeEnterLeave().c_str());
                 ShowLikeInGameStart(c, "safety net");
             }
         } else {
             hidden_since.erase(c);
+        }
+        if (built_at.size() > 64) {
+            built_at.clear();  // chrs gone before their data: never shrinks otherwise
         }
     }
     for (auto it = g_rewound.begin(); it != g_rewound.end();) {
@@ -4003,6 +4035,9 @@ std::atomic<bool> g_host_limbo_late{false};  // ...its boss killed in its death 
 std::mutex g_dead_mu;
 deathrules::DownLedger g_dead_members;    // host: party slots down until revived / re-arrived / gone (under g_dead_mu)
 std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
+// The local player's respawn record (GSM +0x1528) on its last frame alive (LocalDeathHeightTick):
+// a death whose script moves it (deathrules::ScriptedDeathWarp) is told from the record at the funnel.
+std::atomic<u32> g_alive_lamp{0};
 
 // What a chr death writes (ChrIns_OnDeath 0x18C49F0 and its followers 0x18C4F90 / 0x18C5070, the
 // per-frame trigger 0x18BD9D0), snapshot while the host is alive.
@@ -4346,6 +4381,26 @@ bool SoloReviveTest() {
 }
 
 bool HostFallDeath(u64 chr);
+/// The host's death moves its respawn point to another map by script (deathrules::ScriptedDeathWarp:
+/// the Snatcher's kidnap to the Gaol, the first death with Insight to the Dream): the party's
+/// respawn load, whatever the revive switch says. `why` (optional): for the log line.
+bool ScriptedDeathWarpNow(u32 lamp, u32 stage, std::string* why = nullptr) {
+    bool f9420 = false, f9423 = false;
+    const bool ok = ReadEventFlag(9420, &f9420) && ReadEventFlag(9423, &f9423);
+    const bool kidnap = ok && deathrules::KidnapDeath(lamp, f9420, f9423);
+    const u32 alive = g_alive_lamp.load();
+    const bool moved = deathrules::RespawnMovedAtDeath(alive, lamp, ids::EntityMap(lamp) >> 16, stage >> 16);
+    if (why) {
+        char b[160];
+        std::snprintf(b, sizeof b, "%s%s%s (respawn record %u, %u while alive; 9420 %d, 9423 %d)",
+                      kidnap ? "the Snatcher's kidnap" : "", kidnap && moved ? ", " : "",
+                      moved ? "the death's script moved the respawn to another map" : "", lamp, alive, f9420 ? 1 : 0,
+                      f9423 ? 1 : 0);
+        *why = b;
+    }
+    return deathrules::ScriptedDeathWarp(kidnap, moved);
+}
+
 bool HostDeathIntercept() {
     if (!g_on.load() || (Role() != RoleHost && !SoloReviveTest())) {
         return false;
@@ -4405,6 +4460,12 @@ bool HostDeathIntercept() {
     v.lamp_here = v.lamp_here || fall_here;
     v.alone_opt = !(std::getenv("BB_PARTY_HOST_DEATH_ALONE") && std::getenv("BB_PARTY_HOST_DEATH_ALONE")[0] == '0');
     v.solo_fixture = SoloReviveTest();
+    std::string scripted;
+    v.scripted_warp = ScriptedDeathWarpNow(lamp, stage, &scripted);
+    if (v.scripted_warp) {
+        Log("host death: a scripted death warp: %s; the whole party goes (one load), no revive or lone load",
+            scripted.c_str());
+    }
     const deathrules::HostDeathPlan plan = deathrules::PlanHostDeath(v);
     switch (plan) {
     case deathrules::HostDeathPlan::Stock:
@@ -4820,6 +4881,9 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         return;
     }
     const bool dead = ChrHp(s.player) <= 0;
+    if (!dead) {
+        g_alive_lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+    }
     if (!dead && !(Field<u64>(s.player, 0x1e1) & 0x10000)) {
         const float draw = Field<float>(s.player, 0x208);
         if (draw > 0.5f && draw <= 1.0f) {
@@ -5530,6 +5594,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
         const LampSpot& sp = g_lamp_spot;
         dv.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
         dv.lamp_here = dv.lamp_here || (HostFallDeath(s.player) && g_local_safe.valid);  // fallsafe
+        dv.scripted_warp = ScriptedDeathWarpNow(lamp, Field<u32>(s.player, 0x3f8));
     }
     const deathrules::DownTick plan = deathrules::PlanDownTick(dv);
     if (plan == deathrules::DownTick::Wait) {
@@ -9784,7 +9849,8 @@ void Tick(const GameSnapshot& s) {
     // (GSM +0x16F8 +0x18) >= 2 and the own chr alive; otherwise it clears the summon type (+0x16F0)
     // and the join sits in flow 2 until the session times out (the 0.5 s bell timer stall,
     // join_timing.md). 1.5 s after that start, with the count at 2 now: the type back and the same
-    // Lua start once more (twice at most per join). BB_PARTY_JOIN_RESTART=0 off.
+    // Lua start once more (twice at most per join). A load since that start clears it (ProbeTick):
+    // the join loaded. BB_PARTY_JOIN_RESTART=0 off.
     {
         static const bool on = !EnvOff("BB_PARTY_JOIN_RESTART");
         static double handled = -1;

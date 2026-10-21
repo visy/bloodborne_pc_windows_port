@@ -94,6 +94,7 @@ const char* CommandName(CommandType type) {
     case CommandType::Kick: return "kick";
     case CommandType::AddGuestCode: return "add_guest_code";
     case CommandType::NewCode: return "new_code";
+    case CommandType::AddRelayCode: return "add_relay_code";
     case CommandType::Gather: return "gather";
     }
     return "?";
@@ -208,7 +209,7 @@ bool ShareLamps() {
     return g_share_lamps.load();
 }
 namespace {
-std::atomic<bool> g_host_rules[int(HostRule::Count)] = {true, true, true};
+std::atomic<bool> g_host_rules[int(HostRule::Count)] = {true, true, true, true, true, true};
 }  // namespace
 void SetHostRule(HostRule rule, bool on) {
     if (rule < HostRule::Count) g_host_rules[int(rule)].store(on);
@@ -305,7 +306,8 @@ bool RequestCopyGuestCode() {
     return CopyText(code);
 }
 
-bool RequestAddGuestCodeFromClipboard(std::string* got) {
+namespace {
+std::string clipboard_text() {
     std::string text;
 #ifdef _WIN32
     if (OpenClipboard(nullptr)) {
@@ -323,11 +325,29 @@ bool RequestAddGuestCodeFromClipboard(std::string* got) {
         CloseClipboard();
     }
 #endif
-    if (got) *got = text;
+    return text;
+}
+std::string upper_of(const std::string& text) {
     std::string upper;
     for (char c : text) upper.push_back(static_cast<char>(c >= 'a' && c <= 'z' ? c - 32 : c));
-    if (upper.find("BBG1") == std::string::npos) return false;
+    return upper;
+}
+}  // namespace
+
+bool RequestAddGuestCodeFromClipboard(std::string* got) {
+    const std::string text = clipboard_text();
+    if (got) *got = text;
+    const std::string upper = upper_of(text);
+    if (upper.find("BBG1") == std::string::npos && upper.find("BBG6") == std::string::npos) return false;
     Queue({CommandType::AddGuestCode, text});
+    return true;
+}
+
+bool RequestAddRelayCodeFromClipboard(std::string* got) {
+    const std::string text = clipboard_text();
+    if (got) *got = text;
+    if (upper_of(text).find("BBG1") == std::string::npos) return false;
+    Queue({CommandType::AddRelayCode, text});
     return true;
 }
 

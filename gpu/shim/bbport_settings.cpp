@@ -39,6 +39,13 @@ const PartySwitch PartySwitches[] = {
     {"party_progress_npc", "BB_PARTY_PROGRESS_NPC", &Values::party_progress_npc},
     {"party_story", "BB_PARTY_STORY", &Values::party_story},
     {"party_story_mirror", "BB_PARTY_STORY_MIRROR", &Values::party_story_mirror},
+    // 0.7.1: read live from Values (BB_PARTY_GATHER is also the director's pre-ring lamp gather,
+    // BB_PARTY_KEY_ITEMS_SUMMONED=1 means more without the key view: never exported).
+    {"party_kill_record", "BB_PARTY_KILL_RECORD", &Values::party_kill_record, false},
+    {"party_npc_mirror", "BB_PARTY_NPC_MIRROR", &Values::party_npc_mirror, false},
+    {"party_gather", "BB_PARTY_GATHER", &Values::party_gather, false},
+    {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
+    {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
 };
 const int PartySwitchCount = int(std::size(PartySwitches));
 
@@ -201,13 +208,13 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "party_boss_damage") {
         v.party_boss_damage = std::clamp(i, 0, 100);
     } else if (key == "party_boss_poise") {
-        v.party_boss_poise = std::clamp(i, -100, 300);
+        v.party_boss_poise = std::clamp(i, 0, 300);  // below 0 staggered less (2026-10-21)
     } else if (key == "party_enemy_hp") {
         v.party_enemy_hp = std::clamp(i, 0, 400);
     } else if (key == "party_enemy_damage") {
         v.party_enemy_damage = std::clamp(i, 0, 100);
     } else if (key == "party_enemy_poise") {
-        v.party_enemy_poise = std::clamp(i, -100, 300);
+        v.party_enemy_poise = std::clamp(i, 0, 300);
     } else if (key == "party_name_tags") {
         v.party_name_tags = i != 0;
     } else if (key == "party_npc_talk") {
@@ -224,6 +231,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_share_lamps = i != 0;
     } else if (key == "party_rendezvous") {
         v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
+    } else if (key == "party_member_relay") {
+        v.party_member_relay = party::traversal::rendezvous_switch(value.c_str(), true);
+    } else if (key == "party_ipv6") {
+        v.party_ipv6 = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_guest_insight") {
@@ -358,6 +369,9 @@ void Load() {
     }
     // The DHT rendezvous opt-in: the launcher's Party tab (BB_PARTY_RENDEZVOUS) wins over the ini.
     v.party_rendezvous = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_RENDEZVOUS"), v.party_rendezvous);
+    // F2 (0.7.1): the member relay and IPv6 (on by default): the launcher's Party tab wins over the ini.
+    v.party_member_relay = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_MEMBER_RELAY"), v.party_member_relay);
+    v.party_ipv6 = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_IPV6"), v.party_ipv6);
     // I1 friendly fire (tests, scripted hosts): BB_PARTY_FRIENDLY_FIRE=0/1 wins over the ini.
     if (const char* ff = std::getenv("BB_PARTY_FRIENDLY_FIRE"); ff && (ff[0] == '0' || ff[0] == '1'))
         v.party_friendly_fire = ff[0] == '1';
@@ -381,6 +395,10 @@ void Load() {
             exported += (exported.empty() ? "" : ",") + std::string(env);
         };
         for (const PartySwitch& sw : PartySwitches) {
+            if (!sw.env_export) {
+                if (const char* e = std::getenv(sw.env); e && e[0]) v.*(sw.member) = e[0] != '0';
+                continue;
+            }
             take(sw.env, [&](const char* e) { v.*(sw.member) = e[0] != '0'; },
                  (v.*(sw.member)).load() ? "1" : "0");
         }
@@ -666,6 +684,8 @@ void Save() {
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
     put("party_rendezvous", flag(v.party_rendezvous));
+    put("party_member_relay", flag(v.party_member_relay));
+    put("party_ipv6", flag(v.party_ipv6));
     for (const PartySwitch& sw : PartySwitches) put(sw.key, flag(v.*(sw.member)));
     put("party_guest_insight", GuestInsightName(v.party_guest_insight));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));

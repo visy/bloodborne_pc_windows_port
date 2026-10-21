@@ -290,14 +290,55 @@ int win_mem_protect(uintptr_t a, uintptr_t b, int prot) {
     return 0;
 }
 
+/* Host-owned guest-visible memory (runtime_low_map: guest mutexes, thread stacks, the image).
+ * NULL means "this range is taken" to the caller, which then tries the next range. A commit-limit
+ * refusal is not that: before, it walked the whole low range (every try refused the same way) and
+ * every later low allocation failed - a guest mutex's init then returned ENOMEM, which the game
+ * ignores, and its first lock was a Dantelion "Mutex is not initialized" panic (a crash restart's
+ * boot with little commit left, boldmark). It is retried for BB_POOL_COMMIT_WAIT seconds (the
+ * crashed game's memory is still being released, the page file grows), then the process exits
+ * (code 76) with the reason, as the pool's commit does. BB_TEST_LOW_COMMIT_FAILURES=N simulates N
+ * refusals (tests). */
 void *win_mem_private(uintptr_t a, uintptr_t b) {
     if (!inside(a, b)) return NULL;
     MEMORY_BASIC_INFORMATION info;
     for (uintptr_t at = a; at < b; at = (uintptr_t)info.BaseAddress + info.RegionSize)
         if (!VirtualQuery((void *)at, &info, sizeof(info)) || info.State != MEM_RESERVE) return NULL;
     if (make_placeholder(a, b)) return NULL;
-    return virtual_alloc2(GetCurrentProcess(), (void *)a, b - a, MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER,
-                          PAGE_READWRITE, NULL, 0);
+    static unsigned long long test_failures = ~0ull;
+    if (test_failures == ~0ull) test_failures = env_number("BB_TEST_LOW_COMMIT_FAILURES", 0);
+    const unsigned long long wait_s = env_number("BB_POOL_COMMIT_WAIT", 120);
+    const ULONGLONG t0 = GetTickCount64();
+    for (unsigned attempt = 0;; ++attempt) {
+        void *p = NULL;
+        if (test_failures) { --test_failures; SetLastError(ERROR_COMMITMENT_LIMIT); }
+        else p = virtual_alloc2(GetCurrentProcess(), (void *)a, b - a, MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER,
+                                PAGE_READWRITE, NULL, 0);
+        if (p) {
+            if (attempt) fprintf(stderr, "Runtime: host memory for the game committed after %u retries (%llu s)\n",
+                                 attempt, (unsigned long long)((GetTickCount64() - t0) / 1000));
+            return p;
+        }
+        const DWORD error = GetLastError();
+        if (!commit_error(error)) return NULL; /* the range is taken: the caller tries the next one */
+        const unsigned long long waited = (GetTickCount64() - t0) / 1000;
+        if (waited >= wait_s) {
+            report("committing host memory for the game", a, b);
+            fprintf(stderr, "Runtime: FATAL: Windows cannot commit %llu KiB of memory for the game (%llu MiB of "
+                    "commit left; error %lu). The page file is too small: let Windows manage its size "
+                    "(System > About > Advanced system settings > Performance > Advanced > Virtual "
+                    "memory) or enlarge it, or close other programs. Exiting.\n",
+                    (unsigned long long)((b - a) >> 10), commit_free_mib(), error);
+            fflush(stdout);
+            fflush(stderr);
+            ExitProcess(76);
+        }
+        if (!attempt || attempt % 40 == 0)
+            fprintf(stderr, "Runtime: committing %llu KiB of host memory for the game failed (Windows error %lu, "
+                    "%llu MiB of commit left); retrying for up to %llu s\n", (unsigned long long)((b - a) >> 10),
+                    error, commit_free_mib(), wait_s);
+        Sleep(attempt < 8 ? 25 : 250);
+    }
 }
 
 /* Lazy punch/discard: zero or reset pages in backing section without blocking memset */

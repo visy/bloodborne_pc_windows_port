@@ -128,9 +128,10 @@ PARTY_SWITCHES = [
     ("party_restart", "BB_PARTY_RESTART", True),
 ]
 # The party gameplay switches, game settings in bbport.ini (also on the game's System pages Deaths &
-# revives, World & PvP, Story & dialogue, Party rewards; bbport_settings PartySwitches): (bbport.ini
-# key = the launcher_settings.json key before 0.7.0, the variable the launcher set until then, the
-# game's default). The launcher sets no variable for them (an explicit BB_PARTY_* still wins).
+# revives, World & PvP, Shared world, Story & dialogue, Party rewards; bbport_settings PartySwitches):
+# (bbport.ini key = the launcher_settings.json key before 0.7.0, the variable the launcher set until
+# then, the game's default; 0.7.1's: the variable that overrides the ini). The launcher sets no
+# variable for them (an explicit BB_PARTY_* still wins).
 PARTY_INI_SWITCHES = [
     ("party_host_revive", "BB_PARTY_B2_HOST_REVIVE", True),
     ("party_host_limbo_revive", "BB_PARTY_HOST_LIMBO_REVIVE", True),
@@ -146,6 +147,12 @@ PARTY_INI_SWITCHES = [
     ("party_progress_npc", "BB_PARTY_PROGRESS_NPC", True),
     ("party_story", "BB_PARTY_STORY", True),
     ("party_story_mirror", "BB_PARTY_STORY_MIRROR", True),
+    # 0.7.1 (no launcher_settings.json key before: nothing to migrate, INI_SYNC_REV stays)
+    ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
+    ("party_gather", "BB_PARTY_GATHER", True),
+    ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
+    ("party_key_view", "BB_PARTY_KEY_VIEW", True),
+    ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -500,12 +507,28 @@ PARTY_RENDEZVOUS_TIP = (
     "or a VPN. Also in the game: System > Party members. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
 
 
+PARTY_MEMBER_RELAY_TIP = (
+    "When a guest cannot reach the host directly but can reach another party member, it joins through "
+    "that member, who forwards its traffic to the host (the stuck guest pastes the member's guest code, or "
+    "both find each other through the DHT option). Only party members (the party code and password are "
+    "checked), at most 4 per member; it uses some of the member's upload (~3 KB/s per relayed player in play, "
+    "at most 128 KB/s each). "
+    "Also in the game: System > Party network. Default: on (BB_PARTY_MEMBER_RELAY=1/0).")
+PARTY_IPV6_TIP = (
+    "When both PCs have a global IPv6 address, the party link and the game's traffic try IPv6 before any "
+    "relay: no NAT in the way, which helps players behind carrier-grade NAT. A host whose IPv4 port is not "
+    "open then puts its IPv6 address into the party code (a longer code that shows this PC's IPv6 address: "
+    "a temporary privacy address where Windows has one, so the code changes when it does). Also in the game: System > Party "
+    "network. Default: off (BB_PARTY_IPV6=1/0).")
+
+
 def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
-            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS"]
+            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS",
+            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     # bbport.ini's (unset here, so a stale variable never overrides the ini; BB_PARTY_GUEST_INSIGHT too)
     keys += [env_name for _, env_name, _ in PARTY_INI_SWITCHES]
@@ -529,6 +552,9 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
     # Hole punching through the public BitTorrent DHT: opt-in (it shares the IP with DHT nodes).
     env["BB_PARTY_RENDEZVOUS"] = "1" if s.get("party_rendezvous", False) else "0"
+    # F2 (0.7.1): a member relays for a guest that cannot reach the host (on); IPv6 before any relay (off).
+    env["BB_PARTY_MEMBER_RELAY"] = "1" if s.get("party_member_relay", True) else "0"
+    env["BB_PARTY_IPV6"] = "1" if s.get("party_ipv6", False) else "0"  # off by default (0.7.1 decision)
     env["BB_PARTY_STUN"] = stun or None  # game default: stun.l.google.com:19302; "off" disables
     env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
     env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
@@ -710,6 +736,7 @@ MK_BINDINGS = [
     ("Esc / F1", "Options: game menu"),
     ("Arrows / 1 2 3 4", "D-pad up / down / left / right"),
     ("I J K L", "Camera (right stick)"),
+    ("V / H", "Party: ping / gather the party (host)"),
 ]
 
 
@@ -1844,6 +1871,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
         self.party_rendezvous = tk.BooleanVar(value=bool(self.settings.get("party_rendezvous", False)))
+        self.party_member_relay = tk.BooleanVar(value=bool(self.settings.get("party_member_relay", True)))
+        self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
         self.party_public_var = tk.StringVar(value=str(self.settings.get("party_public_addr", "") or ""))
         self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
         self.party_password_var = tk.StringVar(value=str(self.settings.get("party_password", "") or ""))
@@ -2573,6 +2602,10 @@ class BloodborneLauncher(tk.Tk):
                          "support it. Default: on (BB_PARTY_UPNP=1/0).")
         rdv_cb = self._check(sec, "Find each other through the public DHT (shares your IP)", self.party_rendezvous,
                              PARTY_RENDEZVOUS_TIP, command=self.save_settings)
+        relay_cb = self._check(sec, "Relay for party members that cannot reach the host", self.party_member_relay,
+                               PARTY_MEMBER_RELAY_TIP, command=self.save_settings)
+        ipv6_cb = self._check(sec, "Use IPv6 when both PCs have it", self.party_ipv6, PARTY_IPV6_TIP,
+                              command=self.save_settings)
         public_lbl, self.party_public_entry, _, _ = self._entry(
             sec, "Public address:", self.party_public_var,
             "Host only: the address put into the party code. Empty (recommended) = found automatically "
@@ -2632,7 +2665,8 @@ class BloodborneLauncher(tk.Tk):
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, stain_cb, save_cb,
-                                 port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
+                                 port_lbl, self.party_port_entry, upnp_cb, rdv_cb, relay_cb, ipv6_cb, stun_lbl,
+                                 self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
@@ -2989,8 +3023,8 @@ class BloodborneLauncher(tk.Tk):
         """Party rules & sync: the PARTY_SWITCHES, start mode, guest Insight and save backups."""
         dlg = tk.Toplevel(self)
         dlg.title("Party Rules & Sync")
-        dlg.geometry("720x620")
-        dlg.minsize(640, 560)
+        dlg.geometry("720x700")
+        dlg.minsize(640, 640)
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg="#1a1a1a")
@@ -3122,7 +3156,43 @@ class BloodborneLauncher(tk.Tk):
                     "save and rejoins the party (the host keeps your place for 60 s). At most 5 restarts "
                     "in 10 minutes. Default: on (BB_PARTY_RESTART).", command=save)
 
+        # 0.7.1: the host's world rules (System > Shared world) and the guest's key items (Party rewards)
+        sec = section(3, 0, "Shared world (host)")
+        self._check(sec, "Enemies stay dead", var["party_kill_record"],
+                    "An enemy the party killed is dead on every player's game: a kill across an area border "
+                    "reaches the others, and an enemy that comes back alive when its area loads again as you "
+                    "walk is put down again. Only a rest or a party wipe brings enemies back. The host's "
+                    "setting; guests follow it. Off: a kill another player did not see can leave the enemy "
+                    "standing on their game. Default: on (bbport.ini party_kill_record; in the game: System > Shared world).", command=save)
+        self._check(sec, "Host can gather the party", var["party_gather"],
+                    "Lets the host bring every guest to it with System > Party > Gather the party (each guest "
+                    "is asked first and may say no). The host's setting. Off: the row says gathering is off. "
+                    "Default: on (bbport.ini party_gather; in the game: System > Shared world).", command=save)
+        self._check(sec, "NPCs as in the host's world", var["party_npc_mirror"],
+                    "An NPC that is gone from the host's world (moved on by a story event, such as the one "
+                    "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
+                    "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
+
+        sec = section(3, 1, "Key items (guest)")
+        keys_now_cb = None
+
+        def update_keys():
+            keys_now_cb.state(["!disabled"] if var["party_key_view"].get() else ["disabled"])
+            save()
+        self._check(sec, "Own key items as a guest", var["party_key_view"],
+                    "While you are a guest in the host's world, your Key Items tab shows your own keys, "
+                    "badges and tools. Off: the game's view for a visiting hunter (an empty list; your save "
+                    "keeps them). Applies to you while you are a guest; at the next start. "
+                    "Default: on (bbport.ini party_key_view; in the game: System > Party rewards).", command=update_keys)
+        keys_now_cb = self._check(sec, "    Key items at once", var["party_key_items_summoned"],
+                                  "A key item the host's world gives you (Oedon Tomb Key, a badge) is yours "
+                                  "right away, while you are still in the host's world. Off: it waits until "
+                                  "you are back in your own world. Needs Own key items. Default: on "
+                                  "(bbport.ini party_key_items_summoned; in the game: System > Party rewards).",
+                                  command=save)
+
         update_dependents()
+        update_keys()
 
         def on_defaults():
             for key, _, default in PARTY_SWITCHES + PARTY_INI_SWITCHES:
@@ -3132,6 +3202,7 @@ class BloodborneLauncher(tk.Tk):
             self.party_backup_minutes_var.set("10")
             self.party_backup_keep_var.set("10")
             update_dependents()
+            update_keys()
             self.save_party_rules()
 
         bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
@@ -3821,6 +3892,8 @@ class BloodborneLauncher(tk.Tk):
             "party_port": self.party_port_var.get().strip(),
             "party_upnp": self.party_upnp.get(),
             "party_rendezvous": self.party_rendezvous.get(),
+            "party_member_relay": self.party_member_relay.get(),
+            "party_ipv6": self.party_ipv6.get(),
             "party_public_addr": self.party_public_var.get().strip(),
             "party_stun": self.party_stun_var.get().strip(),
             "party_password": self.party_password_var.get(),

@@ -320,6 +320,39 @@ class ShareLampsSetting(unittest.TestCase):
         self.assertIn("self.party_widgets_host = [ff_cb, lamps_cb", src)
 
 
+class PartyRules071Settings(unittest.TestCase):
+    """0.7.1: the switches that had only an env variable got rows (System > Shared world / Party
+    rewards) and Party Rules & Sync checkboxes: bbport.ini keys, on by default, no variable set."""
+    KEYS = {"party_kill_record": "BB_PARTY_KILL_RECORD", "party_gather": "BB_PARTY_GATHER",
+            "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_key_view": "BB_PARTY_KEY_VIEW",
+            "party_key_items_summoned": "BB_PARTY_KEY_ITEMS_SUMMONED"}
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_switches_defaults_and_ini(self):
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        for key, env in self.KEYS.items():
+            self.assertEqual(switches[key], (env, True), key)
+        env = self.L.party_env({"party_mode": "join", "party_name": "A", "party_code": "x"})
+        for name in self.KEYS.values():
+            self.assertIsNone(env[name], name)  # bbport.ini decides
+        values = self.L.party_rules_ini({"party_kill_record": False, "party_key_items_summoned": False}, "")
+        self.assertEqual((values["party_kill_record"], values["party_gather"], values["party_npc_mirror"],
+                          values["party_key_view"], values["party_key_items_summoned"]), ("0", "1", "1", "1", "0"))
+
+    def test_dialog_has_the_checkboxes(self):
+        from pathlib import Path
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        for key in self.KEYS:
+            self.assertIn('var["%s"]' % key, src)
+        self.assertIn('section(3, 0, "Shared world (host)")', src)
+
+
 class DirectSummonSetting(unittest.TestCase):
     """The launcher's Direct summon checkbox: BB_PARTY_DIRECT_SUMMON, on unless turned off."""
     @classmethod
@@ -357,6 +390,34 @@ class RendezvousSetting(unittest.TestCase):
         tip = self.L.PARTY_RENDEZVOUS_TIP
         for words in ("public BitTorrent DHT", "IP", "guest code", "Both", "Default: off"):
             self.assertIn(words, tip)
+
+
+class NetRouteSettings(unittest.TestCase):
+    """F2 (0.7.1): the member relay and IPv6 checkboxes: BB_PARTY_MEMBER_RELAY on by default,
+    BB_PARTY_IPV6 off by default (the game's default too), each as ticked, unset solo."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_off(self):
+        for mode in ("host", "join"):
+            base = {"party_mode": mode, "party_name": "A"}
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_MEMBER_RELAY"], "1")
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_IPV6"], "0")  # IPv6 off unless ticked
+            for key, env in (("party_member_relay", "BB_PARTY_MEMBER_RELAY"), ("party_ipv6", "BB_PARTY_IPV6")):
+                self.assertEqual(self.L.party_env(dict(base, **{key: False}))[env], "0")
+                self.assertEqual(self.L.party_env(dict(base, **{key: True}))[env], "1")
+        for env in ("BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6"):
+            self.assertIsNone(self.L.party_env({})[env])  # no party: unset
+
+    def test_tooltips(self):
+        for words in ("party members", "guest code", "upload", "128 KB/s", "Default: on"):
+            self.assertIn(words, self.L.PARTY_MEMBER_RELAY_TIP)
+        for words in ("IPv6", "before any relay", "party code", "privacy address", "Default: off"):
+            self.assertIn(words, self.L.PARTY_IPV6_TIP)
 
 
 class LampTravelSetting(unittest.TestCase):
