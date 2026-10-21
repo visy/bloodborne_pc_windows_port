@@ -587,6 +587,8 @@ def settings_env(s: dict) -> dict:
     env["BB_ARRIVAL_LOG"] = "1" if on("feat_arrival_log", False) else "0"
     # Party spectate camera log: camera resets and jumps while a dead player spectates a boss fight
     env["BB_PARTY_SPECTATE_LOG"] = "1" if on("feat_spectate_log", False) else "0"
+    # Party host-death lock log for frozen-guest reports: the HostDead locks every 0.25 s on a guest
+    env["BB_HOSTDEAD_LOG"] = "1" if on("feat_hostdead_log", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
     # Mouse & keyboard mode (bbport.ini mk_enabled), the performance HUD (show_hud), async shaders
@@ -1721,6 +1723,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
         self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
+        self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
         _lvl = str(self.settings.get("party_log_level", "") or "")
         self.party_log_level_var = tk.StringVar(
             value=next((label for label, v in PARTY_LOG_LEVELS if v == _lvl), PARTY_LOG_LEVELS[0][0]))
@@ -2154,6 +2157,10 @@ class BloodborneLauncher(tk.Tk):
                     "While a dead player watches a boss fight: camera resets per minute and the largest "
                     "camera jump and turn between frames, one line every 10 s. Default: off "
                     "(BB_PARTY_SPECTATE_LOG).")
+        self._check(sec, "Party host-death lock log (guest frozen)", self.feat_hostdead_log,
+                    "On a guest, from the host's death until the next load: four lines a second with the "
+                    "game's host-death locks, the left stick and how far your character moved. For reports of "
+                    "a guest that cannot move or open menus after the host died. Default: off (BB_HOSTDEAD_LOG).")
 
         sec = self._section(tab, 1, "Watchdog")
         self._check(sec, "Watchdog", self.feat_watchdog,
@@ -3659,6 +3666,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_audio_log": self.feat_audio_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),
             "feat_spectate_log": self.feat_spectate_log.get(),
+            "feat_hostdead_log": self.feat_hostdead_log.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),
