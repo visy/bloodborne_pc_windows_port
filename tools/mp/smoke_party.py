@@ -509,7 +509,7 @@ def phase_lf(only):
 GA_FAR = SK_FAR  # 130 m from the Tomb of Oedon lamp, same map
 GA_ARRIVED = r"guest: arrived in the host's map"
 # the host chain's last step (20 s after round 3: guest 1's arrival and its screenshots) and both arrivals
-GA_UNTIL = [r"0:travel step (\d+)/: ", "1:" + GA_ARRIVED, "2:" + GA_ARRIVED]
+GA_UNTIL = [r"0:travel step (\d+)/\1: ", "1:" + GA_ARRIVED, "2:" + GA_ARRIVED]
 
 
 def phase_ga(only):
@@ -544,13 +544,114 @@ def phase_ga(only):
     )
 
 
+# Phase mk (boldmark, ~6 min, 3 players): a guest's Hunter's Mark and Bold Hunter's Mark (a player's
+# report: the Bold Mark crashed the host's game right after the guests were back). The party travels to
+# the Cathedral Ward lamp 2402950 (m24_00); guest 1 (rendered) has that lamp as its own last lamp and
+# answers "Travel with the party?" with alone (BB_PARTY_TRAVEL_CHOICE). (1) the Bold Mark in the host's
+# map: the guest's own loading screen, the host stays. Then from the Hunter's Dream (guest 1 goes there
+# alone from the lamp: a rest, the host's world reloads and guest 2 follows): (2) the Hunter's Mark,
+# (3) the Bold Mark, each a re-join into the host's world (a Mark is no rest); (4) the lamp 2402950
+# itself from the Dream (a headstone's travel: a rest the re-join carries, the host's rest load for it
+# and guest 2 following: the report's host log). After each everyone is back (the host rewinds its
+# member tasks for the arrivals); no crash, no device lost.
+MK_LAMP = "2402950"    # Cathedral Ward (m24_00)
+MK_DREAM = "2102950"   # the Hunter's Dream lamp
+MK_UNTIL = r"1:travel step (\d+)/\1: "  # guest 1's last step
+MK_CASES = (("Bold Mark in the host's map", "mark_here"), ("Hunter's Mark from the Dream", "mark"),
+            ("Bold Mark from the Dream", "mark"), ("lamp from the Dream (a rest)", "rest"))
+
+
+def _mk_to_dream():
+    """Guest 1 alone to the Dream (a rest: the host's world reloads; guest 2 follows), its last lamp the
+    Cathedral Ward's again once there (25 s: everyone is back from the host's rest load)."""
+    return ["guest_lamp=%s@20%%m24_00" % MK_DREAM, "guest_lastlamp=%s@25%%m21_00" % MK_LAMP]
+
+
+def phase_mk(only):
+    host = ",".join(["god", "host_warp=%s@15" % MK_LAMP])
+    g1 = ",".join(["god",
+                   "guest_lastlamp=%s@12%%m24_00" % MK_LAMP,
+                   "guest_use=1400@2%m24_00",                     # (1) the Bold Mark in the host's map
+                   ] + _mk_to_dream() + ["guest_use=100@2%m21_00"]   # (2) the Hunter's Mark from the Dream
+                  + _mk_to_dream() + ["guest_use=1400@2%m21_00"]     # (3) the Bold Mark from the Dream
+                  + _mk_to_dream() + ["guest_lamp=%s@2%%m21_00" % MK_LAMP,  # (4) the lamp from the Dream
+                                      "guest_press=0@25%m24_00!"])  # back in the host's world: the end
+    return dict(
+        name="mk", seconds=480,
+        env=[],
+        watch=["--watch", r"test: guest_use goods=mark@2,8", "--watch", r"a guest arrived; \d+ member task=back@1,4"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god",
+              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        crash=[],
+        until=[MK_UNTIL],
+    )
+
+
+# Phase kd (kidnap071, ~4 min, 3 players): the Snatcher kidnap (quest_audit.md item 1, P7). The party
+# travels to the Cathedral Ward lamp 2402950 (m24_00). Guest 1 first dies with the kidnap trigger 9420
+# set on its own game (what 12400780 would set; a guest's chr type is 1, so the real event never sets
+# it there): a normal party death, no Gaol. Then the host's grab-death (9420 set as 12400780 sets it at
+# the death, then the kill): common 9421 moves the respawn point to the Hypogean Gaol (2802959, m28)
+# and the death must be the PARTY's respawn load there, not the host's revive or a lone load: every
+# game in m28_00, the guests beside the host, the waking scene 28000010 on the host and never as a
+# live mirror on a guest that is not in m28 (the player report: the host taken alone, the guests
+# shown the host's cutscene in the Cathedral Ward).
+KD_LAMP = "2402950"
+KD_UNTIL = r"0:travel step (\d+)/\1: "  # the host's last step (awake in the cell, ~20 s after the load)
+
+
+def phase_kd(only):
+    host = ",".join(["host_warp=%s@15" % KD_LAMP,
+                     "host_flag=9420@40%m24_00",          # the grab-death's trigger (after guest 1's death)
+                     "host_die@1%m24_00",
+                     "host_press=0@25%m28_00!"])          # awake in the cell: the end
+    g1 = ",".join(["guest_flag=9420@12%m24_00", "guest_die@1%m24_00"])
+    return dict(
+        name="kd", seconds=360,
+        env=[],
+        watch=["--watch", r"cutscene 28000010=wake@1,4,8"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god"],
+        crash=[],
+        until=[KD_UNTIL],
+    )
+
+
+# Phase kw (kidnap071, ~5 min, 3 players): the other scripted warps into another map (quest_audit.md
+# "Scripted warps into another map"). (1) The report's broken scene directly: the host plays the Gaol
+# waking scene 28000010 (BB_PARTY_STORY_TEST host:) while the party stands elsewhere: no guest may
+# mirror it (`dropped: its map is not loaded`). (2) The DLC entry: from the Cathedral Ward the host's
+# story warp to the Hunter's Nightmare 3402959 (what 12405263 runs after the Amygdala's grab scene
+# 24000000, host only): the party goes (one load each, m34_00). (3) The Yahar'gul Amygdala grab
+# 12800431 (no client guard: any player holding the Tonsil Stone): guest 1's story warp to the
+# Lecture Building 3202958: the party goes (m32_00). The grab attacks themselves are not scripted
+# here (an Amygdala's grab hit is the trigger): the steps run the warps as the events do.
+KW_UNTIL = r"1:travel step (\d+)/\1: "  # guest 1's last step (in the Lecture Building)
+
+
+def phase_kw(only):
+    host = ",".join(["god", "host_warp=2402950@25",            # the Cathedral Ward (m24_00)
+                     "host_lamp=3402959:story@15",             # the DLC grab's warp
+                     "host_warp=2802950@25"])                  # Yahar'gul (m28_00)
+    g1 = ",".join(["god", "guest_lamp=3202958:story@15%m28_00",  # the Tonsil Stone grab's warp
+                   "guest_press=0@20%m32_00!"])
+    return dict(
+        name="kw", seconds=480,
+        env=["BB_PARTY_TRAVEL_CHOICE=party", "BB_PARTY_STORY_TEST_DELAY=8"],
+        watch=["--watch", r"28000010|dropped: its map=mirror@1,4"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "0:BB_PARTY_STORY_TEST=host:28000010",
+              "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god"],
+        crash=[],
+        until=[KW_UNTIL],
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -558,7 +659,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)"}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -587,6 +688,10 @@ GROUP_UNTIL = {
     # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
     "lifts": [LF_UNTIL],
     "ladder": [r"1:travel step (\d+)/\1: guest_press"],
+    "mark": [MK_UNTIL],
+    # the host awake in the cell (its last step) and both guests in m28_00
+    "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
+    "story_warp": [KW_UNTIL],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
@@ -1209,10 +1314,95 @@ def check_ga(v, L):
     need(v, L, "ga round 3 over", 0, r"round 3 over", r1)
     check_common(v, L, "ga")
 
+def check_mk(v, L):
+    need(v, L, "mk join: 3 players", 0, r"cooperators [01] -> 2")
+    need(v, L, "mk party at the Cathedral Ward lamp (guest 1)", 1, r"map - -> m24_00")
+    # each case's start on guest 1: its Mark item use, or (4) its lamp step from the Dream
+    starts = L.all(1, r"test: guest_use goods (100|1400) |travel step \d+/\d+: guest_lamp.*map m21_00")
+    for k, (name, kind) in enumerate(MK_CASES):
+        u = starts[k] if k < len(starts) else None
+        ok = u and ("applied" in u[1] if kind != "rest" else True)
+        v.step("mk %d %s: used (guest 1)" % (k + 1, name), ok,
+               ("+%.1f s: %s" % (u[0], u[1][:150])) if u else "case %d never ran" % (k + 1))
+        if not u:
+            continue
+        end = starts[k + 1][0] if k + 1 < len(starts) else 1e9
+        back = need(v, L, "mk %d guest 1 back in the host's map" % (k + 1), 1, r"map - -> m24_00", u[0], end)
+        if kind == "rest":
+            rest = need(v, L, "mk %d host: the rest load the re-join carries" % (k + 1), 0,
+                        r"slot \d rested at lamp %s" % MK_LAMP, u[0] - 1, end)
+            need(v, L, "mk %d guest 2 followed the rest load" % (k + 1), 2, r"map - -> m24_00", rest or u[0], end)
+            need(v, L, "mk %d host: arrivals, member tasks rewound" % (k + 1), 0,
+                 r"a guest arrived; \d+ member task\(s\) rewound", rest or u[0], end)
+        else:
+            if kind == "mark_here":
+                none_of(v, L, "mk %d host stays (no rest load for a Mark)" % (k + 1), r"rested at lamp %s" % MK_LAMP,
+                        u[0], back or end, (0,))
+            need(v, L, "mk %d host: guest 1 arrived" % (k + 1), 0, r"host: slot \d arrived", u[0], end)
+    none_of(v, L, "mk no GPU device lost / guest fault",
+            r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
+    check_common(v, L, "mk")
+
+
+def check_kd(v, L):
+    need(v, L, "kd join: 3 players", 0, r"cooperators [01] -> 2")
+    need(v, L, "kd party at the Cathedral Ward lamp (guest 1)", 1, r"map - -> m24_00")
+    gd = need(v, L, "kd guest 1 death with 9420 set (scripted)", 1, r"travel step \d+/\d+: guest_die")
+    if gd is not None:
+        need(v, L, "kd guest 1: a normal party death (revived)", 1,
+             r"guest: respawned at the host's lamp|guest: died alone: revived|revived at", gd)
+    hd = need(v, L, "kd host grab-death", 0, HOST_DIED)
+    if gd is not None and hd is not None:
+        none_of(v, L, "kd guest 1's death: nobody to the Gaol", r"map .*-> m28_00", gd, hd)
+    if hd is None:
+        check_common(v, L, "kd")
+        return
+    need(v, L, "kd host: the kidnap is the party's respawn load", 0,
+         r"host death: .*the respawn load for the whole party at lamp 2802959", hd - 15)
+    none_of(v, L, "kd host: no revive / lone load", r"host death taken|the host loads it alone", hd - 15, insts=(0,))
+    m0 = need(v, L, "kd host in the Gaol (m28_00)", 0, r"map .*-> m28_00", hd)
+    need(v, L, "kd host: the waking scene 28000010", 0, r"28000010", hd)
+    for i in (1, 2):
+        mi = need(v, L, "kd guest %d in the Gaol (m28_00)" % i, i, r"map .*-> m28_00", hd)
+        if mi is not None:
+            need(v, L, "kd guest %d beside the host" % i, i, r"placed beside the host", mi)
+        # a live mirror of the waking scene on a guest not (yet) in m28 is the report's broken scene
+        none_of(v, L, "kd guest %d: no live mirror of 28000010 outside m28" % i,
+                r"live mirror: remo 2800(0|1)010", hd, mi if mi is not None else 1e9, insts=(i,))
+    none_of(v, L, "kd no GPU device lost / guest fault",
+            r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
+    check_common(v, L, "kd")
+
+
+def check_kw(v, L):
+    need(v, L, "kw join: 3 players", 0, r"cooperators [01] -> 2")
+    sc = need(v, L, "kw host: the Gaol scene played outside m28 (test)", 0, r"remo 2800(0|1)010 mode")
+    for i in (1, 2):
+        if sc is not None:
+            need(v, L, "kw guest %d: no mirror of a map it has not loaded" % i, i,
+                 r"live mirror of remo 2800(0|1)010 dropped: its map is not loaded", sc - 1)
+        # its missed-scene replay may play once the guest stands in m28 (the scene's map), never before
+        m28 = L.find(i, r"map .*-> m28_00")
+        none_of(v, L, "kw guest %d: the Gaol scene not played outside m28" % i, r"remo 2800(0|1)010 mode",
+                0, m28[0] if m28 else 1e9, insts=(i,))
+    dl = need(v, L, "kw DLC entry: the host's story warp 3402959", 0, r"test: host_lamp 3402959 as a story warp")
+    if dl is not None:
+        for i in (0, 1, 2):
+            need(v, L, "kw DLC entry: inst%d in the Hunter's Nightmare" % i, i, r"map .*-> m34_00", dl)
+    am = need(v, L, "kw Amygdala grab: guest 1's story warp 3202958", 1, r"test: guest_lamp 3202958 as a story warp")
+    if am is not None:
+        for i in (0, 1, 2):
+            need(v, L, "kw Amygdala grab: inst%d in the Lecture Building" % i, i, r"map .*-> m32_00", am)
+    none_of(v, L, "kw no GPU device lost / guest fault",
+            r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
+    check_common(v, L, "kw")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L)}
+          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L),
+          "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L)}
 
 
 def main():
@@ -1221,7 +1411,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -1232,7 +1422,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

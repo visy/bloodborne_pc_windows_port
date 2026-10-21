@@ -3939,6 +3939,9 @@ std::atomic<bool> g_host_limbo_late{false};  // ...its boss killed in its death 
 std::mutex g_dead_mu;
 deathrules::DownLedger g_dead_members;    // host: party slots down until revived / re-arrived / gone (under g_dead_mu)
 std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
+// The local player's respawn record (GSM +0x1528) on its last frame alive (LocalDeathHeightTick):
+// a death whose script moves it (deathrules::ScriptedDeathWarp) is told from the record at the funnel.
+std::atomic<u32> g_alive_lamp{0};
 
 // What a chr death writes (ChrIns_OnDeath 0x18C49F0 and its followers 0x18C4F90 / 0x18C5070, the
 // per-frame trigger 0x18BD9D0), snapshot while the host is alive.
@@ -4278,6 +4281,26 @@ bool SoloReviveTest() {
     return on;
 }
 
+/// The host's death moves its respawn point to another map by script (deathrules::ScriptedDeathWarp:
+/// the Snatcher's kidnap to the Gaol, the first death with Insight to the Dream): the party's
+/// respawn load, whatever the revive switch says. `why` (optional): for the log line.
+bool ScriptedDeathWarpNow(u32 lamp, u32 stage, std::string* why = nullptr) {
+    bool f9420 = false, f9423 = false;
+    const bool ok = ReadEventFlag(9420, &f9420) && ReadEventFlag(9423, &f9423);
+    const bool kidnap = ok && deathrules::KidnapDeath(lamp, f9420, f9423);
+    const u32 alive = g_alive_lamp.load();
+    const bool moved = deathrules::RespawnMovedAtDeath(alive, lamp, ids::EntityMap(lamp) >> 16, stage >> 16);
+    if (why) {
+        char b[160];
+        std::snprintf(b, sizeof b, "%s%s%s (respawn record %u, %u while alive; 9420 %d, 9423 %d)",
+                      kidnap ? "the Snatcher's kidnap" : "", kidnap && moved ? ", " : "",
+                      moved ? "the death's script moved the respawn to another map" : "", lamp, alive, f9420 ? 1 : 0,
+                      f9423 ? 1 : 0);
+        *why = b;
+    }
+    return deathrules::ScriptedDeathWarp(kidnap, moved);
+}
+
 bool HostDeathIntercept() {
     if (!g_on.load() || (Role() != RoleHost && !SoloReviveTest())) {
         return false;
@@ -4334,6 +4357,12 @@ bool HostDeathIntercept() {
     v.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
     v.alone_opt = !(std::getenv("BB_PARTY_HOST_DEATH_ALONE") && std::getenv("BB_PARTY_HOST_DEATH_ALONE")[0] == '0');
     v.solo_fixture = SoloReviveTest();
+    std::string scripted;
+    v.scripted_warp = ScriptedDeathWarpNow(lamp, stage, &scripted);
+    if (v.scripted_warp) {
+        Log("host death: a scripted death warp: %s; the whole party goes (one load), no revive or lone load",
+            scripted.c_str());
+    }
     const deathrules::HostDeathPlan plan = deathrules::PlanHostDeath(v);
     switch (plan) {
     case deathrules::HostDeathPlan::Stock:
@@ -4680,6 +4709,9 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         return;
     }
     const bool dead = ChrHp(s.player) <= 0;
+    if (!dead) {
+        g_alive_lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
+    }
     if (!dead && !(Field<u64>(s.player, 0x1e1) & 0x10000)) {
         const float draw = Field<float>(s.player, 0x208);
         if (draw > 0.5f && draw <= 1.0f) {
@@ -5130,6 +5162,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
         const u32 lamp = Field<u32>(Slot(kSlotGsm), 0x1528);
         const LampSpot& sp = g_lamp_spot;
         dv.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (Field<u32>(s.player, 0x3f8) >> 16);
+        dv.scripted_warp = ScriptedDeathWarpNow(lamp, Field<u32>(s.player, 0x3f8));
     }
     const deathrules::DownTick plan = deathrules::PlanDownTick(dv);
     if (plan == deathrules::DownTick::Wait) {
