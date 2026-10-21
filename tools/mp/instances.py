@@ -623,6 +623,11 @@ def run(a):
     # shared game queue (the user stopped several by hand, 2026-10-21).
     step_rx = re.compile(r"test: travel step (\d+)/(\d+)")
     chains_done_at = None
+    # With --until: every chain done and every planned crash done, yet a marker never shows (a fix
+    # changed the line it waits for: itemsync's s2, 2026-10-21, idled 3.5 min until the user killed
+    # it). End 60 s after that and name the markers that never matched.
+    until_quiet = float(os.environ.get("BB_MP_UNTIL_QUIET", "60"))
+    settled_at, last_crash = None, 0.0
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
         if until:
             for i in range(a.count):
@@ -672,6 +677,7 @@ def run(a):
                 print("[harness +%.1f s] crash %d of %d: instance %d" % (time.time() - ts0, plan_next, len(plan), inst),
                       flush=True)
                 planned_kills[inst] += 1
+                last_crash = time.time()  # a restarted game reloads and may run its RESTART chain
                 crash_instance(a.root, inst)
         if idle_limit > 0:
             # Distinct party lines with numbers blanked: periodic status/roster/state lines repeat
@@ -693,6 +699,25 @@ def run(a):
             text = chr(10).join(texts)
             if all(u.search(texts[i] if i is not None and i < a.count else text) for i, u in until):
                 verdict = "all --until markers seen after %.0f s" % (time.time() - t0)
+                break
+        if until and any(expects_steps) and plan_next >= len(plan) and until_quiet > 0:
+            done = True
+            for i in range(a.count):
+                if expects_steps[i]:
+                    last = step_rx.findall(log_text(i, starts[i]))
+                    done = done and bool(last) and last[-1][0] == last[-1][1]
+            if not done:
+                settled_at = None
+            elif settled_at is None:
+                settled_at = time.time()
+            elif time.time() - max(settled_at, last_crash + 90) >= until_quiet:
+                texts = [log_text(i, marks[i]) for i in range(a.count)]
+                text = chr(10).join(texts)
+                missing = [("%d:" % i if i is not None else "") + u.pattern for i, u in until
+                           if not u.search(texts[i] if i is not None and i < a.count else text)]
+                verdict = ("UNTIL NOT MET: every test chain and crash done %.0f s ago, still missing: %s"
+                           % (until_quiet, " ; ".join(missing)))
+                print(verdict, flush=True)
                 break
         time.sleep(1)
     if until or verdict:

@@ -169,7 +169,7 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following"],
     "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
-    "itembox": ["1:item notice closed|lot 50000010 .*not given while summoned|owed key item: lot 50000010"],
+    "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010"],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
