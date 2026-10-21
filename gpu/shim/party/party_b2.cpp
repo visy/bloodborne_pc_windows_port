@@ -25,6 +25,7 @@
 #include "../net/np_hle.h"
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
+#include "party_chalice.h"
 #include "party_status_bridge.h"
 #include "party_spectate.h"
 #include "party_director.h"
@@ -425,9 +426,10 @@ std::atomic<bool> g_force_load_warp{false};
 std::atomic<bool> g_title_continuing{false};  // the director's AutoContinue is pressing Continue  // the next lamp warp loads (title-join home)
 std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
 std::atomic<bool> g_title_home_now{false};
+std::atomic<bool> g_chalice_bail{false};  // the guest left a host's dungeon it loaded without the dungeon
 
 bool SendHomeVeto(u64 site) {
-    const bool own_leave = SendHomeVetoForOwnLeave();
+    const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
     // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
     // home 5 s after the host travelled alone (live split4) although the room and the party link
     // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped -
@@ -7195,6 +7197,7 @@ struct TitleJoin {
     float pos[4] = {}, rot[4] = {};
     int last_role = -2, last_state = -2;
     std::vector<int> requests;  // host: slots that asked
+    std::map<int, std::uint64_t> channels;  // host: the dungeon each asking slot's own save holds (0: none / unknown)
 };
 TitleJoin& TJ() {
     static TitleJoin t;
@@ -7327,6 +7330,35 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         const dsummon::Busy busy = dsummon::TitleJoinBusy(Role() == RoleHost && BossBarShown(),
                                                           Role() == RoleHost && CutscenePlaying(), ready,
                                                           !coop::OthersInPrologue().empty());
+        // A Chalice Dungeon: a title join loads the joiner's own slot's dungeon (no quick join), so
+        // only a joiner whose slot holds this dungeon comes in that way; the others continue into
+        // their own world and the summon brings them in (an empty m29 otherwise).
+        const std::uint64_t host_channel = Field<u64>(Field<u64>(Guest(0x553b120), 0, 0), 0xa88, dsummon::kNoChannel);
+        std::vector<int> into_chalice;
+        if (busy == dsummon::Busy::None) {
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            for (int slot : req) {
+                const auto it = TJ().channels.find(slot);
+                const std::uint64_t guest_channel = it == TJ().channels.end() ? 0 : it->second;
+                if (dsummon::TitleJoinChaliceElsewhere(s.map_id, host_channel, guest_channel)) {
+                    into_chalice.push_back(slot);
+                    Log("title join: slot %d refused: this host is in Chalice Dungeon %#llx, the joiner's slot holds "
+                        "%#llx (it continues into its own world; the summon's quick join brings it in)",
+                        slot, ull(host_channel), ull(guest_channel));
+                }
+            }
+        }
+        for (int slot : into_chalice) {
+            Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") +
+                           dsummon::BusyWord(dsummon::Busy::Chalice) + "\"}");
+        }
+        if (!into_chalice.empty()) {
+            req.erase(std::remove_if(req.begin(), req.end(),
+                                     [&](int x) { return std::find(into_chalice.begin(), into_chalice.end(), x) !=
+                                                         into_chalice.end(); }),
+                      req.end());
+            if (req.empty()) return;
+        }
         if (busy != dsummon::Busy::None) {
             for (int slot : req) {
                 Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + dsummon::BusyWord(busy) + "\"}");
@@ -7552,6 +7584,18 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
         Log("direct summon: the game's wrapper constructor refused");
         return false;
     }
+    // A Chalice Dungeon: the handler takes the message's ChannelId only with FrpgNetMan +0xb14 bit 0
+    // (the vanilla Dream bell's chalice wait, SpEffect 9900; the director applies it while the host
+    // is in a dungeon). Set it for this call too, so the quick join cannot be skipped by a late effect.
+    const u64 net = Field<u64>(Guest(kNetMan), 0, 0);
+    if (dsummon::ChannelSet(room.channel) && net) {
+        const u8 wait = Field<u8>(net, 0xb14, 0);
+        if (!(wait & 1)) {
+            const u8 set = u8(wait | 1);
+            SafeWrite(net + 0xb14, &set, 1);
+            Log("direct summon: chalice wait bit (FrpgNetMan +0xb14 bit 0) was clear: set for the quick join");
+        }
+    }
     // The sender as the handler sees it: +0x20 -> the sender's 16-byte online id.
     char ident[17] = {};
     std::snprintf(ident, sizeof ident, "%s", host_name.c_str());
@@ -7563,6 +7607,11 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
     const u32 state = Field<u32>(entry, 0xc8, 0);
     Log("direct summon: the host's room (%zu bytes) handed to the game as a type-1 summon message: entry state %u",
         room.data.size(), state);
+    if (dsummon::ChannelSet(room.channel)) {
+        // +0xc0: the channel request by id (get_details_info) that becomes the quick join.
+        Log("direct summon: Chalice Dungeon %llu (ChannelId %#llx): channel request %s", ull(room.channel), ull(room.channel),
+            Field<u64>(entry, 0xc0, 0) ? "made (the quick join follows the join)" : "NOT made");
+    }
     return state != 0;
 }
 
@@ -7603,6 +7652,14 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         // us our game ended that session itself, and a room served in between was gone before the
         // guest got in. Until our game is out of it (a fresh room is created then), the guest waits.
         v.settling = Role() == RoleHost && s.cooperators <= 0 && bbnet::np::ms_since_member_left() < 8000;
+        // A Chalice Dungeon: the room carries the host's ChannelId (FrpgNetMan +0xa88), which the
+        // guest's game quick-joins (chalice.md 4). Right after the host's arrival it is still 0 (live:
+        // ~1.5 s), and the summoned game fetches the dungeon from the board: until both are there,
+        // the guest asks again (a room without it loaded the guest into an empty m29 and it fell).
+        const std::uint64_t host_channel = Field<u64>(Field<u64>(Guest(kNetMan), 0, 0), 0xa88, dsummon::kNoChannel);
+        v.chalice_unready = dsummon::ChaliceMap(s.map_id) &&
+                            (!dsummon::ChannelSet(host_channel) ||
+                             !bbnet::party::FromApi::instance().channels().known(host_channel));
         const std::string name = names.count(slot) ? names[slot] : std::string();
         // F5: a member back from a network outage: its sign hold ends once the scan for its old
         // game connection ran (NrDropAfterOutage, ~1.5 s after it was back); the answer waits for
@@ -7672,6 +7729,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         room.area = Field<u32>(net, 0xa7c, 0);
         room.level = 0;  // bbhost's FrpgNetMan +0xaa8 holds a float on our 1.09 (live: 0x3f49...): not sent
         SafeRead(net + 0xaac, room.pos, 12);
+        room.channel = dsummon::ChaliceMap(s.map_id) || dsummon::ChaliceMap(room.area) ? host_channel : dsummon::kNoChannel;
         // A4 (parab3 a4t2, live): a host left alone counts its room down (flow +0xB8, ~10 s after the
         // last member left; 0x1789B60 raises OnRoomTimeOut and the game leaves the room at 0). A
         // room served 27 ms before that ended was gone when the guest's JoinRoom came ("Room not
@@ -7693,8 +7751,8 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             DS().served_at = now;
             DS().refused_wait = false;
         }
-        Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u); its signs are held", slot,
-            name.c_str(), room.data.size(), room.area, room.level);
+        Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u, ChannelId %#llx); its signs "
+            "are held", slot, name.c_str(), room.data.size(), room.area, room.level, ull(room.channel));
     }
     if (keep.empty()) first = 0;
     {
@@ -7719,6 +7777,12 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             a = dsummon::Action::ReportFail;
             Log("direct summon: the host's room is in %s, this guest in %s: not delivered",
                 MapName(DS().room.area).c_str(), MapName(s.map_id).c_str());
+        } else if (dsummon::RoomLacksDungeon(DS().g, now, DS().room)) {
+            a = dsummon::Action::ReportFail;
+            Log("direct summon: the host's room is in its Chalice Dungeon (%s) without a ChannelId: not delivered, this "
+                "game stays in its own world", MapName(DS().room.area).c_str());
+            party::status::SetAlert("The host is in a Chalice Dungeon this game cannot be summoned into yet. You stay in your "
+                             "own world; ring the bell again in a moment.");
         } else {
             const bool entry = s.world_up && !s.loading && WaitingGuestEntry() != 0;
             // Playtest 1 G4: say once per request what keeps a room from being handed over.
@@ -7780,6 +7844,41 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
                        : "the bell sign path takes over");
         }
     }
+}
+
+/// Guest: a summon or title join that loaded the host's Chalice Dungeon without the dungeon (the
+/// map stays unknown: m255, an empty world; live: the guest fell to y -1500 and died, a grey screen,
+/// again at every respawn). Whatever path brought it, it leaves the session at once and goes home
+/// (the game's own send-home, or the title join's lamp warp) with a notice; the summon's quick join
+/// brings it in properly next.
+void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
+    static double since = 0;
+    static bool bailed = false;
+    int host_state = -1;
+    u32 host_map = 0;
+    coop::MemberRoster(0, &host_state, &host_map);
+    const bool empty = Role() == RoleClient && s.world_up && !s.loading && !dsummon::MapKnown(s.map_id) &&
+                       dsummon::ChaliceMap(host_map);
+    if (!empty) {
+        since = 0;
+        if (s.loading) bailed = false;
+        return;
+    }
+    if (since == 0) since = now;
+    if (bailed || now - since < 3.0) return;
+    bailed = true;
+    float p[3] = {};
+    const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (me) ChrPos(me, p);
+    Log("chalice: this guest is in the host's Chalice Dungeon (%s) without the dungeon (map unknown for %.1f s, at "
+        "(%.1f, %.1f, %.1f)): leaving the session, home to its own world",
+        MapName(host_map).c_str(), now - since, double(p[0]), double(p[1]), double(p[2]));
+    g_chalice_bail = !g_title_joined.load();
+    if (g_title_joined.load()) g_title_home_now = true;
+    using Fn = u8(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    party::status::SetAlert("This game loaded the host's Chalice Dungeon without the dungeon. You are sent back to your own "
+                     "world; the party's summon brings you into the dungeon.");
 }
 
 void DirectSummonEvent(int from_slot, const std::string& body) {
@@ -8430,7 +8529,15 @@ bool TitleJoinHold(const GameSnapshot& s) {
             }
             return false;
         }
-        Send(0, "{\"op\":\"title_req\"}");
+        {
+            // The dungeon this save holds (its current slot), if the flags are readable at the title:
+            // a host in a Chalice Dungeon lets only a joiner with that dungeon title-join into it.
+            const chalice::State cs = chalice::Read();
+            const std::uint64_t own = cs.valid && cs.load_mode == 0 ? cs.channel : chalice::LocalChannel();
+            char req[96];
+            std::snprintf(req, sizeof req, "{\"op\":\"title_req\",\"chalice\":\"%llx\"}", ull(own));
+            Send(0, req);
+        }
         std::lock_guard<std::mutex> lk(t.mu);
         t.phase = TitlePhase::Requested;
         t.since = now;
@@ -8971,6 +9078,7 @@ void Tick(const GameSnapshot& s) {
     }
     ProbeTick(s);
     DirectSummonTick(s, now);
+    ChaliceEmptyWorldTick(s, now);
     if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);
@@ -9206,7 +9314,10 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             return;  // the guest's ack timeout sends it the usual way
         }
         Send(from_slot, "{\"op\":\"title_ack\"}");
+        unsigned long long ch = 0;
+        if (const char* pc = std::strstr(body.c_str(), "\"chalice\":\"")) std::sscanf(pc + 11, "%llx", &ch);
         std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().channels[from_slot] = ch;
         TJ().requests.push_back(from_slot);
         return;
     }

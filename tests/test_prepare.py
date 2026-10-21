@@ -111,5 +111,18 @@ class EbootValidationTests(unittest.TestCase):
             parse_self(b'\x00' * 64)
 
 
+    def test_libc_missing_truncated_or_damaged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            libc = Path(tmp) / 'libc.prx'
+            with self.assertRaisesRegex(ValueError, 'sce_module/libc.prx is missing'):
+                inspect_libc(libc)
+            libc.write_bytes(b'O=')
+            with self.assertRaisesRegex(ValueError, r'libc.prx at .* is truncated \(4 bytes\)'):
+                inspect_libc(libc)
+            libc.write_bytes(fixture()[:0x100])
+            with self.assertRaisesRegex(ValueError, r'libc.prx at .* is unreadable'):
+                inspect_libc(libc)
+
+
 if __name__ == '__main__':
     unittest.main()
