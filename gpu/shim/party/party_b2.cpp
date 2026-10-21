@@ -4322,10 +4322,10 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         // Issue #4 item 7: the game's fall-death state (normally a load path; an in-place revive
         // after a fall only with BB_PARTY_GUEST_REVIVE_FAR or a failed load) is cleared too.
         const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(p, 0x3b0), 0x20), 0x200);
-        if (deathrules::FallDeathState(f, hp200)) {
+        if (deathrules::FallDeathState(f, hp200) || (hp200 & deathrules::kDeathBitsHp200) != 0) {
             f &= ~deathrules::kFallFlags1e1;
             if (const u64 m20 = Field<u64>(Field<u64>(p, 0x3b0), 0x20)) {
-                const u16 w = u16(hp200 & ~deathrules::kFallBitsHp200);
+                const u16 w = u16(hp200 & ~(deathrules::kFallBitsHp200 | deathrules::kDeathBitsHp200));
                 SafeWrite(m20 + 0x200, &w, 2);
             }
             Log("%s revive: the game's fall-death state cleared (hp+0x200 %04x)", host ? "host" : "guest",

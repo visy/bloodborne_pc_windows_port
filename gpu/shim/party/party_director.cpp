@@ -1866,34 +1866,40 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         {
             // The own HP / max (HP module [+0x3B0] +0x20: +0xF8 / +0xFC; rally and vial checks) and
             // lock-on (chr +0xF8, the behaviour variable IsLockon in 0x1A18BF0; 0x188E900 sets it
-            // with the target entry's first 16 bytes at +0x100, the target's chr handle first).
+            // and copies the target entry's first 16 bytes to +0x100: the target's position, live
+            // revivecheck) with the loaded enemy nearest that point.
             const std::uint64_t player = LocalPlayer();
             std::uint64_t cm = 0, dm = 0;
             std::int32_t hp = -1, mhp = -1;
             std::uint8_t lock = 0;
-            std::uint32_t lh = 0;
+            float lp[3] = {};
             if (player && SafeGet(player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
                 SafeGet(dm + 0xf8, &hp);
                 SafeGet(dm + 0xfc, &mhp);
             }
             if (player) {
                 SafeGet(player + 0xf8, &lock);
-                SafeGet(player + 0x100, &lh);
+                SafeRead(player + 0x100, lp, sizeof lp);
             }
             std::uint32_t lent = 0;
             int lhp = -1;
+            float best = 4.0f;  // within 2 m of the point
             if (lock) {
                 for (const auto& e : balance::LoadedEnemies()) {
-                    std::uint32_t h = 0;
-                    if (SafeGet(e.chr + 8, &h) && h == lh) {
+                    float at[3] = {};
+                    if (!balance::ChrPosition(e.chr, at)) continue;
+                    const float d = (at[0] - lp[0]) * (at[0] - lp[0]) + (at[1] - lp[1]) * (at[1] - lp[1]) +
+                                    (at[2] - lp[2]) * (at[2] - lp[2]);
+                    if (d < best) {
+                        best = d;
                         lent = e.entity;
                         lhp = balance::EnemyHp(e.chr);
                     }
                 }
             }
-            char b[200];
-            std::snprintf(b, sizeof b, "; own HP %d/%d, lock-on %u (target handle %#x = entity %u, HP %d)", hp, mhp,
-                          unsigned(lock), lh, lent, lhp);
+            char b[220];
+            std::snprintf(b, sizeof b, "; own HP %d/%d, lock-on %u (target at (%.1f, %.1f, %.1f): enemy %u, HP %d)", hp,
+                          mhp, unsigned(lock), double(lp[0]), double(lp[1]), double(lp[2]), lent, lhp);
             target += b;
         }
         Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
