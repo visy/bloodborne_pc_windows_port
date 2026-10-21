@@ -1928,9 +1928,9 @@ void PartyTab() {
                sc.kind == 1 ? T("Per extra hunter in the party; Bloodborne itself adds none.",
                                 "За каждого охотника в группе; в самой игре прибавки нет.")
                             : T("Per extra hunter, in % of Bloodborne's own boss step (100 % = the game's; normal "
-                                "enemies get none in the game). Negative poise: easier to stagger.",
+                                "enemies get none in the game). Poise starts at 0 %: the game's own.",
                                 "За каждого охотника, в % от шага самой игры для боссов (100 % = как в игре; "
-                                "обычные враги в игре не усиливаются). Отрицательная стойкость: легче оглушить."),
+                                "обычные враги в игре не усиливаются). Стойкость от 0 %: как в игре."),
                on, [&](int i) { Store(*sc.value, sc.table[std::clamp(i, 0, 10)], true); });
     }
     if (!b.last_event.empty()) {

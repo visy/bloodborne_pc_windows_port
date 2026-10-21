@@ -38,7 +38,7 @@ struct Rules {
     int boss_poise = 100;  ///< % of the vanilla poise step (+30 per cooperator)
     int enemy_hp = 50;     ///< normal enemies: % of the boss HP step (vanilla: 0)
     int enemy_damage = 0;  ///< + % damage per extra hunter
-    int enemy_poise = 0;   ///< % of the poise step; negative = easier to stagger (ERSC 3-4 players)
+    int enemy_poise = 0;   ///< % of the poise step (0..300: below 0 staggered less)
     /// I1: friendly fire / PvP (ERSC Judicator's Rulebook): party members can hurt each other.
     /// Off by default; only the host's value counts (party_pvp.h).
     bool friendly_fire = false;
@@ -59,7 +59,7 @@ Rules Vanilla();
 /// The menu sliders' 11 positions (0..10) for each kind of value.
 extern const int kHpTable[11];      ///< % of the HP step: 0 .. 400
 extern const int kDamageTable[11];  ///< + % per extra hunter: 0 .. 100
-extern const int kPoiseTable[11];   ///< % of the poise step: -100 .. 300
+extern const int kPoiseTable[11];   ///< % of the poise step: 0 .. 300
 int Position(const int* table, int value);  ///< the nearest position
 int AtPosition(const int* table, int position);
 
