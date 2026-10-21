@@ -1589,12 +1589,24 @@ void DieForTest() {
 /// world, with no loading screen and no stage request pending.
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
+    // BB_PARTY_DIRECTOR_TEST_SOLO=1: the host steps without a cooperator, "joined" from the first
+    // steady world on: in single player (no BB_PARTY) or as a party host alone (vanilla comparisons,
+    // e.g. streamsync: does a neighbour map's kill stay dead when that map streams out and in).
+    static const bool solo = [] {
+        const char* v = std::getenv("BB_PARTY_DIRECTOR_TEST_SOLO");
+        return v && v[0] == '1';
+    }();
+    const bool solo_now = solo && (role == PartyRole::None || role == PartyRole::Host);
+    if (solo_now) {
+        role = PartyRole::Host;
+    }
     if (t.steps.empty() || role == PartyRole::None) {
         return;
     }
     // Guest: in once a client with the world loaded; out only when the session ends (the summon's
     // own map reload into the host world is still in).
-    const bool joined = role == PartyRole::Host ? s.cooperators >= 1
+    const bool joined = solo_now                  ? t.joined || (s.world_up && !s.loading)
+                        : role == PartyRole::Host ? s.cooperators >= 1
                         : t.joined                ? s.session_role == RoleClient
                                                   : s.session_role == RoleClient && s.world_up && !s.loading;
     if (joined != t.joined) {
@@ -1854,10 +1866,22 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         Log("test: %s %u ms (%s)", TravelStepName(step.kind), step.buttons, Describe(s).c_str());
     } else if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
         // In-process pad input (runtime_pad_director_press, OR-ed into every pad sample; no OS
-        // input): a tap, released 0.15 s later.
-        runtime_pad_director_press(step.buttons);
-        t.pressing = true;
-        t.release_at = now + std::chrono::milliseconds(150);
+        // input): a tap, released 0.15 s later. ":lock": not while the lock-on (chr +0xF8) is on.
+        // R3 with no target in the camera's view only turns the camera behind the player, as on
+        // a pad: after a chr warp (host_chr) the camera can face away from the target (live
+        // deaths071: the first R3 after host_chr missed with and without a death before it, the
+        // second locked on).
+        std::uint8_t locked = 0;
+        if (step.args == "lock") {
+            if (const std::uint64_t pl = LocalPlayer()) SafeGet(pl + 0xf8, &locked);
+        }
+        if (!locked) {
+            runtime_pad_director_press(step.buttons);
+            t.pressing = true;
+            t.release_at = now + std::chrono::milliseconds(150);
+        } else {
+            Log("test: %s 0x%x:lock skipped: locked on already", TravelStepName(step.kind), step.buttons);
+        }
         std::string target;
         if (t.chr_target) {
             // A weapon fight (host_chr / guest_chr then R1 taps): the target's HP and distance.
@@ -3300,6 +3324,9 @@ void PartyDirector::ConfigureFromEnv() {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 0));
                     // "!": only once the own chr is alive and the world up (not into a death screen).
                     step.alive = item.find('!') != std::string::npos;
+                    // BUTTONS:lock: R3 only while the lock-on is off (a second try after an R3 that
+                    // only turned the camera; never a tap that releases the lock).
+                    if (item.find(":lock") != std::string::npos) step.args = "lock";
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                         step.map = item.substr(pc + 1, item.find('!', pc) == std::string::npos ? std::string::npos
                                                                                               : item.find('!', pc) - pc - 1);
