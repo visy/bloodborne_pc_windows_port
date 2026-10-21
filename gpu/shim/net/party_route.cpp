@@ -121,7 +121,12 @@ bool open(const Router::KeyedMac& kmac, const std::uint8_t* key, const std::vect
     return equal16(want, f.data() + hdr - 16);
 }
 
-constexpr std::size_t kQ2 = 51, kQ3 = 99, kQ5 = 22;  // frame sizes (Q1: Router::kQ1Size; Q4: 40 + name)
+constexpr std::size_t kQ2 = 67, kQ3 = 115, kQ5 = 22;  // frame sizes (Q1: Router::kQ1Size; Q4: 40 + name)
+constexpr std::size_t kTHeader = 30;                  // T / t: fc type session4 ctr8 mac16
+constexpr const char* kLabelCookie = "bbport relay cookie v1";
+constexpr const char* kLabelUp = "bbport relay up v1";
+constexpr const char* kLabelDown = "bbport relay down v1";
+constexpr const char* kLabelNonceMac = "bbport net6 nonce v1";
 constexpr const char* kLabelScalar = "bbport cpace member scalar v1";
 constexpr const char* kLabelIsk = "bbport cpace isk v1";
 constexpr const char* kLabelConfirmA = "bbport cpace confirm guest v1";
@@ -270,6 +275,7 @@ void secure_random(void* out, std::size_t n) {
 Router::Router() {
     secure_random(hash_key_.data(), hash_key_.size());
     secure_random(sv_salt_.data(), sv_salt_.size());
+    secure_random(sv_cookie_key_.data(), sv_cookie_key_.size());
 }
 
 Router::MemberKey Router::new_member_key() {
@@ -284,8 +290,8 @@ bool Router::Bucket::take(double n, RClock::time_point now) {
         tokens = burst;
         at = now;
     }
-    const double dt = std::chrono::duration<double>(now - at).count();
-    at = now;
+    const double dt = std::max(0.0, std::chrono::duration<double>(now - at).count());
+    if (now > at) at = now;
     tokens = std::min(burst, tokens + dt * rate);
     if (tokens < n) return false;
     tokens -= n;
@@ -495,13 +501,31 @@ bool Router::key_of_locked(const Ep6& e6, std::uint32_t* addr, std::uint16_t* po
     return false;
 }
 
-Wire Router::nonce_wire(const Ep6& to, const std::array<std::uint8_t, 16>& nonce) {
+void Router::set_nonce_key(const std::array<std::uint8_t, 32>& key) {
+    std::lock_guard<std::mutex> lk(mu_);
+    nonce_key_ = key;
+    have_nonce_key_ = true;
+}
+
+std::uint64_t Router::curve_ops() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return curve_ops_;
+}
+
+Wire Router::nonce_wire(const Ep6& to, const std::array<std::uint8_t, 16>& nonce) const {
     Wire w;
     w.v6 = true;
     w.addr6 = to.addr;
     w.port = to.port;
     w.data = {kRouteMagic, 'N'};
     w.data.insert(w.data.end(), nonce.begin(), nonce.end());
+    std::lock_guard<std::mutex> lk(mu_);
+    std::vector<std::uint8_t> m;
+    append(m, kLabelNonceMac);
+    m.insert(m.end(), nonce.begin(), nonce.end());
+    std::uint8_t tag[16] = {};
+    if (kmac_ && have_nonce_key_) kmac_(nonce_key_.data(), m.data(), m.size(), tag);
+    w.data.insert(w.data.end(), tag, tag + 16);
     return w;
 }
 
@@ -537,10 +561,13 @@ void Router::outgoing(std::uint32_t to_addr, std::uint16_t to_port, const std::u
                       RClock::time_point now, std::vector<Wire>* out) {
     std::lock_guard<std::mutex> lk(mu_);
     if (cl_.st != ClientState::Off && to_addr == cl_.h_addr && to_port == cl_.h_port) {
-        if (cl_.st != ClientState::Ready) return;  // the handshake first; the link dials after it
+        if (cl_.st != ClientState::Ready || !kmac_) return;  // the handshake first; the link dials after it
         std::vector<std::uint8_t> f{kRouteMagic, 'T'};
         put32(f, cl_.session);
+        put64(f, ++cl_.up_ctr);
+        f.resize(f.size() + 16);
         f.insert(f.end(), d, d + n);
+        seal(kmac_, cl_.k_up.data(), f, kTHeader);
         cl_.last_sent = now;
         wire_to(cl_.m_addr, cl_.m_port, std::move(f), out);
         return;
@@ -635,6 +662,50 @@ void Router::session_key(const Pake& pk, const std::uint8_t* cn, const std::uint
     pk.hash(m.data(), m.size(), out);
 }
 
+// The member's stateless cookie for a guest's handshake (Q2, checked at Q3 before any curve work).
+void Router::cookie(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, const std::uint8_t* ya,
+                    const std::uint8_t* yb, std::int64_t minute, std::uint8_t out[16]) const {
+    std::vector<std::uint8_t> m;
+    append(m, kLabelCookie);
+    put_key(m, a, p);
+    m.insert(m.end(), cn, cn + 16);
+    m.insert(m.end(), ya, ya + 32);
+    m.insert(m.end(), yb, yb + 32);
+    put32(m, static_cast<std::uint32_t>(minute));
+    kmac_(sv_cookie_key_.data(), m.data(), m.size(), out);
+}
+
+// Handshake budgets: per /56 group (5 a second each for Q1 and Q3) and for everyone (200).
+bool Router::budget(bool confirm, std::uint32_t group, RClock::time_point now) {
+    if (group_budget_.size() > 4096) {
+        for (auto i = group_budget_.begin(); i != group_budget_.end();)
+            i = now - i->second.first.at > std::chrono::minutes(1) && now - i->second.second.at > std::chrono::minutes(1)
+                    ? group_budget_.erase(i)
+                    : std::next(i);
+        if (group_budget_.size() > 4096) group_budget_.clear();
+    }
+    auto& gb = group_budget_[group];
+    Bucket& b = confirm ? gb.second : gb.first;
+    if (b.rate == 0) {
+        b.rate = kHandshakeRatePerGroup;
+        b.burst = 2 * kHandshakeRatePerGroup;
+    }
+    if (!b.take(1, now)) return false;
+    return (confirm ? confirm_budget_ : hello_budget_).take(1, now);
+}
+
+// The guest's side: the member's confirmation failed (an impostor or another party): not asked
+// again for a while, doubling (R3).
+void Router::member_failed(RClock::time_point now) {
+    Backoff& b = backoff_[k(cl_.m_addr, cl_.m_port)];
+    ++b.failures;
+    auto wait = kBackoffFirst;
+    for (int i = 1; i < b.failures && wait < kBackoffMax; ++i) wait *= 2;
+    if (wait > kBackoffMax) wait = kBackoffMax;
+    b.until = now + wait;
+    if (backoff_.size() > 256) backoff_.erase(backoff_.begin());
+}
+
 bool Router::valid_guest_key(std::uint32_t ga, std::uint16_t gp, std::uint32_t member_src) const {
     if (!ga || !gp) return false;
     const std::uint8_t a0 = reinterpret_cast<const std::uint8_t*>(&ga)[0];
@@ -654,7 +725,13 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
     const std::size_t n = d.size();
     const std::uint8_t type = d[1];
     if (type == 'N') {  // the host checks our IPv6 endpoint: echoed over the link (net6_echo)
-        if (!v6 || n != 18) return false;
+        if (!v6 || n != 34 || !kmac_ || !have_nonce_key_) return false;
+        std::vector<std::uint8_t> m;
+        append(m, kLabelNonceMac);
+        m.insert(m.end(), d.begin() + 2, d.begin() + 18);
+        std::uint8_t want[16];
+        kmac_(nonce_key_.data(), m.data(), m.size(), want);
+        if (!equal16(want, d.data() + 18)) return false;  // not from a party member (R4)
         auto it = v6_by_key_.find(k(sa, sp));
         if (it == v6_by_key_.end()) return false;
         // One slot per source /48 (N6: a flood from one network keeps one slot; the latest wins), at
@@ -686,17 +763,20 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 refuse(kNotServing, 0);
                 return false;
             }
-            // Each hello costs two X25519 operations: a global budget against floods.
-            if (!q1_budget_.take(1, now)) return false;
+            // Each hello costs two curve operations: budgets per /56 and for everyone (R1).
+            if (!kmac_ || !budget(false, tkey, now)) return false;
             const std::uint8_t* ya = d.data() + 19;
-            std::uint8_t g[32], yb_s[32], yb[32];
+            std::uint8_t g[32], yb_s[32], yb[32], ck[16];
             sv_pake_.generator(cn, g);
             member_scalar(sa, sp, cn, ya, minute, yb_s);
+            curve_ops_ += 2;
             if (!sv_pake_.x25519(yb_s, g, yb)) return false;
-            // Q2 is the member's point only: nothing in it can be checked against a password guess.
+            cookie(sa, sp, cn, ya, yb, minute, ck);
+            // Q2 is the member's point and its cookie: nothing in it can be checked against a password guess.
             std::vector<std::uint8_t> f{kRouteMagic, 'Q', 2};
             f.insert(f.end(), cn, cn + 16);
             f.insert(f.end(), yb, yb + 32);
+            f.insert(f.end(), ck, ck + 16);
             wire_to(sa, sp, std::move(f), out);
             return false;
         }
@@ -707,20 +787,29 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             }
             const std::uint8_t* ya = d.data() + 19;
             const std::uint8_t* yb = d.data() + 51;
-            std::uint8_t g[32], yb_s[32], want_yb[32];
-            sv_pake_.generator(cn, g);
+            // The cookie first: one BLAKE2b, no curve work for a forged or stale Q3 (R1).
+            if (!kmac_) return false;
+            std::int64_t at = 0;
             bool fresh = false;
             for (std::int64_t m = minute; m >= minute - 1 && !fresh; --m) {
-                member_scalar(sa, sp, cn, ya, m, yb_s);
-                fresh = sv_pake_.x25519(yb_s, g, want_yb) && std::memcmp(want_yb, yb, 32) == 0;
+                std::uint8_t ck[16];
+                cookie(sa, sp, cn, ya, yb, m, ck);
+                if (equal16(ck, d.data() + 83)) {
+                    fresh = true;
+                    at = m;
+                }
             }
             if (!fresh) return false;  // stale or not ours: the guest says hello again
+            if (!budget(true, tkey, now)) return false;
+            std::uint8_t yb_s[32];
+            member_scalar(sa, sp, cn, ya, at, yb_s);
             std::int64_t remaining = 0;
             if (sv_throttle_.locked && sv_throttle_.locked(tkey, &remaining)) {
                 refuse(kLockedOut, static_cast<int>((remaining + 999) / 1000));
                 return false;
             }
             std::uint8_t kk[32], isk[32], confirm[16];
+            ++curve_ops_;
             const bool point_ok = sv_pake_.x25519(yb_s, ya, kk);  // a low-order Ya gives zero: refused
             if (point_ok) {
                 session_key(sv_pake_, cn, ya, yb, kk, isk);
@@ -729,7 +818,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 m.insert(m.end(), cn, cn + 16);
                 kmac_(isk, m.data(), m.size(), confirm);
             }
-            if (!point_ok || !equal16(confirm, d.data() + 83)) {
+            if (!point_ok || !equal16(confirm, d.data() + 99)) {
                 if (sv_throttle_.fail) sv_throttle_.fail(tkey);
                 note("member relay: a wrong party key from " + key_text(sa, sp) + " (refused)");
                 refuse(kWrongKey, 0);
@@ -760,6 +849,13 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 while (!s.id) secure_random(&s.id, sizeof s.id);
                 s.cn = cna;
                 s.created = s.last = now;
+                std::vector<std::uint8_t> ku(isk, isk + 32), kd(isk, isk + 32);
+                append(ku, kLabelUp);
+                append(kd, kLabelDown);
+                sv_pake_.hash(ku.data(), ku.size(), s.k_up.data());
+                sv_pake_.hash(kd.data(), kd.size(), s.k_down.data());
+                // A guest we relay over IPv6 is a party member's: its key is never evicted.
+                if (auto v = v6_by_key_.find(k(sa, sp)); v != v6_by_key_.end()) v->second.trusted = true;
                 s.frames.rate = kSessionFrameRate;
                 s.frames.burst = 2 * kSessionFrameRate;
                 s.bytes.rate = kSessionByteRate;
@@ -796,6 +892,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             return false;
         if (sub == 2 && n == kQ2 && !cl_.have_isk) {
             std::memcpy(cl_.yb.data(), d.data() + 19, 32);
+            std::memcpy(cl_.cookie.data(), d.data() + 51, 16);
             std::uint8_t kk[32];
             if (!cl_.pake.x25519(cl_.ya_s.data(), cl_.yb.data(), kk)) return false;  // a low-order point
             session_key(cl_.pake, cl_.cn.data(), cl_.ya.data(), cl_.yb.data(), kk, cl_.isk.data());
@@ -813,12 +910,22 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             std::uint8_t tag[16];
             kmac_(cl_.isk.data(), ok.data(), ok.size(), tag);
             if (!equal16(tag, d.data() + 24 + nl)) {  // not a party member: its welcome is ignored
-                if (!cl_.impostor_noted)
+                if (!cl_.impostor_noted) {
                     note("member relay: " + key_text(cl_.m_addr, cl_.m_port) +
-                         " does not know our party key (not a party member)");
+                         " does not know our party key (not a party member): not asked again for a while");
+                    member_failed(now);
+                    cl_.st = ClientState::Refused;
+                    cl_.code = kWrongKey;
+                }
                 cl_.impostor_noted = true;
                 return false;
             }
+            std::vector<std::uint8_t> ku(cl_.isk.begin(), cl_.isk.end()), kd(cl_.isk.begin(), cl_.isk.end());
+            append(ku, kLabelUp);
+            append(kd, kLabelDown);
+            cl_.pake.hash(ku.data(), ku.size(), cl_.k_up.data());
+            cl_.pake.hash(kd.data(), kd.size(), cl_.k_down.data());
+            backoff_.erase(k(cl_.m_addr, cl_.m_port));
             cl_.session = session;
             cl_.name = clean_name(d.data() + 24, nl);
             cl_.st = ClientState::Ready;
@@ -829,6 +936,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             cl_.code = d[19];
             cl_.wait_s = d[20] << 8 | d[21];
             cl_.st = ClientState::Refused;
+            if (cl_.code == kWrongKey) member_failed(now);  // our confirmation failed there
             static const char* why[] = {"", "it has another party key (a different code or password)",
                                         "too many wrong attempts from here", "it does not relay now",
                                         "it relays for others already"};
@@ -838,13 +946,15 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
         }
         return false;
     }
-    if (type == 'T' && n >= 6 && serving_) {  // a guest's datagram for the host
+    if (type == 'T' && n >= kTHeader && serving_ && kmac_) {  // a guest's datagram for the host
         auto it = sessions_.find(k(sa, sp));
         if (it == sessions_.end() || it->second.id != get32(d.data() + 2)) return false;
         Session& s = it->second;
+        if (!open(kmac_, s.k_up.data(), d, kTHeader)) return false;  // forged or altered (R2)
+        if (!s.up_in.accept(get64(d.data() + 6))) return false;      // replayed
         s.last = now;
-        if (n == 6) return false;  // keepalive
-        if (is_route_frame(d.data() + 6, n - 6) || !kmac_ || !sv_key_.id) return false;
+        if (n == kTHeader) return false;  // keepalive
+        if (is_route_frame(d.data() + kTHeader, n - kTHeader) || !sv_key_.id) return false;
         if (!s.frames.take(1, now) || !s.bytes.take(static_cast<double>(n), now)) {
             if (s.dropped++ % 1000 == 0)
                 note("member relay: " + key_text(sa, sp) + " is over its rate; datagrams dropped");
@@ -856,7 +966,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
         put64(f, ++sv_out_ctr_);
         put_key(f, sa, sp);
         f.resize(f.size() + 16);
-        f.insert(f.end(), d.begin() + 6, d.end());
+        f.insert(f.end(), d.begin() + kTHeader, d.end());
         seal(kmac_, sv_key_.key.data(), f, kVHeaderMemberToHost);
         ++s.up;
         wire_to(sv_h_addr_, sv_h_port_, std::move(f), out);
@@ -873,16 +983,21 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
         if (it == sessions_.end() || is_route_frame(d.data() + kVHeaderHostToMember, n - kVHeaderHostToMember)) return false;
         std::vector<std::uint8_t> f{kRouteMagic, 't'};
         put32(f, it->second.id);
+        put64(f, ++it->second.down_ctr);
+        f.resize(f.size() + 16);
         f.insert(f.end(), d.begin() + kVHeaderHostToMember, d.end());
+        seal(kmac_, it->second.k_down.data(), f, kTHeader);
         ++it->second.down;
         wire_to(ga, gp, std::move(f), out);
         return false;
     }
-    if (type == 't' && n >= 6) {  // the host's datagram, through our member
+    if (type == 't' && n > kTHeader && kmac_) {  // the host's datagram, through our member
         if (cl_.st != ClientState::Ready || sa != cl_.m_addr || sp != cl_.m_port || get32(d.data() + 2) != cl_.session)
             return false;
-        if (is_route_frame(d.data() + 6, n - 6) || n == 6) return false;
-        d.erase(d.begin(), d.begin() + 6);
+        if (!open(kmac_, cl_.k_down.data(), d, kTHeader)) return false;  // forged or altered (R2)
+        if (!cl_.down_in.accept(get64(d.data() + 6))) return false;      // replayed
+        if (is_route_frame(d.data() + kTHeader, n - kTHeader)) return false;
+        d.erase(d.begin(), d.begin() + kTHeader);
         *src_addr = cl_.h_addr;
         *src_port = cl_.h_port;
         if (via_relay) *via_relay = true;
@@ -969,6 +1084,7 @@ void Router::client_send_auth(RClock::time_point now, std::vector<Wire>* out) {
     f.insert(f.end(), cl_.cn.begin(), cl_.cn.end());
     f.insert(f.end(), cl_.ya.begin(), cl_.ya.end());
     f.insert(f.end(), cl_.yb.begin(), cl_.yb.end());
+    f.insert(f.end(), cl_.cookie.begin(), cl_.cookie.end());
     f.insert(f.end(), confirm, confirm + 16);
     cl_.next_send = now + std::chrono::milliseconds(500);
     wire_to(cl_.m_addr, cl_.m_port, std::move(f), out);
@@ -984,6 +1100,14 @@ void Router::relay_use(std::uint32_t ma, std::uint16_t mp, std::uint32_t ha, std
     cl_.h_addr = ha;
     cl_.h_port = hp;
     cl_.pake = std::move(pake);
+    if (auto b = backoff_.find(k(ma, mp)); b != backoff_.end() && now < b->second.until) {
+        cl_.st = ClientState::Refused;
+        cl_.code = kBackoff;
+        cl_.wait_s = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(b->second.until - now).count());
+        note("member relay: not asking the member at " + key_text(ma, mp) + " again yet (its confirmation failed " +
+             std::to_string(b->second.failures) + " time(s); " + std::to_string(cl_.wait_s) + " s left)");
+        return;
+    }
     secure_random(cl_.cn.data(), 16);
     // Our PAKE point Ya = ya * g(relay key, cn).
     std::uint8_t g[32];
@@ -1040,6 +1164,7 @@ void Router::serve(bool on, std::uint32_t ha, std::uint16_t hp, Pake pake, std::
     if (!serving_ || ha != sv_h_addr_ || hp != sv_h_port_ || key.id != sv_key_.id) {
         sessions_.clear();
         secure_random(sv_salt_.data(), 16);
+        secure_random(sv_cookie_key_.data(), 32);
         sv_out_ctr_ = 0;
         sv_in_ = Replay{};
         note("member relay: ready to relay to the host " + key_text(ha, hp) +
@@ -1160,9 +1285,12 @@ void Router::poll(RClock::time_point now, std::vector<Wire>* out) {
             if (cl_.have_isk) client_send_auth(now, out);
             else client_send_hello(now, out);
         }
-    } else if (cl_.st == ClientState::Ready && now - cl_.last_sent > kKeepalive) {
+    } else if (cl_.st == ClientState::Ready && now - cl_.last_sent > kKeepalive && kmac_) {
         std::vector<std::uint8_t> f{kRouteMagic, 'T'};
         put32(f, cl_.session);
+        put64(f, ++cl_.up_ctr);
+        f.resize(f.size() + 16);
+        seal(kmac_, cl_.k_up.data(), f, kTHeader);
         cl_.last_sent = now;
         wire_to(cl_.m_addr, cl_.m_port, std::move(f), out);
     }

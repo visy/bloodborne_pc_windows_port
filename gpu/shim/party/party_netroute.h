@@ -42,7 +42,7 @@ void Configure(Env env);
 
 // ---- host ----
 // After the link listens: IPv6 on the party port (setting), accepting relayed guests (setting).
-void HostStart(bool loopback);
+void HostStart(bool loopback, const std::string& password, const std::array<std::uint8_t, 8>& secret);
 // The IPv6 address for the party code's tail: only with IPv6 on, a global address (or the test
 // override) and an IPv4 port that is not open. False: the code stays IPv4 only.
 bool HostCodeIpv6(bool port_open, std::array<std::uint8_t, 16>* out);

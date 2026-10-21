@@ -15,16 +15,20 @@
 //    mark_trusted; bound entries never go). throttle_key() puts a whole /56 under one key (password
 //    / relay lockouts cannot be dodged by rotating addresses).
 //  - Member relay, frames [0xfc][type] on the party port:
-//      Q1 hello     guest -> member  [fc 'Q' 1][cn 16][Ya 32][pad]   (56 bytes: no amplification)
-//      Q2 point     member -> guest  [fc 'Q' 2][cn 16][Yb 32]        (stateless; nothing password-checkable)
-//      Q3 confirm   guest -> member  [fc 'Q' 3][cn 16][Ya 32][Yb 32][confirm A 16]
+//      Q1 hello     guest -> member  [fc 'Q' 1][cn 16][Ya 32][pad]   (72 bytes: no amplification)
+//      Q2 point     member -> guest  [fc 'Q' 2][cn 16][Yb 32][cookie 16]  (stateless; nothing password-checkable)
+//      Q3 confirm   guest -> member  [fc 'Q' 3][cn 16][Ya 32][Yb 32][cookie 16][confirm A 16]
+//                   (the cookie, a MAC of the member's over the guest's endpoint, cn, Ya, Yb and the
+//                   minute, is checked with one BLAKE2b before any curve work: a forged Q3 costs nothing)
 //      Q4 welcome   member -> guest  [fc 'Q' 4][cn 16][session u32][name len u8][name][confirm B 16]
 //      Q5 refusal   member -> guest  [fc 'Q' 5][cn 16][code u8][wait s u16]   (a hint only)
-//      T  to relay  guest -> member  [fc 'T'][session u32] + a datagram for the host (empty: keepalive)
+//      T  to relay  guest -> member  [fc 'T'][session u32][counter u64][mac 16] + a datagram for the host
+//                   (empty: keepalive); sealed under a key from the PAKE's ISK, with a replay window
 //      V  to host   member -> host   [fc 'V'][flags][key id u32][counter u64][guest addr 4][port 2][mac 16] + datagram
 //      v  from host host -> member   [fc 'v'][key id u32][counter u64][guest addr 4][port 2][mac 16] + datagram
-//      t  to guest  member -> guest  [fc 't'][session u32] + that datagram
-//      N  nonce     host -> member over IPv6 [fc 'N'][nonce 16]: the member echoes it over the link
+//      t  to guest  member -> guest  [fc 't'][session u32][counter u64][mac 16] + that datagram (likewise)
+//      N  nonce     host -> member over IPv6 [fc 'N'][nonce 16][mac 16] (MAC under the party's nonce
+//                   key: strangers cannot fill the slots): the member echoes it over the link
 //                   (net6_echo) before the host lists its IPv6 endpoint (net6_table)
 //    The Q handshake is a PAKE (CPace on X25519, Pake): the generator comes from the party's relay
 //    key (from the code and the password) and the guest's nonce, each side sends its point, both
@@ -132,7 +136,7 @@ public:
     static constexpr std::size_t kMaxV6Per64 = 32;
     static constexpr std::size_t kMaxV6Per48 = 64;
     static constexpr std::size_t kMaxNonceSlots = 32;
-    static constexpr double kHelloRate = 50;  // relay hellos handled per second (two X25519 each)
+
     static constexpr auto kSessionIdle = std::chrono::seconds(30);
     static constexpr auto kSessionReplaceIdle = std::chrono::seconds(5);
     static constexpr auto kSessionStart = std::chrono::seconds(3);
@@ -144,8 +148,14 @@ public:
     // Per relayed session at the member: datagrams and bytes per second (bursts twice that). In
     // play a relayed guest sends ~3 KB/s; a join's snapshot and mirror image are ~15 KB.
     static constexpr double kSessionFrameRate = 300, kSessionByteRate = 128.0 * 1024;
-    static constexpr std::size_t kQ1Size = 56;
-    enum Refusal : std::uint8_t { kWrongKey = 1, kLockedOut = 2, kNotServing = 3, kFull = 4, kTimeout = 0xff };
+    static constexpr std::size_t kQ1Size = 72;
+    // Relay handshakes per source /56 and per second (Q1 and Q3 each), and for everyone together.
+    static constexpr double kHandshakeRatePerGroup = 5, kHandshakeRateGlobal = 200;
+    // A member whose confirmation failed (an impostor, or another party's) is not asked again for
+    // kBackoffFirst, doubling to kBackoffMax.
+    static constexpr auto kBackoffFirst = std::chrono::seconds(30);
+    static constexpr auto kBackoffMax = std::chrono::hours(1);
+    enum Refusal : std::uint8_t { kWrongKey = 1, kLockedOut = 2, kNotServing = 3, kFull = 4, kBackoff = 0xfe, kTimeout = 0xff };
 
     // The MAC for V / v frames (the party runtime's BLAKE2b); without one no V / v is sent or taken.
     void set_keyed_mac(KeyedMac mac);
@@ -173,8 +183,12 @@ public:
     void set_key_hash_for_tests(std::function<std::uint32_t(const Ip6&)> h);
 
     // ---- IPv6 endpoint checks (M3) ----
-    // The nonce frame the host sends to a member's claimed IPv6 endpoint.
-    static Wire nonce_wire(const Ep6& to, const std::array<std::uint8_t, 16>& nonce);
+    // The party's key for the nonce frames (from the relay key: party members only).
+    void set_nonce_key(const std::array<std::uint8_t, 32>& key);
+    // The nonce frame the host sends to a member's claimed IPv6 endpoint (MACed under the nonce key).
+    Wire nonce_wire(const Ep6& to, const std::array<std::uint8_t, 16>& nonce) const;
+    // Curve operations the member side has done (tests: a forged Q3 costs none).
+    std::uint64_t curve_ops() const;
     // Nonces that reached us over IPv6 since the last call (the member echoes them over the link).
     std::vector<std::array<std::uint8_t, 16>> take_nonces();
 
@@ -259,6 +273,9 @@ private:
         std::uint16_t port = 0;
         std::uint32_t id = 0;
         std::array<std::uint8_t, 16> cn{};
+        std::array<std::uint8_t, 32> k_up{}, k_down{};  // T / t keys from the ISK
+        std::uint64_t down_ctr = 0;
+        Replay up_in;
         RClock::time_point created{}, last{};
         Bucket frames, bytes;
         std::uint64_t up = 0, down = 0, dropped = 0;
@@ -291,6 +308,10 @@ private:
                             const std::uint8_t* kk, std::uint8_t out[32]);
     void client_send_hello(RClock::time_point now, std::vector<Wire>* out);
     void client_send_auth(RClock::time_point now, std::vector<Wire>* out);
+    void cookie(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, const std::uint8_t* ya, const std::uint8_t* yb,
+                std::int64_t minute, std::uint8_t out[16]) const;
+    bool budget(bool confirm, std::uint32_t group, RClock::time_point now);
+    void member_failed(RClock::time_point now);
     bool valid_guest_key(std::uint32_t ga, std::uint16_t gp, std::uint32_t member_src) const;
     bool on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<std::uint8_t>& d, RClock::time_point now,
                   std::uint32_t* src_addr, std::uint16_t* src_port, std::vector<Wire>* out, bool* via_relay);
@@ -312,7 +333,10 @@ private:
         std::uint16_t m_port = 0, h_port = 0;
         Pake pake;
         std::array<std::uint8_t, 16> cn{};
-        std::array<std::uint8_t, 32> ya_s{}, ya{}, yb{}, isk{};
+        std::array<std::uint8_t, 32> ya_s{}, ya{}, yb{}, isk{}, k_up{}, k_down{};
+        std::array<std::uint8_t, 16> cookie{};
+        std::uint64_t up_ctr = 0;
+        Replay down_in;
         bool have_isk = false;
         bool impostor_noted = false;
         std::uint32_t session = 0;
@@ -325,7 +349,18 @@ private:
     std::uint32_t sv_h_addr_ = 0;
     std::uint16_t sv_h_port_ = 0;
     Pake sv_pake_;
-    Bucket q1_budget_{0, kHelloRate, 2 * kHelloRate, {}};
+    std::array<std::uint8_t, 32> sv_cookie_key_{};
+    Bucket hello_budget_{0, kHandshakeRateGlobal, 2 * kHandshakeRateGlobal, {}};
+    Bucket confirm_budget_{0, kHandshakeRateGlobal, 2 * kHandshakeRateGlobal, {}};
+    std::map<std::uint32_t, std::pair<Bucket, Bucket>> group_budget_;  // by /56 group: hellos, confirms
+    std::uint64_t curve_ops_ = 0;
+    struct Backoff {
+        int failures = 0;
+        RClock::time_point until{};
+    };
+    std::map<std::uint64_t, Backoff> backoff_;  // members whose confirmation failed (by endpoint)
+    std::array<std::uint8_t, 32> nonce_key_{};
+    bool have_nonce_key_ = false;
     std::string sv_name_;
     Throttle sv_throttle_;
     MemberKey sv_key_;

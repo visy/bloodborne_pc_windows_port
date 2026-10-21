@@ -233,7 +233,7 @@ void host_tick() {
                 // The nonce goes to the claimed IPv6 endpoint (5 tries, 1 s apart); the member echoes it.
                 if (it->second.sent < 5) {
                     ++it->second.sent;
-                    bbnet::p2p_send_wire(udp::Router::nonce_wire(it->second.e6, it->second.nonce));
+                    bbnet::p2p_send_wire(bbnet::p2p_router().nonce_wire(it->second.e6, it->second.nonce));
                     ++it;
                 } else {
                     log("IPv6: slot " + std::to_string(it->first) + "'s endpoint " + ep6_text(it->second.e6) +
@@ -492,7 +492,10 @@ void Configure(Env env) {
 
 // ---- host ----
 
-void HostStart(bool loopback) {
+void HostStart(bool loopback, const std::string& password, const std::array<std::uint8_t, 8>& secret) {
+    // The party's nonce key for the IPv6 checks (R4: strangers cannot fill the members' slots).
+    bbnet::p2p_router().set_keyed_mac(keyed_mac);
+    bbnet::p2p_router().set_nonce_key(crypto::relay_key(crypto::derive_party_key(password, secret.data())));
     {
         std::lock_guard<std::mutex> lk(S().mu);
         if (S().started) return;
@@ -589,6 +592,7 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
         s.host6 = host6 && have6;
         s.host_ip6 = h6;
         s.rkey = crypto::relay_key(party_key);
+        bbnet::p2p_router().set_nonce_key(s.rkey);
         s.have_key = true;
         s.own_name = cfg.name;
         s.chooser.set_ipv6(s.host6);

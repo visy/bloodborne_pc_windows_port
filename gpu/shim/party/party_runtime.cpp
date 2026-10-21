@@ -1736,7 +1736,7 @@ void start_host(LinkConfig cfg) {
     coop::PartyDirector::Get().SetLink(link);
     write_marker();
     lan_responder_start(cfg, lb);
-    netroute::HostStart(lb);  // F2 (0.7.1): IPv6, guests relayed by a member
+    netroute::HostStart(lb, cfg.password, cfg.secret);  // F2 (0.7.1): IPv6, guests relayed by a member
 
     bbnet::party::PartyHostService& svc = bbnet::party::PartyHostService::instance();
     svc.set_loading_query([](const std::string& id) {

@@ -354,7 +354,15 @@ IPv4 endpoints only and need no change:
   online guess, counted by the member's lockout (an impostor member gets one guess per guest that
   dials it, uncounted on the guest's side). Relay key ids are not taken over by another member; the
   IPv6 nonces keep one slot per source /48 and one echo event per tick, and a repeated `net6` does not
-  restart the host's tries. A member's IPv6 endpoint enters `net6_table` only after a nonce the
+  restart the host's tries. Third review: Q2 carries a stateless cookie (a MAC of the member's over the guest's
+  endpoint, cn, Ya, Yb and the minute) that Q3 must return, checked with one BLAKE2b before any curve
+  operation, and hellos / confirmations are budgeted per /56 (5 a second each) and in all (200), so a
+  flood cannot stall a member's party port; T / t frames are sealed under keys from the PAKE's ISK
+  with a counter and a replay window; a member whose confirmation failed (an impostor) is not asked
+  again for 30 s, doubling to an hour; IPv6 nonce frames carry a MAC under the party's relay key, so
+  strangers cannot fill their slots; a member marks the IPv6 guests it relays as trusted. The curve
+  work still runs under the route table's lock on the party port's reader; the budgets bound it to
+  ~400 X25519 a second at most. A member's IPv6 endpoint enters `net6_table` only after a nonce the
   host sent there came back over its link (`net6_echo`). Nonces, session ids and salts from
   BCryptGenRandom; a replayed or recent handshake never replaces a live session; each session is
   capped at 300 datagrams and 128 KB/s. The host's IPv6 address in the code is a temporary privacy
