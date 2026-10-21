@@ -145,6 +145,9 @@ struct PartyStatusHooks {
 void SetPartyStatusHooks(PartyStatusHooks hooks);
 /// The rows the page `page` shows now (visible ones, in order): what the game is given.
 std::vector<const Row*> ShownRows(const Page& page);
+/// The shown rows as "NAME=VALUE | ..." (English; " (CUT)" after a text longer than its column):
+/// BB_GAME_MENU_TRACE's page line, asserted by tools/mp/smoke_party.py "rules".
+std::string ShownSummary(const Page& page);
 
 /// The "Restart the game" button (runtime_restart in the game; tests count calls).
 void SetRestartHandler(void (*restart)());

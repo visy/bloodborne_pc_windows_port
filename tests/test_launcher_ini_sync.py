@@ -132,6 +132,40 @@ class IniSync(unittest.TestCase):
         self.assertEqual((ini["upscaler"], ini["object_motion"], ini["volumetric_res"], ini["skip_intro"],
                           ini["gpl"]), ("off", "0", "1", "1", "1"))
 
+    # ---- party gameplay switches (0.7.0: bbport.ini, the game's party rules pages)
+    def test_party_switches_in_ini(self):
+        L = self.L
+        keys = [k for k, _, _ in L.PARTY_INI_SWITCHES]
+        for key in ("party_host_revive", "party_host_limbo_revive", "party_guest_revive_inplace", "party_items"):
+            self.assertIn(key, keys)
+        env = L.party_env({"party_mode": "host", "party_host_limbo_revive": False})
+        for _, name, _ in L.PARTY_INI_SWITCHES:
+            self.assertIn(name, env)
+            self.assertIsNone(env[name], name)  # unset: bbport.ini decides
+        self.assertIsNone(env["BB_PARTY_GUEST_INSIGHT"])
+        self.assertEqual(env["BB_PARTY_RESTART"], "1")
+        values = L.party_rules_ini({"party_items": False}, "Full bonus")
+        self.assertEqual((values["party_items"], values["party_host_revive"], values["party_guest_insight"]),
+                         ("0", "1", "full"))
+        for label, v in L.PARTY_INSIGHT_CHOICES:
+            self.assertEqual(L.party_insight_label({"party_guest_insight": v}), label)
+        self.assertEqual(L.party_insight_label({}), L.PARTY_INSIGHT_CHOICES[0][0])
+
+    def test_party_switches_migrate_once(self):
+        L = self.L
+        self.ini.write_text("party_items=1\nupscaler=dlss\n", encoding="utf-8")
+        s = {"ini_sync_rev": 1, "party_items": False, "party_host_limbo_revive": True,
+             "party_guest_insight": "0", "party_restart": False}
+        written = L.migrate_settings_to_ini(s, self.ini)
+        ini = L.read_ini(self.ini)
+        self.assertEqual((ini["party_items"], ini["party_host_limbo_revive"], ini["party_guest_insight"],
+                          ini["upscaler"]), ("0", "1", "0", "dlss"))
+        self.assertNotIn("party_restart", ini)  # a launcher option: stays in launcher_settings.json
+        self.assertNotIn("party_items", s)
+        self.assertEqual(s["ini_sync_rev"], L.INI_SYNC_REV)
+        self.assertTrue(written)
+        self.assertIsNone(L.migrate_settings_to_ini(s, self.ini))
+
     def test_write_env_migrates(self):
         L = self.L
         settings = Path(self.tmp.name) / "launcher_settings.json"

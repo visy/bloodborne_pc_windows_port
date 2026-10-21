@@ -132,7 +132,7 @@ arrow pointing their way (relative to the camera). Companions who are not in you
 loading, in their prologue, disconnected) are greyed and say where they are. Companions in your
 world and in view also get a small name tag with their HP above their head. The numbers come from
 the game itself when the companion stands in your world, otherwise from their own game (sent about
-4 times a second through the host). Switch it in the game (**System > Party members > Party HUD**),
+4 times a second through the host). Switch it in the game (**System > Party display > Party HUD**),
 the overlay's Party tab or the launcher's Party tab (bbport.ini `party_hud`, default on; never shown
 in single-player). The panel stays clear of the game's HUD and stacks above the performance HUD
 when that sits in the bottom left; join / leave notices appear above the panel.
@@ -205,7 +205,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   home routers; not with symmetric NAT (see next point). Details:
   [party/network_robustness.md](party/network_robustness.md) §4.
   Since 0.6.1 this can happen **by itself**, opt-in: with *Find each other through the public
-  DHT* on (launcher *Party* tab or *System > Party rules*; **both** host and guest must turn it on;
+  DHT* on (launcher *Party* tab or *System > Party members*; **both** host and guest must turn it on;
   `BB_PARTY_RENDEZVOUS=1`, bbport.ini `party_rendezvous=1`), a guest that cannot reach the host
   leaves its address in the public BitTorrent DHT under a hash only the party can compute, and the
   host finds it there and opens the way (no guest code to pass on). It is **off by default**: DHT

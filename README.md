@@ -312,7 +312,7 @@ before anyone is in the game):
   (his last offer, the ending choice, stays the host's); quest steps are shared by the whole
   party, and NPCs look solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
-  Party rules → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
+  Story & dialogue → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
   headstones show no caption. One-time NPC gifts go to every party member;
   repeatable ones (Blood of Arianna, Iosefka's vials, ...) to whoever asked.
 - **Change your appearance at the Dream's mirror.** The workshop mirror opens the appearance editor
@@ -326,7 +326,7 @@ before anyone is in the game):
   stamina, +10% stamina use, −15% rally or −10 Item Discovery. Using a lamp (even just opening its
   travel menu) or levelling up clears it. Each save slot keeps its own. Your current rot and what it
   does ("Rot 2/5: max HP -20 %") show on the *Party* page and under the party HUD. On by default; the
-  host can turn it off on the *Party rules* page.
+  host can turn it off on the *Deaths & revives* page.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter; normal enemies get tougher too. Six values (boss / enemy health, damage,
   poise) on the *Enemy scaling* page.
@@ -336,12 +336,15 @@ before anyone is in the game):
 - **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: `Tab` + `Q`,
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your
   name and its distance. *Show party through walls* puts a small marker on every companion. Both on
-  *System → Pings* and the launcher's Party tab.
+  *System → Party display* and the launcher's Party tab.
 - **Friendly fire / PvP** (host's switch, off by default): party members can hurt each other, both
-  ways, like invaders (*System → Friendly fire*). A party kill is a normal party death; the killer
+  ways, like invaders (*System → World & PvP*). A party kill is a normal party death; the killer
   gets no Echoes or Insight.
-- **Party HUD.** Party members and events in a small HUD; every party setting is on the *Party*
-  pages of the game's *System* menu.
+- **Party HUD.** Party members and events in a small HUD.
+- **Every party rule in the game's own menu.** The *System* menu has the party pages *Deaths &
+  revives* (rot, getting up without a loading screen, respawns), *World & PvP*, *Story & dialogue*,
+  *Party rewards*, *Enemy scaling* and *Party display*; the host's rules show read-only for guests.
+  The launcher's *Party Rules & Sync* shows the same settings (`bbport.ini`).
 
 **Safety and recovery**
 
@@ -367,7 +370,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
 | The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike - gets up right there in the arena, where they fell (or beside a living hunter), no load, their echoes still in their bloodstain. *Party Rules & Sync → Get up after a boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike - gets up right there in the arena, where they fell (or beside a living hunter), no load, their echoes still in their bloodstain. the host's *System → Deaths & revives → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.
@@ -430,7 +433,7 @@ A guest on the host's network with the Internet code finds the host on the LAN b
 No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
 sends it to the host, who presses *Add a guest code*: the game then punches through both routers.
 To skip the code, turn on *Find each other through the public DHT* (launcher *Party* tab or
-*System > Party rules*) on **both** PCs: the guest's address is then exchanged through the public
+*System > Party members*) on **both** PCs: the guest's address is then exchanged through the public
 BitTorrent DHT under a hash only the party knows. It is off by default because DHT nodes see your
 IP address, as with any torrent client.
 If the guest's game gets no UDP answer from the host ("UDP to the guest is blocked" /
