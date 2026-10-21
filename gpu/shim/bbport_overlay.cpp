@@ -24,6 +24,7 @@
 #include "../../src/pad_bindings.h"
 #include "party/party_hud.h"
 #include "party/party_balance_rules.h"
+#include "party/party_gather.h"
 #include "party/party_npctalk.h"
 #include "party/party_ping.h"
 #include "party/party_status.h"
@@ -3437,6 +3438,12 @@ bool HandleEvent(const SDL_Event& event) {
         // V: a ping (I2, party_ping.h). Not taken from the game: a key.* binding of V still works.
         if (!is_open && down && !event.key.repeat && event.key.key == SDLK_V && coop::ping::Enabled()) {
             coop::ping::Request("V key");
+            return false;
+        }
+        // H: the host gathers the party (I5, party_gather.h; as System > Party > Gather the party).
+        // Not taken from the game either; on a guest it is only the game's key.
+        if (!is_open && down && !event.key.repeat && event.key.key == SDLK_H && coop::gather::HotkeyAvailable()) {
+            coop::gather::RequestFromHotkey("H key");
             return false;
         }
         if (!is_open) {

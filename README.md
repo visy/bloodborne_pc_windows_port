@@ -79,6 +79,7 @@ tab or *System > Mouse & keyboard* in game).
 | Items and weapons (d-pad) | D-pad | Arrow keys | Arrow keys, `1`-`4`, mouse wheel (quick items) |
 | Menu (Options) | `Start` | `F1`, `O` | `Esc`, `F1` |
 | Gestures / key items (touchpad) | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right, `Back` alone the left half) | `Tab` or `G` / `Backspace` | `Tab` or `G` / `Backspace` |
+| Party: ping / gather the party (host) | Hold the touchpad, press `R3` / `L3` (Xbox pads: hold `Back`) | `V` / `H` (or `Tab` + `C` / `Tab` + `Z`) | `V` / `H` (or `Tab` + `Q` / `Tab` + `Z`) |
 | Port settings | *System* in the game's menu | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in the launcher) | `Insert` | `Insert` |
 | Fullscreen | — | `Alt + Enter` | `Alt + Enter` |
@@ -244,8 +245,8 @@ before anyone is in the game):
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later.
-- **Gather the party.** The host's *System → Party → Gather the party* brings every guest to the
-  host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
+- **Gather the party.** The host's *System → Party → Gather the party* (or hold the touchpad and
+  press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
   cannot gather during its own boss fight or cutscene, and only once every 30 s.

@@ -40,6 +40,11 @@ int bbgpu_overlay_captures_input(void);
  * R3) belongs to the party (a party runs, pings on); the pad reader calls request on the combo. */
 int bbgpu_ping_combo_enabled(void);
 void bbgpu_ping_request(void);
+/* I5 gather the party (gpu/shim/party/party_gather.h): 1 while this game hosts a running party
+ * with gathering on; the pad reader calls request on touchpad held + L3 (Back + L3 without a touch
+ * surface). `source` names the combo in the log. */
+int bbgpu_gather_combo_enabled(void);
+void bbgpu_gather_request(const char *source);
 /* NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker; vk_reflex.h): before the
  * simulation samples pad input (driver frame pacing) and right after. No-ops unless Reflex runs. */
 void bbgpu_reflex_pre_input_sample(void);

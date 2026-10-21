@@ -581,8 +581,8 @@ void DefineBuiltinPartyRows() {
     gather.name = [](const B&) { return T2("Gather the party", "Собрать группу"); };
     gather.value = [](const B&) { return T2("Gather", "Собрать"); };
     gather.help = [](const B&) {
-        return T2("Press: bring every guest to you (each is asked; not in boss fights; 30 s between gathers)",
-                  "Нажмите: перенести всех гостей к вам (каждого спросят; не в бою с боссом; раз в 30 с)");
+        return T2("Bring every guest to you; each is asked, not in boss fights, 30 s apart. Also touchpad + L3 / H",
+                  "Перенести всех гостей к вам; каждого спросят, не в бою с боссом, раз в 30 с. Ещё тачпад + L3 / H");
     };
     gather.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host; };
     gather.press = PartyRow::Press::Once;

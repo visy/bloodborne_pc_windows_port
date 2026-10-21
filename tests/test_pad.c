@@ -13,6 +13,9 @@ int bbgpu_text_input_is_active(void) { return 0; }
 static int ping_on, pings;
 int bbgpu_ping_combo_enabled(void) { return ping_on; }
 void bbgpu_ping_request(void) { ++pings; }
+static int gather_on, gathers;
+int bbgpu_gather_combo_enabled(void) { return gather_on; }
+void bbgpu_gather_request(const char *source) { (void)source; ++gathers; }
 void bbgpu_reflex_pre_input_sample(void) {}
 void bbgpu_reflex_on_input_sampled(void) {}
 /* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
@@ -206,6 +209,33 @@ static void test_walk_key(void) {
 
 /* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
  * a04e1e95, parsifal295's PR #39); Back alone clicks the left half for 150 ms on release. */
+static int combo_yes(void) { return 1; }
+static int combo_no(void) { return 0; }
+/* Back + R3 (ping) / Back + L3 (I5 gather) on pads without a touch surface. */
+static void test_back_click_combo(void) {
+    BackClickCombo c={0,0};
+    uint32_t b=BTN_L3;
+    assert(!back_click_combo(&c,0,&b,BTN_L3,combo_yes) && b==BTN_L3);  /* L3 alone: the game's */
+    b=0;
+    assert(!back_click_combo(&c,1,&b,BTN_L3,combo_yes));              /* Back down */
+    b=BTN_L3|BTN_CROSS;
+    assert(back_click_combo(&c,1,&b,BTN_L3,combo_yes) && b==BTN_CROSS); /* Back + L3: fires, L3 kept */
+    b=BTN_L3;
+    assert(!back_click_combo(&c,1,&b,BTN_L3,combo_yes) && b==0);       /* held: once, still kept */
+    b=BTN_L3;
+    assert(!back_click_combo(&c,0,&b,BTN_L3,combo_yes) && b==0);       /* Back up first: kept until released */
+    b=0;
+    assert(!back_click_combo(&c,0,&b,BTN_L3,combo_yes));
+    b=BTN_L3;
+    assert(!back_click_combo(&c,0,&b,BTN_L3,combo_yes) && b==BTN_L3);  /* then the game's again */
+    BackClickCombo guest={0,0};
+    b=BTN_L3;
+    assert(!back_click_combo(&guest,1,&b,BTN_L3,combo_no) && b==BTN_L3); /* not the host: the game's */
+    BackClickCombo early={0,0};
+    b=BTN_L3;
+    assert(!back_click_combo(&early,0,&b,BTN_L3,combo_yes));
+    assert(!back_click_combo(&early,1,&b,BTN_L3,combo_yes) && b==BTN_L3); /* L3 held before Back: no combo */
+}
 static void test_back_combo(void) {
     uint64_t t=1000000;
     assert(back_combo_step(0,0,0,0,t)==-1);
@@ -233,6 +263,7 @@ int main(void) {
     test_keyboard_sticks();
     test_walk_key();
     test_back_combo();
+    test_back_click_combo();
     const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");
     assert(created==0);
     bb_test_setenv("BB_PAD_FILE",path);
@@ -415,6 +446,41 @@ int main(void) {
     ping_on=0;
     inject(path,"touchpad r3");
     assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_R3) && pings==1);
+    inject(path,"");
+    pad_read_state(1,&data);
+    /* I5 gather the party (the host): touchpad held + L3 gathers, neither button reaches the game. */
+    usleep(150000);
+    pad_read_state(1,&data);
+    ping_on=1; gather_on=1;
+    inject(path,"touchpad");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD) && data.touch_count==0);
+    inject(path,"touchpad l3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_L3)) && data.touch_count==0 &&
+           gathers==1 && pings==1);
+    inject(path,"l3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_L3) && gathers==1); /* held back until released */
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0);
+    inject(path,"l3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_L3) && gathers==1); /* L3 alone: the game's */
+    inject(path,"");
+    pad_read_state(1,&data);
+    /* Pings off on the host: touchpad + R3 is the game's R3, touchpad + L3 still gathers. */
+    ping_on=0;
+    inject(path,"touchpad");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD));
+    inject(path,"touchpad r3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_R3) && !(data.buttons & BTN_TOUCHPAD) && pings==1);
+    inject(path,"touchpad");
+    pad_read_state(1,&data);
+    inject(path,"touchpad l3");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_L3)) && gathers==2);
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.touch_count==0); /* no gestures click */
+    /* A guest (or gathering off): touchpad + L3 is the game's. */
+    gather_on=0;
+    inject(path,"touchpad l3");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_L3) && gathers==2);
     inject(path,"");
     pad_read_state(1,&data);
     /* Button prompts in the runtime: the device used last (a scripted keyboard key, a scripted pad

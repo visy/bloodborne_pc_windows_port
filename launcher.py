@@ -710,6 +710,7 @@ MK_BINDINGS = [
     ("Esc / F1", "Options: game menu"),
     ("Arrows / 1 2 3 4", "D-pad up / down / left / right"),
     ("I J K L", "Camera (right stick)"),
+    ("V / H", "Party: ping / gather the party (host)"),
 ]
 
 
