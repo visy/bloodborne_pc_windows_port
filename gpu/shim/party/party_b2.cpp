@@ -33,6 +33,7 @@
 #include "party_hud.h"
 #include "party_status.h"
 #include "party_guestvals_rules.h"
+#include "party_remote_show_rules.h"
 #include "party_ping.h"
 #include "party_flow.h"
 #include "../bbport_camera.h"
@@ -2353,25 +2354,52 @@ void RemoteVisibleTick(double now) {
         // chr +0x1E0 bit 20: set on every drawn player chr (local and remote, both games), clear on
         // the invisible re-created one ("the health bar but no model", live vis3 render probe:
         // 0x00009800 vs 0x00109800). Put back.
+        // Never before the member's first data (party_remote_show_rules.h): that data brings the draw
+        // bit itself and the game's own fade-in follows. Logged once per such chr (how long the
+        // data took, and that the game drew it).
+        float p[3] = {};
+        const bool awaits = !ChrPos(c, p) || coop::remote_show::AwaitsFirstData(ChrHp(c), p);
+        const u32 f = Field<u32>(c, 0x1e0);
+        // chr -> {first seen without its member's data, when the data came}
+        static std::map<u64, std::pair<double, double>> built_at;
+        if (awaits) {
+            built_at.emplace(c, std::make_pair(now, 0.0));
+            continue;
+        }
+        if (auto b = built_at.find(c); b != built_at.end()) {
+            if (b->second.second == 0) {
+                b->second.second = now;
+            }
+            if (f & 0x100000u) {
+                Log("remote chr %#llx (handle %x, mode %d): its member's data after %.1f s, drawn by the game %.1f s "
+                    "later%s", ull(c), Field<u32>(c, 8), t.mode, b->second.second - b->second.first,
+                    now - b->second.second, party::runtime().restarted() ? " [crash-restarted game]" : "");
+                built_at.erase(b);
+            }
+        }
         // A chr of a task we rewound: shown as at a load's end (the root cause, above).
         if (auto it = g_rewound.find(t.task); it != g_rewound.end()) {
             g_rewound.erase(it);
+            built_at.erase(c);
             ShowLikeInGameStart(c, "re-created by a rewind");
             continue;
         }
         // Safety net: any other remote chr without the draw bit 4 s after we first saw it so.
         static std::map<u64, double> hidden_since;
-        const u32 f = Field<u32>(c, 0x1e0);
         if (f && !(f & 0x100000u)) {
             auto h = hidden_since.emplace(c, now).first;
-            if (now - h->second >= 4.0) {
+            if (coop::remote_show::SafetyNetShows(awaits, false, now - h->second)) {
                 hidden_since.erase(h);
+                built_at.erase(c);
                 Log("remote chr %#llx (mode %d): no draw bit for 4 s (safety net); enterleave%s", ull(c), t.mode,
                     DescribeEnterLeave().c_str());
                 ShowLikeInGameStart(c, "safety net");
             }
         } else {
             hidden_since.erase(c);
+        }
+        if (built_at.size() > 64) {
+            built_at.clear();  // chrs gone before their data: never shrinks otherwise
         }
     }
     for (auto it = g_rewound.begin(); it != g_rewound.end();) {
