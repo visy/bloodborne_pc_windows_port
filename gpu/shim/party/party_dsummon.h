@@ -56,12 +56,14 @@ Kind KindOf(const std::string& body);
 /// word of a refusal (never broadcast as dsum_busy).
 /// MemberPrologue (#19): another party member is still in its prologue - summons start once
 /// everybody is ready.
-enum class Busy { None, Boss, Cutscene, Prologue, OtherMap, MemberPrologue, Settle, Chalice };
+enum class Busy { None, Boss, Cutscene, Prologue, OtherMap, MemberPrologue, Settle, Chalice, Sign };
 /// Settle (F5): the host's game is still ending the session a member left (after a network
 /// outage it leaves its room ~5 s after the member did): the guest asks again in kReaskWait.
 /// Chalice: the host is in a Chalice Dungeon whose ChannelId is not set / not on the party's board
 /// yet (the guest asks again, as for Settle), or a title joiner does not have that dungeon (it
 /// continues into its own world and the summon's quick join brings it in).
+/// Sign: the host's game asked to summon a sign moments ago (SignSummonBusy): the guest asks
+/// again, as for Settle; a sign summon that brought nobody into the room ends the wait early.
 /// The boss bar wins over a cutscene (a boss intro cutscene ends in the fight).
 Busy HostBusy(bool boss_bar_up, bool cutscene_playing);
 /// Why the host refuses a guest's title join (the restarted / launching guest asks at its title):
@@ -117,6 +119,7 @@ struct HostView {
     bool carry = false;                        // CarriesAcrossMaps: no map check
     int cooperators = 0, max_cooperators = 3;
     long long ms_since_sign_summon = 1 << 30;  // the host's game asked to summon a sign this long ago
+    long long ms_since_member_joined = 1 << 30; // a member joined the host's room this long ago
     long long other_hold_ms = 0;               // a crash hold running (C6)
     Busy busy = Busy::None;                    // A11: a boss fight / cutscene: joiners wait
     bool settling = false;                     // F5: a member left our room moments ago and our game
@@ -124,6 +127,15 @@ struct HostView {
     bool chalice_unready = false;              // the host is in a Chalice Dungeon whose ChannelId is not
                                                // set / not on the board yet: the room could not carry it
 };
+/// The host's game is summoning a sign: the guest's direct summon waits. A sign summon whose
+/// guest joined the room (a member joined since the request) holds for kSignSummonHold; one that
+/// brought nobody in within kSignSummonNoJoin is failing (the game's own wait for the guest runs
+/// ~30 s and then summons the next sign): the direct summon goes on. Without this, a failed join
+/// locked the host: its game summoned the failed guest's new sign every ~30 s and every direct
+/// summon landed in the hold (smoke 2026-10-21, 230+ s of refusals).
+constexpr long long kSignSummonHold = 20000;
+constexpr long long kSignSummonNoJoin = 10000;
+bool SignSummonBusy(const HostView& v);
 const char* HostRefusal(const HostView& v);
 /// The "wait" word a refusal of `v` carries (the guest's Party page / its gather): Prologue,
 /// OtherMap, Boss, Cutscene or None.
@@ -147,7 +159,7 @@ struct Guest {
 /// entry is not: the bell's SpEffect 9005 was "already on" from an attempt whose entry the game had
 /// used up, so ringing again made no new entry. Drop the bell's effect and ring it again (once per
 /// request); the entry wait starts again from the re-ring.
-/// Reask (F5): a Settle refusal: ask the host again.
+/// Reask (F5): a Settle / Chalice / Sign refusal: ask the host again.
 enum class Action { None, Deliver, ReportOk, ReportFail, Rearm, Reask };
 constexpr double kReaskWait = 1.5;  // F5: a Settle refusal: the guest asks again this much later
 constexpr int kMaxReasks = 8;       // ... at most this often (~12 s), then the bell sign path

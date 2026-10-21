@@ -18,7 +18,7 @@ when BB_MP_LOCAL_TEST=1. Windows are placed side by side.
 the code the host writes to ROOT/party_code.txt (BB_PARTY_CODE_FILE, deleted before the run);
 BB_PARTY_PORT=base+i, BB_PARTY_NAME=Hunter{i}, no UPnP, no public STUN, 127.0.0.1 everywhere.
 --env still overrides any of these; --ienv I:KEY=VALUE sets a variable for instance I only (e.g. a
-test action on the guest). --crash-at S kills instance --crash-instance's bbport.exe
+test action on the guest); --start-when I/W:REGEX starts instance I once instance W's log matched REGEX. --crash-at S kills instance --crash-instance's bbport.exe
 (TerminateProcess, as a crash) S seconds into the run; run.bat then restarts it (BB_PARTY_RESTART).
 --crash-plan I[/W]:REGEX[@D] (repeatable, in order): several crashes in one run; each kills instance
 I's game D s (default 0) after instance W's log (default I) matched REGEX, looking only at what was
@@ -547,6 +547,22 @@ def run(a):
                     pass
                 time.sleep(2)
             print("[harness +%.1f s] %s: starting instance %d" % (time.time() - ts0, want, i), flush=True)
+        for sw in a.start_when or []:
+            # --start-when I/W:REGEX: instance I starts once instance W's log matched REGEX (300 s at most).
+            who, _, rx = sw.partition(":")
+            tgt, _, src = who.partition("/")
+            if tgt.strip() != str(i):
+                continue
+            src_log = Path(a.root) / f"inst{int(src or 0)}" / "run.log"
+            deadline = time.time() + 300
+            while time.time() < deadline and any(q.poll() is None for _, q, _ in procs):
+                try:
+                    if re.search(rx, src_log.read_text(encoding="utf-8", errors="replace")):
+                        break
+                except OSError:
+                    pass
+                time.sleep(1)
+            print("[harness +%.1f s] start-when %s: starting instance %d" % (time.time() - ts0, sw, i), flush=True)
         log, starts[i] = open_log(inst / "run.log")
         # Test games run ABOVE_NORMAL (children inherit) so agents' builds never starve them.
         prio = 0x00008000 if os.name == "nt" else 0
@@ -827,6 +843,8 @@ def main():
     ap.add_argument("--env", action="append")
     ap.add_argument("--reserve", type=int, default=0,
                     help="run: hold this many game slots (at least --count), e.g. 2 for a performance run alone on the GPU")
+    ap.add_argument("--start-when", action="append",
+                    help="run: I/W:REGEX, instance I starts once instance W's log matched REGEX (300 s at most)")
     ap.add_argument("--ienv", action="append", help="run: I:KEY=VALUE, set for instance I only (after --env)")
     ap.add_argument("--timestamps", action="store_true",
                     help="run: prefix every log line with [+seconds] since the run started (one clock for all instances)")

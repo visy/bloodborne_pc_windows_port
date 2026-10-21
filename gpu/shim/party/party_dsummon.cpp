@@ -52,6 +52,7 @@ const char* BusyWord(Busy b) {
     case Busy::MemberPrologue: return "member_prologue";
     case Busy::Settle: return "settle";
     case Busy::Chalice: return "chalice";
+    case Busy::Sign: return "sign";
     default: return "none";
     }
 }
@@ -79,6 +80,7 @@ Busy WaitOf(const std::string& body) {
     if (body.find("\"wait\":\"member_prologue\"") != std::string::npos) return Busy::MemberPrologue;
     if (body.find("\"wait\":\"settle\"") != std::string::npos) return Busy::Settle;
     if (body.find("\"wait\":\"chalice\"") != std::string::npos) return Busy::Chalice;
+    if (body.find("\"wait\":\"sign\"") != std::string::npos) return Busy::Sign;
     return Busy::None;
 }
 
@@ -197,6 +199,12 @@ bool OtherMap(const HostView& v) {
 }
 }  // namespace
 
+bool SignSummonBusy(const HostView& v) {
+    if (v.ms_since_sign_summon < 0 || v.ms_since_sign_summon >= kSignSummonHold) return false;
+    if (v.ms_since_sign_summon < kSignSummonNoJoin) return true;
+    return v.ms_since_member_joined >= 0 && v.ms_since_member_joined < v.ms_since_sign_summon;  // its guest came in
+}
+
 const char* HostRefusal(const HostView& v) {
     if (!v.world_up || v.loading) return "the host is not in its world";
     if (v.travel_pending) return "the host is about to travel (its loading screen is next): the guest joins it there";
@@ -207,7 +215,7 @@ const char* HostRefusal(const HostView& v) {
     if (v.busy == Busy::Cutscene) return "the host is watching a cutscene: joiners wait";
     if (OtherMap(v)) return "the guest is in another map: it gathers to the host's lamp first (loading screen)";
     if (v.cooperators >= v.max_cooperators) return "the host's world is full";
-    if (v.ms_since_sign_summon < 20000) return "the host's game is summoning a sign";
+    if (SignSummonBusy(v)) return "the host's game is summoning a sign";
     if (v.settling) return "a member just left this host's room and its game is still ending that session (a fresh room follows)";
     if (v.other_hold_ms > 0) return "a crashed member's connection is still held";
     if (v.chalice_unready)
@@ -222,8 +230,10 @@ Busy RefusalWait(const HostView& v) {
     if (v.member_in_prologue) return Busy::MemberPrologue;
     if (v.busy != Busy::None) return v.busy;
     if (OtherMap(v)) return Busy::OtherMap;
-    if (v.cooperators < v.max_cooperators && v.ms_since_sign_summon >= 20000 && v.settling) return Busy::Settle;
-    if (v.cooperators < v.max_cooperators && v.ms_since_sign_summon >= 20000 && v.other_hold_ms <= 0 && v.chalice_unready)
+    if (v.cooperators >= v.max_cooperators) return Busy::None;
+    if (SignSummonBusy(v)) return Busy::Sign;  // asks again: a failing sign summon ends its hold early
+    if (v.settling) return Busy::Settle;
+    if (v.other_hold_ms <= 0 && v.chalice_unready)
         return Busy::Chalice;
     return Busy::None;
 }
@@ -290,7 +300,7 @@ void OnAsked(Guest& g, double now) {
 
 void OnRoom(Guest& g, double now, bool refused, Busy wait) {
     if (g.phase != Phase::Asked) return;  // late or unasked: ignored
-    if (refused && (wait == Busy::Settle || wait == Busy::Chalice) && g.reasks < kMaxReasks) {
+    if (refused && (wait == Busy::Settle || wait == Busy::Chalice || wait == Busy::Sign) && g.reasks < kMaxReasks) {
         g.reask_at = now + kReaskWait;  // the host's game is ending a session: ask again soon
         g.since = now;
         return;
@@ -300,7 +310,7 @@ void OnRoom(Guest& g, double now, bool refused, Busy wait) {
     if (refused) {
         g.fail_why = "refused by the host";
         g.gather = wait == Busy::OtherMap;
-        g.waited = wait != Busy::None && wait != Busy::OtherMap;
+        g.waited = wait != Busy::None && wait != Busy::OtherMap && wait != Busy::Sign;  // Sign: the bell sign path
     }
 }
 
