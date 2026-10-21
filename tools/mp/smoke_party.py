@@ -240,9 +240,10 @@ def _s3_stain():
 
 
 def _s3_enemy():
-    """A nearby enemy on the same floor: R1 once (it fights back), HP lines, R3 lock-on, the kills, a vial."""
-    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 5 + [
-        "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!", "host_press=0@2%m24_01!",   # R3: lock-on
+    """A nearby enemy on the same floor: R3 lock-on, R1 once (it fights back), HP lines, the kills, a vial
+    (killed within ~10 s: two of them took the host's 575 HP in 13 s)."""
+    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+            "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 4 + [                  # R1: it fights back
         "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
         "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial
 
@@ -251,7 +252,10 @@ def phase_s3(only):
     host = ",".join([
         "echoes=5000",
         "host_warp=2412953@20",                                    # the Tomb of Oedon lamp (party travel)
-        "host_kill=0:hp@5%m24_01", "host_kill=0:hp@2%m24_01",      # two kills before the deaths
+        # two kills before the deaths, of this map's own enemies (m24_01, 130 m away: the nearest ones
+        # belong to the Cathedral Ward map m24_00, whose enemies come back on a game that streams that
+        # map out and in again, any load or none: hostcheck run respawnE)
+        "host_kill=2410247@5%m24_01", "host_kill=2410202@2%m24_01",
         "host_stick=-41.5:79.5:1:30@8%m24_01!",                    # off the lamp, walked
         "host_press=0@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!",
         "host_die@2%m24_01",                                       # outside a fight: lamp revive 1
@@ -269,11 +273,13 @@ def phase_s3(only):
         "host_lastlamp=2402950@1%m24_01", "host_die@2%m24_01",     # last lamp in the Cathedral Ward: a lone load
         "host_press=0@30%m24_00",                                  # its census, then the end
     ])
-    g1 = "god,guest_kill=0@10%m24_01"
+    # guest 1 kills one too; both guests then stand in the arena, off the host's walk to its stain
+    g1 = "god,guest_kill=2410261@10%m24_01,guest_move=-49.9:-40.82:73.3@2%m24_01"
+    g2 = "god,guest_move=-49.9:-40.82:73.3@14%m24_01"
     return dict(
         name="s3", seconds=600, pad=True,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_ENEMY_CENSUS=1"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
         crash=[],
         until=[S3_UNTIL],
     )
