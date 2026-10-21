@@ -156,6 +156,7 @@ struct TravelStep {
         // previous step, the later), while it is out (repeat cycles: tools/mp/smoke_party.py).
         HostLeave, GuestLeave, HostRejoin, GuestRejoin
     } kind = HostWarp;
+    bool after_scene = false; // "~": the delay counts from the end of a cutscene after the previous step
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
     float pos[3] = {};    // HostMove / GuestMove: the chr warp target (map coordinates)
     float yaw = 0;        // HostMove / GuestMove: rotation about Y (radians) when has_yaw
@@ -286,6 +287,9 @@ struct Test {
     // after the world was steady again with a cooperator, counted from here.
     Clock::time_point steady_at{};
     bool steady = false;
+    // The game's cutscenes (a step ending in "~" counts from the end of one).
+    bool scene_on = false;
+    Clock::time_point scene_end_at{};
     // A running multi-tick step (HostWalk / HostHeadstone).
     struct Script {
         TravelStep::Kind kind = TravelStep::HostWalk;
@@ -1627,6 +1631,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.steady = steady;
         t.steady_at = now;
     }
+    if (const bool scene = CutscenePlaying(); scene != t.scene_on) {
+        t.scene_on = scene;
+        if (!scene) {
+            t.scene_end_at = now;
+        }
+    }
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
     if (t.ran &&
         (t.last_kind == TravelStep::GuestStick || t.last_kind == TravelStep::HostStick ||
@@ -1689,7 +1699,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         }
         // S s after the later of: the last load (steady again), the previous step (or the join).
         const Clock::time_point prev = t.ran ? t.step_at : t.joined_at;
-        const Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        if (t.steps[t.next_step].after_scene) {
+            // "~": waits for a cutscene that ended after the previous step, then S s after its end.
+            if (t.scene_on || t.scene_end_at <= prev) {
+                return;
+            }
+            from = t.scene_end_at > from ? t.scene_end_at : from;
+        }
         if (Seconds(from, now) < t.steps[t.next_step].delay) {
             return;
         }
@@ -2971,7 +2988,13 @@ void PartyDirector::ConfigureFromEnv() {
             if (end == std::string::npos) {
                 end = list.size();
             }
-            const std::string item = list.substr(at, end - at);
+            std::string item = list.substr(at, end - at);
+            // "~" at the end of a travel step: its delay counts from the end of a cutscene that plays
+            // after the previous step (a boss intro), not from the previous step itself.
+            const bool after_scene = item.size() > 1 && item.back() == '~';
+            if (after_scene) {
+                item.pop_back();
+            }
             at = end + 1;
             if (item == "log_state") {
                 st.test.log_state = true;
@@ -3140,6 +3163,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
                        item.rfind("guest_rejoin", 0) == 0) {
                 TravelStep step;
+                step.after_scene = after_scene;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
