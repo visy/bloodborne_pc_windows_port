@@ -393,7 +393,7 @@ static void Party() {
     // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
-    assert(P::PartyRowCount() == 7); // status, rot, copy, LAN copy, rejoin, leave + the extension row
+    assert(P::PartyRowCount() == 8); // status, rot, copy, LAN copy, rejoin, new party code, leave + the extension row
     assert(!hud.visible()); // the party HUD switch: party mode only
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
