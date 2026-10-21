@@ -5,7 +5,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
-- **Fixed: a guest that cannot be reached no longer knocks other guests out of the host's world**: PLACEHOLDER
+- **Fixed: a guest whose join failed is not summoned again until the host can hear its game**: when a guest's join failed because nothing from its game reached the host (a blocked port, a firewall), the host kept summoning it. The host now waits until that guest's game is heard on the party port (3 minutes at most) before it summons it again, by its sign or by a direct summon, and shows "Hunter1 can't reach you (UDP blocked)" meanwhile. Other guests join as usual.
+- **Fixed: a guest no longer drops out right after arriving while a lower party slot is empty**: a guest joining while a guest before it in the party was not in the host's world (guest 2 without guest 1) was sent back to its own world 0.2 s after its loading screen, on every join. Its game changes its player number to its party slot's right after the load, and the host's game checked it under the new number before its copy of that hunter was rebuilt with it. That one check is now ignored for the few seconds the rebuild takes.
+- **Changed: longer party notices stay up longer**: 3 s plus a little per letter, up to 10 s (every notice used to show for 4 s).
 
 ## 0.7.0 (Windows port 0.7.0, party co-op round after the second playtest)
 

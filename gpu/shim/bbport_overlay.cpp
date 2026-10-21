@@ -147,7 +147,6 @@ bool focus_request = true; // the menu was opened: its first row takes the focus
 std::atomic<std::uint64_t> toast_seen{0};  // the party event already shown
 std::atomic<std::int64_t> toast_until_ms{0}; // steady clock
 std::string toast_text;                      // present thread (imgui_mutex)
-constexpr std::int64_t ToastMs = 4000;
 
 std::int64_t SteadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2963,7 +2962,7 @@ void PartyPings() {
     }
 }
 
-/// Party notices (join / leave / travel): the latest party_status event for ToastMs in a bottom
+/// Party notices (join / leave / travel): the latest party_status event for ToastMs (by its length) in a bottom
 /// corner, clear of the game's HUD (bottom left; bottom right while the performance HUD has the
 /// bottom left), fading out. Not
 /// interactive, never "menu open"; a newer event replaces the one shown.
@@ -2976,7 +2975,7 @@ void PartyToast() {
         const party::status::Board b = party::status::Snapshot();
         toast_seen = b.event_seq;
         toast_text = b.last_event;
-        toast_until_ms = toast_text.empty() ? 0 : now + ToastMs;
+        toast_until_ms = toast_text.empty() ? 0 : now + party::status::ToastMs(toast_text);
     }
     const std::int64_t left = toast_until_ms.load() - now;
     if (left <= 0 || toast_text.empty()) {
@@ -3121,7 +3120,7 @@ void HoldPartyNoticesInGameMenu() {
         const party::status::Board b = party::status::Snapshot();
         toast_seen = b.event_seq;
         toast_text = b.last_event;
-        toast_until_ms = toast_text.empty() ? 0 : now + ToastMs;
+        toast_until_ms = toast_text.empty() ? 0 : now + party::status::ToastMs(toast_text);
     } else if (toast_until_ms.load() > now) {
         toast_until_ms += dt;
     }

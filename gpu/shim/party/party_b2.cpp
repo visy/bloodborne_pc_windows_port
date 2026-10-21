@@ -104,6 +104,7 @@ constexpr u64 kDtorResetCall = 0x1947207;   // e8 24 d6 50 00 -> 0x1e54830
 constexpr u64 kUidLeaveCall = 0x193c657;    // e8 44 41 59 00 -> 0x1ed07a0
 constexpr u64 kUidDropCall = 0x193c689;     // e8 82 26 c8 ff -> 0x15bed10
 constexpr u64 kMatchCheckCall = 0x13809b7;  // e8 e4 fd b4 00 -> 0x1ed07a0
+constexpr u64 kMatchErrorCall = 0x1380a65;  // e8 36 fd b4 00 -> 0x1ed07a0 (Lua OnMatchingError)
 constexpr u64 kJoinStartCall = 0x178524f;   // e8 2c 25 b9 ff -> 0x1317780
 constexpr u64 kFunnelLeaveJne = 0x13cdeae;  // 75 6c (cmp [GSM+0x1592],0 ; jne skip-leave)
 constexpr u64 kHostDeathReturnCall = 0x18c4d7d; // e8 2e 00 59 00 -> 0x1e54db0 (ChrIns_OnDeath, role 3)
@@ -166,6 +167,8 @@ std::atomic<bool> g_rejoin{false};  // a B2 re-join is in flight (K5 / K6 armed)
 std::atomic<bool> g_k1_xml{false};  // the XML retarget already keeps the room at 0x19471B1
 std::atomic<int> g_apart_k5{0};     // members in another area (split travel): K5 stands aside
 std::atomic<double> g_split_change_at{-100.0};  // the last split chr removal / meet rewind (Now())
+std::atomic<double> g_renumber_at{-100.0};      // guest: PlayerNumberTick changed the own number (Now())
+std::atomic<int> g_renumber_from{0}, g_renumber_to{0};
 std::atomic<double> g_title_served_at{-1e9};  // host: the last title-join room sent (Now()), holds lamp travel
 
 bool IdEquals(u64 a, u64 b) {
@@ -880,6 +883,27 @@ BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
     const bool split = g_apart_k5.load() > 0 || Now() - g_split_change_at.load() < 15.0;
     if (g_on.load() && (g_rejoin.load() || split)) {
         Log("K5: OnMatchingCheck leave suppressed (%s)", g_rejoin.load() ? "re-join in flight" : "split travel: members apart");
+        return 0;
+    }
+    using Fn = u64(BB_COOP_SYSV*)(u64);
+    return reinterpret_cast<Fn>(Guest(kBeginLeave))(session);
+}
+
+// K5b: Lua OnMatchingError (0x13809F0): the host's OnMatchingCheck did not find this guest's chr
+// under the player number the guest's check message carries (IsMatchingMultiPlay(host no,
+// GetPlayID)), so it sent OnMatchingError for that number, and the guest with that number
+// (GetLocalPlayerId() == GetParam3()) leaves. Right after PlayerNumberTick changed the own number
+// (a guest summoned while a lower slot is absent gets the host's next free number, e.g. 2 for
+// slot 2), the host's copy of this chr still has the old number until its 1.5 s rebuild, and the
+// summon's check message already carries the new one (live sf3: every join of guest 2 after guest
+// 1's failed join ended 0.2 s after the arrival load). That error is a stale chr there, not a
+// broken session: ignored for 10 s after a renumber (the host's rebuild fixes its copy).
+BB_COOP_SYSV u64 MatchErrorHook(u64 session) {
+    const double since = Now() - g_renumber_at.load();
+    if (g_on.load() && Role() == RoleClient && since < 10.0) {
+        Log("K5b: OnMatchingError leave ignored: the host checked player number %d %.1f s after this guest "
+            "changed it from %d, before its chr there was rebuilt with it (cleared: that error only)",
+            g_renumber_to.load(), since, g_renumber_from.load());
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -6470,6 +6494,11 @@ void PlayerNumberTick(const GameSnapshot& s, double now) {
     if (was != want) {
         SafeWrite(own + 0x10, &want, 4);
         SafeWrite(s.player + 0x3b8, &want, 4);  // as the packet 7 receive writes both
+        if (guest) {
+            g_renumber_from = was;
+            g_renumber_to = want;
+            g_renumber_at = Now();  // K5b: the host's copy keeps the old number until its rebuild
+        }
         NoteOwnAppearanceChanged();             // own record again (with the number), peers rebuild this chr
         Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr",
             was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load());
@@ -8002,10 +8031,10 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
                     DS().refused_at = Now();
                 }
                 Log("direct summon: slot %d (%s) refused (its last join failed and its UDP has not been heard on the "
-                    "party port since%s; its signs are held too: an unreachable joiner in the room makes the members "
-                    "in the session leave)", slot, name.c_str(), probe ? "; probing it now" : "");
-                party::status::SetLastEvent("UDP from " + name + " is blocked: its last join failed and nothing from "
-                                            "its game reaches this host's party port; no summon until it does");
+                    "party port since%s: nothing from its game reaches this host's party port, no summon until it does; "
+                    "its signs are held too: an unreachable joiner in the room makes the members in the session leave)", slot, name.c_str(), probe ? "; probing it now" : "");
+                // Short for the toast; the log line above has the why.
+                party::status::SetLastEvent(name + " can't reach you (UDP blocked)");
                 continue;
             }
         }
@@ -9061,6 +9090,8 @@ void Init() {
     InstallCall(kUidDropCall, kDropPresentation, reinterpret_cast<const void*>(&UidDropHook), "B2 K4 stage-UID drop");
     InstallCall(kMatchCheckCall, kBeginLeave, reinterpret_cast<const void*>(&MatchCheckHook),
                 "B2 K5 OnMatchingCheck leave");
+    InstallCall(kMatchErrorCall, kBeginLeave, reinterpret_cast<const void*>(&MatchErrorHook),
+                "B2 K5b OnMatchingError leave");
     InstallCall(kJoinStartCall, kJoinStartLua, reinterpret_cast<const void*>(&JoinStartHook), "B2 K6 OnBeJoinStart");
     InstallCall(kHostDeathReturnCall, kRequestReturn, reinterpret_cast<const void*>(&HostDeathReturnHook),
                 "B2 K8 host death return-all");
