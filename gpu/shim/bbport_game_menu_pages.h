@@ -114,7 +114,8 @@ struct Texts {
 struct PartyRow {
     using Board = party::status::Board;
     int order = 0; ///< position on the page; built-in rows: status 10, rot 15, copy code 20/21, rejoin
-                   ///< 30, leave 40 (notices and last event: Party members page)
+                   ///< 30, leave 40 (notices and last event: Party members page); Party mode page:
+                   ///< new party code 27 (host)
     int page = 0;  ///< 0: the Party page, 1: the Party mode page (switching role / single player)
     std::function<Texts(const Board&)> name;    ///< at most MaxNameLength units (cut otherwise)
     std::function<Texts(const Board&)> help;    ///< the bottom line, at most MaxHelpLength

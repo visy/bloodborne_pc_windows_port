@@ -268,28 +268,38 @@ std::string DescribeDamage(int percent, bool russian) {
     return b;
 }
 
-std::string DescribeRot(const int kind[kRotFileKinds], bool russian) {
+std::string DescribeRotEffect(int k, int stacks, bool russian) {
     // Per stack, as party_balance's UpdateRotFactor applies them.
     static const char* const kEn[kRotFileKinds] = {"max HP -%d %%", "max stamina -%d %%", "stamina costs +%d %%",
                                                     "rally -%d %%", "item discovery -%d"};
     static const char* const kRu[kRotFileKinds] = {"здоровье -%d %%", "выносливость -%d %%", "траты выносл. +%d %%",
                                                     "отыгрыш -%d %%", "находки -%d"};
     static const int kPer[kRotFileKinds] = {kRotHpPercentPerStack, kRotHpPercentPerStack, 10, 15, 10};
+    const int n = std::clamp(stacks, 0, kRotMaxStacks);
+    if (k < 0 || k >= kRotFileKinds || n == 0) return {};
+    char b[64];
+    std::snprintf(b, sizeof b, russian ? kRu[k] : kEn[k], std::min(n * kPer[k], 100));
+    return b;
+}
+
+std::string DescribeRotHead(const int kind[kRotFileKinds], bool russian) {
     int stacks = 0;
-    std::string what;
-    for (int k = 0; k < kRotFileKinds; ++k) {
-        const int n = std::clamp(kind[k], 0, kRotMaxStacks);
-        if (n == 0) continue;
-        stacks += n;
-        char b[64];
-        std::snprintf(b, sizeof b, russian ? kRu[k] : kEn[k], std::min(n * kPer[k], 100));
-        what += (what.empty() ? "" : ", ") + std::string(b);
-    }
+    for (int k = 0; k < kRotFileKinds; ++k) stacks += std::clamp(kind[k], 0, kRotMaxStacks);
     if (stacks == 0) return {};
     char head[32];
     std::snprintf(head, sizeof head, russian ? "Гниль %d/%d: " : "Rot %d/%d: ", std::min(stacks, kRotMaxStacks),
                   kRotMaxStacks);
-    return head + what;
+    return head;
+}
+
+std::string DescribeRot(const int kind[kRotFileKinds], bool russian) {
+    std::string what;
+    for (int k = 0; k < kRotFileKinds; ++k) {
+        const std::string e = DescribeRotEffect(k, kind[k], russian);
+        if (!e.empty()) what += (what.empty() ? "" : ", ") + e;
+    }
+    const std::string head = DescribeRotHead(kind, russian);
+    return head.empty() ? head : head + what;
 }
 
 std::string DescribePoise(int percent, bool russian) {

@@ -896,6 +896,10 @@ void runtime_pad_director_sticks(int lx, int ly, int rx, int ry) {
 /* runtime_pad_last_buttons: the buttons of the last sample the game read (test aids' logs). */
 static volatile uint32_t last_sample_buttons;
 uint32_t runtime_pad_last_buttons(void) { return last_sample_buttons; }
+/* runtime_pad_last_left: the left stick of the last sample the game read, lx | ly << 8 (0..255,
+ * 128 neutral; the party's host-death lock log compares it with the chr's movement). */
+static volatile uint32_t last_sample_left=0x8080u;
+uint32_t runtime_pad_last_left(void) { return last_sample_left; }
 /* runtime_pad_cross_presses: Cross presses (rising edges) the game read, counted here so a short
  * tap is never missed by a reader that looks once a frame (the game menu's button rows). */
 static volatile uint32_t cross_presses;
@@ -1131,6 +1135,7 @@ static void sample(PadData *d) {
     if (director_buttons & BTN_L2) d->l2=255;
     if (director_buttons & BTN_R2) d->r2=255;
     for (int i=0;i<4;++i) { const int v=director_stick[i]; if (v>=0) *axes[i]=(uint8_t)(v>255 ? 255 : v); }
+    last_sample_left=(uint32_t)d->left_x|(uint32_t)d->left_y<<8;
     touch_ids(d);
 }
 

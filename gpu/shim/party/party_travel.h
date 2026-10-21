@@ -280,6 +280,13 @@ void InstallTravelPatches();
 bool PopHostTravel(TravelIntent* out);
 /// Guest: the host's travel (any thread; the PartyLink callback).
 void RequestGuestTravel(const TravelIntent& t);
+/// Guest: notes the host's chalice dungeon and says whether this game stays out of the host's
+/// travel into a Chalice Dungeon (one it does not have, or one entered from outside: the summon
+/// brings it in). Both travel paths ask it (RequestGuestTravel and b2::OnHostTravel).
+bool GuestSkipsChaliceTravel(const TravelIntent& t);
+/// Guest: the host's last travel went into a Chalice Dungeon this game does not have in its
+/// current slot (only a summon brings it in, from its own world).
+bool HostInOtherChalice();
 /// Main thread, once a frame (the coop tick): the guest replay.
 void TravelTick();
 /// Main thread: replays `t` now with the native warp ChooseReplay picks (B2 drives this itself,
