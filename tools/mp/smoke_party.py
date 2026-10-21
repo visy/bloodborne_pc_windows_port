@@ -284,8 +284,8 @@ GROUP_UNTIL = {
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
     "keyitems": [r"1:key goods held: .*load mode 0\)"],  # guest 1 back in its own world after the Leave
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
-    # guest 2 in the host's world, then ~10 s of log for the screenshots
-    "summonfail": [r"0:cooperators 0 -> 1[\s\S]{6000}"],
+    # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
+    "summonfail": [r"0:cooperators 0 -> 1[\s\S]{40000}"],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
