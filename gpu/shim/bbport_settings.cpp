@@ -532,6 +532,14 @@ bool RestartNeeded() {
 namespace {
 /// Rewrites the file with `keys` set (a value) or removed (none), in the order given for new
 /// ones; every other line stays as it is. Callers hold save_mutex.
+bool TraceIni() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_GAME_MENU_TRACE");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+
 void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<std::string>>>& keys) {
     std::string out;
     bool had_lines = false;
@@ -552,6 +560,9 @@ void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<st
                 if (it != keys.end()) {
                     if (it->second) {
                         out += it->first + "=" + *it->second + "\n";
+                        // BB_GAME_MENU_TRACE=1 (scripted menu tests, smoke_party "rules"): what changed.
+                        if (TraceIni() && text.substr(eq + 1) != *it->second)
+                            std::printf("Settings: bbport.ini %s=%s\n", it->first.c_str(), it->second->c_str());
                     }
                     written[size_t(it - keys.begin())] = true;
                     continue;
@@ -567,6 +578,7 @@ void WriteMergedLocked(const std::vector<std::pair<std::string, std::optional<st
     for (size_t k = 0; k < keys.size(); ++k) {
         if (!written[k] && keys[k].second) {
             out += keys[k].first + "=" + *keys[k].second + "\n";
+            if (TraceIni()) std::printf("Settings: bbport.ini %s=%s\n", keys[k].first.c_str(), keys[k].second->c_str());
         }
     }
     // Replaced whole: a crash while writing leaves the old file.

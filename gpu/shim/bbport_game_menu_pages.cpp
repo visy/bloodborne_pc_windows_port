@@ -1564,6 +1564,68 @@ void SetPartyStatusHooks(PartyStatusHooks hooks) {
     status_hooks = std::move(hooks);
 }
 
+namespace {
+/// BB_GAME_MENU_TRACE=1 (scripted menu tests, tools/mp/smoke_party.py "rules"): each change a
+/// page applies, as "Game menu: row 'NAME' -> VALUE".
+bool TraceChanges() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_GAME_MENU_TRACE");
+        return env && env[0] == '1';
+    }();
+    return on;
+}
+std::string Ascii(u32 id) {
+    std::string out;
+    for (const char16_t* c = Text(id, false); c && *c; ++c) out.push_back(*c < 128 ? char(*c) : '?');
+    return out;
+}
+/// What a row shows in its value column now (English).
+std::string ValueText(const Row& r) {
+    const int f = r.field;
+    switch (r.kind) {
+    case Kind::Slider: return std::to_string(int(bytes[std::size_t(f)]));
+    case Kind::List: {
+        const int v = values[std::size_t(f)];
+        return v >= 0 && std::size_t(v) < r.choices.size() ? Ascii(r.choices[std::size_t(v)]) : "?";
+    }
+    case Kind::Toggle:
+    case Kind::Steps: {
+        const int count = int(r.choices.size());
+        const int c = r.kind == Kind::Toggle ? std::clamp(int(bytes[std::size_t(f)]), 0, count - 1)
+                                             : ChoiceFromPosition(bytes[std::size_t(f)], count);
+        return count ? Ascii(r.choices[std::size_t(c)]) : "?";
+    }
+    case Kind::Button: return r.choices.empty() ? "" : Ascii(r.choices[0]);
+    }
+    return "?";
+}
+/// A text past its column (MaxNameLength / MaxValueLength) or cut by SetDynamic ("...").
+bool Cut(u32 id, std::size_t limit) {
+    const char16_t* t = Text(id, false);
+    std::u16string_view v = t ? t : u"";
+    return v.size() > limit || (IsDynamic(id) && v.size() >= 3 && v.substr(v.size() - 3) == u"...");
+}
+const Row* RowOfField(int field) {
+    for (const Page& p : pages)
+        for (const Row& r : p.rows)
+            if (r.field == field && (!r.visible || r.visible())) return &r;
+    return nullptr;
+}
+} // namespace
+
+std::string ShownSummary(const Page& page) {
+    std::scoped_lock lock{StateMutex()};
+    std::string out;
+    for (const Row* r : ShownRows(page)) {
+        if (!out.empty()) out += " | ";
+        out += Ascii(r->name) + "=" + ValueText(*r);
+        bool cut = Cut(r->name, MaxNameLength);
+        for (u32 c : r->choices) cut = cut || Cut(c, MaxValueLength);
+        if (cut) out += " (CUT)";
+    }
+    return out;
+}
+
 void Poll(std::int64_t now_ms) {
     std::scoped_lock lock{StateMutex()};
     if (!loaded) {
@@ -1611,6 +1673,9 @@ void Poll(std::int64_t now_ms) {
         if (f.set) {
             f.set(value);
             save = true;
+            if (TraceChanges())
+                if (const Row* r = RowOfField(int(i)))
+                    std::printf("Game menu: row '%s' -> %s\n", Ascii(r->name).c_str(), ValueText(*r).c_str());
         }
     }
     if (save) {

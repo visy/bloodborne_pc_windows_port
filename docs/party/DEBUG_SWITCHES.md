@@ -41,6 +41,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_STORY` | Share cutscenes and endings (0.7.0: bbport.ini `party_story`, System > Story & dialogue; the launcher no longer sets the variable, set it wins over the ini) | 1 |
 | `BB_PARTY_STORY_MIRROR` | Play them live with the host (0.7.0: bbport.ini `party_story_mirror`, System > Story & dialogue; the launcher no longer sets the variable, set it wins over the ini) | 1 |
 | `BB_PARTY_SWITCH_ENV` | Internal (0.7.0, set by the game at start): the party switch variables above it filled in from bbport.ini, so a restart from the menu (which inherits the environment) reads the ini again instead of them | set by the game |
+| `BB_GAME_MENU_TRACE` | Test aid (scripted menu walks, `tools/mp/smoke_party.py --only rules`): `1` logs the System menu events: `Game menu: page N NAME open`, `Game menu: page N rows (K): NAME=VALUE ...` (the rows separated by a bar) (" (CUT)" after a text past its column), `Game menu: row 'NAME' -> VALUE` for each change a page applies, `Settings: bbport.ini KEY=VALUE` for each key a save changes | off |
 | `BB_SAVE_BACKUP_MINUTES` | Back up every (min) | 10 (0 = only at start) |
 | `BB_SAVE_BACKUP_KEEP` | Backups to keep | 10 |
 | `BB_SAVE_SESSION_KEEP` | Party session snapshots kept (both save folders, taken right before each party session for the launcher's *Undo last party session*; `0` = none) | 5 |

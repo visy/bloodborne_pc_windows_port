@@ -446,6 +446,7 @@ static void RulesPages() {
         ps::SetRole(role);
         ps::SetHostRule(ps::HostRule::HostRevive, false);
         ps::SetHostRule(ps::HostRule::HostLimboRevive, true);
+        BbSettings::Get().party_host_revive = true;  // EverySettingSaved changed every row once
         P::Load();
         Advance(300);
         assert(names(u"Deaths & revives") == deaths);
@@ -460,6 +461,11 @@ static void RulesPages() {
         assert(k[0] == (guest ? P::Kind::Button : P::Kind::Toggle) && k[1] == P::Kind::Toggle);
         assert(k[2] == k[0] && k[3] == k[0] && k[4] == P::Kind::Toggle);
         assert(kinds(u"Party rewards").back() == P::Kind::List && kinds(u"Party display").back() == P::Kind::List);
+        // The trace's page line (smoke_party "rules" asserts it): every row, its value, nothing cut.
+        for (const P::Page& page : P::All()) assert(P::ShownSummary(page).find("(CUT)") == std::string::npos);
+        const std::string deaths_line = P::ShownSummary(PageNamed(u"Deaths & revives"));
+        assert(deaths_line.find("Host gets up, no load=" + std::string(guest ? "Off" : "On")) != std::string::npos);
+        assert(P::ShownSummary(PageNamed(u"Party rewards")).find("Insight for bosses=") != std::string::npos);
         if (guest) {
             const auto shown = P::ShownRows(PageNamed(u"Deaths & revives"));
             assert(std::u16string(P::Text(shown[2]->choices[0], false)) == u"Off");
