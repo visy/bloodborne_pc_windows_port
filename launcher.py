@@ -2528,8 +2528,8 @@ class BloodborneLauncher(tk.Tk):
         lamps_cb = self._check(sec, "Shared lamps (host)", self.party_share_lamps,
                                "Host only: a lamp any party member lights is lit for everyone, in each member's "
                                "own save too (a guest's lamps light up in your world when it joins; yours reach "
-                               "its save). Your setting is the party's rule. Also in the game: System > Friendly "
-                               "fire page (Shared lamps). Default: on (bbport.ini party_share_lamps).",
+                               "its save). Your setting is the party's rule. Also in the game: System > World & "
+                               "PvP (Shared lamps). Default: on (bbport.ini party_share_lamps).",
                                command=self.save_party_share_lamps)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
@@ -2829,8 +2829,8 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
 
     def save_party_share_lamps(self):
-        """The Shared lamps checkbox (host): bbport.ini party_share_lamps (in game: System > Friendly
-        fire page)."""
+        """The Shared lamps checkbox (host): bbport.ini party_share_lamps (in game: System > World &
+        PvP)."""
         try:
             update_ini(bbport_ini_path(), {"party_share_lamps": "1" if self.party_share_lamps.get() else "0"})
         except OSError as ex:
