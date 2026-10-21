@@ -138,7 +138,8 @@ def phase_s2(only):
     ])
     g1 = ",".join([
         "goods=1230:20",                    # Pebbles at their inventory maximum (20): the host's Pebble goes to storage
-        "watch_text=Unable to acquire",     # the game's "inventory or storage max" box: must not show
+        "watch_text=Unable to acquire/Oedon Tomb Key",  # the "inventory or storage max" box: must not show;
+                                            # a key item's name: the Key Items tab of the menu walk below
         "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
         "guest_press=0x4000@29%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
         "guest_leave@10%m24_01",            # Leave right after the kill (no load between), then Rejoin
@@ -168,11 +169,16 @@ def phase_s2(only):
     return dict(
         name="s2", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD + "," + PEBBLE_FLAG, "BB_PARTY_TEST_INVINCIBLE=1"],
-        watch=["--watch", "up again in the arena=arena@1,4", "--watch", r"travel step \d+/\d+: guest_chr=hits@6,10"],
+        watch=["--watch", "up again in the arena=arena@1,4", "--watch", r"travel step \d+/\d+: guest_chr=hits@6,10",
+               "--watch", r"test menu: step \d+/\d+: mark=keytab=keytab@0.5"],
+        # Guest 1, 4 s after it arrives at the Cleric Beast's lamp (summoned): Options > Inventory, two
+        # tabs right = Key Items (items.md 10.7, run10), a shot, back out. Its restarts: no walk.
+        files={"menu1.txt": "m24_01 4 options/cross/right/right/mark=keytab/circle/circle\n-\n-\n-\n"},
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
               # the host's own award of a Pebble treasure lot (host-only, 20 s after the join): the
               # summoned guest at its Pebble maximum gets it into its storage (items.md 10.4)
               "0:BB_PARTY_ITEMS_HOST_TEST=" + PEBBLE_LOT,
+              "1:BB_TEST_MENU_FILE={root}\\menu1.txt",
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
               "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@25", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
               "2:BB_PARTY_DIRECTOR_TEST_RESTART=none"],
@@ -549,7 +555,7 @@ def run_phase(a, ph, out: Path):
     for e in ph["env"]:
         cmd += ["--env", e.replace("{root}", str(root))]
     for e in ph["ienv"]:
-        cmd += ["--ienv", e.replace("{hold}", hold)]
+        cmd += ["--ienv", e.replace("{hold}", hold).replace("{root}", str(root))]
     for w in ph.get("start_when", []):
         cmd += ["--start-when", w]
     if ph.get("pad"):
@@ -777,6 +783,9 @@ def check_s2(v, L, d: Path):
              r"summoned load: the own key section is shown \([1-9]", tr)
         need(v, L, "s2 key items held by the summoned guest after the travel", 1,
              r"key goods held: .*4000 x1,.*4114 x1,.*map m24_01.*load mode 1", tr)
+        # The menu walk (phase_s2 files): the Key Items tab of the summoned guest lists its own keys.
+        need(v, L, "s2 key items: the summoned guest's Key Items tab lists its own keys", 1,
+             r'text shows: "Oedon Tomb Key"', tr)
     check_key_saves(v)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     if lv is not None:
