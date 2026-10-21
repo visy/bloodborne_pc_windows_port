@@ -689,6 +689,43 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   alive: the host's `ArenaRevive` and then guest 1's (it waited while the host's chr was down), both at
   their corpse spots, no loading screen anywhere; stain recovered; hits taken. Smoke group `arena`
   (s2, Cleric Beast: guest 2 dead in the fight, up in the arena, an enemy hit, no load) passes.
+* **Fall deaths: the last safe floor** (fallsafe 2026-10-21, user rule: "a fall death uses the same logic
+  as the bloodstain"). The game keeps a chr's last safe ground spot at PlayerIns +0x400 -> +0x30
+  (position) / +0x3C (rotation), read by 0x1904660 / 0x1904690 for the stain record 0x13D2910 (its
+  +0x00, where 0x1868A50 builds the live stain) and by the game's own safe-spot warp-and-revive
+  0x13CBAD0 (Lua, entity 10000). It is a lagging history of grounded spots (live: a few seconds behind,
+  the walk's start rather than the ledge) and goes on after HP 0 while the body lies on something
+  (a guest's record 11 s later sat on the corpse). `LocalDeathHeightTick` keeps it at HP 0
+  (`g_local_safe`, `deathrules::SafeSpotUsable`: finite, not zeros, within 60 m of the HP 0 spot) and
+  logs `local death: HP 0 at ...; the game's last safe ground spot ...`. A fall death
+  (`LocalFallDeath`: the 6 m drop test or the +0x1E1 fall flags; a death out of the world has no fall
+  flags, the drop test catches it) then:
+  * the arena revives (host `DownTick::ArenaRevive`, guest `GuestArenaRevive`, also the late kill):
+    `deathrules::PlanArenaReviveSpot` - the safe spot, else the member's spot, never the corpse;
+  * outside an arena revive, after the death is taken (host `ReviveHost`, guest `GuestFallSafeRevive`
+    from `HeldDeathTick`; `deathrules::PlanFallRespawn`): in place on the safe spot, no load (the
+    host needs no lamp in the map for it); a guest with the in-place revive off, or no safe spot
+    kept: the respawn as before;
+  * the guest's revive before an alone travel (`GuestDeathAloneToOwnLamp`): the safe spot first
+    (`PlanLiesRevive`);
+  * the stain: `FallStainToSafeSpot` puts the record's +0x00 on the HP 0 safe spot (the host's own
+    record by `FallStainTick`, a guest's in `GuestBloodstain`) and rebuilds the live stain in the own
+    world; the party stain takes +0x00 (it took +0x18, the death spot, before);
+  * a body far below its spot (out of the world): `ReviveLocal` moves it there first while dead and
+    `PendingReviveTick` revives it once it has stood there `kFallSettle` s (`PlanFallReviveStep`);
+    then 2 s of invincibility, and on the host the game's own 0x13CBAD0 (on a guest it calls
+    BeginLeaveSession at +0x13CBD0F: not used there); `SafeReviveWatchTick` sends a revive that
+    still drops 3 m within 5 s to the lamp.
+  Kill plane: m24_01 kills a chr that falls out of the world at about y -1500 (about 30 s of fall from
+  the Great Bridge; no +0x1E1 fall flags). Single player then wakes in the Hunter's Dream (solo run:
+  `map - -> m21_00_00_00` after the death); in a party the guest's respawn load did the same (r6-r10,
+  destination map m24_01 at the load's start, arrival m21) and a revive in the same frame as the
+  body's move died again 33 ms later (the host lost its stain's echoes to that second death). The
+  fall recovery nets (6 s of falling) normally catch such a fall first and put the chr back on the
+  safe spot (`BB_PARTY_FALL_RECOVERY=0`: off, test aid). Live (fallsafe runs, Great Bridge, test aids:
+  a 23-40 m drop by `guest_move` / `host_move` into the air, a fall through the bridge's floor into the
+  void with the recovery off): arena revives on the safe floor (host and guest), stains moved there,
+  host void death outside a fight up on its safe floor once, alive 5 s later, no load.
 * Shared boss lamp (design decision, ERSC_PARITY @ 7552b38): every respawn after a boss fight goes to
   the same lamp - the host's last lamp (a guest's lone respawn already uses the host's last lamp, or
   a lit lamp of the loaded map, 6.10; the wipe and the host use the host's lamp).

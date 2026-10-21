@@ -519,10 +519,12 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
-# NAT traversal (F2): the NAT model against simulated NATs, the netsim NAT kinds and the DHT
-# rendezvous (fake DHT nodes on loopback only). ninja -C out/gpu party-nat-test
+# NAT traversal (F2): the NAT model against simulated NATs, the netsim NAT kinds, the DHT
+# rendezvous (fake DHT nodes on loopback only) and the route table (member relay, IPv6; 0.7.1).
+# ninja -C out/gpu party-nat-test
 add_executable(party-nat-test EXCLUDE_FROM_ALL ../tests/test_party_nat.cpp ${PARTY_LINK_SOURCES}
-    shim/party/party_nat.cpp shim/party/party_rdv.cpp shim/net/net_stun.cpp shim/net/netsim.cpp
+    shim/party/party_nat.cpp shim/party/party_rdv.cpp shim/party/party_netpath.cpp shim/net/party_route.cpp
+    shim/net/party_udp.cpp shim/net/net_stun.cpp shim/net/netsim.cpp
     third_party/monocypher/monocypher.c)
 target_compile_options(party-nat-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-nat-test PRIVATE shim)
@@ -591,6 +593,12 @@ add_executable(party-gather-test EXCLUDE_FROM_ALL ../tests/test_party_gather.cpp
 target_compile_options(party-gather-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-gather-test PRIVATE shim)
 set_target_properties(party-gather-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Remote player chrs shown by the port only after their member's data (party_remote_show_rules.h).
+# ninja -C out/gpu party-remote-show-test
+add_executable(party-remote-show-test EXCLUDE_FROM_ALL ../tests/test_party_remote_show.cpp)
+target_compile_options(party-remote-show-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-remote-show-test PRIVATE shim)
+set_target_properties(party-remote-show-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Deaths, rests and same-map lamps (party_death_rules.h). ninja -C out/gpu party-death-rules-test
 add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death_rules.cpp)
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

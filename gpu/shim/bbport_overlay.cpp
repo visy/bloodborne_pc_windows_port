@@ -1690,6 +1690,21 @@ void PartyTab() {
             ps::RequestCopyGuestCode();
         }
     }
+    if (b.role == ps::Role::Guest) {
+        // F2 (0.7.1, party_netroute.h): a member that may relay for us when the host is out of reach.
+        if (ActionRow("party_relay_via", T("Join through a member (paste their guest code)",
+                                           "Войти через участника (вставить его гостевой код)"),
+                      nullptr,
+                      T("When the host cannot be reached directly but another member can: copy that member's "
+                        "guest code (BBG1-...) and press. The party then goes through that member (party "
+                        "members only; it uses some of their upload).",
+                        "Если до хоста не достучаться напрямую, а до другого участника можно: скопируйте его "
+                        "гостевой код (BBG1-...) и нажмите. Связь пойдёт через этого участника (только для "
+                        "группы; использует часть его исходящего канала)."),
+                      on)) {
+            ps::RequestAddRelayCodeFromClipboard();
+        }
+    }
     if (b.role == ps::Role::Host) {
         if (ActionRow("party_add_guest", T("Add a guest code (paste)", "Добавить гостевой код (вставить)"), nullptr,
                       T("Copy a guest's code (BBG1-...) and press: without an open port, the game then "
@@ -1844,6 +1859,23 @@ void PartyTab() {
              "DHT видят ваш IP, как у любого торрент-клиента. Нужно включить и хосту, и гостю. Выкл.: "
              "отправьте хосту гостевой код или используйте проброс порта / VPN. Со следующего запуска группы; "
              "при запуске значение берётся из вкладки Party лаунчера."),
+           on);
+    Toggle("party_member_relay", T("Relay for party members", "Ретранслятор для участников"), s.party_member_relay,
+           T("A member that cannot reach the host joins through you (and you through a member when you cannot). "
+             "Only party members (the party code and password are checked), at most 4, capped; it uses some "
+             "upload (~3 KB/s per relayed player in play, at most 128 KB/s). Relaying follows this switch at once.",
+             "Участник, который не достаёт до хоста, входит через вас (и вы через участника, если не достаёте). "
+             "Только участники группы (проверяются код и пароль), не более 4, с ограничением; расходует часть "
+             "исходящего канала (~3 КБ/с на игрока в игре, не более 128 КБ/с). Ретрансляция следует переключателю сразу."),
+           on);
+    Toggle("party_ipv6", T("IPv6 for the party", "IPv6 для группы"), s.party_ipv6,
+           T("Lets players reach you over IPv6 (both PCs need it on; tried before any relay, helps behind "
+             "carrier-grade NAT). A host without an open IPv4 port then puts its IPv6 address into the party "
+             "code (a temporary privacy address where Windows has one: the code shows it and changes when "
+             "Windows rotates it). Off by default. From the next party start.",
+             "Если у обоих ПК есть глобальный адрес IPv6, группа пробует IPv6 до ретрансляции (без NAT; "
+             "помогает за CGNAT провайдера). Хост без открытого порта IPv4 добавляет свой адрес IPv6 в код "
+             "группы. Со следующего запуска группы."),
            on);
     Toggle("party_guest_lamps", T("Guests use lamps", "Фонари гостям"), s.party_guest_lamps,
            T("Guests may use lamps and the Dream's headstones; the host leads and the whole party "

@@ -198,6 +198,84 @@ constexpr double kArenaCorpseRise = 4.0;   ///< m (height) from the followed mem
 inline bool ArenaReviveAtCorpse(bool corpse_known, bool fall_death, double horiz_m, double dy_m) {
     return corpse_known && !fall_death && horiz_m <= kArenaCorpseNear && std::fabs(dy_m) <= kArenaCorpseRise;
 }
+
+// ---- Where a player gets up after a FALL death (fallsafe, user rule 2026-10-21) ----
+// A fall death never gets up at its corpse spot (the bottom of the fall, often under the level: a
+// report showed a revived guest under Cathedral Ward looking up at it). It gets up where the game
+// itself puts the bloodstain: the chr's last safe ground spot, PlayerIns +0x400 -> +0x30 (position)
+// / +0x3C (rotation), read by 0x1904660 / 0x1904690 for the stain record 0x13D2910 (its +0x00) and
+// by the game's own safe-spot warp 0x13CBAD0. The game's value as it was at HP 0, never a computed
+// height. Usable: read, finite, not the origin (no tracker: zeros) and within kSafeSpotNear m
+// (horizontal) of where the chr stood at HP 0 (hostcheck: the stain up to ~11 m from the death spot).
+constexpr double kSafeSpotNear = 60.0;
+inline bool SafeSpotUsable(bool read_ok, const float safe[3], const float died[3]) {
+    if (!read_ok || !std::isfinite(safe[0]) || !std::isfinite(safe[1]) || !std::isfinite(safe[2])) {
+        return false;
+    }
+    if (std::fabs(safe[0]) < 0.01f && std::fabs(safe[1]) < 0.01f && std::fabs(safe[2]) < 0.01f) {
+        return false;
+    }
+    if (!std::isfinite(died[0]) || !std::isfinite(died[2])) {
+        return true;  // nothing to compare with (the death spot unknown): the game's value alone
+    }
+    const double dx = double(safe[0]) - double(died[0]), dz = double(safe[2]) - double(died[2]);
+    return std::sqrt(dx * dx + dz * dz) <= kSafeSpotNear;
+}
+/// The arena revive's spot (host DownTick::ArenaRevive, guest GuestLimboEnd::ArenaRevive). A fall:
+/// the game's safe spot, else on the followed / nearest living member's spot (never the corpse).
+/// Any other death: its corpse spot when that is within 40 m / 4 m of the member, else the member's.
+enum class ArenaSpot { Corpse, SafeFloor, Member };
+inline const char* ArenaSpotName(ArenaSpot a) {
+    return a == ArenaSpot::Corpse ? "where it died" : a == ArenaSpot::SafeFloor ? "on its last safe floor (a fall death)"
+                                                                               : "on the living member's spot";
+}
+inline ArenaSpot PlanArenaReviveSpot(bool corpse_known, bool fall_death, double horiz_m, double dy_m, bool safe_ok) {
+    if (fall_death) {
+        return safe_ok ? ArenaSpot::SafeFloor : ArenaSpot::Member;
+    }
+    return ArenaReviveAtCorpse(corpse_known, false, horiz_m, dy_m) ? ArenaSpot::Corpse : ArenaSpot::Member;
+}
+/// A revive "where it lies" (GuestDeathAloneToOwnLamp: up again, then the alone travel to its own
+/// lamp in another map). A fall: warped onto the game's safe spot first; with none, no revive here
+/// (the caller's respawn load). Any other death: where it lies, as before.
+/// The order of a fall revive (fallsafe, user report: the host was put on its safe spot and then
+/// still got "YOU DIED"): nothing before the game's death is taken (the host's death funnel / a
+/// guest's held death); then a body far below its spot (out of the world) is moved there while
+/// still dead; the revive itself runs once the body stands on the spot (or kFallMoveWait s after
+/// the move, whichever first) and has stood there kFallSettle s: the game's own warp updates the
+/// position at once but its physics a few frames later, and a revive in the same frame met the kill
+/// plane again (live r11: the guest's HP 0 again 36 ms after the revive, "YOU DIED", then a load).
+constexpr double kFallMoveWait = 3.0;
+constexpr double kFallSettle = 1.0;
+enum class FallReviveStep { Wait, MoveBody, Revive };
+inline FallReviveStep PlanFallReviveStep(bool death_taken, bool body_far_below, bool moved, bool at_spot,
+                                         double since_move) {
+    if (!death_taken) {
+        return FallReviveStep::Wait;
+    }
+    if (body_far_below && !moved) {
+        return FallReviveStep::MoveBody;
+    }
+    if (moved && since_move < (at_spot ? kFallSettle : kFallMoveWait)) {
+        return FallReviveStep::Wait;
+    }
+    return FallReviveStep::Revive;
+}
+/// Where a fall death (off a ledge or out of the world) gets up outside a boss arena's revive (user
+/// rule): on its last safe floor in the party's world with no load when that spot is kept and the
+/// in-place revive is on (a guest: System > Deaths & revives; the host: its revive in place); else
+/// the respawn as before (Respawn: the lamp, a load if needed). Never at the bottom of the fall.
+enum class FallRespawn { SafeFloor, Respawn };
+inline FallRespawn PlanFallRespawn(bool fall_death, bool safe_ok, bool inplace_on) {
+    return fall_death && safe_ok && inplace_on ? FallRespawn::SafeFloor : FallRespawn::Respawn;
+}
+enum class LiesRevive { WhereItLies, SafeFloor, Load };
+inline LiesRevive PlanLiesRevive(bool fall_death, bool safe_ok) {
+    if (!fall_death) {
+        return LiesRevive::WhereItLies;
+    }
+    return safe_ok ? LiesRevive::SafeFloor : LiesRevive::Load;
+}
 /// PR #6's wait after a limbo's boss died: its bar still up over the dead chr (the game's defeat
 /// event, which saves the defeat flag, has not run), or less than 3 s since the bar went; at most
 /// 20 s from the moment the boss was gone.

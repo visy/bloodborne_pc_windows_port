@@ -16,7 +16,9 @@
 //          the lamp nearest the host, a re-join with the host's snapshot), then beside the host;
 //          in its own world the Rejoin (the bell; the summon brings it to the host).
 //
-// Env: BB_PARTY_GATHER=0 turns it off (the row then says so; guests refuse asks).
+// The host's rule (0.7.1): System > Shared world "Host can gather", bbport.ini party_gather,
+// the launcher's Party Rules & Sync; BB_PARTY_GATHER=0/1 wins at start. Off: the host's press is
+// refused ("Gather the party is off"); a guest follows the host's rule (party_balance Rules).
 // Test aid: BB_PARTY_GATHER_TEST=yes,no,menu,... answers this guest's questions in order (yes / no:
 // the dialog with the in-process pad, YES = Cross, NO = Right then Cross; menu: the in-game menu is
 // opened (Options) before the next question, which is then refused, and closed again (Circle)).
@@ -35,7 +37,7 @@ struct GameSnapshot;
 
 namespace coop::gather {
 
-/// BB_PARTY_GATHER: on unless "0".
+/// The host's own setting (BbSettings party_gather; live).
 bool Enabled();
 /// Any thread (the status bridge, the menu's Gather the party row): the host gathers on the next tick.
 void RequestFromMenu();

@@ -15,6 +15,8 @@
 #include "party_desync.h"
 #include "party_balance.h"
 #include "party_kill_record.h"
+#include "party_status.h"
+#include "../bbport_settings.h"
 
 #include "game_state.h"
 #include "party_link.h"
@@ -172,7 +174,8 @@ void HostDesync(Bridge& b, party::PartyLink* link, const std::map<int, std::stri
 // ---- The party's kill record (party_kill_record.h) ----
 struct KillRecordGame {
     killrec::KillRecord rec;
-    bool started = false;  // host: its first epoch
+    bool started = false;  // host: its first epoch; guest: ran once
+    bool on = false;       // the switch at the last tick
     bool was_down = true;  // loading / no world at the last tick
     bool was_active = false;
     std::set<int> members;  // host: the members its full record went to
@@ -202,10 +205,34 @@ void PostKills(party::PartyLink* link, int slot, const std::vector<u32>& ids) {
 /// Every frame in a party session (host: a member connected; guest: in the host's world): the
 /// party's kill record. `members`: the host's connected member slots (a new one gets the record).
 void KillRecordTick(party::PartyLink* link, bool host, bool active, const std::map<int, std::string>& members) {
-    static const bool on = desync::KillRecordFromEnv();
-    if (!on || !link) return;
+    // The host's rule (System > Shared world, bbport.ini party_kill_record, BB_PARTY_KILL_RECORD
+    // at start): the host's own setting, a guest follows the host's (party_balance Rules). Live.
+    const bool on = host ? BbSettings::Get().party_kill_record.load()
+                         : party::status::HostRuleOn(party::status::HostRule::KillRecord);
+    if (!link) return;
     KillRecordGame& k = KR();
     const double now = NowS();
+    if (!on) {
+        // The host relays nothing while off. A guest keeps what came in: the host's record of a
+        // new world can arrive just before its rules turn the switch on again (live: 40 ms).
+        if (host) (void)desync::PopKillRecords();
+        if (k.on) BLog("kill record: off (%s)", host ? "System > Shared world" : "the host's rule");
+        k.on = false;
+        return;
+    }
+    if (!k.on && k.started) {
+        // On again: kills from before may be stale (a rest in between). The host starts a new
+        // world (its members get it afresh); a guest waits for the host's.
+        if (host) {
+            k.rec.Reset(k.rec.epoch() + 1);
+            k.members.clear();
+        } else {
+            k.rec.Reset(0);
+        }
+        BLog("kill record: on again: world %llu", static_cast<unsigned long long>(k.rec.epoch()));
+    }
+    k.on = true;
+    k.started = k.started || !host;
     if (host && !k.started) {
         k.started = true;
         k.rec.Reset(1);

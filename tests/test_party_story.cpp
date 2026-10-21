@@ -251,6 +251,14 @@ static void test_mirror_then_replay() {
 // kidnap071 (a player report): the host's Gaol waking scene (28000010, m28) reached guests that
 // were still in the Cathedral Ward (m24_00) and played there without the cell's scenery. A live
 // mirror plays only in its own map; on a guest in another map it is dropped (TakeMirrorOtherMap).
+// User decision 2026-10-21: guests that arrive in the Gaol with the kidnapped host skip its waking
+// scene; the replay keeps the scene's flags (9423).
+static void test_guest_skips_gaol_scene() {
+    CHECK(GuestSkipsScene(28000010));
+    CHECK(!GuestSkipsScene(24010010));  // a boss intro still plays
+    CHECK(!GuestSkipsScene(21000000));
+}
+
 static void test_mirror_needs_its_map() {
     CHECK(MirrorMapOk(28000010, 0x1c000000));   // m28_00
     CHECK(!MirrorMapOk(28000010, 0x18000000));  // m24_00
@@ -835,6 +843,7 @@ int main() {
     test_host_queue();
     test_mirror_then_replay();
     test_mirror_needs_its_map();
+    test_guest_skips_gaol_scene();
     test_cut_mirror_replayed();
     test_replay_waits_home_when_summoned_off();
     test_missed_scene_replayed_while_summoned();

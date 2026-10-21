@@ -129,6 +129,7 @@ Actions DefaultActions() {
         return link && link->is_host() && link->kick_name(name, "kicked by the host");
     };
     a.add_guest_code = [](const std::string& text) { return party::runtime_add_guest_code(text); };
+    a.add_relay_code = [](const std::string& text) { return party::runtime_add_relay_code(text); };
     a.new_code = [] {
         std::thread([] {  // key derivations: not on the game's main thread
             std::string message;
@@ -184,6 +185,14 @@ void HandleCommand(Bridge& b, const status::Command& c, const TickIn& in, TickOu
         Log("status: Add guest code: %d valid code(s)", n);
         status::SetLastEvent(n > 0 ? "Guest code added: opening the way for that guest"
                                    : "No valid guest code (BBG1-XXXX-XXXX-XXXX) on the clipboard");
+        break;
+    }
+    case status::CommandType::AddRelayCode: {
+        if (in.host) break;
+        const int n = a.add_relay_code ? a.add_relay_code(c.name) : 0;
+        Log("status: Join through a member: %d new member code(s)", n);
+        status::SetLastEvent(n > 0 ? "Member added: if the host cannot be reached directly, the party goes through it"
+                                   : "No new member guest code (BBG1-XXXX-XXXX-XXXX) on the clipboard");
         break;
     }
     case status::CommandType::NewCode: {

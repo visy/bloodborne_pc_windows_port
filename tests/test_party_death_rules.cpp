@@ -206,6 +206,55 @@ int main() {
         CHECK(!ArenaReviveAtCorpse(true, true, 12.0, 0.5));    // a fall death: the member's spot
         CHECK(!ArenaReviveAtCorpse(true, false, 41.0, 0.5));   // not in the arena with the member
         CHECK(!ArenaReviveAtCorpse(true, false, 5.0, -4.5));   // another floor
+        // fallsafe: a fall death gets up on the game's safe spot (the bloodstain's), never the corpse.
+        CHECK(PlanArenaReviveSpot(true, true, 12.0, 0.5, true) == ArenaSpot::SafeFloor);
+        CHECK(PlanArenaReviveSpot(true, true, 12.0, 0.5, false) == ArenaSpot::Member);  // no safe spot read
+        CHECK(PlanArenaReviveSpot(true, true, 2.0, -40.0, true) == ArenaSpot::SafeFloor);  // corpse far below
+        CHECK(PlanArenaReviveSpot(true, false, 12.0, 0.5, true) == ArenaSpot::Corpse);  // no fall: as before
+        CHECK(PlanArenaReviveSpot(true, false, 41.0, 0.5, true) == ArenaSpot::Member);
+        CHECK(PlanArenaReviveSpot(false, false, 1.0, 0.0, true) == ArenaSpot::Member);
+        // The game's value is usable: read, finite, not the origin, near the HP 0 spot horizontally.
+        const float died[3] = {-130.0f, -95.0f, 50.0f};  // 70 m below the bridge
+        const float safe[3] = {-134.6f, -26.6f, 54.7f};
+        CHECK(SafeSpotUsable(true, safe, died));
+        CHECK(!SafeSpotUsable(false, safe, died));
+        const float zero[3] = {0.0f, 0.0f, 0.0f};
+        CHECK(!SafeSpotUsable(true, zero, died));  // no tracker: the getter's zeros
+        const float far[3] = {-200.0f, -26.6f, 54.7f};
+        CHECK(!SafeSpotUsable(true, far, died));   // 70 m away: stale (another place)
+        const float nan3[3] = {std::numeric_limits<float>::quiet_NaN(), 0.0f, 1.0f};
+        CHECK(!SafeSpotUsable(true, nan3, died));
+        CHECK(SafeSpotUsable(true, safe, nan3));   // the death spot unknown: the game's value alone
+        // A revive where it lies (then the alone travel): a fall on the safe spot, or no revive here.
+        CHECK(PlanLiesRevive(false, false) == LiesRevive::WhereItLies);
+        CHECK(PlanLiesRevive(true, true) == LiesRevive::SafeFloor);
+        CHECK(PlanLiesRevive(true, false) == LiesRevive::Load);
+        // Outside an arena revive: a fall with a safe spot gets up there in place (no load).
+        CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);
+        CHECK(PlanFallRespawn(true, false, true) == FallRespawn::Respawn);
+        CHECK(PlanFallRespawn(true, true, false) == FallRespawn::Respawn);
+        CHECK(PlanFallRespawn(false, true, true) == FallRespawn::Respawn);
+        {
+            // The sequence of a death out of the world: HP 0 (the game's death plays), the death taken
+            // (held), the body moved up, a settle, the revive in place - and no load.
+            double t = 0;
+            CHECK(PlanFallReviveStep(false, true, false, false, t) == FallReviveStep::Wait);  // dying
+            CHECK(PlanFallRespawn(true, true, true) == FallRespawn::SafeFloor);              // taken: no load
+            CHECK(PlanFallReviveStep(true, true, false, false, t) == FallReviveStep::MoveBody);
+            int frames = 0;
+            for (t = 0; PlanFallReviveStep(true, true, true, true, t) == FallReviveStep::Wait; t += 1.0 / 30) ++frames;
+            CHECK(frames >= 29);  // at least kFallSettle s of frames with the body on its spot first
+        }
+        // The order: never before the death is taken; a body out of the world moved first; then up.
+        CHECK(PlanFallReviveStep(false, true, false, false, 0.0) == FallReviveStep::Wait);
+        CHECK(PlanFallReviveStep(false, false, false, true, 0.0) == FallReviveStep::Wait);
+        CHECK(PlanFallReviveStep(true, true, false, false, 0.0) == FallReviveStep::MoveBody);
+        CHECK(PlanFallReviveStep(true, true, true, false, 0.5) == FallReviveStep::Wait);
+        CHECK(PlanFallReviveStep(true, true, true, true, 0.0) == FallReviveStep::Wait);    // moved this frame
+        CHECK(PlanFallReviveStep(true, true, true, true, 0.5) == FallReviveStep::Wait);    // physics settling
+        CHECK(PlanFallReviveStep(true, true, true, true, kFallSettle) == FallReviveStep::Revive);
+        CHECK(PlanFallReviveStep(true, true, true, false, kFallMoveWait) == FallReviveStep::Revive);
+        CHECK(PlanFallReviveStep(true, false, false, false, 0.0) == FallReviveStep::Revive);  // landed near
     }
     {
         // PR #6's wait: the bar over the dead boss, or 3 s after it went; at most 20 s.

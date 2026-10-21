@@ -136,7 +136,9 @@ class IniSync(unittest.TestCase):
     def test_party_switches_in_ini(self):
         L = self.L
         keys = [k for k, _, _ in L.PARTY_INI_SWITCHES]
-        for key in ("party_host_revive", "party_host_limbo_revive", "party_guest_revive_inplace", "party_items"):
+        for key in ("party_host_revive", "party_host_limbo_revive", "party_guest_revive_inplace", "party_items",
+                    "party_kill_record", "party_gather", "party_npc_mirror", "party_key_view",
+                    "party_key_items_summoned"):
             self.assertIn(key, keys)
         env = L.party_env({"party_mode": "host", "party_host_limbo_revive": False})
         for _, name, _ in L.PARTY_INI_SWITCHES:
@@ -165,6 +167,9 @@ class IniSync(unittest.TestCase):
         self.assertEqual(s["ini_sync_rev"], L.INI_SYNC_REV)
         self.assertTrue(written)
         self.assertIsNone(L.migrate_settings_to_ini(s, self.ini))
+        # 0.7.1's keys were never in launcher_settings.json: nothing written for them
+        self.assertNotIn("party_kill_record", ini)
+        self.assertNotIn("party_key_view", ini)
 
     def test_write_env_migrates(self):
         L = self.L

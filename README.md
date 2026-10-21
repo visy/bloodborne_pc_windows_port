@@ -249,7 +249,8 @@ before anyone is in the game):
   press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
-  cannot gather during its own boss fight or cutscene, and only once every 30 s.
+  cannot gather during its own boss fight or cutscene, and only once every 30 s. The host can turn
+  gathering off (*Host can gather* on *System → Shared world*).
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
   lamps, headstones and the Hunter's Mark work exactly as in single player.
@@ -301,6 +302,7 @@ before anyone is in the game):
   host's world (Oedon Tomb Key, badges, workshop tools, chalices, umbilical cords) are given at once,
   and checked again when its own world loads and given again if missing; one you already hold is
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
+  Both are your own switches on *System → Party rewards* (*Own key items as guest*, *Key items at once*).
   Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
 - **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
   NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
@@ -353,9 +355,11 @@ before anyone is in the game):
   gets no Echoes or Insight.
 - **Party HUD.** Party members and events in a small HUD.
 - **Every party rule in the game's own menu.** The *System* menu has the party pages *Deaths &
-  revives* (rot, getting up without a loading screen, respawns), *World & PvP*, *Story & dialogue*,
-  *Party rewards*, *Enemy scaling* and *Party display*; the host's rules show read-only for guests.
-  The launcher's *Party Rules & Sync* shows the same settings (`bbport.ini`).
+  revives* (rot, getting up without a loading screen, respawns), *World & PvP*, *Shared world*
+  (enemies the party killed stay dead, gathering the party, NPCs as in the host's world), *Story &
+  dialogue*, *Party rewards* (also your key items as a guest), *Enemy scaling* and *Party display*;
+  the host's rules show read-only for guests. The launcher's *Party Rules & Sync* shows the same
+  settings (`bbport.ini`).
 
 **Safety and recovery**
 
@@ -379,8 +383,8 @@ before anyone is in the game):
 
 | Who dies | What happens |
 |---|---|
-| A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a fall death or a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
-| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. A death that takes the host somewhere else by the story (a Snatcher's kidnap to the Hypogean Gaol) takes the whole party there instead: one loading screen for everyone, the guests wake beside the host. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
+| A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing. **A fall** (off a ledge, or out of the world into a bottomless drop): it gets up on the last solid ground before the fall, in the host's world, right on its bloodstain, with no loading screen (never in the Hunter's Dream) |
+| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. After a fall (off a ledge or out of the world) it gets up on the last solid ground before the fall instead, right on its bloodstain, no loading screen. A death that takes the host somewhere else by the story (a Snatcher's kidnap to the Hypogean Gaol) takes the whole party there instead: one loading screen for everyone, the guests wake beside the host. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
 | Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (or beside a living hunter), no load, their echoes still in their bloodstain. the host's *System → Deaths & revives → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
@@ -405,7 +409,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
 | Progress (anyone can progress) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Network & robustness | `██████████████████░░` | 93% | `██████████████████░░` | 92% |
+| Network & robustness | `███████████████████░` | 96% | `███████████████████░` | 93% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Feels like single player in a party | `████████████████████` | 100% | `███████████████████░` | 95% |
 
@@ -453,8 +457,15 @@ IP address, as with any torrent client.
 If the guest's game gets no UDP answer from the host ("UDP to the guest is blocked" /
 "UDP to the host is blocked"), nobody rings until it does: it keeps retrying and the summon
 then starts by itself.
-The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
-connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+If the host cannot be reached at all but another member can, a guest joins **through that member**:
+it copies the member's guest code and presses *Join through a member* on its *Party* page (with the
+DHT option on, members are found by themselves); this is on by default. **IPv6** is off by default:
+turned on on both PCs (launcher *Party* tab, *System > Party network*), the party tries it before any
+relay, and a host without an open port then has a longer code that **contains its IPv6 address** (a
+temporary privacy address where Windows has one, so the code changes when Windows rotates it).
+The *Party* page's *Network* line says which NAT you have, what to do about it and which path the
+link took (TCP, UDP, IPv6 or a member's relay). Two symmetric / carrier-grade NATs with no IPv6 and no
+reachable member still cannot meet; there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 ### Reporting a co-op bug
 

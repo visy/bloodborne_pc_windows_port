@@ -163,6 +163,12 @@ std::vector<std::uint32_t> StoryFlagsForRemo(std::uint32_t remo_id) {
     return out;
 }
 
+bool GuestSkipsScene(std::uint32_t remo_id) {
+    // The Gaol waking scene (common 9422) is the kidnapped host's own; a guest that arrives in the
+    // cell with the party keeps its flags (9423) but not the scene (user decision 2026-10-21).
+    return BaseRemo(remo_id) == 28000010;
+}
+
 bool ReplayWorthy(const StoryIntent& s) {
     if (s.force) {
         return true;
@@ -483,7 +489,7 @@ void GuestStory::Build(const StoryIntent& s, bool mirror, bool summoned) {
     }
     switch (s.kind) {
     case StoryKind::Cutscene: {
-        if (!Seen(s.id) || s.force) {
+        if ((!Seen(s.id) && !GuestSkipsScene(s.id)) || s.force) {
             // Summoned: the phantom path (mode 2) the live mirror uses; no warp variant.
             push({Op::Play, s.id, summoned ? 2u : 0u});
             push({Op::WaitRemoStart});
