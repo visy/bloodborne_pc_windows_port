@@ -480,7 +480,7 @@ def phase_lf(only):
         "guest_obj=%s:0:0@8%%m24_01" % LF_LIFT,            # onto the car's root: drops into the car (at the
                                                            # bottom), whose up event starts at once
         "guest_obj=2401103:1.0:0@25%m24_01",               # out of the car at the bottom (its ride is over)
-        "guest_press=0@10%m24_01!",
+        "guest_press=0@10!",                               # (in m24_00 there: no map condition)
     ])
     g2 = "god,log_objanim=%s,log_objanim=2411204,log_flag=%s" % (LF_LIFT, LF_FLAGS)
     return dict(
