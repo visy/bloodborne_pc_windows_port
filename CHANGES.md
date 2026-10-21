@@ -5,6 +5,11 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a lift no longer carries you back and forth in a party**: on the Nightmare of Mensis library lift and the lift at Cainhurst Castle, a hunter who stayed in the car when it arrived was taken straight back the other way, again and again, as long as anyone else in the party stood outside the car. These two lifts now wait, like every other lift, until everybody has stepped out before they count the ride as over.
+- **Fixed: a lift ends in the same place for everyone**: after a ride on the Nightmare of Mensis library lift, a guest's game could keep the car at the other end until it rode again, so the lift then did nothing for that guest or rode from the wrong end. The guest's lift now always ends where the car really is, the same as the host's.
+- **Fixed: every lift ride reaches the host's world**: when the host was far away, a guest's ride to a lift end it had already reached once (up, down, up again) never reached the host's world, so the host found the car at the other end when it came back. Every ride counts now.
+- **Fixed: no lift ride is taken for a fall**: the fall rescue (a hunter falling out of the world is put back on safe ground) could still take a long ride on a lift it did not know, such as a Chalice Dungeon lift, for a fall and pull the rider out of the car partway down. It now only acts on a real fall, faster than any lift moves.
+
 ## 0.7.1 (Windows port 0.7.1, party co-op round from the 0.7.0 playtest reports)
 
 - **Fixed: the last hunter down respawns with the party**: when the host died in a boss fight and a guest fought on and fell much later, the party's respawn started while that guest was still dying: its loading screen took it to the host's lamp mid-death, its Blood Echoes were dropped at the lamp instead of in the arena, and it then got up alone at its own lamp next to the boss. Now that guest finishes dying where it fell (its bloodstain stays there), then takes the same respawn as everyone and gets up beside the host at the host's lamp. A guest that is down waits for the party's respawn as long as the host is down, however long the fight goes on.

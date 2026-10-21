@@ -476,10 +476,10 @@ inline double FallDrop(double peak_before, double y_at_death, double y_now) {
 // put the summoned guest back on the top floor while the car went on down (then a fall down the
 // empty shaft). PlayerIns +0x1E5 bit 0x02 (the fifth byte of the +0x1E1 flags) is set on a REMOTE
 // chr standing in a lift car (the report: all 62 samples on lift rides, none elsewhere; off within a
-// second of leaving the car, on for a body lying in it); the local chr does not carry it (live,
-// Mensis lift 2601240: 0000005098 all the ride), so the game side also asks whether a lift car plays
-// a ride animation where the chr stands (worldact::OnMovingLiftCar), and the rate tests below hold
-// without either.
+// second of leaving the car, on for a body lying in it); the local chr carried it on the library lift
+// (liftfix: 0200085098 / 0200005098 the whole ride, cleared the moment the chr fell off), not in liftfall's
+// el1 on lift 2601240 (0000005098), so the game side also asks whether a lift car plays a ride animation
+// where the chr stands (worldact::OnMovingLiftCar), and the rate tests below hold without either.
 constexpr std::uint64_t kRideFlag1e1 = 0x0200000000ull;
 inline bool RidingObject(std::uint64_t f1e1) {
     return (f1e1 & kRideFlag1e1) != 0;
