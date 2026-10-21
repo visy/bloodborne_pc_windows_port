@@ -5731,6 +5731,18 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
 std::atomic<double> g_carry_join_at{-1};
 std::atomic<double> g_carry_gd_at{-1};  // A5: the arrival started; its GameData follows in the host's map
 
+/// The play id a summoned guest's own GameData +0x10 gets: its room member id (the host 1, each
+/// guest its own; what a vanilla summon leaves there: 2 for the first guest, 3 for a second one that
+/// joined after it). The game sends it in the player record and every peer makes this player's chr
+/// with it (PlayerIns +0x3B8, 0x1E50090); synchronized Lua animations go to the chr with the
+/// sender's id (entity 10001 + id, 0x13C97A0). A fixed 2 gave two guests the same id: one guest's
+/// item pickup (event 4010, ANIMEID_PICK) then played the pickup animation on the other guest's own
+/// character. Without a room yet: 2.
+int SummonedPlayId() {
+    const int m = bbnet::np::own_member_id();
+    return m >= 2 && m < 0xff00 ? m : 2;
+}
+
 /// A5 (live a5c / a11h: the host counted 0 cooperators and its watchdog ended the session 60 s
 /// later): a guest that joined from its own world never got the summoned placement, so its own
 /// GameData kept the own-world values (+0x5D8 0: chr type 1/0, not a cooperator). Once it stands
@@ -5753,12 +5765,12 @@ void CarryGameDataTick(const GameSnapshot& s, double now) {
     g_carry_gd_at = -1;
     if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
         const int was = Field<int>(gd, 0x5d8, -1);
-        const int two = 2, one = 1, seven = 7;
-        SafeWrite(gd + 0x10, &two, 4);
+        const int id = SummonedPlayId(), one = 1, seven = 7;
+        SafeWrite(gd + 0x10, &id, 4);
         SafeWrite(gd + 0xa4, &one, 4);
         SafeWrite(gd + 0x5d8, &seven, 4);
         RebroadcastOwnRecord("A5 arrival: a summoned guest's session type");
-        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 %d -> 7)", was);
+        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 %d -> 7)", id, was);
     }
 }
 
@@ -7495,11 +7507,11 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         Field<int>(Slot(kSlotFlow), 0x84, -1) == 4 && Field<u64>(Slot(kSlotWorldChrMan), 0x60)) {
         if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
             gd_set = true;
-            const int two = 2, one = 1, seven = 7;
-            SafeWrite(gd + 0x10, &two, 4);
+            const int id = SummonedPlayId(), one = 1, seven = 7;
+            SafeWrite(gd + 0x10, &id, 4);
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
-            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7) at flow 4 (%s)",
+            Log("title join: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 7) at flow 4 (%s)", id,
                 s.loading ? "loading screen still up" : "in the world");
         }
     }
@@ -7568,14 +7580,15 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
             }
         }
         // A summoned guest's own GameData as the summon load leaves it (live, vanilla join):
-        // +0x10 2 (the 0x168 record and the first-sync packet 0xC are sent only with it set),
+        // +0x10 2 for the first guest (the 0x168 record and the first-sync packet 0xC are sent only
+        // with it set; SummonedPlayId: the own member id),
         // +0xA4 1 (white phantom, packet 0xB), +0x5D8 7 (session type).
         if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
-            const int two = 2, one = 1, seven = 7;
-            SafeWrite(gd + 0x10, &two, 4);
+            const int id = SummonedPlayId(), one = 1, seven = 7;
+            SafeWrite(gd + 0x10, &id, 4);
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
-            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7)");
+            Log("title join: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 7)", id);
         }
     }
     // Ready (Continue pressed, the load not started): the save's spawn is the forced placement

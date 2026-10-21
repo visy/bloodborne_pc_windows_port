@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: one guest's item pickup no longer makes another guest kneel** (party of 3 or 4): every guest got the same player number when it joined, so a guest's pickup animation, which the game sends to the other players, played on the other guests' own characters (and on the wrong guest's copy on the host's screen). Each guest now has its own number; a pickup animates only the player who picked up.
 - **Fixed: joining over a VPN when the host has no open port** (PR #7, vladtepes22): the 0.6.9 VPN fix rewrote the host's address but not its STUN-found public address, which the guest's game still preferred, so the join timed out (live over Radmin). Both now take the address the party connection reached.
 - **Added: your rot is shown**: the *Party* page of the System menu has a *Rot* row ("3/5", and on its help line what it does, e.g. "Rot 3/5: max HP -20 %, stamina costs +10 %"), and the party HUD shows the same line under your companions while you carry rot. Each player sees their own; a lamp rest still cleanses it.
 - **Changed: the bloodstain marker is an option, off by default**: the red "Blood Echoes N" marker with its distance on a guest's lost-echoes bloodstain now shows only with *System > Pings > Bloodstain marker* (also a launcher checkbox, `bbport.ini party_stain_marker`, `BB_PARTY_STAIN_MARKER=1`). The bloodstain and its echoes are unchanged.
