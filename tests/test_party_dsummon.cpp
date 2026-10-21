@@ -161,6 +161,42 @@ int main() {
         OnRoom(h, 30.0, true, Busy::Settle);  // too often: the sign path
         CHECK(h.phase == Phase::Failed);
     }
+    // A failed join locked the host (smoke 2026-10-21): its game summoned the failed guest's new
+    // sign every ~30 s and every direct summon landed in the 20 s sign hold, for minutes. A sign
+    // summon that brought nobody into the room ends its hold after kSignSummonNoJoin; the guest
+    // asks again (Sign) and is served then.
+    {
+        HostView w; w.world_up = true; w.cooperators = 0;
+        w.ms_since_sign_summon = 200; w.ms_since_member_joined = 1 << 30;
+        CHECK(SignSummonBusy(w) && HostRefusal(w) && std::strstr(HostRefusal(w), "summoning a sign") &&
+              RefusalWait(w) == Busy::Sign);
+        w.ms_since_sign_summon = kSignSummonNoJoin - 1; CHECK(SignSummonBusy(w));
+        w.ms_since_sign_summon = kSignSummonNoJoin + 500; CHECK(!SignSummonBusy(w) && !HostRefusal(w));  // nobody came
+        w.ms_since_member_joined = 3000;  // its guest joined the room 3 s ago: a real summon, held
+        CHECK(SignSummonBusy(w) && RefusalWait(w) == Busy::Sign);
+        w.ms_since_member_joined = kSignSummonNoJoin + 900;  // joined before the request: not this summon
+        CHECK(!SignSummonBusy(w));
+        w.ms_since_member_joined = 3000; w.ms_since_sign_summon = kSignSummonHold; CHECK(!SignSummonBusy(w));
+        w.ms_since_sign_summon = 1000; w.cooperators = 3; CHECK(RefusalWait(w) == Busy::None);  // full: no re-ask
+        w.cooperators = 0; w.settling = true; CHECK(RefusalWait(w) == Busy::Sign);  // the sign hold is named first
+        CHECK(WaitOf(EncodeRefuse(Busy::Sign)) == Busy::Sign && BusyText(Busy::Sign, false).empty());
+        // The guest: asks again every kReaskWait; the hold ends within the re-asks (8 x 1.5 s > 10 s).
+        CHECK(kMaxReasks * kReaskWait * 1000.0 > double(kSignSummonNoJoin));
+        Guest g;
+        OnAsked(g, 0.0);
+        OnRoom(g, 0.2, true, Busy::Sign);
+        CHECK(g.phase == Phase::Asked && Step(g, 0.2 + kReaskWait, false, false) == Action::Reask);
+        OnRoom(g, 2.0, false);
+        CHECK(g.phase == Phase::HaveRoom);
+        Guest h;
+        OnAsked(h, 0.0);
+        for (int i = 0; i < kMaxReasks; ++i) {
+            OnRoom(h, 1.0 + i * 2.0, true, Busy::Sign);
+            CHECK(Step(h, 1.0 + i * 2.0 + kReaskWait, false, false) == Action::Reask);
+        }
+        OnRoom(h, 30.0, true, Busy::Sign);  // still summoning: the bell sign path, not a wait
+        CHECK(h.phase == Phase::Failed && !h.waited);
+    }
     // Playtest 1 #9: the guest in another map gathers first (refused with "wait":"map")
     CHECK(MapKnown(0x15000000) && !MapKnown(0) && !MapKnown(0xffffffffu));
     CHECK(SameMap(0x18010000, 0x18010000) && SameMap(0x18010000, 0x18010001) && !SameMap(0x18010000, 0x18000000));
