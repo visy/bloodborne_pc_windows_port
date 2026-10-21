@@ -1185,6 +1185,11 @@ LinkCallbacks make_callbacks(bool host) {
                 else plog("%s event from slot %d: %s", name.c_str(), slot, err.c_str());
                 return;
             }
+            if (name == coop::desync::kKillRecordEvent) {  // the deaths a guest's game saw (party_kill_record.h)
+                std::string err;
+                if (!coop::desync::QueueKillRecord(slot, body, &err)) plog("kill_record from slot %d refused: %s", slot, err.c_str());
+                return;
+            }
             if (name == coop::desync::kCensusAskEvent) {  // a guest's enemy census differs from the digest
                 std::string err;
                 if (!coop::desync::HostQueueCensusAsk(slot, body, &err)) plog("census_ask from slot %d refused: %s", slot, err.c_str());
@@ -1304,6 +1309,11 @@ LinkCallbacks make_callbacks(bool host) {
                 std::string err;
                 if (coop::StoryFromJsonText(body, &s, &err) && coop::SanitizePeerStory(&s, &err)) coop::RequestGuestStory(s);
                 else plog("story event refused: %s", err.c_str());
+                return;
+            }
+            if (name == coop::desync::kKillRecordEvent) {  // the host's kill record (party_kill_record.h)
+                std::string err;
+                if (!coop::desync::QueueKillRecord(slot, body, &err)) plog("kill_record event: %s", err.c_str());
                 return;
             }
             if (name == coop::desync::kCensusListEvent) {  // the host's census entries asked for

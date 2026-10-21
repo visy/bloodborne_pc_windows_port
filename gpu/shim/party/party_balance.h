@@ -80,6 +80,10 @@ bool ChrPosition(std::uint64_t chr, float out[3]);
 /// HP 0 on a living chr (the state a lethal hit leaves: the chr's own update runs its death, drop
 /// roll and kill echoes as for a kill). False: unreadable or already dead. Main thread.
 bool SetEnemyHpZero(std::uint64_t chr);
+/// The same death for an enemy that is already dead in the party (the kill record: its map
+/// streamed in again, or a joiner's game): marked echoes-paid first (+0x1E1 0x40000, which the
+/// payer 0x18C5070 skips) and its drop roll skipped (party_droproll SkipDrop). Main thread.
+bool SetEnemyDeadQuietly(std::uint64_t chr);
 /// H3: what the game's kill-echo payer (0x18C5070) checks on a dead chr, for the logs.
 std::string DescribeKillEchoGates(std::uint64_t chr);
 

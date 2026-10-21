@@ -5,6 +5,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: an enemy of the next area stays dead when you walk away and come back** (B / D parity): the game brings an enemy of a neighbouring area back alive when that area unloads and loads again as you walk (in single player too: killed a Cathedral Ward enemy seen from the Tomb of Oedon, walked 130 m away and back, it stood there again), but only on the game that walked away, so the party saw different enemies. In a party it now dies again at once, with no echoes and no drop: only a rest or a party wipe brings enemies back. Single player is unchanged.
+- **Fixed: a kill just across an area border reaches the guests even when the host walks straight on**: the guests learned of such a kill only from the enemy check every 15 s while both games had the enemy loaded, so a host who walked away right after the kill left it alive for the guests. Every game now tells the party of the kills it sees; a guest with the enemy in sight puts it to death 3 s later (the kill's echoes and drop as for any party kill), one who gets there only later finds it dead. `BB_PARTY_KILL_RECORD=0` turns it off.
+
 ## 0.7.0 (Windows port 0.7.0, party co-op round after the second playtest)
 
 - **Added: saves from shadPS4 and other regions load as they are**: a save in shadPS4's layout (`SPRJ0005\sce_sys\param.sfo` inside the folder) is taken in at the next start, and our port now also writes that `param.sfo`, so the same save folder opens in shadPS4 again. When the folder the game reads has no save but another user id or another region's Bloodborne folder has one (e.g. an EU save with a US game), it is copied in (the original stays); a save copied one folder too deep or too shallow is named in the log. How to bring a save over: docs/SAVES.md.
