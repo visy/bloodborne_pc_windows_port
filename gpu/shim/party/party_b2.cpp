@@ -53,6 +53,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1213,6 +1214,46 @@ u32 LivingBossHandle() {
         }
     }
     return ~0u;
+}
+
+bool BossBarDying();
+int ChrHp(u64 chr);
+/// Guest (its boss-fight limbo): was the boss that went killed, and is its defeat saved yet? The
+/// last living boss bar's chr while a bar is up; once none is up: killed when the bar stays over a
+/// dead chr or that chr reads HP 0 (a bar that just goes, a rest or a reset, is no kill). Reset by
+/// a load or a new fight. Main thread, every frame (HeldDeathTick).
+struct LimboKillWatch {
+    u32 boss_h = ~0u;
+    bool killed = false;
+    double gone_at = 0;    // Now() when no living boss bar was up any more (0: a fight is on / none)
+    double killed_at = 0;
+    bool pending = false;  // deathrules::DefeatPending: the defeat is not saved yet
+};
+LimboKillWatch g_limbo_kill;
+void LimboKillTick(bool loading, double now) {
+    LimboKillWatch& w = g_limbo_kill;
+    if (loading) {
+        w = LimboKillWatch{};
+        return;
+    }
+    const u32 h = LivingBossHandle();
+    if (h != ~0u) {
+        w = LimboKillWatch{};
+        w.boss_h = h;
+        return;
+    }
+    if (w.boss_h == ~0u) {
+        return;  // no fight seen since the last load
+    }
+    if (w.gone_at == 0) w.gone_at = now;
+    const bool dying = BossBarDying();
+    if (!w.killed && (dying || ChrHp(ChrOfHandle(w.boss_h)) == 0)) {
+        w.killed = true;
+        w.killed_at = now;
+        Log("boss fight: the boss was killed (%s, %.1f s after its bar's last living frame)",
+            dying ? "its bar over a dead chr" : "its chr at HP 0", now - w.gone_at);
+    }
+    w.pending = deathrules::DefeatPending(now - w.gone_at, dying);
 }
 
 /// A boss bar is still up for a chr whose HP is 0 (or gone): the boss died and the game's defeat
@@ -3656,7 +3697,11 @@ bool HostChrDown() {
     return false;
 }
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
+bool GuestArenaRevive(const GameSnapshot& s, double held_for);
+bool HostLimboReviveOn();
+bool LivingMemberHere(u64 me);
 void HeldDeathTick(const GameSnapshot& s, double now) {
+    LimboKillTick(s.loading || !s.world_up, now);
     if (g_dead_follow.load() && !SessionUp()) {
         // The follow ended without an arrival (B1 fallback): the host's records stay, which is
         // where the fallback and the gather take the guest anyway.
@@ -3721,8 +3766,33 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
             }
             return;
         }
+        // User request (2026-10-21): the boss was KILLED while this guest lay dead in the fight (in
+        // its limbo, or in the grace with the fight on at its death): it gets up in the arena, no
+        // load, once the defeat is saved (PR #6's wait, as the host's arena revive).
+        const LimboKillWatch& kw = g_limbo_kill;
+        const bool in_fight = limbo_logged == at || (kw.gone_at > 0 && kw.gone_at >= at);
+        const deathrules::GuestLimboEnd end =
+            in_fight ? deathrules::PlanGuestLimboEnd(kw.killed, HostLimboReviveOn(), kw.pending,
+                                                     s.player && LivingMemberHere(s.player))
+                     : deathrules::GuestLimboEnd::Lamp;
+        static double wait_logged = 0;
+        if (end == deathrules::GuestLimboEnd::Wait) {
+            if (wait_logged != at) {
+                wait_logged = at;
+                Log("guest: the limbo's boss was killed (%.1f s after the death): waiting for its defeat to be saved",
+                    now - at);
+            }
+            return;
+        }
         if (limbo_logged == at) {
-            Log("guest: the boss fight is over (%.1f s after the death); respawning", now - at);
+            Log("guest: the boss fight is over (%.1f s after the death); %s", now - at,
+                end == deathrules::GuestLimboEnd::ArenaRevive ? "the boss was killed: up in the arena (no load)"
+                : kw.killed && !HostLimboReviveOn()           ? "respawning (BB_PARTY_HOST_LIMBO_REVIVE=0)"
+                                                              : "respawning");
+        }
+        if (end == deathrules::GuestLimboEnd::ArenaRevive && GuestArenaRevive(s, now - at)) {
+            g_death_held_at = 0;
+            return;
         }
         SpectateEnd();  // also one begun at the hold, when the boss died in the grace
     }
@@ -3785,6 +3855,33 @@ struct LampSpot {
     const char* what = nullptr;   // the warp's log name (default: "... revive at the lamp")
 };
 LampSpot g_lamp_spot;  // main thread
+bool ChrTransform(u64 chr, float pos[4], float rot[4]);
+
+/// The living party member chr here nearest to `me` (horizontally): its own transform in `out`
+/// (a spot a living chr stands on: never inside a wall or over the void). False: nobody alive here.
+bool NearestLivingMember(u64 me, LampSpot* out) {
+    float at[3] = {};
+    ChrPos(me, at);
+    float best = 1e30f;
+    out->valid = false;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        alignas(16) float pos[4], rot[4];
+        if (!c || ChrHp(c) <= 0 || !ChrTransform(c, pos, rot)) continue;
+        const float d = (pos[0] - at[0]) * (pos[0] - at[0]) + (pos[2] - at[2]) * (pos[2] - at[2]);
+        if (d < best) {
+            best = d;
+            out->valid = true;
+            std::memcpy(out->pos, pos, sizeof pos);
+            std::memcpy(out->rot, rot, sizeof rot);
+        }
+    }
+    return out->valid;
+}
+bool LivingMemberHere(u64 me) {
+    LampSpot l;
+    return NearestLivingMember(me, &l);
+}
 // The host's limbo (C5): where its chr lay when it died, for the arena revive (main thread).
 struct CorpseSpot {
     bool valid = false;
@@ -3792,6 +3889,9 @@ struct CorpseSpot {
     alignas(16) float rot[4] = {};
 };
 CorpseSpot g_host_corpse;
+// Any role: where the local chr stood at its last HP 0 (LocalDeathHeightTick), for a guest's arena
+// revive (the spectate carries the dead chr along afterwards). Main thread.
+CorpseSpot g_local_corpse;
 std::atomic<bool> g_host_down{false};    // the host's death was taken; not revived yet
 std::atomic<double> g_host_down_at{0};
 std::atomic<int> g_revivals{0};
@@ -4545,6 +4645,9 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         d.peak = p[1];
         for (const auto& h : hist) d.peak = std::max(d.peak, double(h.second));
         g_death_height = d;
+        g_local_corpse = CorpseSpot{};
+        g_local_corpse.valid = ChrTransform(s.player, g_local_corpse.pos, g_local_corpse.rot) &&
+                               std::isfinite(g_local_corpse.pos[1]);
     }
     was_dead = dead;
 }
@@ -4647,6 +4750,46 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     return true;
 }
 
+/// Guest, main thread: its boss-fight limbo ended with the boss's kill and the defeat saved
+/// (deathrules::PlanGuestLimboEnd): it gets up in the arena with no load, as the host does
+/// (HostDownTick's ArenaRevive): at its corpse spot (where it stood at HP 0) when that is in the
+/// arena with the living member nearest to it (40 m / 4 m) and the death was no fall, else exactly
+/// on that member's spot. Both are positions a chr really stood on (no computed height). The stain
+/// stays where it fell (its party stain: walking back onto it recovers the echoes). False: nobody
+/// alive here to get up beside (the caller respawns it at the host's lamp).
+bool GuestArenaRevive(const GameSnapshot& s, double held_for) {
+    LampSpot arena;
+    if (!s.player || !NearestLivingMember(s.player, &arena)) {
+        return false;
+    }
+    // The height history's drop (the spectate has carried the chr since: its height now says nothing).
+    const double fell_m = deathrules::FallDrop(g_death_height.peak, g_death_height.at_death, g_death_height.at_death);
+    DeathFields dead;
+    ReadDeathFields(s.player, &dead);
+    const bool fell = deathrules::PlanGuestRevive(fell_m, g_death_height.known, deathrules::FallDeathState(dead.f1e1, dead.m20_200)) !=
+                      deathrules::GuestRevive::InPlace;
+    const CorpseSpot& c = g_local_corpse;
+    const double dx = double(c.pos[0] - arena.pos[0]), dz = double(c.pos[2] - arena.pos[2]);
+    const double horiz = std::sqrt(dx * dx + dz * dz), dy = double(c.pos[1] - arena.pos[1]);
+    const bool corpse = deathrules::ArenaReviveAtCorpse(c.valid, fell, horiz, dy);
+    if (corpse) {
+        std::memcpy(arena.pos, c.pos, sizeof arena.pos);
+        std::memcpy(arena.rot, c.rot, sizeof arena.rot);
+    }
+    arena.exact = true;
+    arena.map = s.map_id;
+    arena.what = corpse ? "guest revive at its corpse spot (arena)" : "guest revive at the nearest member (arena)";
+    Log("guest: the boss was killed while it lay dead in the fight (%.1f s after its death): up again in the arena %s at "
+        "(%.1f, %.1f, %.1f), no load; the corpse spot was %.1f m from the nearest living member (height %+.1f m)%s; its "
+        "echoes stay in its bloodstain",
+        held_for, corpse ? "where it died" : "on the nearest member's spot", double(arena.pos[0]), double(arena.pos[1]),
+        double(arena.pos[2]), horiz, dy, !c.valid ? ", no corpse spot kept" : fell ? ", a fall death" : "");
+    SpectateEnd();
+    ReviveLocal(s, arena, false);
+    party::status::SetLastEvent("The boss fell: you are back on your feet");
+    return true;
+}
+
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
     // On by default since 2026-10-15 (live: Cathedral Ward re-join, Hemwick alone load); "0" off.
     static const bool on = !(std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '0');
@@ -4690,6 +4833,7 @@ std::vector<std::array<float, 3>> g_spectators;      // positions where members 
 /// removed copy was built again by its task and its plate followed the spectator around (spec3).
 /// Its revive / respawn replaces the copy with a fresh one as usual.
 std::atomic<double> g_spectator_until{0};
+std::set<u64> g_spectator_hidden;  // the copies disabled here (main thread)
 void SpectatorRemoveTick(const GameSnapshot& s) {
     {
         std::lock_guard<std::mutex> lk(g_member_revived_mu);
@@ -4701,13 +4845,12 @@ void SpectatorRemoveTick(const GameSnapshot& s) {
     if (!s.world_up || s.loading || Now() > g_spectator_until.load()) {
         return;
     }
-    static std::map<u64, bool> done;
     for (const TaskInfo& t : Tasks(false)) {
         const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
-        if (!c || ChrHp(c) != 0 || done[c]) {
+        if (!c || ChrHp(c) != 0 || g_spectator_hidden.count(c)) {
             continue;
         }
-        done[c] = true;
+        g_spectator_hidden.insert(c);
         reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x18c6390))(c, 1);
         Log("spectator: its dead copy %#llx here disabled (not drawn, no plate) until it respawns", ull(c));
     }
@@ -4715,21 +4858,27 @@ void SpectatorRemoveTick(const GameSnapshot& s) {
 
 /// Removes the member chr here nearest to `at` (within 6 m) and rewinds its task so it is built
 /// again from the member's GameData row (its record); none near: the chr-less tasks are rewound.
-void RecreateMemberNear(const std::array<float, 3>& at, const char* why) {
+void RecreateMemberNear(const std::array<float, 3>& at, const char* why, bool prefer_dead = false) {
     u64 victim = 0;
     float best = 36.0f;
+    int rank = 3;  // a spectator's hidden copy (0) before a copy at HP 0 (1) before any other (2)
     for (const TaskInfo& t : Tasks(false)) {
         const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
         float p[3];
         if (c && ChrPos(c, p)) {
             const float d = (p[0] - at[0]) * (p[0] - at[0]) + (p[1] - at[1]) * (p[1] - at[1]) +
                             (p[2] - at[2]) * (p[2] - at[2]);
-            if (d < best) {
+            // The arena revive's spot is where the spectate carried the dead chr: on the followed
+            // member's own spot, so a living member can be as near as the dead copy.
+            const int r = !prefer_dead ? 2 : g_spectator_hidden.count(c) ? 0 : ChrHp(c) <= 0 ? 1 : 2;
+            if (d < 36.0f && (r < rank || (r == rank && d < best))) {
                 best = d;
+                rank = r;
                 victim = c;
             }
         }
     }
+    g_spectator_hidden.erase(victim);
     if (!victim) {
         // Already removed (its limbo: "spectating") or never here: built again by its task.
         const int n = RewindRemoteTasks(why);
@@ -4757,7 +4906,7 @@ void MemberRevivedTick(const GameSnapshot& s) {
         std::lock_guard<std::mutex> lk(g_member_revived_mu);
         todo.swap(g_member_revived);
     }
-    for (const auto& at : todo) RecreateMemberNear(at, "member revived");
+    for (const auto& at : todo) RecreateMemberNear(at, "member revived", true);
 }
 
 // H5 (0.6.2): a member changed its appearance (the Dream mirror's editor). Its chr on the other
@@ -4911,22 +5060,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
     // it with the member it follows), and the host's corpse spot when that is safe.
     LampSpot arena;
     if (dv.limbo) {
-        float me[3] = {};
-        ChrPos(s.player, me);
-        float best = 1e30f;
-        for (const TaskInfo& t : Tasks(false)) {
-            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
-            alignas(16) float pos[4], rot[4];
-            if (!c || ChrHp(c) <= 0 || !ChrTransform(c, pos, rot)) continue;
-            const float d = (pos[0] - me[0]) * (pos[0] - me[0]) + (pos[2] - me[2]) * (pos[2] - me[2]);
-            if (d < best) {
-                best = d;
-                arena.valid = true;
-                std::memcpy(arena.pos, pos, sizeof pos);
-                std::memcpy(arena.rot, rot, sizeof rot);
-            }
-        }
-        dv.member_here = arena.valid;
+        dv.member_here = NearestLivingMember(s.player, &arena);
     }
     dv.revive_opt_in = HostReviveOn();
     dv.down_for = now - g_host_down_at.load();
@@ -9637,11 +9771,22 @@ void OnLinkEvent(int from_slot, const std::string& body) {
                 g_member_revived.push_back({p[0], p[1], p[2]});
             }
         }
-        {
+        int origin = from_slot;
+        if (const char* pf = std::strstr(body.c_str(), "\"from\":")) std::sscanf(pf, "\"from\":%d", &origin);
+        if (Role() == RoleHost && from_slot > 0 && body.find("\"from\":") == std::string::npos) {
+            // The other guests too (a guest's events reach only the host): their copy of the member
+            // lay dead where it fell, or carried along with its spectate (the arena revive).
+            std::string fwd = body;
+            fwd.insert(fwd.size() - 1, ",\"from\":" + std::to_string(from_slot));
+            for (int slot = 1; slot < party::kMaxPartyPlayers; ++slot) {
+                if (slot != from_slot) Send(slot, fwd);  // absent slots: the link drops it
+            }
             std::lock_guard<std::mutex> lk(g_dead_mu);
             g_dead_members.Clear(from_slot);
         }
-        Log("slot %d was revived in place (no load)", from_slot);
+        // Its limbo is over: its new copy here is not disabled as a spectator's (as host_revived).
+        g_spectator_until = 0;
+        Log("slot %d was revived in place (no load)", origin);
         return;
     }
     if (body.find("\"host_revived\"") != std::string::npos) {

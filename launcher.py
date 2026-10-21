@@ -2974,12 +2974,12 @@ class BloodborneLauncher(tk.Tk):
                     "Removes the walls the game puts on area borders while a helper is in your world, "
                     "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
                     "same for everyone. Default: on (BB_PARTY_OPEN_WORLD).", command=save)
-        self._check(sec, "Host gets up after a boss kill", var["party_host_limbo_revive"],
-                    "When the host dies in a boss fight and the guests kill the boss, the host gets up "
-                    "right there in the arena (where it fell, or beside the hunter it watched), with no "
-                    "loading screen for anyone; its Blood Echoes stay in its bloodstain. Off: the whole "
-                    "party gets the respawn loading screen at the host's lamp. Host's setting. "
-                    "Default: on (BB_PARTY_HOST_LIMBO_REVIVE).", command=save)
+        self._check(sec, "Get up after a boss kill", var["party_host_limbo_revive"],
+                    "When you die in a boss fight and the others kill the boss, you get up right there in "
+                    "the arena (where you fell, or beside a living hunter), with no loading screen; your "
+                    "Blood Echoes stay in your bloodstain. Host and guests alike. Off: a host's death "
+                    "takes the whole party's respawn loading screen at the host's lamp, a guest gets up "
+                    "at the host's lamp. Default: on (BB_PARTY_HOST_LIMBO_REVIVE).", command=save)
 
         sec = section(1, 1, "Guests")
         self._check(sec, "Respawn at the host's lamp", var["party_guest_respawn"],

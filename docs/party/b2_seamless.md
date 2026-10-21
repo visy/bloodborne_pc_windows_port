@@ -659,6 +659,24 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
 * A guest dies in a boss fight: its held death (6.8) is kept past the grace while the bar is up
   (`guest: dead in a boss fight (...): limbo until the boss is gone, a wipe or a rest`), then the lone
   respawn (6.9) at the host's last lamp; a host travel (wipe, rest) takes it along as before.
+* **Guest arena revive** (arenaguest 2026-10-21, the same switch `BB_PARTY_HOST_LIMBO_REVIVE`, each
+  game for its own player; `party_death_rules.h` `PlanGuestLimboEnd`): the boss KILLED while the
+  guest lay dead in the fight (in its limbo, or still in the grace with the fight on at its death).
+  `LimboKillTick` keeps the last living boss bar's chr; once no living bar is up, a kill is the bar
+  over a dead chr or that chr at HP 0 (`boss fight: the boss was killed (...)`), and
+  `DefeatPending` is PR #6's wait (bar still up, or < 3 s after it went, at most 20 s):
+  `guest: the limbo's boss was killed (...): waiting for its defeat to be saved`. Then
+  `GuestArenaRevive`: `ReviveLocal` (guest steps incl. `hitbody`) at its corpse spot (its transform
+  at HP 0, `LocalDeathHeightTick`: the spectate carries the dead chr afterwards) when that is within
+  40 m / 4 m of the nearest living member and no fall death (the height history's drop or the
+  +0x1E1 fall flags), else exactly on that member's spot (`LampSpot::exact`). Spectating ends; no
+  load; the party stain stays where it fell (walking back onto it pays it, `GuestStainTick`).
+  `member_revived` (the carried spot) now goes from the host on to the other guests too, and
+  `RecreateMemberNear` prefers a spectator's hidden copy, then a copy at HP 0, over a living member
+  standing as near (the carried spot is on the followed member's own spot). Host and a guest both
+  dead, the other guest's kill: the host by `DownTick::ArenaRevive`, the guest by this rule (it waits
+  while the host's chr is down, at most 30 s from its death, as before). Switch off, a bar that went
+  without a kill, or nobody alive here: the host's lamp as before; a wipe: the host's death load.
 * Shared boss lamp (design decision, ERSC_PARITY @ 7552b38): every respawn after a boss fight goes to
   the same lamp - the host's last lamp (a guest's lone respawn already uses the host's last lamp, or
   a lit lamp of the loaded map, 6.10; the wipe and the host use the host's lamp).
