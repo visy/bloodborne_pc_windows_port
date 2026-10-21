@@ -45,6 +45,11 @@ struct Rules {
     /// Statsaudit finding 5 (user decision 2026-10-15): lamps are shared by the whole party - a lamp
     /// any member lit is lit for everyone (each member's own save too). On by default; the host's.
     bool share_lamps = true;
+    /// The host's deaths (party_b2; user decision 2026-10-21: in the game's menus): the host gets
+    /// up at its lamp without a load, and in the arena after the guests kill the boss. The host's
+    /// own settings; sent so a guest's menu shows them. On by default.
+    bool host_revive = true;
+    bool host_limbo_revive = true;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };
