@@ -2275,6 +2275,16 @@ void p2p_peer_v6(std::uint32_t addr, std::uint16_t port_host, const udp::Ep6& e6
     flush_route_notes();
 }
 
+bool p2p_send_wire(const udp::Wire& w) {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        auto it = g_p2p_ports.find(g_bound_port.load());
+        if (it != g_p2p_ports.end()) port = it->second;
+    }
+    return port && wire_send(*port, w) >= 0;
+}
+
 void p2p_punch6(const char* label, const udp::Ep6& e6) {
     std::shared_ptr<P2pPort> port;
     {
@@ -2341,10 +2351,12 @@ bool local_ipv6(udp::Ip6* out, std::string* how) {
             if (!udp::ip6_global(ip) || (ip.b[0] == 0x20 && ip.b[1] == 0x01 && ip.b[2] == 0 && ip.b[3] == 0) ||
                 (ip.b[0] == 0x20 && ip.b[1] == 0x02))
                 continue;
-            // The longest-lived address: the stable one, not a temporary privacy address that
-            // changes daily (the party code would change with it).
-            if (!found || u->ValidLifetime > best_valid ||
-                (u->ValidLifetime == best_valid && u->PreferredLifetime > best_pref)) {
+            // Privacy first (F2 review L5): the shortest-lived preferred address, i.e. a temporary
+            // privacy address where Windows makes them, not the stable one (on some systems built
+            // from the adapter's MAC). The host's code then changes when that address rotates.
+            if (u->PreferredLifetime == 0) continue;
+            if (!found || u->PreferredLifetime < best_pref ||
+                (u->PreferredLifetime == best_pref && u->ValidLifetime < best_valid)) {
                 found = true;
                 *out = ip;
                 best_valid = u->ValidLifetime;

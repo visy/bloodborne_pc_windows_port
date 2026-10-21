@@ -1687,6 +1687,8 @@ void start_host(LinkConfig cfg) {
     // shares the number, which is fine (different protocol).
     if (!bbnet::p2p_open()) plog("warning: cannot open the party UDP port %u (another program?)", port);
 
+    // F2 (0.7.1): wrong passwords from IPv6 peers count per /64 (the route table's throttle key).
+    cfg.throttle_key = [](std::uint32_t ip) { return bbnet::p2p_router().throttle_key(ip); };
     auto* link = new PartyLink(cfg, make_callbacks(true));
     attach_udp_path(link);
     if (const char* gc = env("BB_PARTY_GUEST_CODES")) add_guest_code_text(gc);
@@ -1846,6 +1848,16 @@ void start_host(LinkConfig cfg) {
          internet.empty() ? "(no public address: set BB_PARTY_PUBLIC_ADDR)" : internet.c_str(),
          lan.empty() ? "(no LAN address)" : lan.c_str());
     if (!source.empty()) plog("public address %s (%s)", pub_text.c_str(), source.c_str());
+    {
+        // F2: our own addresses are never a relayed guest's (party_route.h).
+        std::vector<std::uint32_t> own{bbnet::local_ipv4()};
+        if (!source.empty()) {
+            std::uint32_t p4 = 0;
+            std::memcpy(&p4, pub.data(), 4);
+            own.push_back(p4);
+        }
+        bbnet::p2p_router().set_own_addrs(own);
+    }
 
     // The host's own endpoint for guests' records and our MappedAddr.
     const std::string ep_addr = source.empty() ? bbnet::party::ip_text(bbnet::local_ipv4()) : format_ipv4(pub);

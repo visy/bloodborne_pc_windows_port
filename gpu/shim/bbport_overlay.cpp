@@ -1862,15 +1862,16 @@ void PartyTab() {
     Toggle("party_member_relay", T("Relay for party members", "Ретранслятор для участников"), s.party_member_relay,
            T("A member that cannot reach the host joins through you (and you through a member when you cannot). "
              "Only party members (the party code and password are checked), at most 4, capped; it uses some "
-             "upload (~3 KB/s per relayed player). Relaying follows this switch at once.",
+             "upload (~3 KB/s per relayed player in play, at most 128 KB/s). Relaying follows this switch at once.",
              "Участник, который не достаёт до хоста, входит через вас (и вы через участника, если не достаёте). "
              "Только участники группы (проверяются код и пароль), не более 4, с ограничением; расходует часть "
-             "исходящего канала (~3 КБ/с на игрока). Ретрансляция следует переключателю сразу."),
+             "исходящего канала (~3 КБ/с на игрока в игре, не более 128 КБ/с). Ретрансляция следует переключателю сразу."),
            on);
     Toggle("party_ipv6", T("IPv6 for the party", "IPv6 для группы"), s.party_ipv6,
            T("When both PCs have a global IPv6 address, the party tries IPv6 before any relay (no NAT in the "
              "way; helps behind carrier-grade NAT). A host without an open IPv4 port then puts its IPv6 "
-             "address into the party code. From the next party start.",
+             "address into the party code (a temporary privacy address where Windows has one: the code shows it "
+             "and changes with it). From the next party start.",
              "Если у обоих ПК есть глобальный адрес IPv6, группа пробует IPv6 до ретрансляции (без NAT; "
              "помогает за CGNAT провайдера). Хост без открытого порта IPv4 добавляет свой адрес IPv6 в код "
              "группы. Со следующего запуска группы."),

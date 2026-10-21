@@ -451,7 +451,8 @@ then starts by itself.
 If the host cannot be reached at all but another member can, a guest joins **through that member**:
 it copies the member's guest code and presses *Join through a member* on its *Party* page (with the
 DHT option on, members are found by themselves). When both PCs have **IPv6**, the party tries it
-before any relay (a host without an open port then has a longer code with its IPv6 address). Both are
+before any relay (a host without an open port then has a longer code that **contains its IPv6
+address**, a temporary privacy address where Windows has one, so the code changes when it does). Both are
 on by default (launcher *Party* tab, *System > Party network*).
 The *Party* page's *Network* line says which NAT you have, what to do about it and which path the
 link took (TCP, UDP, IPv6 or a member's relay). Two symmetric / carrier-grade NATs with no IPv6 and no

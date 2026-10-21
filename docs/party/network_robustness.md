@@ -304,12 +304,13 @@ IPv4 endpoints only and need no change:
 
 - **IPv6**: a second UDP socket on the party port (`[::]:port`, IPv6 only). A peer reached over IPv6
   keeps the IPv4 endpoint the game knows it by (the host: its party code address; a guest: its room
-  address) when one is bound to it, else it gets a **synthetic key** `240.x.y.z:port` (240/4 is
-  reserved and never routed; the key is a hash of the IPv6 address, so every PC derives the same
-  one and room records carry it unchanged). The host's party code carries its IPv6 address
+  address) when one is bound to it, else it gets a **synthetic key** `240.x.y.z:port` (240/5 is
+  reserved and never routed; a keyed hash of the IPv6 address, local to each PC: other PCs get the
+  host's keys through the room records and `net6_table`). The host's party code carries its IPv6 address
   (`BBP3-...+6XXXX-...`) only when its IPv4 port is not open; a guest's guest code adds a `BBG6-`
   part so a host behind an IPv6 firewall can punch it like a `BBG1-` code. Members tell the host
-  their IPv6 endpoint (`net6` event); the host checks it against the member's own room address and
+  their IPv6 endpoint (`net6` event); the host checks it with a nonce sent there and echoed over the
+  link (`net6_echo`), and against the member's own room address, and
   sends the table to everyone (`net6_table`), so guest pairs probe IPv6 before the host relay.
 - **Member relay**: frames `[0xfc][type]` on the party port. The stuck guest G and the member M
   first run a handshake keyed by the party key (G: `Q1` nonce -> M: `Q2` nonce, stateless -> G:
@@ -336,7 +337,21 @@ IPv4 endpoints only and need no change:
   System > Party network; on: party members only, capped) and `BB_PARTY_IPV6` (`party_ipv6`; on).
   The *Network* line and the log say which path the link took: `party link over UDP via IPv6
   [addr]:port` / `through Hunter1's relay`; the member logs whom it relays for.
-- Cost: the member's upload (~3 KB/s per relayed guest in play, more during a join) and one more
+- **Security review fixes (2026-10-21, before the merge)**: V / v frames carry a counter and a MAC
+  under the member's own random key, given to the host over its encrypted party link (`relay_key`), with
+  a 64-frame replay window and the member's endpoint bound at its first frame; a route moves to another
+  member only after 10 s of quiet and on that member's new session; at most 4 guests per member; guest
+  keys that are loopback (unless the member is: tests), unspecified, multicast, broadcast or the host's
+  own are refused. Synthetic keys are SipHash-2-4 under a per-process random key (local to each PC; the
+  host hands them out in records and `net6_table`); a clash probes for a free key and never evicts a
+  live or bound entry; 32 keys per /64. The link's and the relay's lockouts count an IPv6 /64 as one
+  address (`LinkConfig::throttle_key`). The member proves the party key first (Q2), so a guest never
+  sends its proof to an impostor. A member's IPv6 endpoint enters `net6_table` only after a nonce the
+  host sent there came back over its link (`net6_echo`). Nonces, session ids and salts from
+  BCryptGenRandom; a replayed or recent handshake never replaces a live session; each session is
+  capped at 300 datagrams and 128 KB/s. The host's IPv6 address in the code is a temporary privacy
+  address where Windows has one.
+- Cost: the member's upload (~3 KB/s per relayed guest in play, more during a join; at most 128 KB/s) and one more
   hop of latency for the relayed guest's traffic to the host only.
 
 **Tests** (party-nat-test): three players behind simulated RFC 4787 NATs, each with the real route

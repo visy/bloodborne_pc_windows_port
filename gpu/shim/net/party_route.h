@@ -6,27 +6,39 @@
 //
 //  - IPv6: a key bound to an IPv6 endpoint (bind_v6) is sent there when its route is on, and
 //    datagrams from that endpoint are presented as the key. An IPv6 source with no binding gets a
-//    synthetic key 240.x.y.z:port (240/4 is reserved and never routed; a hash of the address, so
-//    every PC derives the same key for the same peer).
+//    synthetic key 240.x.y.z:port (240/5 is reserved and never routed). The key is a keyed hash
+//    (SipHash-2-4 under a per-process random key) of the address: nobody can aim at another peer's
+//    key, and a clash never evicts a live or bound entry (the newcomer probes for a free key, or is
+//    dropped). Keys are local to each PC; other PCs learn them from the host (room records,
+//    net6_table). At most kMaxV6Per64 synthetic entries per IPv6 /64, and throttle_key() puts every
+//    address of one /64 under one key (password / relay lockouts cannot be dodged by rotating the
+//    interface id).
 //  - Member relay, frames [0xfc][type] on the party port:
-//      Q1 hello     guest -> member  [fc 'Q' 1][client nonce 16][pad 21]   (padded: no amplification)
-//      Q2 nonce     member -> guest  [fc 'Q' 2][client nonce 16][server nonce 16]  (stateless)
-//      Q3 auth      guest -> member  [fc 'Q' 3][client nonce 16][server nonce 16][proof 16]
-//      Q4 welcome   member -> guest  [fc 'Q' 4][client nonce 16][session u32][name len u8][name][proof 16]
-//      Q5 refusal   member -> guest  [fc 'Q' 5][client nonce 16][code u8][wait s u16]   (a hint only)
+//      Q1 hello     guest -> member  [fc 'Q' 1][client nonce 16][pad]          (56 bytes: no amplification)
+//      Q2 nonce     member -> guest  [fc 'Q' 2][cn 16][server nonce 16][member proof 16]  (stateless)
+//      Q3 auth      guest -> member  [fc 'Q' 3][cn 16][sn 16][guest proof 16]  (only after Q2's proof checked)
+//      Q4 welcome   member -> guest  [fc 'Q' 4][cn 16][session u32][name len u8][name][proof 16]
+//      Q5 refusal   member -> guest  [fc 'Q' 5][cn 16][code u8][wait s u16]   (a hint only)
 //      T  to relay  guest -> member  [fc 'T'][session u32] + a datagram for the host (empty: keepalive)
-//      V  to host   member -> host   [fc 'V'][guest addr 4][guest port 2] + that datagram
-//      v  from host host -> member   [fc 'v'][guest addr 4][guest port 2] + a datagram for the guest
+//      V  to host   member -> host   [fc 'V'][flags][key id u32][counter u64][guest addr 4][port 2][mac 16] + datagram
+//      v  from host host -> member   [fc 'v'][key id u32][counter u64][guest addr 4][port 2][mac 16] + datagram
 //      t  to guest  member -> guest  [fc 't'][session u32] + that datagram
-//    Proofs are a keyed MAC (Mac: the party runtime's BLAKE2b under a subkey of the party key) over
-//    a label and the nonces: only party members can use or serve a relay. The guest presents the
-//    host at the host's own key; the host presents the guest at the guest's endpoint as the
-//    member sees it (its link, STUN, room records and the game run end to end over it).
+//      N  nonce     host -> member over IPv6 [fc 'N'][nonce 16]: the member echoes it over the link
+//                   (net6_echo) before the host lists its IPv6 endpoint (net6_table)
+//    Q proofs are a keyed MAC (Mac: BLAKE2b under a subkey of the party key) over a label and both
+//    nonces; the member proves itself first (Q2), so a guest never hands an impostor its proof. V / v
+//    are MACed (KeyedMac) under the member's own random key, which the member gives the host over its
+//    encrypted, authenticated party link (relay_key event), with a counter and a replay window: a
+//    stranger, even on the member's address, cannot inject, replay or redirect relayed traffic.
 //  - Security (F3): a member serves only while told to (in the party, its own link not relayed, the
-//    switch on); wrong proofs go to a Throttle (party_link.h AuthThrottle); it forwards only between
-//    its sessions (kMaxSessions, rate-limited, idle kSessionIdle) and its own host endpoint. The
-//    host accepts V only from a member (is_member) and, for a new route, only for a guest endpoint
-//    it has not heard directly within kDirectGuard (a member cannot pose as another member).
+//    switch on); wrong proofs go to a Throttle (party_link.h AuthThrottle, by throttle_key); it
+//    forwards only between its sessions (kMaxSessions, rate-limited, idle kSessionIdle) and its own
+//    host endpoint; a live session is never replaced by a replayed or recent handshake. The host
+//    accepts V only under a registered member key, from that member's link address, bound to the
+//    first endpoint it came from; at most kMaxRoutesPerMember guests per member; a route moves to
+//    another member only after it was quiet kRouteMoveIdle and the new member's session has just
+//    started; a new route never for an endpoint heard directly within kDirectGuard, nor for a
+//    loopback / unspecified / multicast / own address (unless the member itself is on loopback: tests).
 // Pure state machine plus a mutex: no sockets, no threads (party-nat-test drives it over
 // simulated NATs).
 #pragma once
@@ -39,6 +51,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,9 +78,10 @@ bool ip6_loopback(const Ip6& a);                    // ::1
 bool ip6_zero(const Ip6& a);
 std::string key_text(std::uint32_t addr_nbo, std::uint16_t port_nbo);  // "a.b.c.d:port"
 
-// The synthetic key of an IPv6 endpoint (240.0.0.0 - 247.255.255.255, port kept).
+// A synthetic key's address range (240.0.0.0 - 247.255.255.255).
 bool is_synthetic(std::uint32_t addr_nbo);
-void synthetic_key(const Ep6& e, std::uint32_t* addr_nbo, std::uint16_t* port_nbo);
+// Cryptographically random bytes (BCryptGenRandom; rand_s / /dev/urandom as the fallback).
+void secure_random(void* out, std::size_t n);
 
 constexpr std::uint8_t kRouteMagic = 0xfc;
 inline bool is_route_frame(const std::uint8_t* d, std::size_t n) { return n >= 2 && d[0] == kRouteMagic; }
@@ -83,36 +97,72 @@ struct Wire {
 
 class Router {
 public:
+    Router();
     // A keyed MAC (16 bytes) over a message; the same function on every party member.
     using Mac = std::function<void(const std::uint8_t* d, std::size_t n, std::uint8_t out[16])>;
-    // Online password guessing at the member (party_link.h AuthThrottle over an address).
+    // A MAC (16 bytes) under an explicit 32-byte key (the members' relay keys).
+    using KeyedMac = std::function<void(const std::uint8_t key[32], const std::uint8_t* d, std::size_t n,
+                                        std::uint8_t out[16])>;
+    // Online password guessing at the member (party_link.h AuthThrottle over a throttle key).
     struct Throttle {
         std::function<bool(std::uint32_t ip, std::int64_t* remaining_ms)> locked;
         std::function<void(std::uint32_t ip)> fail, success;
     };
+    // The member's key for its V / v frames (given to the host over the party link).
+    struct MemberKey {
+        std::uint32_t id = 0;
+        std::array<std::uint8_t, 32> key{};
+    };
+    static MemberKey new_member_key();
+
     static constexpr std::size_t kMaxSessions = 4;
     static constexpr std::size_t kMaxHostRoutes = 16;
+    static constexpr std::size_t kMaxRoutesPerMember = 4;
+    static constexpr std::size_t kMaxMemberKeys = 8;
     static constexpr std::size_t kMaxV6 = 1024;
+    static constexpr std::size_t kMaxV6Per64 = 32;
     static constexpr auto kSessionIdle = std::chrono::seconds(30);
+    static constexpr auto kSessionReplaceIdle = std::chrono::seconds(5);
+    static constexpr auto kSessionStart = std::chrono::seconds(3);
     static constexpr auto kHostRouteIdle = std::chrono::seconds(60);
+    static constexpr auto kRouteMoveIdle = std::chrono::seconds(10);
     static constexpr auto kDirectGuard = std::chrono::seconds(10);
     static constexpr auto kHandshakeTimeout = std::chrono::seconds(4);
     static constexpr auto kKeepalive = std::chrono::seconds(4);
-    // Per relayed session at the member: datagrams and bytes per second (bursts twice that).
-    static constexpr double kSessionFrameRate = 1000, kSessionByteRate = 2.0 * 1024 * 1024;
+    // Per relayed session at the member: datagrams and bytes per second (bursts twice that). In
+    // play a relayed guest sends ~3 KB/s; a join's snapshot and mirror image are ~15 KB.
+    static constexpr double kSessionFrameRate = 300, kSessionByteRate = 128.0 * 1024;
+    static constexpr std::size_t kQ1Size = 56;
     enum Refusal : std::uint8_t { kWrongKey = 1, kLockedOut = 2, kNotServing = 3, kFull = 4, kTimeout = 0xff };
+
+    // The MAC for V / v frames (the party runtime's BLAKE2b); without one no V / v is sent or taken.
+    void set_keyed_mac(KeyedMac mac);
 
     // ---- IPv6 ----
     void set_ipv6(bool on);
     bool ipv6() const;
     // `key` (the IPv4 endpoint the game knows) is reached at `e6`: datagrams from e6 are presented
-    // as the key; datagrams to the key go to e6 while `route` is on.
-    void bind_v6(std::uint32_t key_addr, std::uint16_t key_port, const Ep6& e6, bool route);
+    // as the key; datagrams to the key go to e6 while `route` is on. False: e6 is bound to another key.
+    bool bind_v6(std::uint32_t key_addr, std::uint16_t key_port, const Ep6& e6, bool route);
     void route_v6(std::uint32_t key_addr, std::uint16_t key_port, bool route);
     void unbind_v6(std::uint32_t key_addr, std::uint16_t key_port);
     bool v6_of(std::uint32_t key_addr, std::uint16_t key_port, Ep6* e6, bool* route = nullptr) const;
     // The key an IPv6 source is presented as (its binding, else its synthetic key, remembered).
-    void key_of(const Ep6& e6, std::uint32_t* addr, std::uint16_t* port);
+    // False: none could be given (the table or the source's /64 is full of live entries).
+    bool key_of(const Ep6& e6, std::uint32_t* addr, std::uint16_t* port);
+    // The key e6 has now, without making one.
+    bool known_key(const Ep6& e6, std::uint32_t* addr, std::uint16_t* port) const;
+    // The address password and relay lockouts count under: the IPv6 /64 of a synthetic key, the
+    // address itself otherwise.
+    std::uint32_t throttle_key(std::uint32_t addr) const;
+    // Tests: the synthetic-key hash (address -> 27 bits).
+    void set_key_hash_for_tests(std::function<std::uint32_t(const Ip6&)> h);
+
+    // ---- IPv6 endpoint checks (M3) ----
+    // The nonce frame the host sends to a member's claimed IPv6 endpoint.
+    static Wire nonce_wire(const Ep6& to, const std::array<std::uint8_t, 16>& nonce);
+    // Nonces that reached us over IPv6 since the last call (the member echoes them over the link).
+    std::vector<std::array<std::uint8_t, 16>> take_nonces();
 
     // ---- member relay: the guest that cannot reach the host ----
     enum class ClientState { Off, Handshake, Ready, Refused };
@@ -125,9 +175,10 @@ public:
     bool relay_member(std::uint32_t* addr, std::uint16_t* port) const;
 
     // ---- member relay: the member serving ----
-    // Serve guests of our party that cannot reach our host (its key, as our link reaches it).
+    // Serve guests of our party that cannot reach our host (its key, as our link reaches it); `key`
+    // is ours for the V / v frames (the host got it over our party link).
     void serve(bool on, std::uint32_t host_addr, std::uint16_t host_port, Mac mac, std::string own_name,
-               Throttle throttle);
+               Throttle throttle, const MemberKey& key);
     bool serving() const;
     struct Served {
         std::uint32_t addr = 0;
@@ -137,11 +188,17 @@ public:
     std::vector<Served> served() const;
 
     // ---- the host ----
-    // Accept guests relayed by a member (is_member: that address:port is a party member's).
-    void accept_relayed(bool on, std::function<bool(std::uint32_t addr, std::uint16_t port)> is_member);
+    void accept_relayed(bool on);
+    // A member's relay key from its party link (`ip`: the address its link comes from); replaces an
+    // earlier key of that member (`member`: its name).
+    void set_member_key(const MemberKey& key, std::uint32_t ip, const std::string& member);
+    void drop_member(const std::string& member);
+    // This PC's own addresses: never a relayed guest's.
+    void set_own_addrs(std::vector<std::uint32_t> addrs);
     struct HostRoute {
         std::uint32_t guest_addr = 0, member_addr = 0;
         std::uint16_t guest_port = 0, member_port = 0;
+        std::string member;
     };
     std::vector<HostRoute> host_routes() const;
     bool relayed_guest(std::uint32_t addr, std::uint16_t port, std::uint32_t* member_addr = nullptr,
@@ -177,36 +234,61 @@ private:
         RClock::time_point at{};
         bool take(double n, RClock::time_point now);
     };
+    struct Replay {  // a 64-counter sliding window
+        std::uint64_t top = 0, mask = 0;
+        bool seen_any = false;
+        bool accept(std::uint64_t c);
+    };
     struct Session {
         std::uint32_t addr = 0;
         std::uint16_t port = 0;
         std::uint32_t id = 0;
         std::array<std::uint8_t, 16> cn{};
-        RClock::time_point last{};
+        RClock::time_point created{}, last{};
         Bucket frames, bytes;
         std::uint64_t up = 0, down = 0, dropped = 0;
     };
+    struct Member {
+        std::string name;
+        std::array<std::uint8_t, 32> key{};
+        std::uint32_t ip = 0;              // its link's address
+        std::uint32_t bound_addr = 0;      // where its frames come from (the first authenticated one)
+        std::uint16_t bound_port = 0;
+        RClock::time_point last{};
+        std::uint64_t out_ctr = 0;
+        Replay in;
+    };
     struct HostRouteState {
-        HostRoute r;
+        std::uint32_t guest_addr = 0;
+        std::uint16_t guest_port = 0;
+        std::uint32_t member_id = 0;
         RClock::time_point last{};
     };
     static std::uint64_t k(std::uint32_t a, std::uint16_t p) { return a | (static_cast<std::uint64_t>(p) << 32); }
     void note(std::string s);
-    void key_of_locked(const Ep6& e6, std::uint32_t* addr, std::uint16_t* port);
+    bool key_of_locked(const Ep6& e6, std::uint32_t* addr, std::uint16_t* port);
+    std::uint32_t hash27(const Ip6& a) const;
+    std::uint32_t group_of_locked(std::uint32_t addr) const;
     void wire_to(std::uint32_t addr, std::uint16_t port, std::vector<std::uint8_t> data, std::vector<Wire>* out) const;
     void server_nonce(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, std::int64_t minute,
                       std::uint8_t out[16]) const;
+    void member_proof(const Mac& mac, const std::uint8_t* cn, const std::uint8_t* sn, std::uint8_t out[16]) const;
     void client_send_hello(RClock::time_point now, std::vector<Wire>* out);
     void client_send_auth(RClock::time_point now, std::vector<Wire>* out);
-    bool on_frame(std::uint32_t sa, std::uint16_t sp, std::vector<std::uint8_t>& d, RClock::time_point now,
+    bool valid_guest_key(std::uint32_t ga, std::uint16_t gp, std::uint32_t member_src) const;
+    bool on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<std::uint8_t>& d, RClock::time_point now,
                   std::uint32_t* src_addr, std::uint16_t* src_port, std::vector<Wire>* out, bool* via_relay);
 
     mutable std::mutex mu_;
     std::vector<std::string> notes_;
+    KeyedMac kmac_;
+    std::array<std::uint8_t, 16> hash_key_{};
+    std::function<std::uint32_t(const Ip6&)> test_hash_;
     // IPv6
     bool ipv6_ = false;
     std::map<std::uint64_t, V6> v6_by_key_;
     std::map<Ep6, std::uint64_t> key_by_v6_;
+    std::deque<std::array<std::uint8_t, 16>> nonces_;
     // client
     struct Client {
         ClientState st = ClientState::Off;
@@ -215,6 +297,7 @@ private:
         Mac mac;
         std::array<std::uint8_t, 16> cn{}, sn{};
         bool have_sn = false;
+        bool impostor_noted = false;
         std::uint32_t session = 0;
         RClock::time_point started{}, next_send{}, last_sent{};
         std::string name;
@@ -227,11 +310,16 @@ private:
     Mac sv_mac_;
     std::string sv_name_;
     Throttle sv_throttle_;
+    MemberKey sv_key_;
+    std::uint64_t sv_out_ctr_ = 0;
+    Replay sv_in_;
     std::array<std::uint8_t, 16> sv_salt_{};
     std::map<std::uint64_t, Session> sessions_;  // by guest key
+    std::deque<std::array<std::uint8_t, 16>> recent_cn_;  // handshakes seen (no replay replaces a session)
     // host
     bool accept_ = false;
-    std::function<bool(std::uint32_t, std::uint16_t)> is_member_;
+    std::map<std::uint32_t, Member> members_;               // by key id
+    std::set<std::uint32_t> own_addrs_;
     std::map<std::uint64_t, HostRouteState> host_routes_;   // by guest key
     std::map<std::uint64_t, RClock::time_point> direct_;    // keys heard directly (kDirectGuard)
     RClock::time_point direct_pruned_{};

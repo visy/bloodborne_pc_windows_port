@@ -504,12 +504,14 @@ PARTY_MEMBER_RELAY_TIP = (
     "When a guest cannot reach the host directly but can reach another party member, it joins through "
     "that member, who forwards its traffic to the host (the stuck guest pastes the member's guest code, or "
     "both find each other through the DHT option). Only party members (the party code and password are "
-    "checked), at most 4 per member; it uses some of the member's upload (~3 KB/s per relayed player). "
+    "checked), at most 4 per member; it uses some of the member's upload (~3 KB/s per relayed player in play, "
+    "at most 128 KB/s each). "
     "Also in the game: System > Party network. Default: on (BB_PARTY_MEMBER_RELAY=1/0).")
 PARTY_IPV6_TIP = (
     "When both PCs have a global IPv6 address, the party link and the game's traffic try IPv6 before any "
     "relay: no NAT in the way, which helps players behind carrier-grade NAT. A host whose IPv4 port is not "
-    "open then puts its IPv6 address into the party code (a longer code). Also in the game: System > Party "
+    "open then puts its IPv6 address into the party code (a longer code that shows this PC's IPv6 address: "
+    "a temporary privacy address where Windows has one, so the code changes when it does). Also in the game: System > Party "
     "network. Default: on (BB_PARTY_IPV6=1/0).")
 
 

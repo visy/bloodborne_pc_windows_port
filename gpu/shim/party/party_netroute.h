@@ -7,6 +7,10 @@
 //  - guest: the path of each link attempt (party_netpath.h: IPv6, direct, member relays), the
 //    member relay handshake keyed by the party key, relaying for others while its own link is up
 //    and direct, its IPv6 endpoint for the other guests, and the path in the log / Network line.
+// Security (F2 review, 0.7.1): a member's V / v frames are MACed under its own random key, given
+// to the host over its party link (relay_key); a member's IPv6 endpoint enters net6_table only once a
+// nonce the host sent there came back over its link (net6_echo); password / relay lockouts count an
+// IPv6 /64 as one address (LinkConfig throttle_key).
 // Switches: BbSettings party_member_relay (BB_PARTY_MEMBER_RELAY) and party_ipv6 (BB_PARTY_IPV6),
 // both on by default; BB_PARTY_RELAY_VIA (comma list of a.b.c.d:port or BBG1 guest codes: members
 // to relay through) and BB_PARTY_IPV6_ADDR (this PC's IPv6 address, ::1 for loopback tests).
@@ -25,6 +29,8 @@ namespace party::netroute {
 constexpr const char* kNet6Event = "net6";            // guest -> host {Addr6, Port6}
 constexpr const char* kNet6TableEvent = "net6_table";  // host -> guests {Members:[{Name, Addr, Port, Addr6, Port6}]}
 constexpr const char* kRelayPunchEvent = "relay_punch";  // host -> guests {Addr, Port}
+constexpr const char* kRelayKeyEvent = "relay_key";      // member -> host {Id, Key}: its V / v frame key
+constexpr const char* kNet6EchoEvent = "net6_echo";      // guest -> host {Nonce}: the IPv6 nonce it got
 
 struct Env {
     std::function<PartyLink*()> link;

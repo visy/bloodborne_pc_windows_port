@@ -380,9 +380,9 @@ class NetRouteSettings(unittest.TestCase):
             self.assertIsNone(self.L.party_env({})[env])  # no party: unset
 
     def test_tooltips(self):
-        for words in ("party members", "guest code", "upload", "Default: on"):
+        for words in ("party members", "guest code", "upload", "128 KB/s", "Default: on"):
             self.assertIn(words, self.L.PARTY_MEMBER_RELAY_TIP)
-        for words in ("IPv6", "before any relay", "party code", "Default: on"):
+        for words in ("IPv6", "before any relay", "party code", "privacy address", "Default: on"):
             self.assertIn(words, self.L.PARTY_IPV6_TIP)
 
 

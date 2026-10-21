@@ -24,6 +24,7 @@ class RelayClient;
 class Router;
 struct Ip6;
 struct Ep6;
+struct Wire;
 }
 
 namespace bbnet {
@@ -132,9 +133,12 @@ bool p2p_ipv6_open();
 // Another guest's IPv6 endpoint (the host's net6 table) for its IPv4 key: PeerPaths probes it
 // too and its traffic goes over IPv6 when IPv4 does not answer.
 void p2p_peer_v6(std::uint32_t addr, std::uint16_t port_host, const udp::Ep6& e6);
+// One datagram straight onto the wire (party_route.h Wire: the host's IPv6 nonce check).
+bool p2p_send_wire(const udp::Wire& w);
 // Opens our IPv6 firewall towards a guest (its BBG6 code): probes from the party port for 10 s.
 void p2p_punch6(const char* label, const udp::Ep6& e6);
-// This PC's global IPv6 address (the longest-lived one on a real adapter; BB_PARTY_IPV6_ADDR
+// This PC's global IPv6 address (the shortest-lived preferred one: a temporary privacy address
+// where there is one; BB_PARTY_IPV6_ADDR
 // forces one, ::1 included, for loopback tests). False when there is none.
 bool local_ipv6(udp::Ip6* out, std::string* how = nullptr);
 // How long ago the party port last heard addr (network order) : port (host order), anything (a

@@ -62,11 +62,20 @@ struct State {
     std::uint16_t own_port = 0;
     Clock::time_point down_since = Clock::now();
     // host
-    std::map<int, udp::Ep6> net6_pending;  // slot -> its IPv6 endpoint (net6), until its room address is known
+    // slot -> its IPv6 endpoint (net6) until the nonce sent there came back over its link (net6_echo)
+    // and its room address is known (M3: the host never lists an endpoint the member does not own).
+    struct Pending6 {
+        udp::Ep6 e6;
+        std::array<std::uint8_t, 16> nonce{};
+        bool verified = false;
+        int sent = 0;
+    };
+    std::map<int, Pending6> net6_pending;
     std::map<std::string, Net6> net6;      // member name -> entry
     bool net6_dirty = false;
     std::string host_line;
     std::set<std::uint64_t> relayed_seen;
+    std::map<int, std::string> key_owner;  // slot -> member name that gave us a relay key
 };
 State& S() {
     static State* s = new State;
@@ -120,6 +129,33 @@ bool ipv6_on() { return BbSettings::Get().party_ipv6.load(); }
 
 udp::Router::Mac mac_for(const crypto::Key& k) {
     return [k](const std::uint8_t* d, std::size_t n, std::uint8_t out[16]) { crypto::mac16(k, d, n, out); };
+}
+
+// V / v frames: BLAKE2b-128 under the member's own relay key.
+void keyed_mac(const std::uint8_t key[32], const std::uint8_t* d, std::size_t n, std::uint8_t out[16]) {
+    crypto::Key k;
+    std::memcpy(k.data(), key, 32);
+    crypto::mac16(k, d, n, out);
+}
+
+std::string hex_of(const std::uint8_t* d, std::size_t n) {
+    static const char* x = "0123456789abcdef";
+    std::string s;
+    for (std::size_t i = 0; i < n; ++i) {
+        s.push_back(x[d[i] >> 4]);
+        s.push_back(x[d[i] & 15]);
+    }
+    return s;
+}
+bool unhex(const std::string& t, std::uint8_t* out, std::size_t n) {
+    if (t.size() != 2 * n) return false;
+    auto v = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    for (std::size_t i = 0; i < n; ++i) {
+        const int a = v(t[2 * i]), b = v(t[2 * i + 1]);
+        if (a < 0 || b < 0) return false;
+        out[i] = static_cast<std::uint8_t>(a << 4 | b);
+    }
+    return true;
 }
 
 std::string ep6_text(const udp::Ep6& e) { return "[" + udp::ip6_text(e.addr) + "]:" + std::to_string(sw16(e.port)); }
@@ -183,6 +219,19 @@ void host_tick() {
         // by) once the host service has it; the address must be the member's own (its link's address,
         // the synthetic key of that very IPv6 endpoint, or loopback in a local test).
         for (auto it = s.net6_pending.begin(); it != s.net6_pending.end();) {
+            if (!it->second.verified) {
+                // The nonce goes to the claimed IPv6 endpoint (5 tries, 1 s apart); the member echoes it.
+                if (it->second.sent < 5) {
+                    ++it->second.sent;
+                    bbnet::p2p_send_wire(udp::Router::nonce_wire(it->second.e6, it->second.nonce));
+                    ++it;
+                } else {
+                    log("IPv6: slot " + std::to_string(it->first) + "'s endpoint " + ep6_text(it->second.e6) +
+                        " not taken (our nonce sent there never came back over its link)");
+                    it = s.net6_pending.erase(it);
+                }
+                continue;
+            }
             std::string name;
             for (const RosterEntry& r : roster)
                 if (r.slot == it->first && r.connected) name = r.name;
@@ -209,23 +258,35 @@ void host_tick() {
             const std::uint16_t kp = sw16(static_cast<std::uint16_t>(p));
             std::uint32_t sk = 0;
             std::uint16_t sp = 0;
-            udp::synthetic_key(it->second, &sk, &sp);
-            const bool own = link->member_ip(it->first) == ka || (sk == ka && sp == kp) ||
+            const bool known = bbnet::p2p_router().known_key(it->second.e6, &sk, &sp);
+            const bool own = link->member_ip(it->first) == ka || (known && sk == ka && sp == kp) ||
                              (bbnet::party::ip_is_loopback(ka) && bbnet::party::ip_is_loopback(link->member_ip(it->first)));
             if (!own) {
-                log("IPv6: " + name + "'s endpoint " + ep6_text(it->second) + " not taken (its room address " +
+                log("IPv6: " + name + "'s endpoint " + ep6_text(it->second.e6) + " not taken (its room address " +
                     udp::key_text(ka, kp) + " is not its own)");
                 it = s.net6_pending.erase(it);
                 continue;
             }
             Net6& n = s.net6[name];
-            if (n.addr != ka || n.port != kp || !(n.e6 == it->second)) {
-                n = {ka, kp, it->second};
+            if (n.addr != ka || n.port != kp || !(n.e6 == it->second.e6)) {
+                n = {ka, kp, it->second.e6};
                 s.net6_dirty = true;
-                log("IPv6: " + name + " (" + udp::key_text(ka, kp) + ") is also at " + ep6_text(it->second) +
+                log("IPv6: " + name + " (" + udp::key_text(ka, kp) + ") is also at " + ep6_text(it->second.e6) +
                     "; the other guests try it before the host relay");
             }
             it = s.net6_pending.erase(it);
+        }
+        for (auto it = s.key_owner.begin(); it != s.key_owner.end();) {
+            bool in = false;
+            for (const RosterEntry& r : roster)
+                if (r.slot == it->first && r.name == it->second && r.connected) in = true;
+            if (!in) {
+                bbnet::p2p_router().drop_member(it->second);
+                log("member relay: " + it->second + "'s relay key dropped (not in the party any more)");
+                it = s.key_owner.erase(it);
+            } else {
+                ++it;
+            }
         }
         for (auto it = s.net6.begin(); it != s.net6.end();) {
             bool in = false;
@@ -262,13 +323,13 @@ void host_tick() {
     std::string relayed;
     bool fresh = false;
     for (const udp::Router::HostRoute& hr : routes) {
-        std::string guest, member;
+        std::string guest;
+        const std::string member = hr.member;
         for (const RosterEntry& r : roster) {
             std::uint32_t ip = 0;
             std::uint16_t port = 0;
             if (r.slot == kHostSlot || !link->member_endpoint(r.slot, &ip, &port)) continue;
             if (ip == hr.guest_addr && port == hr.guest_port) guest = r.name;
-            else if (ip == hr.member_addr && member.empty()) member = r.name;
         }
         if (guest.empty()) continue;  // not in the party (yet)
         if (!relayed.empty()) relayed += ", ";
@@ -325,7 +386,24 @@ void guest_tick(bool* serving, std::size_t* served_n, bool* net6_sent, bool* dia
     if (want != *serving) {
         *serving = want;
         g_serving.store(want);
-        r.serve(want, ha, hp, mac_for(k), name, throttle());
+        // A fresh key for our V / v frames each time we start serving, given to the host over our
+        // encrypted party link (H1: nobody else can speak for us, even from our address).
+        const udp::Router::MemberKey mk = want ? udp::Router::new_member_key() : udp::Router::MemberKey{};
+        r.serve(want, ha, hp, mac_for(k), name, throttle(), mk);
+        if (want) {
+            json::Value v = json::Value::make_object();
+            char id[16];
+            std::snprintf(id, sizeof id, "%08x", static_cast<unsigned>(mk.id));
+            v.set("Id", std::string(id));
+            v.set("Key", hex_of(mk.key.data(), mk.key.size()));
+            link->send_event(0, kRelayKeyEvent, json::dump(v, 0));
+        }
+    }
+    // The host's IPv6 nonces (M3): echoed over the link, proving the IPv6 endpoint is ours.
+    for (const auto& nonce : r.take_nonces()) {
+        json::Value v = json::Value::make_object();
+        v.set("Nonce", hex_of(nonce.data(), nonce.size()));
+        link->send_event(0, kNet6EchoEvent, json::dump(v, 0));
     }
     // The DHT option: while our link is down for 10 s, members that relay are looked up there.
     bool rdv, lb;
@@ -414,28 +492,10 @@ void HostStart(bool loopback) {
     } else {
         log("IPv6: off (BB_PARTY_IPV6=0 / System > Party network)");
     }
+    bbnet::p2p_router().set_keyed_mac(keyed_mac);
     if (relay_on()) {
-        // Only a member's address may hand us a relayed guest; the answer is cached for a second
-        // (the party port's reader asks per datagram; the link takes its own lock for it).
-        auto cache = std::make_shared<std::pair<std::mutex, std::map<std::uint32_t, std::pair<bool, Clock::time_point>>>>();
-        bbnet::p2p_router().accept_relayed(true, [cache](std::uint32_t addr, std::uint16_t) {
-            const auto now = Clock::now();
-            {
-                std::lock_guard<std::mutex> lk(cache->first);
-                auto it = cache->second.find(addr);
-                if (it != cache->second.end() && now - it->second.second < std::chrono::seconds(1)) return it->second.first;
-            }
-            const Env e = env_copy();
-            PartyLink* l = e.link ? e.link() : nullptr;
-            bool member = false;
-            if (l)
-                for (const RosterEntry& r : l->roster())
-                    if (r.slot != kHostSlot && r.connected && l->member_ip(r.slot) == addr) member = true;
-            std::lock_guard<std::mutex> lk(cache->first);
-            if (cache->second.size() > 256) cache->second.clear();
-            cache->second[addr] = {member, now};
-            return member;
-        });
+        // Only under a key a member gave us over its link (relay_key) does a relayed guest get in.
+        bbnet::p2p_router().accept_relayed(true);
         log("member relay: on (a member that a guest reaches may relay that guest to us)");
     } else {
         log("member relay: off (BB_PARTY_MEMBER_RELAY=0 / System > Party network)");
@@ -495,6 +555,7 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
     } else {
         log("IPv6: off (BB_PARTY_IPV6=0 / System > Party network)");
     }
+    bbnet::p2p_router().set_keyed_mac(keyed_mac);
     const crypto::Key party_key = crypto::derive_party_key(cfg.password, code.secret.data());
     {
         std::lock_guard<std::mutex> lk(s.mu);
@@ -530,7 +591,7 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
         for (;;) {
             const Env e = env_copy();
             if (e.stopping && e.stopping()) {
-                bbnet::p2p_router().serve(false, 0, 0, nullptr, {}, {});
+                bbnet::p2p_router().serve(false, 0, 0, nullptr, {}, {}, {});
                 return;
             }
             guest_tick(&serving, &served, &net6_sent, &dialed);
@@ -650,7 +711,9 @@ void GuestNetworkLine(const std::string& line) {
 // ---- both ----
 
 bool OnEvent(bool host, int slot, const std::string& name, const std::string& body) {
-    if (name != kNet6Event && name != kNet6TableEvent && name != kRelayPunchEvent) return false;
+    if (name != kNet6Event && name != kNet6TableEvent && name != kRelayPunchEvent && name != kRelayKeyEvent &&
+        name != kNet6EchoEvent)
+        return false;
     json::Value v;
     std::string err;
     if (!json::parse(body, v, err) || v.type != json::Value::Type::Object) {
@@ -666,8 +729,47 @@ bool OnEvent(bool host, int slot, const std::string& name, const std::string& bo
             return true;
         }
         e6.port = sw16(static_cast<std::uint16_t>(p));
+        State::Pending6 pd;
+        pd.e6 = e6;
+        udp::secure_random(pd.nonce.data(), pd.nonce.size());
         std::lock_guard<std::mutex> lk(S().mu);
-        if (S().net6_pending.size() < 16) S().net6_pending[slot] = e6;
+        if (S().net6_pending.size() < 16) S().net6_pending[slot] = pd;
+        return true;
+    }
+    if (host && name == kNet6EchoEvent) {
+        std::array<std::uint8_t, 16> nonce{};
+        if (!unhex(str_of(v, "Nonce"), nonce.data(), nonce.size())) return true;
+        std::lock_guard<std::mutex> lk(S().mu);
+        auto it = S().net6_pending.find(slot);
+        if (it != S().net6_pending.end() && it->second.nonce == nonce && !it->second.verified) {
+            it->second.verified = true;
+            log("IPv6: slot " + std::to_string(slot) + " owns " + ep6_text(it->second.e6) + " (our nonce came back)");
+        }
+        return true;
+    }
+    if (host && name == kRelayKeyEvent) {
+        udp::Router::MemberKey mk;
+        std::uint8_t id[4];
+        if (!unhex(str_of(v, "Id"), id, 4) || !unhex(str_of(v, "Key"), mk.key.data(), mk.key.size())) {
+            log("relay_key from slot " + std::to_string(slot) + " refused: malformed");
+            return true;
+        }
+        mk.id = static_cast<std::uint32_t>(id[0]) << 24 | static_cast<std::uint32_t>(id[1]) << 16 |
+                static_cast<std::uint32_t>(id[2]) << 8 | id[3];
+        const Env e = env_copy();
+        PartyLink* l = e.link ? e.link() : nullptr;
+        if (!l || !relay_on()) return true;
+        std::string member;
+        for (const RosterEntry& r : l->roster())
+            if (r.slot == slot && r.connected) member = r.name;
+        const std::uint32_t ip = l->member_ip(slot);
+        if (member.empty() || !ip) return true;
+        bbnet::p2p_router().set_member_key(mk, ip, member);
+        {
+            std::lock_guard<std::mutex> lk(S().mu);
+            S().key_owner[slot] = member;
+        }
+        log("member relay: " + member + " may relay guests to us (its relay key, from its party link)");
         return true;
     }
     if (!host && name == kNet6TableEvent) {
@@ -707,7 +809,7 @@ bool OnEvent(bool host, int slot, const std::string& name, const std::string& bo
 }
 
 void Stop() {
-    bbnet::p2p_router().serve(false, 0, 0, nullptr, {}, {});
+    bbnet::p2p_router().serve(false, 0, 0, nullptr, {}, {}, {});
     bbnet::p2p_router().relay_stop();
 }
 
