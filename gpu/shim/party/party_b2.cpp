@@ -3664,7 +3664,11 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         Log("guest: held death goes with the host's travel (%.1f s after it); no redirect, no leave", now - at);
         return;
     }
-    if (now - at < DeathGrace() || s.loading) {
+    // The grace waits for a host travel that would take this guest along (a wipe's death load, a
+    // limbo). With the host alive and no boss bar up nothing is coming: 2 s, not 8 (every guest
+    // death takes the respawn load since 0.6.9; the 8 s wait was most of the delay before it).
+    const double grace = HostChrDown() || BossFightActive(nullptr) ? DeathGrace() : std::min(DeathGrace(), 2.0);
+    if (now - at < grace || s.loading) {
         // The spectate starts at the hold in a boss fight, not after the grace (the guest's view
         // stayed on its corpse 8 s longer than the host's): the limbo decision below still waits
         // for the grace (a host death travel in it takes the guest along and ends the spectate).

@@ -281,10 +281,14 @@ before anyone is in the game):
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
   open for everyone, in the host's world and in each guest's own save. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
-- **Key items are never lost.** Key items a guest earned in the host's world (Oedon Tomb Key,
-  badges, workshop tools, chalices, umbilical cords) are checked each time its own world loads and
-  given again if missing; one you already hold is never handed out twice. Keys and tools found
+- **Key items are never lost.** Key items a guest earns in the host's world (Oedon Tomb Key,
+  badges, workshop tools, chalices, umbilical cords) go into its inventory right away, and are
+  checked again each time its own world loads and given again if missing; one you already hold is
+  never handed out twice. Keys and tools found
   lying around go to the whole party, so nobody is locked out of a door.
+- **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
+  NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
+  in each player's own save, also when it was learned in someone else's world.
 - **Enemy drops for each player, one roll.** Everyone gets their own copy of each enemy's drop from
   one shared roll per kill; each player's own Item Discovery counts.
 - **Blood Echoes for every kill**, whoever made it, and **treasure for each player**: items in the
