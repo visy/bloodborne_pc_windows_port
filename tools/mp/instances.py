@@ -441,6 +441,7 @@ def run(a):
     ts0 = time.time()
     print("[harness] %.1f s from the game slot to the first start (setup, leftovers check)" % (ts0 - t_slot), flush=True)
     starts = [0] * a.count  # where this run begins in each run.log
+    expects_steps = [False] * a.count  # instance i has a director test chain of travel steps
     code_file = Path(a.root) / "party_code.txt"
     if a.party and code_file.exists():
         code_file.unlink()  # a stale code (old secret) would only get the guests rejected
@@ -490,6 +491,7 @@ def run(a):
             if who.strip() == str(i):
                 k, _, v = kv.partition("=")
                 env[k] = v.replace("{i}", str(i)).replace("{port}", str(port0 + i))
+        expects_steps[i] = bool(re.search(r"(?:^|,)(?:host|guest)_[a-z_]+[=@]", env.get("BB_PARTY_DIRECTOR_TEST", "")))
         if (getattr(a, "headless_delay_after_join", 0) and a.party and i > 0 and
                 i == a.count - getattr(a, "headless", 0)):
             # The headless instances start once the first guest has joined (the host's
@@ -591,6 +593,11 @@ def run(a):
     # End it at once with the reason instead.
     crash_rx = re.compile(r"the game exited with -?\d+ \(a crash\); restart \d+ of")
     planned_kills = [0] * a.count
+    # Without --until and without a crash plan: the run ends 20 s after every instance with a test
+    # chain logged its last travel step ("travel step N/N"), so finished runs do not sit idle in the
+    # shared game queue (the user stopped several by hand, 2026-10-21).
+    step_rx = re.compile(r"test: travel step (\d+)/(\d+)")
+    chains_done_at = None
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
         if until:
             for i in range(a.count):
@@ -599,6 +606,18 @@ def run(a):
                                           "out\\crash_*.log); its test chain does not run again"
                                           % (i, time.time() - t0))
             if verdict:
+                print(verdict, flush=True)
+                break
+        if not until and not plan and any(expects_steps):
+            done = True
+            for i in range(a.count):
+                if expects_steps[i]:
+                    last = step_rx.findall(log_text(i, starts[i]))
+                    done = done and bool(last) and last[-1][0] == last[-1][1]
+            if done and chains_done_at is None:
+                chains_done_at = time.time()
+            if chains_done_at is not None and time.time() - chains_done_at >= 20:
+                verdict = "all test chains done (last step + 20 s) after %.0f s" % (time.time() - t0)
                 print(verdict, flush=True)
                 break
         if time.time() - t0 > lease and time.time() - last_lease_check > 5:

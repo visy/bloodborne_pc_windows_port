@@ -144,11 +144,17 @@ All the details: [docs/SETTINGS.md](docs/SETTINGS.md#controls).
 Play the whole game with friends in one session, from the first lamp to the end credits.
 Modelled on Elden Ring Seamless Co-op, adapted to Bloodborne. **In development:** tested on one
 PC (several game copies, simulated internet lag), **between two PCs on a LAN** (summon, combat,
-shared kills and doors, per-player pickups) and **over the Internet**: a 2.5 h session between two
-PCs in different homes (two campaigns, prologue to Old Yharnam, several hosts and joins, one crash with
-a working rejoin). The bugs reported from it are fixed in 0.6.1
-([docs/party/playtest1_triage.md](docs/party/playtest1_triage.md)). A scripted two-player
-run from two new characters to the end credits passed, and a three-player travel run
+shared kills and doors, per-player pickups) and **over the Internet** in two real sessions between
+PCs in different homes:
+
+| Session | Build | What it showed |
+|---|---|---|
+| Playtest 1: 2.5 h, two campaigns, prologue to Old Yharnam | 0.6.0 | Fixed in 0.6.1 ([docs/party/playtest1_triage.md](docs/party/playtest1_triage.md)) |
+| Playtest 2: 2 h, Old Yharnam, the Blood-starved Beast and the Hunter's Dream | 0.6.9 | Joining, travel, deaths and boss kills held up; a boss the guest finished while the host lay dead stayed dead. Its reports are fixed for 0.7.0: guests frozen while the host died, the spectator camera, one-time shop items sold out for guests, gestures and key items not kept by guests, an uncollectable shared drop, guests unable to talk to Gehrman, captions at the workbench and shops, a new party code on every host launch |
+
+Players running bigger parties sent reports and fixes too (Chalice Dungeon entry, VPN joins, 3-4 player
+parties: guests drawn with one another's look, pickups animating every other player). A scripted
+two-player run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
 **Party sections:** [Starting a party](#start-from-the-title-screen-recommended) ·
@@ -302,7 +308,8 @@ before anyone is in the game):
   headstones all work for guests. A guest can rest alone (lamp, "No"), level up and shop in the
   Dream and come back while the others play on. Shop stock is per player: one-of-a-kind items
   (armour sets, the Insight shop's attire) bought by one player stay in stock for the others.
-- **Talk to NPCs.** Guests can talk to NPCs in the host's world; quest steps are shared by the whole
+- **Talk to NPCs.** Guests can talk to NPCs in the host's world, Gehrman in the Hunter's Dream too
+  (his last offer, the ending choice, stays the host's); quest steps are shared by the whole
   party, and NPCs look solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
   Party rules → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
@@ -359,18 +366,18 @@ before anyone is in the game):
 | Who dies | What happens |
 |---|---|
 | A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
-| The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
+| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss dies the host gets up right there in the arena, where it fell (or beside the hunter it watched), no load, its echoes still in its bloodstain; a guest gets up at the host's lamp. *Party Rules & Sync → Host gets up after a boss kill* off: the party's respawn load instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
-A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
+A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.
 
 ### Seamless co-op progress
 
 Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
 Two numbers: **plan done** is how much of the plan is built and seen working at least once;
 **ERSC parity (evidence-weighted)** caps every row at 95% until it has been checked on two real PCs over
-the Internet (every check of the current build ran on one PC; the only Internet session so far was on 0.6.0), and caps rows where we chose to differ from ERSC (the
+the Internet (two real Internet sessions so far, on 0.6.0 and 0.6.9; every other check ran on one PC), and caps rows where we chose to differ from ERSC (the
 whole party respawns with the host, 4 players instead of 6, one shared drop roll) at 95% too.
 
 | Area | Plan done | | ERSC parity (evidence-weighted) | |
@@ -394,15 +401,17 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
 | Game-style fades instead of blinks for in-world moves and revives | Planned |
 | Shader cache builder: bosses, gestures and hunter tools; a fuller shared cache | In progress |
-| A real two-PC Internet session on the current build | Needs players: see `docs/party/playtest2_checklist.md` |
+| Playtest 3 over the Internet on 0.7.0 (the fixes from playtest 2, VPN joins, 3-4 players) | Needs players: see `docs/party/playtest2_checklist.md` |
 
 ### Known issues
 
 - **FSR 4 can show a white or grey picture** on some PCs. The cause is under investigation (suspected:
   FSR 4 with HDR turned on in Windows). Meanwhile switch to FSR 3.1, DLSS or no upscaler.
-- **Co-op on the current build was tested on one PC** (several game copies, simulated internet lag);
-  a real two-PC Internet session on the current build is still to come. Please send support bundles
-  if something goes wrong (see [Reporting a co-op bug](#reporting-a-co-op-bug)).
+- **The fixes since playtest 2 were tested on one PC** (several game copies, simulated internet lag),
+  not yet in a real Internet session. Please send support bundles if something goes wrong (see
+  [Reporting a co-op bug](#reporting-a-co-op-bug)).
+- **The Bath Messengers may pop in and out** (with their sound repeating) for a player watching while
+  another browses their shop. Being fixed.
 
 ### Connecting over the internet
 
@@ -477,14 +486,15 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; next release: button prompts for the keyboard, Xbox and Nintendo pads (72e5c8ce) and the frame rate by hooks in the game's code (0.6-pre1) |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press |
-| shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press; next release: clear error for a missing or truncated `sce_module/libc.prx` |
+| shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit; next release: first-page texture lookup (145932bf, via Mrsuss60's port) |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor); next release: the high-FPS fixes for effects, grass wind and the Bloodletter's L2 (Kyoskii, perf/next 6f735f4, b2818b4) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
 | Supermedo, IFreemz | DLSS bridge and Windows loader |
 | FIocker (Supermedo/bloodborne_pc PR #69) | Frame generation (DLSS FG, FSR FG) with paced presentation, NVIDIA Reflex, conservative object motion for frame generation, DLSS bridge ABI 2, FG diagnostics tools |
 | Supermedo and contributors ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) | Intel 12th gen+ crash fix, FPS-preset physics step (found by FIocker), frame limiter pacing, texture-cache, pipeline-cache and shader-walker fixes, skipped draws for failed pipelines, keyboard stick movement, allocating past a full VRAM budget, object motion off on AMD before RDNA3, the memory log line once a minute, Back + d-pad touchpad halves on Xbox pads (idea by parsifal295), skipped draws with a null vertex buffer table, retried boot-file swaps, the unclean-eboot.bin warning, a bad PM4 header dropping its buffer instead of stopping the game and the GPU line flushed at start (c07f0ffa, from parsifal295's PRs #57 and #61); in 0.6.3 the flip IRQ ahead of its label (76f5b5f6, from Awaken's port), a keyboard sprint kept through direction changes (4b930b10, measured by cassioKenji, PR #74), read-only game files and exFAT / FAT32 drives no longer dropping mods (ba34a3a2 from emurphy04's PR #77, bf0878bf); checked against Supermedo's five PR fixes (3e3b760f): parsifal295's stale texture format (#55), title-menu flicker above 1080p (#56), bmy's loading-screen item picture (#62) and DLSS device fallback (#58, its reason now names the Vulkan result), dGstone18's build path with spaces (#72), all already here; imedved (direct mouse camera, ported by mcrib884); andrecabralgit (stereo audio level), Jgamrot (overlay checkboxes and sliders), dGstone18 (mods on Windows); parsifal295 (game check passes over locked files), RafaelHGOliveira (exclusive fullscreen), fliperama86 (HDR desktop black level), emurphy04 (ultrawide output, video queue fix) |
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
+| HatsyRei (via Mrsuss60's port, PR #152) | Windows system DLLs no longer shipped; licence notices for the shipped DLLs and built-in libraries (`out/licenses`) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |
@@ -494,4 +504,4 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
 included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license
-(`out/NVIDIA_DLSS_LICENSE.txt`).
+(`out/NVIDIA_DLSS_LICENSE.txt`). The licences of every other shipped DLL and built-in library are in `out/licenses` (`msys2/PACKAGES.txt` lists each DLL's package and version).
