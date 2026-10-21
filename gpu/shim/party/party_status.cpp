@@ -209,7 +209,7 @@ bool ShareLamps() {
     return g_share_lamps.load();
 }
 namespace {
-std::atomic<bool> g_host_rules[int(HostRule::Count)] = {true, true, true};
+std::atomic<bool> g_host_rules[int(HostRule::Count)] = {true, true, true, true, true, true};
 }  // namespace
 void SetHostRule(HostRule rule, bool on) {
     if (rule < HostRule::Count) g_host_rules[int(rule)].store(on);

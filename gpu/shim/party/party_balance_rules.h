@@ -50,6 +50,13 @@ struct Rules {
     /// own settings; sent so a guest's menu shows them. On by default.
     bool host_revive = true;
     bool host_limbo_revive = true;
+    /// 0.7.1 (user rule: every party gameplay switch in the menus): the kill record (enemies stay
+    /// dead for the party, party_kill_record.h), the NPC presence mirror (party_npc_mirror.h) and
+    /// I5 Gather the party (party_gather.h). The host's; a guest follows them. On by default (a
+    /// host from before them sends none: on).
+    bool kill_record = true;
+    bool npc_mirror = true;
+    bool gather = true;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };

@@ -90,6 +90,34 @@ int main() {
     BbSettings::Load();
     assert(s.party_ipv6 && !s.party_member_relay);
     assert(bb_test_setenv("BB_PARTY_IPV6", "") == 0 && bb_test_setenv("BB_PARTY_MEMBER_RELAY", "") == 0);
+    // 0.7.1 party switches with rows (System > Shared world / Party rewards, the launcher's Party
+    // Rules & Sync): on by default, saved under their key, an explicit variable wins at start and
+    // nothing is put into the environment (the modules read the setting live).
+    const char* const new_envs[] = {"BB_PARTY_KILL_RECORD", "BB_PARTY_NPC_MIRROR", "BB_PARTY_GATHER",
+                                    "BB_PARTY_KEY_VIEW", "BB_PARTY_KEY_ITEMS_SUMMONED"};
+    for (const char* e : new_envs) assert(bb_test_setenv(e, "") == 0);
+    BbSettings::Load();
+    assert(s.party_kill_record && s.party_npc_mirror && s.party_gather && s.party_key_view &&
+           s.party_key_items_summoned);
+    for (const char* e : new_envs) assert(!std::getenv(e) || !std::getenv(e)[0]);  // not exported
+    s.party_kill_record = false;
+    s.party_key_items_summoned = false;
+    BbSettings::Save();
+    assert(Read(path).find("party_kill_record=0\n") != std::string::npos);
+    assert(Read(path).find("party_key_items_summoned=0\n") != std::string::npos);
+    assert(Read(path).find("party_gather=1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(!s.party_kill_record && !s.party_key_items_summoned && s.party_gather);
+    assert(bb_test_setenv("BB_PARTY_KILL_RECORD", "1") == 0);
+    assert(bb_test_setenv("BB_PARTY_GATHER", "0") == 0);
+    BbSettings::Load();
+    assert(s.party_kill_record && !s.party_gather);  // the variable wins over the ini
+    assert(std::string(std::getenv("BB_PARTY_GATHER")) == "0");
+    for (const char* e : new_envs) assert(bb_test_setenv(e, "") == 0);
+    s.party_kill_record = true;
+    s.party_gather = true;
+    s.party_key_items_summoned = true;
+    BbSettings::Save();
 
     // The in-game menu's key rows (after Mrsuss60 90008b39): set, change and remove binding
     // lines, keep the rest of the file, bump the generation runtime_pad.c watches.
@@ -107,5 +135,5 @@ int main() {
     assert(BbSettings::ReadLines("mkkey.").empty());
     assert(Read(path).find("party_rendezvous=") != std::string::npos);  // the rest is kept
     std::remove(path);
-    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, key binding lines");
+    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines");
 }
