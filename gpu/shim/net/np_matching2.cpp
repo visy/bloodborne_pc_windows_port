@@ -1156,6 +1156,11 @@ bool party_guest_in_room() {
     return g.in_room && !g.is_host;
 }
 
+std::uint16_t own_member_id() {
+    std::lock_guard<std::mutex> lk(g.mu);
+    return g.in_room ? g.member_id : 0;
+}
+
 bool matching2_context_started() {
     std::lock_guard<std::mutex> lk(g.mu);
     return g.started;
