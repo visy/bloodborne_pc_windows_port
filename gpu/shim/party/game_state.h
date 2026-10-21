@@ -18,6 +18,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <vector>
 #include <string>
 
 namespace coop {
@@ -104,6 +106,9 @@ int ItemCount(std::uint32_t type_bits, std::uint32_t id);
 /// How many inventory entries (stacks) hold item `id`: 1 normally; 2 or more is a duplicated stack
 /// (a unique key item given while one was held: the save then lists it twice). -1 unknown.
 int ItemStacks(std::uint32_t type_bits, std::uint32_t id);
+/// The inventory's first section (key items and unique goods, index below +0x24): {type bits | id,
+/// count} of every used entry. Empty for a summoned guest after a host-world load.
+std::vector<std::pair<std::uint32_t, int>> KeySectionItems();
 /// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
 /// It shows nothing; ShowItemGet adds the native "item acquired" entry.
 bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);

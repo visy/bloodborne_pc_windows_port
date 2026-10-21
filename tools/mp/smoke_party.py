@@ -471,6 +471,13 @@ def check_s2(v, L, d: Path):
     none_of(v, L, "s2 key item: no duplicate stack", r"DUPLICATE STACK")
     if tr is not None:
         need(v, L, "s2 key items after the travel (host)", 0, r"key goods held: .*4000 x1, 4001 x0,.*map m24_01", tr)
+        # BB_PARTY_KEY_RESTORE=1 (off by default: it duplicates keys in the save): a summoned guest's
+        # key items are put back right after each host-world load.
+        if L.find(1, r"summoned key items (put back|all held) after the load"):
+          need(v, L, "s2 key items put back on the summoned guest after the travel", 1,
+               r"summoned key items (put back|all held) after the load \(pass 1", tr)
+          need(v, L, "s2 key items held by the summoned guest after the travel", 1,
+               r"key goods held: .*4000 x1,.*4114 x1,.*map m24_01.*load mode 1", tr)
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     if lv is not None:
         need(v, L, "s2 key items back at home after the travels (guest)", 1,
