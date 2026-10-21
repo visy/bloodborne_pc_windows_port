@@ -10,6 +10,7 @@
 #include "../net/bbnet_internal.h"
 #include "../net/json.h"
 #include "../net/party_host_service.h"
+#include "../net/party_transport.h"
 #include "../net/party_route.h"
 #include "../net/party_util.h"
 
@@ -372,6 +373,38 @@ void host_tick() {
     }
 }
 
+// The member that relays for us is, to our game, the endpoint we reach it at (its public one), not
+// the address the host lists for it (its LAN address when its own link came over the LAN): its room
+// records are rewritten to it (real 2-PC run 20261021_1929: our game sent to the member's LAN
+// address, heard it from its public one, and never finished joining the room). Called from the
+// watcher and when the link connects (before the game's join asks for the room).
+void sync_relay_peer() {
+    static std::mutex mu;
+    static std::string peer_set;
+    netpath::Step step;
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        step = S().chooser.current();
+    }
+    udp::Router& r = bbnet::p2p_router();
+    std::string member;
+    std::uint32_t ma = 0;
+    std::uint16_t mp = 0;
+    if (step.route != netpath::Route::Relay || r.relay_state(&member) != udp::Router::ClientState::Ready ||
+        !r.relay_member(&ma, &mp))
+        member.clear();
+    std::lock_guard<std::mutex> lk(mu);
+    if (member == peer_set) return;
+    peer_set = member;
+    bbnet::party::RemoteGuest* rg = bbnet::party::remote_guest();
+    if (!rg) return;
+    rg->clear_peer_endpoints();
+    if (member.empty()) return;
+    rg->set_peer_endpoint(member, ma, sw16(mp));
+    log("member relay: our game reaches " + member + " at " + udp::key_text(ma, mp) +
+        " (where it relays for us), whatever address the host lists for it");
+}
+
 // ---- guest watcher: relaying for others, the relay handshake, our IPv6 endpoint ----
 void guest_tick(bool* serving, std::size_t* served_n, bool* net6_sent, bool* dialed) {
     State& s = S();
@@ -472,6 +505,7 @@ void guest_tick(bool* serving, std::size_t* served_n, bool* net6_sent, bool* dia
     } else {
         *dialed = false;
     }
+    sync_relay_peer();
     // Our IPv6 endpoint for the other guests (the host checks and shares it: net6_table).
     if (st == LinkState::Connected && !*net6_sent && have6 && ipv6_on() && bbnet::p2p_ipv6_open()) {
         *net6_sent = true;
@@ -632,6 +666,7 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
 }
 
 void GuestLinkState(LinkState st) {
+    if (st == LinkState::Connected) sync_relay_peer();  // before the game asks for the room
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     if (!s.started || s.host) return;

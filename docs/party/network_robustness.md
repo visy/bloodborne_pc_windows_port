@@ -368,7 +368,14 @@ IPv4 endpoints only and need no change:
   200 handshakes a second are kept for networks that completed a handshake in the last hour or hold a
   party member's IPv6 key; with a password the relay and nonce keys come from the password alone, so
   members who joined with a plain host:port relay and verify IPv6 with code members (the log names
-  the key type). A member's IPv6 endpoint enters `net6_table` only after a nonce the
+  the key type). Real 2-PC run 20261021_1929 (agent vpntest): the party link through the relay worked, but
+  the relayed guest's game never finished joining the room: the host listed the relaying member at
+  the LAN address its own link came from, so the guest's game sent to that unreachable address and
+  heard the member from its public endpoint, an unknown source. The relayed guest now rewrites that
+  member's room records to the endpoint it relays at (`RemoteGuest::set_peer_endpoint`, set when the
+  relay is ready and again when the link connects, before the game asks for the room); unit:
+  party-host-test (the records), party-nat-test (LAN address unreachable, the public one reachable,
+  the member's answer from the rewritten address). A member's IPv6 endpoint enters `net6_table` only after a nonce the
   host sent there came back over its link (`net6_echo`). Nonces, session ids and salts from
   BCryptGenRandom; a replayed or recent handshake never replaces a live session; each session is
   capped at 300 datagrams and 128 KB/s. The host's IPv6 address in the code is a temporary privacy

@@ -841,6 +841,10 @@ Router::KeyedMac kmac() {
 struct RelayResult {
     bool link = false, data = false;
     rudp::Endpoint host_saw;
+    // game traffic between the relayed guest and the member (the real 2-PC run 20261021_1929):
+    bool game_to_lan = false;     // the guest's game datagram to the member's LAN address arrived
+    bool game_to_public = false;  // ... to the endpoint it relays for us at arrived
+    rudp::Endpoint member_heard_at;  // where the guest heard the member's answer from
 };
 
 // The guest reaches the host only through the member: the host and the member already play
@@ -890,8 +894,25 @@ RelayResult relay_run(nat::Type ht, nat::Type mt, nat::Type gt, bool punch, cons
             G.stream->write(blob.data(), blob.size());
             H.stream->write(blob.data(), blob.size());
         }
-        if (res.link && G.stream->readable() == 40000 && H.stream->readable() == 40000) {
+        if (res.link && G.stream->readable() == 40000 && H.stream->readable() == 40000 && !res.data) {
             res.data = true;
+            // The game's own traffic with the member: the host lists the member at its LAN address
+            // (its link came over the LAN), which the relayed guest cannot reach; the endpoint the
+            // member relays at is reachable, and the member's answers come from there.
+            const std::uint8_t g2m[8] = {0xff, 0xc3, 40, 40, 9, 9, 9, 9};
+            const std::uint64_t m_before = M.game_in;
+            net.send(G, ip(192, 168, 56, 1), nbo(9307), g2m, sizeof g2m);  // the LAN record (the bug)
+            for (int i = 0; i < 20; ++i) net.step();
+            res.game_to_lan = M.game_in > m_before;
+            const std::uint64_t m_mid = M.game_in;
+            net.send(G, mp.addr, mp.port, g2m, sizeof g2m);  // set_peer_endpoint's record (the fix)
+            for (int i = 0; i < 20; ++i) net.step();
+            res.game_to_public = M.game_in > m_mid;
+            const rudp::Endpoint g_seen = M.last_game_src;  // the guest as the member hears it
+            G.last_game_src = {};
+            net.send(M, g_seen.addr, g_seen.port, g2m, sizeof g2m);
+            for (int i = 0; i < 20; ++i) net.step();
+            res.member_heard_at = G.last_game_src;
             break;
         }
     }
@@ -942,6 +963,12 @@ static void test_member_relay_matrix() {
     // and lockout count against it at the host, not against the member).
     const sim3::RelayResult r = sim3::relay_run(Type::PortRestricted, Type::FullCone, Type::Symmetric, true, k, k);
     CHECK(r.link && r.host_saw.addr == ip(198, 51, 100, 2));
+    // The real-network case (20261021_1929): the party link through the relay works, but game
+    // traffic to the member's LAN address (as the host lists it) never arrives; to the endpoint the
+    // member relays at it does, and the member answers from exactly there (the address the guest's
+    // records now carry: RemoteGuest::set_peer_endpoint, party-host-test).
+    CHECK(r.data && !r.game_to_lan && r.game_to_public);
+    CHECK(r.member_heard_at.addr == ip(192, 0, 2, 50));
 }
 
 // Delivers the wires addressed to `to_addr` (any port) into `to`, as coming from from_addr:from_port.
