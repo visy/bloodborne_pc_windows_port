@@ -239,7 +239,7 @@ GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s
           "host_leave": "s2", "rules": "rules"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
-              "wipe": r"wipe", "kill": r"boss kill|party stays", "itembox": r"item box|reward on the summoned",
+              "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "rules": r"^rules"}
 
