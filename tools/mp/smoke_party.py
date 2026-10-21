@@ -339,17 +339,83 @@ def phase_summonfail(only):
     )
 
 
-PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail}
+# Phase s3 (hostcheck, ~6 min, Gascoigne un-killed): the host's revives in place and what must work
+# after them. Kills first (host 2, guest 1 one, each game's own death path), then a host death outside
+# a fight (lamp revive 1), a death in the Gascoigne fight that the guests' kill ends (the arena
+# revive), a death 130 m away at an enemy group (lamp revive 2: the long way back). After each: every
+# guest's enemy census against the host's (kills still dead, no respawn on one game only); after the
+# first two: the bloodstain walked onto and picked up; after the last two: an enemy's hits, lock-on, a
+# Blood Vial. Last, the host dies with its last lamp in another area (a lone load).
+S3_TRIGGER = "-48.76:-40.92:72.44"   # Gascoigne's intro trigger (region 2412815), the arena floor
+S3_UNTIL = r"0:travel step (\d+)/\1: "  # the host chain's last step
+
+
+def _s3_stain():
+    """Walk onto the own bloodstain, Cross; then 10 s more for the census."""
+    return ["host_stick=stain:0.6:40@1%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@3%m24_01!",
+            "host_press=0@10%m24_01!"]
+
+
+def _s3_enemy():
+    """A nearby enemy on the same floor: R3 lock-on, R1 once (it fights back), HP lines, the kills, a vial
+    (killed within ~10 s: two of them took the host's 575 HP in 13 s)."""
+    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+            "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 4 + [                  # R1: it fights back
+        "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
+        "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial
+
+
+def phase_s3(only):
+    host = ",".join([
+        "echoes=5000",
+        "host_warp=2412953@20",                                    # the Tomb of Oedon lamp (party travel)
+        # two kills before the deaths, of this map's own enemies (m24_01, 130 m away: the nearest ones
+        # belong to the Cathedral Ward map m24_00, whose enemies come back on a game that streams that
+        # map out and in again, any load or none: hostcheck run respawnE)
+        "host_kill=2410247@5%m24_01", "host_kill=2410202@2%m24_01",
+        "host_stick=-41.5:79.5:1:30@8%m24_01!",                    # off the lamp, walked
+        "host_press=0@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!",
+        "host_die@2%m24_01",                                       # outside a fight: lamp revive 1
+        "host_press=0@14%m24_01!",
+    ] + _s3_stain() + [
+        "host_move=%s@2%%m24_01" % S3_TRIGGER,                     # the fight
+        "host_press=0@1%m24_01~", "host_press=0@2%m24_01",
+        "host_die@1%m24_01",                                       # in the fight: the limbo
+        "host_kill=2410810:hp@22%m24_01",                          # the guests' kill: the arena revive
+        "host_press=0@8%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@2%m24_01!",  # OK on the key's box
+    ] + _s3_stain() + _s3_enemy() + [
+        "host_die@2%m24_01",                                       # 130 m from the lamp: lamp revive 2
+        "host_press=0@14%m24_01!", "host_press=0@12%m24_01!",
+    ] + _s3_enemy() + [
+        "host_lastlamp=2402950@1%m24_01", "host_die@2%m24_01",     # last lamp in the Cathedral Ward: a lone load
+        "host_press=0@30%m24_00",                                  # its census, then the end
+    ])
+    # guest 1 kills one too; both guests then stand in the arena, off the host's walk to its stain
+    g1 = "god,guest_kill=2410261@10%m24_01,guest_move=-49.9:-40.82:73.3@2%m24_01"
+    g2 = "god,guest_move=-49.9:-40.82:73.3@14%m24_01"
+    return dict(
+        name="s3", seconds=600, pad=True,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_ENEMY_CENSUS=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
+        crash=[],
+        until=[S3_UNTIL],
+    )
+
+
+PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
+          "s3": phase_s3}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
-          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail"}
+          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
+          "host_revive": "s3"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
-              "savecopy": r"^sc ", "summonfail": r"^summonfail"}
+              "savecopy": r"^sc ", "summonfail": r"^summonfail",
+              "host_revive": r"^s3 "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -371,6 +437,7 @@ GROUP_UNTIL = {
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
     # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
     "summonfail": [r"0:cooperators 0 -> 1[\s\S]{40000}"],
+    "host_revive": [S3_UNTIL],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
@@ -440,6 +507,10 @@ def run_phase(a, ph, out: Path):
         cmd += ["--ienv", e.replace("{hold}", hold)]
     for w in ph.get("start_when", []):
         cmd += ["--start-when", w]
+    if ph.get("pad"):
+        # the stick walks (host_stick) write the in-process pad script
+        (root / "pad0.txt").write_text("lx=128 ly=128\n")
+        cmd += ["--ienv", "0:BB_PAD_FILE=" + str(root / "pad0.txt")]
     for c in ph["crash"]:
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
@@ -740,8 +811,73 @@ def check_summonfail(v, L):
 
 
 RUN_ROOT = ["."]  # main: --root (the sc checks read the host's save folder)
+
+HP_RX = re.compile(r"own HP (-?\d+)/")
+
+
+def _hp(lines):
+    return [(t, int(HP_RX.search(l).group(1))) for t, l in lines if HP_RX.search(l)]
+
+
+def check_s3_revive(v, L, tag, t, end, stain=True, enemy=True):
+    """After a host revive at +t (until +end): census, stain, an enemy's hits, lock-on, vial."""
+    for i in (1, 2):
+        need(v, L, "s3 %s: guest %d census matches the host's" % (tag, i), i,
+             r"enemy census: digest \d+ matches the host's .*after the host's revive", t, t + 25)
+    none_of(v, L, "s3 %s: no census difference" % tag, r"enemy census: DIFFERS|RESPAWN without a load", t, t + 25)
+    if stain:
+        st = L.find(0, r"own bloodstain taken: .*echoes (\d+) -> -1", t, end)
+        m = re.search(r"echoes (\d+) -> -1.*own echoes (\d+)", st[1]) if st else None
+        v.step("s3 %s: bloodstain picked up, echoes back" % tag, bool(m) and 0 < int(m.group(1)) <= int(m.group(2)),
+               ("+%.1f s: %s" % (st[0], st[1][:160])) if st else "no 'own bloodstain taken' after +%.0f s" % t)
+    if not enemy:
+        return
+    ch = L.find(0, r"test: host_chr \d+ \(.*standing at", t, end)
+    kl = L.find(0, r"test: host_kill: entity", ch[0], end) if ch else None
+    if not ch or not kl:
+        v.step("s3 %s: an enemy's hits (HP drop)" % tag, False, "no host_chr / host_kill after +%.0f s" % t)
+        return
+    hp = _hp(L.all(0, r"test: host_press 0x[0-9a-f]+;", ch[0], kl[0]))
+    drop = [1 for (_, a), (_, b) in zip(hp, hp[1:]) if b < a]
+    v.step("s3 %s: an enemy's hits (HP drop)" % tag, bool(drop),
+           ("HP %s" % " -> ".join(str(h) for _, h in hp)) if hp else "no HP lines")
+    lk = L.find(0, r"test: host_press 0x0;.*lock-on 1 ", ch[0], kl[0])
+    v.step("s3 %s: lock-on (R3)" % tag, bool(lk), lk[1][:160] if lk else "lock-on stayed 0")
+    vi = L.find(0, r"test: host_press 0x1000;", kl[0], end)
+    before = _hp([vi]) if vi else []
+    after = _hp(L.all(0, r"test: host_press 0x0;", vi[0] + 0.1, end))[:1] if vi else []
+    v.step("s3 %s: Blood Vial heals" % tag, bool(before and after and after[0][1] >= before[0][1] + 50),
+           "HP %d -> %d" % (before[0][1], after[0][1]) if before and after else "no vial press / HP line")
+
+
+def check_s3(v, L):
+    need(v, L, "s3 join: 3 players", 0, r"cooperators [01] -> 2")
+    lamp_rx = r"host revive #\d+: after: .* at lamp 2412953"
+    lamp = need(v, L, "s3 lamp revive 1 (no load)", 0, lamp_rx)
+    ids = [re.search(r"entity (\d+)", l).group(1) for _, l in
+           L.all(0, r"test: host_kill: entity \d+ (killed|HP)", 0, lamp or 1e9) +
+           L.all(1, r"test: guest_kill: entity \d+ (killed|HP)", 0, lamp or 1e9)]
+    v.step("s3 kills before the deaths (host, guest)", len(ids) >= 3, "entities " + " ".join(ids))
+    arena = need(v, L, "s3 arena revive (no load)", 0, r"host death: up again in the arena", lamp or 0)
+    lamp2 = need(v, L, "s3 lamp revive 2, from 130 m (no load)", 0, lamp_rx, arena or 1e9)
+    if lamp is not None:
+        check_s3_revive(v, L, "lamp revive 1", lamp, arena or 1e9, enemy=False)
+    if arena is not None:
+        check_s3_revive(v, L, "arena revive", arena, lamp2 or 1e9)
+    if lamp2 is not None:
+        check_s3_revive(v, L, "lamp revive 2", lamp2, 1e9, stain=False)
+    lone = need(v, L, "s3 host death with its lamp in another area", 0, r"travel step \d+/\d+: host_lastlamp", lamp2 or 0)
+    if lone is not None:
+        cen = L.all(1, r"enemy census: ", lone, lone + 60)
+        v.step("s3 lone load: guest 1 census afterwards", not any("DIFFERS" in l for _, l in cen),
+               cen[-1][1][:160] if cen else "no census line (the host in another map: not compared)")
+    check_common(v, L, "s3")
+
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
-          "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L)}
+          "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
+          "s3": lambda v, L, d: check_s3(v, L)}
 
 
 def main():
@@ -750,7 +886,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -761,7 +897,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
