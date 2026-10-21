@@ -3656,6 +3656,19 @@ std::vector<RawPart> SnapshotRaw(u64 chr) {
     add("ctrl", Field<u64>(chr, 0x58), 0x400);
     add("ctrl38", Field<u64>(Field<u64>(chr, 0x58), 0x38), 0x100);
     add("upd18", Field<u64>(chr, 0x18), 0x80);
+    // The chr's and ChrCtrl's other parts (pointers), e.g. ChrCtrl +0x20: the model whose hit mask
+    // Lua SetHitMask writes (+0x118, parts +0x70).
+    static const char* cn[] = {"ctrl+10", "ctrl+18", "ctrl+20", "ctrl+28", "ctrl+30", "ctrl+40", "ctrl+48", "ctrl+50"};
+    for (int i = 0; i < 8; ++i) {
+        const u64 off = i < 5 ? 0x10 + u64(i) * 8 : 0x40 + u64(i - 5) * 8;
+        add(cn[i], Field<u64>(Field<u64>(chr, 0x58), off), 0x300);
+    }
+    add("ctrl+20 +70", Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 0x20), 0x70), 0x200);
+    static const char* hn[] = {"chr+20", "chr+28", "chr+30", "chr+40", "chr+48", "chr+50", "chr+60", "chr+68"};
+    static const u32 ho[] = {0x20, 0x28, 0x30, 0x40, 0x48, 0x50, 0x60, 0x68};
+    for (int i = 0; i < 8; ++i) {
+        add(hn[i], Field<u64>(chr, ho[i]), 0x300);
+    }
     static const char* names[] = {"mod+0", "mod+8", "mod+10", "mod+18", "mod+20", "mod+28", "mod+30", "mod+38",
                                   "mod+40", "mod+48", "mod+50", "mod+58", "mod+60", "mod+68", "mod+70", "mod+78",
                                   "mod+80", "mod+88", "mod+90", "mod+98"};
@@ -3737,6 +3750,10 @@ void LogRawDiff(u64 chr) {
                 std::snprintf(t, sizeof t, " +%zx:%08x->%08x(%g->%g)", o, x, y, double(fx), double(fy));
                 line += t;
                 ++shown;
+                if (line.size() > 700) {  // the log truncates long lines
+                    Log("revive diff %s (%#llx):%s", a.name, ull(a.base), line.c_str());
+                    line.clear();
+                }
             }
             if (!line.empty()) {
                 Log("revive diff %s (%#llx):%s", a.name, ull(a.base), line.c_str());
@@ -3771,7 +3788,7 @@ bool RecipeHas(const char* step) {
     // '|' separates the recipes of successive revivals (the last one repeats): one run tries several.
     static const std::vector<std::string> list = [] {
         const char* v = std::getenv("BB_PARTY_B2_REVIVE_RECIPE");
-        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,warp,gsm,rearm";
+        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,hitbody,warp,gsm,rearm";
         std::vector<std::string> out;
         for (std::size_t a = 0;;) {
             const std::size_t b = all.find('|', a);
@@ -4006,8 +4023,41 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
 // while alive, for a guest's in-place revive (issue #4 item 4). LocalDeathHeightTick, main thread.
 float g_local_draw_alive = 1.0f;
 u64 g_local_draw_chr = 0;
+constexpr u32 kDeadHitLayer = 0x36;   // a dead chr's hit bodies (filter info low 6 bits)
+constexpr u32 kAliveHitLayer = 0x08;  // a living player's (live: 0x01000008)
+// The collision filter of the local chr's hit bodies while alive (ChrCtrl +0x20 +0xA8, see
+// RestoreHitBodies), kept by LocalDeathHeightTick with the draw factor.
+u32 g_local_hitfilter_alive = 0;
 void ReviveHost(const GameSnapshot& s) {
     ReviveLocal(s, g_lamp_spot, true);
+}
+
+/// BB_PARTY_B2_REVIVE_HITBODY=0 (A/B, diagnostics): the in-place revive leaves the hit bodies dead.
+bool ReviveHitBodyOn() {
+    static const bool on = !(std::getenv("BB_PARTY_B2_REVIVE_HITBODY") && std::getenv("BB_PARTY_B2_REVIVE_HITBODY")[0] == '0');
+    return on;
+}
+
+/// Why a player revived in place could not be hit (live revivehit x1/w3): its hit bodies (the
+/// Havok bodies of ChrCtrl +0x20, which attacks query in the hit world [0x553D700]+0x28, query
+/// 0x185FBE0 -> 0x1860FB0 -> hit record 0x185B200 -> 0x18B79E0 -> damage module) get collision
+/// layer 0x36 at the death (filter info 0x01000008 -> 0x01000036, ChrCtrl +0x20 +0xA8/+0xAC), which
+/// attacks and other chrs do not collide with; only a chr rebuild (a load) sets them back. The
+/// game's own setter (vfunc +0x30 of that object, 0x1812400(obj, filter): every body's filter
+/// through 0xB6A370, then +0xA8/+0xAC) puts the alive filter back.
+void RestoreHitBodies(u64 p, bool host) {
+    const u64 hb = Field<u64>(Field<u64>(p, 0x58), 0x20);
+    const u32 now = Field<u32>(hb, 0xa8);
+    if (!hb || (now & 0x3f) != kDeadHitLayer) {
+        Log("%s revive: hit bodies not dead (filter %08x); left alone", host ? "host" : "guest", now);
+        return;
+    }
+    // The alive filter seen on this chr, else the dead one with the alive layer (8).
+    const bool seen = g_local_draw_chr == p && g_local_hitfilter_alive != 0;
+    const u32 alive = seen ? g_local_hitfilter_alive : ((now & ~0x3fu) | kAliveHitLayer);
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1812400))(hb, alive);
+    Log("%s revive: hit bodies back to the alive collision filter %08x -> %08x (%s; now %08x)", host ? "host" : "guest",
+        now, alive, seen ? "as seen alive" : "layer 8", Field<u32>(hb, 0xa8));
 }
 
 /// Main thread: the local player's chr revived where it lies and put on `sp` (its lamp's spawn
@@ -4051,11 +4101,19 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         // game's revive (body form, SpEffects) runs for the guest too, its phantom type put back after
         // (0x1900710 writes +0x78 = 0, which would turn the phantom into a body); then the draw
         // factor it had alive. BB_PARTY_GUEST_REVIVE_BODY=0: as before (no revive call).
-        const int type = Field<int>(p, 0x78, -1);
+        const int type = Field<int>(p, 0x78, -1), team0 = Field<int>(p, 0x88, -1);
         const float draw0 = Field<float>(p, 0x208);
         reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
         if (type >= 0 && Field<int>(p, 0x78, -1) != type) {
             SafeWrite(p + 0x78, &type, 4);
+        }
+        if (Field<int>(p, 0x88, -1) != team0) {
+            // 0x1900710 also re-resolved the team from type 0 (19, the host's body; a cooperator is 20,
+            // live revivehit w3 / x1: +0x88 0x14 -> 0x13): the game's team resolver 0x18C2A00 again
+            // with the phantom type back.
+            const int t1 = Field<int>(p, 0x88, -1);
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x18c2a00))(p);
+            Log("guest revive: team %d -> %d -> %d (type %d)", team0, t1, Field<int>(p, 0x88, -1), type);
         }
         const float alive = g_local_draw_chr == p ? g_local_draw_alive : 1.0f;
         const float draw1 = Field<float>(p, 0x208);
@@ -4140,6 +4198,9 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         } else {
             Log("host revive: no behavior to reset (gate %u)", unsigned(Field<u8>(m30, 0x384)));
         }
+    }
+    if (RecipeHas("hitbody") && ReviveHitBodyOn()) {
+        RestoreHitBodies(p, host);
     }
     if (RecipeHas("anim")) {
         // Lua ForcePlayAnimation (0x132E290 -> 0x13CBFD0(entity, anim, 0, 0)); 10000 = local player.
@@ -4230,6 +4291,10 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         if (draw > 0.5f && draw <= 1.0f) {
             g_local_draw_alive = draw;
             g_local_draw_chr = s.player;
+            const u32 hf = Field<u32>(Field<u64>(Field<u64>(s.player, 0x58), 0x20), 0xa8);
+            if (hf != 0 && (hf & 0x3f) != kDeadHitLayer) {
+                g_local_hitfilter_alive = hf;
+            }
         }
     }
     if (!dead) {
@@ -4246,6 +4311,46 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
     was_dead = dead;
 }
 
+/// Diagnostics (BB_PARTY_B2_REVIVE_DIFF=1), any role: the alive copy for a guest too (the host's is
+/// taken in HostDownTick), and 3 s after each revive what still differs from it.
+void ReviveDiffTick(const GameSnapshot& s, double now) {
+    static const bool diff = std::getenv("BB_PARTY_B2_REVIVE_DIFF") && std::getenv("BB_PARTY_B2_REVIVE_DIFF")[0] == '1';
+    if (!diff || !s.world_up || s.loading || !s.player) return;
+    static int revivals = 0;
+    static double due = 0, next_raw = 0;
+    if (g_revivals.load() != revivals) {
+        revivals = g_revivals.load();
+        due = now + 3.0;
+    }
+    // The SpEffects with their entry flags (+0x1C) and param stateInfo (+0x156).
+    auto effects = [](u64 chr) {
+        std::string out;
+        u64 node = Field<u64>(Field<u64>(chr, 0x1c8), 8);
+        for (int guard = 0; node && guard < 128; ++guard) {
+            char b[64];
+            std::snprintf(b, sizeof b, " %d/%x/si%d", Field<int>(node, 0x40, -1), Field<u32>(node, 0x1c),
+                          int(Field<u16>(Field<u64>(node, 0x48), 0x156)));
+            out += b;
+            node = Field<u64>(node, 0x58);
+        }
+        return out;
+    };
+    static std::string alive_fx;
+    if (due > 0 && now >= due) {
+        due = 0;
+        Log("revive diff (3 s after revive #%d; +0x1e4 %02x): alive -> now", revivals, unsigned(Field<u8>(s.player, 0x1e4)));
+        LogRawDiff(s.player);
+        Log("revive diff speffects alive:%s", alive_fx.c_str());
+        Log("revive diff speffects now:%s", effects(s.player).c_str());
+    }
+    if (Role() != RoleHost && due == 0 && ChrHp(s.player) > 0 && !(Field<u64>(s.player, 0x1e1) & 0x10000) &&
+        g_revivals.load() == 0 && now >= next_raw) {
+        next_raw = now + 1.0;
+        g_alive_raw = SnapshotRaw(s.player);
+        alive_fx = effects(s.player);
+    }
+}
+
 bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     static const bool on = !(std::getenv("BB_PARTY_GUEST_REVIVE") && std::getenv("BB_PARTY_GUEST_REVIVE")[0] == '0');
     const u32 stage = Field<u32>(s.player, 0x3f8);
@@ -4260,10 +4365,10 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // guest's camera underground and its controls broken); any other death revives in place at
         // any distance. BB_PARTY_GUEST_REVIVE_FAR=1: the in-place revive after a fall too.
         // 0.6.9, correct over seamless: every death takes the respawn load. A guest revived in place
-        // could not be hit until its next load (enemy attacks passed through it; PR #6 report, live
-        // revive1 runs 2-7: with or without the body revive 0x1900710 and with the "restore" step;
-        // a flags word of the chr's module [+0x3B0]+0x80 +0x2A0 (bit 0x01000000) and chr
-        // +0x218..+0x26C stay as in death). BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
+        // could not be hit until its next load (enemy attacks passed through it; PR #6 report). The
+        // cause: the death puts the chr's hit bodies on the dead collision layer; the revive's
+        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab2).
+        // BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
         static const bool inplace = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE"));
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
@@ -8499,6 +8604,7 @@ void Tick(const GameSnapshot& s) {
     K10ProbeTick(s, now);
     K10ActionHoldTick(s, now);
     LocalDeathHeightTick(s, now);
+    ReviveDiffTick(s, now);
     {
         GuestPhase gp;
         {

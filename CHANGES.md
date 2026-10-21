@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a player revived in place can be hit again** (the optional no-loading-screen revive, `BB_PARTY_GUEST_REVIVE_INPLACE=1` for guests, `BB_PARTY_B2_HOST_REVIVE=1` for the host): death moves a character's hit bodies to the corpse collision layer, and the in-place revive never moved them back, so enemy attacks passed through the revived player and nothing pushed it until its next load. The revive now restores them (and a guest's cooperator team). Both options stay off by default; a guest's death still uses the short respawn loading screen.
 - **Fixed: joining over a VPN when the host has no open port** (PR #7, vladtepes22): the 0.6.9 VPN fix rewrote the host's address but not its STUN-found public address, which the guest's game still preferred, so the join timed out (live over Radmin). Both now take the address the party connection reached.
 
 ## 0.6.9 (Windows port 0.6.9, co-op fixes from PR #6 and its reports)
