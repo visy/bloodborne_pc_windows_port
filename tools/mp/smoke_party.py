@@ -30,7 +30,7 @@ OUT/verdict.txt (one line per step: PASS / FAIL, the evidence line or what was m
 Exit code 0 only when every step passed. LOOK AT THE SCREENSHOTS too (agents/RULES_062.txt): the
 verdict reads logs, it cannot see a grey screen, a camera in a wall or a stuck dialog.
 """
-import argparse, os, re, subprocess, sys, time
+import argparse, os, re, shutil, struct, subprocess, sys, time
 from pathlib import Path
 
 
@@ -146,16 +146,85 @@ def phase_s2(only):
     )
 
 
-PHASES = {"s1": phase_s1, "s2": phase_s2}
+def _psf(entries):
+    """A PSF file (param.sfo): [(key, fmt, value bytes, max length)], keys sorted, as shadPS4 writes it."""
+    entries = sorted(entries)
+    keys = b"".join(k.encode() + b"\0" for k, *_ in entries)
+    keys += b"\0" * (-len(keys) % 4)
+    key_off = 20 + 16 * len(entries)
+    index, data, ko = b"", b"", 0
+    for k, fmt, v, mx in entries:
+        index += struct.pack("<HHIII", ko, fmt, len(v), mx, len(data))
+        data += v + b"\0" * (mx - len(v))
+        ko += len(k) + 1
+    return b"\0PSF" + struct.pack("<IIII", 0x101, key_off, key_off + len(keys), len(entries)) + index + keys + data
+
+
+def prep_savecopy(root: Path):
+    r"""The host's party save as a player brings one from another build (savecopy): a copy of the
+    instance's test save in shadPS4's layout (SPRJ0005\sce_sys\param.sfo inside, no SPRJ0005.sce_sys
+    beside it), with the Bloodborne Save Editor's *.bak leftovers, over a party folder whose side
+    files belong to another character in the same slot (party_characters.txt says so; party_rot.txt
+    has its rot). The game must take the save in, drop that rot and load it."""
+    user = root / "inst0" / "user"
+    solo = user / "savedata"
+    if not solo.is_dir():
+        subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", "2", "--root", str(root)], check=False)
+    if not solo.is_dir():
+        sys.exit("savecopy: %s has no test save (instances.py setup failed)" % solo)
+    party = user / "savedata_party"
+    if party.exists():
+        shutil.rmtree(party)
+    shutil.copytree(solo, party)
+    for name in ("party_state.json", "party_story.json", "party_rot.txt", "party_prologue.txt", "party_stain.txt",
+                 "party_gestures.txt", "party_characters.txt"):
+        (user / name).unlink(missing_ok=True)
+    slots = []
+    for meta in list(party.rglob("*.sce_sys")):
+        folder = meta.with_name(meta.name[:-8])
+        p = (meta / "param.bin").read_bytes()
+        title, sub, detail = (p[a:b].split(b"\0")[0] + b"\0" for a, b in ((0, 128), (128, 256), (256, 1280)))
+        sfo = _psf([("ACCOUNT_ID", 0x0004, b"\0" * 8, 8), ("MAINTITLE", 0x0204, title, 128), ("SUBTITLE", 0x0204, sub, 128),
+                    ("DETAIL", 0x0204, detail, 1024), ("SAVEDATA_DIRECTORY", 0x0204, folder.name.encode() + b"\0", 32),
+                    ("SAVEDATA_LIST_PARAM", 0x0404, p[1280:1284], 4),
+                    ("TITLE_ID", 0x0204, folder.parent.name.encode() + b"\0", 16)])
+        (folder / "sce_sys").mkdir(exist_ok=True)
+        (folder / "sce_sys" / "param.sfo").write_bytes(sfo)
+        if (meta / "icon0.png").exists():
+            shutil.copy2(meta / "icon0.png", folder / "sce_sys" / "icon0.png")
+        shutil.rmtree(meta)
+        for f in list(folder.glob("userdata00*")) + list(folder.glob("backup0000")):
+            shutil.copy2(f, f.with_name(f.name + ".bak"))
+        slots += [int(f.name[-4:]) for f in folder.glob("userdata000[0-9]") if f.read_bytes().strip(b"\0")]
+    if not slots:
+        sys.exit("savecopy: the test save has no character")
+    (user / "party_characters.txt").write_text("".join("slot %d used %d play %u name %016x\n" % (
+        s, 1 if s in slots else 0, 99 * 3600000 if s in slots else 0, 0x1234 if s in slots else 0) for s in range(10)))
+    (user / "party_rot.txt").write_text("".join("slot %d kinds 1 0 0 0 0\n" % s for s in slots))
+    print("[smoke] savecopy: inst0's party save in shadPS4's layout with *.bak files; slot(s) %s marked as another "
+          "character's, with its rot" % slots, flush=True)
+
+
+def phase_sc(only):
+    # A save brought in from another build (savecopy): taken in, the old character's rot dropped,
+    # loaded by the host's Continue, a guest joins.
+    return dict(
+        name="sc", seconds=300, count=2, headless=0, fresh=False, prep=prep_savecopy,
+        env=[], ienv=[], crash=[],
+        until=["0:cooperators 0 -> 1", "1:session .* -> client"],
+    )
+
+
+PHASES = {"s1": phase_s1, "s2": phase_s2, "sc": phase_sc}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
-          "host_leave": "s2"}
+          "host_leave": "s2", "savecopy": "sc"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"boss kill|party stays", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
-              "host_crash": r"host crash", "host_leave": r"host Leave"}
+              "host_crash": r"host crash", "host_leave": r"host Leave", "savecopy": r"^sc "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -195,8 +264,11 @@ def run_phase(a, ph, out: Path):
         # instances.py moves the old run.log to run.prev.log, unless something holds it open (then
         # it appends): remember the file id and size, and copy from there when it is the same file.
         starts[i] = (p.stat().st_ino, p.stat().st_size) if p.exists() else (None, 0)
-    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "3", "--headless", "1", "--party",
-           "--fresh-saves", "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
+    count = ph.get("count", 3)
+    if ph.get("prep"):
+        ph["prep"](root)
+    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(count), "--headless", str(ph.get("headless", 1)),
+           "--party"] + (["--fresh-saves"] if ph.get("fresh", True) else []) + ["--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
            "--label", "smoke %s" % ph["name"]]
     for e in ph["env"]:
@@ -221,7 +293,7 @@ def run_phase(a, ph, out: Path):
     finally:
         shooter.terminate()
     print("[smoke] %s: harness exit %d after %.0f s" % (ph["name"], r.returncode, time.time() - t0), flush=True)
-    for i in range(3):
+    for i in range(count):
         p = root / f"inst{i}" / "run.log"
         with open(p, "rb") as f:
             f.seek(starts[i][1] if os.fstat(f.fileno()).st_ino == starts[i][0] else 0)
@@ -380,7 +452,23 @@ def check_s2(v, L, d: Path):
     check_common(v, L, "s2")
 
 
-CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2}
+def check_sc(v, L, d: Path, root: Path):
+    need(v, L, "sc save check OK (*.bak ignored)", 0, r"Saves: check OK: .*savedata_party")
+    need(v, L, "sc shadPS4 layout taken in", 0, r"is in shadPS4's layout \(sce_sys/param\.sfo inside\)")
+    need(v, L, "sc old character's side files dropped", 0, r"Saves: save slot \d: another character")
+    w = need(v, L, "sc host Continue loads the copied character", 0, r"party character in the world")
+    need(v, L, "sc guest joins the host", 0, r"cooperators 0 -> 1", w or 0)
+    need(v, L, "sc guest in the host's session", 1, r"session .* -> client")
+    party = root / "inst0" / "user" / "savedata_party"
+    both = bool(list(party.rglob("*.sce_sys/param.bin")) and list(party.rglob("sce_sys/param.sfo")))
+    v.step("sc both layouts' descriptions on disk", both, "param.bin and sce_sys/param.sfo" if both else "missing")
+    rot = root / "inst0" / "user" / "party_rot.txt"
+    left = rot.read_text().strip() if rot.exists() else ""
+    v.step("sc the other character's rot is gone", not left, "gone" if not left else repr(left[:80]))
+    none_of(v, L, "sc: no crash / assert", r"(?i)unhandled exception|assertion failed|EXCEPTION_ACCESS|fatal error", insts=(0, 1))
+
+
+CHECKS = {"s1": lambda v, L, d, root: check_s1(v, L), "s2": lambda v, L, d, root: check_s2(v, L, d), "sc": check_sc}
 
 
 def main():
@@ -399,7 +487,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "sc") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
@@ -412,7 +500,7 @@ def main():
         if not a.check_only:
             run_phase(a, ph, out / name)
         print("[smoke] verdict %s" % name, flush=True)
-        CHECKS[name](v, Logs(out / name), out / name)
+        CHECKS[name](v, Logs(out / name), out / name, Path(a.root))
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
