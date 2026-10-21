@@ -63,6 +63,14 @@ int main() {
     assert(!GuestServiceTalk(0));
     assert(GuestServiceTalkAllowed(210304, ""));
     assert(!GuestServiceTalkAllowed(210305, ""));
+    // Gehrman t210305: his last event (ending choice) is up with 1028, or 1029 without 1030.
+    assert(!GehrmanLastEvent(false, false, false));
+    assert(!GehrmanLastEvent(false, false, true));
+    assert(!GehrmanLastEvent(false, true, true));
+    assert(GehrmanLastEvent(false, true, false));
+    assert(GehrmanLastEvent(true, false, false));
+    assert(GehrmanLastEvent(true, true, true));
+    assert(kGehrmanTalk == 210305);
     assert(GuestServiceTalkAllowed(210305, "all"));
     assert(GuestServiceTalkAllowed(210305, "123,210305"));
     assert(!GuestServiceTalkAllowed(210305, "123,2103050"));

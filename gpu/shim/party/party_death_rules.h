@@ -283,11 +283,26 @@ inline AskClose PlanAskClose(bool open, bool loading, bool local_dead, double op
 /// headstone's talk script sets it on the user's own game (SetEventFlag). The same warp event
 /// also runs on every other game in that map (live splitq: the guest's 12107000 reached its warp
 /// 2003[49] 0.05 s after the host's, with no flag set there), so both players were asked.
+/// The 7AAB01xx shape alone also matched the talk state flags of m21_00 (72100100-72100102 the
+/// Doll's level-up handshake, 72100120-72100136 Gehrman's lines) and 700001xx (live 2026-10-20:
+/// a guest's Doll / Gehrman talk and the workbench logged as "this player's lamp use", which then
+/// counted as its own use for a lamp warp of another member's within 10 s). Lamps are 7AAB01xx of
+/// areas 22-36 and m21_01 (72110100); see TalkStateFlag for the rest.
 inline bool LampTriggerFlag(std::uint32_t id) {
     if (id / 1000 == 72102 || id / 1000 == 72103) {
         return true;
     }
-    return id >= 70000000u && id < 80000000u && id / 1000 % 10 == 0 && id % 1000 / 100 == 1;
+    if (!(id >= 70000000u && id < 80000000u && id / 1000 % 10 == 0 && id % 1000 / 100 == 1)) {
+        return false;
+    }
+    const std::uint32_t area = id / 100000 % 100, block = id / 10000 % 10;
+    return area >= 21 && !(area == 21 && block == 0);
+}
+/// The other 7AAB01xx flags: per-player talk state (the Dream's 721001xx, 700001xx), set and
+/// cleared by each game's own talk scripts and events; kept out of the host-world mirror like the
+/// lamp flags (a mirrored host 0 would undo a guest's Doll handshake mid level-up).
+inline bool TalkStateFlag(std::uint32_t id) {
+    return id >= 70000000u && id < 80000000u && id / 1000 % 10 == 0 && id % 1000 / 100 == 1 && !LampTriggerFlag(id);
 }
 constexpr double kLampOriginWindow = 10.0;  ///< s from a lamp's flag to its warp (the event waits ~3-4 s)
 enum class LampOrigin { Own, Other };
