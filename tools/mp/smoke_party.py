@@ -147,14 +147,17 @@ def phase_s1(only):
             "guest_obj=2411810@20%m24_01",
             "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
             "guest_die@46%m24_01~",               # 40 s after the host's death: the last one down
-            # wipeboss (0.7.2 known issue 2): back at the host's lamp after the respawn load, 30 s
-            # near Gascoigne's fog with nobody going in (HP logged every 10 s: no boss, no hits), then
-            # a real walk through the fog: the fight must open for everyone from that alone.
+        ])
+        # wipeboss (0.7.2 known issue 2): guest 2 (its scripted death always runs; guest 1's waits
+        # forever when Gascoigne kills it first), back at the host's lamp after the respawn load:
+        # 30 s near Gascoigne's fog with nobody going in (HP logged every 10 s: no boss, no hits),
+        # then a real walk through the fog: the fight must open for everyone from that alone.
+        g2 = ",".join([
+            "guest_die@16%m24_01~",
             "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!",
             "guest_obj=2411810@2%m24_01",
             "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
         ])
-        g2 = "guest_die@16%m24_01~"
     return dict(
         name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -962,9 +965,10 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following", "1:Party HUD: slot 0 spectating"],
     "wipe": [WIPE_UNTIL],
     # guest 1 back from the late wipe's respawn load (then the hold: no revive of its own after it)
-    # and its walk through Gascoigne's fog 30 s later: the fight opens on the host
-    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)[\s\S]*"
-                  r"went through boss fog", r"0:a wipe; the[\s\S]*boss fog: slot 1 went in first"],
+    # and guest 2's walk through Gascoigne's fog 30 s later: the fight opens on the host
+    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)",
+                  r"2:own chr at HP 0: told the host[\s\S]*went through boss fog",
+                  r"0:a wipe; the[\s\S]*boss fog: slot \d+ went in first"],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
@@ -1271,7 +1275,7 @@ def check_wipe_boss(v, L, w, arr):
     t0 = back[0] if back else arr
     for i in (0, 1, 2):
         need(v, L, "s1 late wipe boss: boss reset by the load on inst%d" % i, i, r"boss health bar: reset \(a load\)", w - 1)
-    walk = L.find(1, r"travel step \d+/\d+: guest_obj", arr)
+    walk = L.find(2, r"travel step \d+/\d+: guest_obj", arr)  # guest 2 (headless) walks in
     t1 = walk[0] if walk else 1e9
     v.step("s1 late wipe boss: 30 s at the lamp before the walk-in", walk is not None and t1 - arr >= 30,
            "walk +%.1f s, guest 1 back +%.1f s" % (t1, arr) if walk else "no guest_obj step after +%.1f s" % arr)
@@ -1279,10 +1283,10 @@ def check_wipe_boss(v, L, w, arr):
     none_of(v, L, "s1 late wipe boss: no stale fog flag held back", r"already 1 when this stay began", arr - 15, t1, insts=(1, 2))
     if walk is None:
         return
-    went = need(v, L, "s1 late wipe boss: guest 1 walks through the fog", 1, r"guest: went through boss fog", t1)
+    went = need(v, L, "s1 late wipe boss: guest 2 walks through the fog", 2, r"guest: went through boss fog", t1)
     if went is None:
         return
-    need(v, L, "s1 late wipe boss: the host opens the fight from it", 0, r"boss fog: slot 1 went in first", went - 0.5)
+    need(v, L, "s1 late wipe boss: the host opens the fight from it", 0, r"boss fog: slot \d+ went in first", went - 0.5)
     for i in (0, 1, 2):
         need(v, L, "s1 late wipe boss: the fight is on for inst%d (bar)" % i, i, r"boss health bar shown", went - 0.5)
 
