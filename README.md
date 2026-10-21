@@ -395,21 +395,24 @@ area's enemies).
 
 Parity with Elden Ring Seamless Co-op, measured row by row in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
 Two numbers: **plan done** is how much of the plan is built and seen working at least once;
-**ERSC parity (evidence-weighted)** caps every row at 95% until it has been checked on two real PCs over
-the Internet (two real Internet sessions so far, on 0.6.0 and 0.6.9; every other check ran on one PC), and caps rows where we chose to differ from ERSC (the
-whole party respawns with the host, 4 players instead of 6, one shared drop roll) at 95% too.
+**ERSC parity (evidence-weighted)** caps every row checked on one PC only at 92%, at 94% when it also ran
+over the real Internet from one PC (through a VPN), until it has been checked on two real PCs over the
+Internet (two real Internet sessions so far, on 0.6.0 and 0.6.9; every other check ran on one PC); a row
+that failed in a real session and is fixed on one PC only scores lower still (84-88%), and rows where we
+chose to differ from ERSC (a wipe respawns everyone together, 4 players instead of 6, one shared drop roll)
+are capped at 95% too.
 
 | Area | Plan done | | ERSC parity (evidence-weighted) | |
 |---|---|--:|---|--:|
-| **Overall** | `████████████████████` | 99% | `███████████████████░` | 95% |
-| Session & joining | `████████████████████` | 100% | `███████████████████░` | 95% |
-| World & travel | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
-| Progress (anyone can progress) | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Network & robustness | `███████████████████░` | 96% | `███████████████████░` | 93% |
-| Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Feels like single player in a party | `████████████████████` | 100% | `███████████████████░` | 95% |
+| **Overall** | `████████████████████` | 100% | `██████████████████░░` | 91% |
+| Session & joining | `████████████████████` | 100% | `██████████████████░░` | 92% |
+| World & travel | `████████████████████` | 100% | `██████████████████░░` | 92% |
+| Death & respawn | `████████████████████` | 100% | `██████████████████░░` | 89% |
+| Progress (anyone can progress) | `████████████████████` | 100% | `██████████████████░░` | 91% |
+| Services & UI | `████████████████████` | 100% | `██████████████████░░` | 90% |
+| Network & robustness | `███████████████████░` | 97% | `██████████████████░░` | 92% |
+| Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `██████████████████░░` | 92% |
+| Feels like single player in a party | `████████████████████` | 100% | `██████████████████░░` | 90% |
 
 ### Coming next
 
