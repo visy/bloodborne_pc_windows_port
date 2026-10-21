@@ -131,6 +131,29 @@ void Log(const char* fmt, ...) {
 /// A live travel test step (BB_PARTY_DIRECTOR_TEST host_warp=ID@S, host_die@S, guest_die@S):
 /// runs S seconds after this player's next (re)join - the host's cooperators 0 -> >= 1, the
 /// guest's client session with the world loaded - on the main thread, in list order.
+// Where every member is (the party link's vitals; the director's tick writes it, the "?near=" test
+// condition reads it).
+std::mutex g_where_mu;
+std::vector<b2::Where> g_where;
+int g_where_local = -1;
+
+/// Another member's vitals position (fresh, under 3 s) lies within `r` m of `at`; `d` its distance.
+bool MemberNear(const float at[3], float r, float* d) {
+    std::lock_guard<std::mutex> lk(g_where_mu);
+    for (const b2::Where& w : g_where) {
+        if (w.slot == g_where_local || !w.has_pos || w.age_ms > 3000) {
+            continue;
+        }
+        const float dx = w.pos[0] - at[0], dy = w.pos[1] - at[1], dz = w.pos[2] - at[2];
+        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist <= r) {
+            if (d) *d = dist;
+            return true;
+        }
+    }
+    return false;
+}
+
 struct TravelStep {
     // HostMark / GuestMark (steady-world clock, as host_move; %MAP filter): the Hunter's Mark (the Lua event "OnReviveMagic", what the player's
     // special-effect update 0x18FEF50 raises for a stateInfo 0x17 effect). HostStage: Lua
@@ -181,6 +204,15 @@ struct TravelStep {
     // then (e.g. a lift's position flag at the end of its ride: no fixed wait for the ride's length)
     std::uint32_t wait_flag = 0;
     bool wait_value = true;
+    // "?near=X:Y:Z:R" at the end (liftfix): not before another party member stands within R m of
+    // (X, Y, Z) (its vitals' position); S counts from then (a second rider steps into a lift's car
+    // once the first one stands in it: no race of two fixed delays on two games)
+    bool wait_near = false;
+    float near_pos[3] = {0, 0, 0};
+    float near_r = 0;
+    // "?obj=ENTITY:ANIM" at the end (liftfix): not before map object ENTITY shows animation ANIM and
+    // it stopped (a lift car arrived: step out right at its arrival, as a player does); S counts from then
+    std::int32_t wait_obj = 0, wait_obj_anim = -1;
 };
 
 // host_route / guest_route (B1): a waypoint counts as reached within this many m; still blocked after
@@ -256,6 +288,7 @@ struct Test {
     Clock::time_point st_at{};
     bool god = false;     // god: the own chr kept invincible (test aid)
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
+    double log_pos_every = 1.0;  // log_pos=S (liftfix): every S s (0.2..10; a lift ride's vertical speed)
     Clock::time_point pos_at{};
     // watch_text=A/B: every new appearance of a game text containing A or B (an action prompt
     // "Kick Down Ladder", a dialog) is logged with its full text (test aid, dlast).
@@ -302,6 +335,8 @@ struct Test {
     Clock::time_point joined_at{};
     Clock::time_point coop_since{};  // the next step's "^N" cooperator count reached (its clock)
     Clock::time_point flag_since{};  // the next step's "?FLAG=V" condition met (its clock)
+    Clock::time_point near_since{};  // the next step's "?near=X:Y:Z:R" condition met (its clock)
+    Clock::time_point obj_since{};   // the next step's "?obj=ENTITY:ANIM" condition met (its clock)
     int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
     int coop_rises[8] = {};          // how often the count rose to >= N (index N), since the start
     Clock::time_point step_at{}; // the last step's run, for "back after" times
@@ -1833,6 +1868,39 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else {
         t.flag_since = {};
     }
+    // "?near=X:Y:Z:R": the same, on another party member's position (the party link's vitals).
+    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_near) {
+        const TravelStep& ns = t.steps[t.next_step];
+        float d = 0;
+        if (!MemberNear(ns.near_pos, ns.near_r, &d)) {
+            t.near_since = {};
+            return;
+        }
+        if (t.near_since == Clock::time_point{}) {
+            t.near_since = now;
+            Log("test: travel step %zu (%s): a party member %.1f m from (%.2f, %.2f, %.2f) now; its delay counts from "
+                "here", t.next_step + 1, TravelStepName(ns.kind), double(d), double(ns.near_pos[0]), double(ns.near_pos[1]),
+                double(ns.near_pos[2]));
+        }
+    } else {
+        t.near_since = {};
+    }
+    // "?obj=ENTITY:ANIM": the same, on a map object's animation (stopped).
+    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj) {
+        const TravelStep& os = t.steps[t.next_step];
+        worldact::ObjAnimState a;
+        if (!worldact::ReadObjAnim(os.wait_obj, &a) || a.anim != os.wait_obj_anim || a.playing) {
+            t.obj_since = {};
+            return;
+        }
+        if (t.obj_since == Clock::time_point{}) {
+            t.obj_since = now;
+            Log("test: travel step %zu (%s): object %d stopped at anim %d now; its delay counts from here", t.next_step + 1,
+                TravelStepName(os.kind), os.wait_obj, os.wait_obj_anim);
+        }
+    } else {
+        t.obj_since = {};
+    }
     if (t.next_step < t.steps.size() &&
         (next_kind == TravelStep::HostKill || next_kind == TravelStep::HostMove || next_kind == TravelStep::GuestMove ||
          next_kind == TravelStep::HostPress || next_kind == TravelStep::GuestPress || next_kind == TravelStep::HostWalk ||
@@ -1851,6 +1919,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
         if (t.coop_since > from) from = t.coop_since;
         if (t.flag_since > from) from = t.flag_since;
+        if (t.near_since > from) from = t.near_since;
+        if (t.obj_since > from) from = t.obj_since;
         if (t.steps[t.next_step].after_scene) {
             // "~": waits for a cutscene that ended after the previous step, then S s after its end.
             if (t.scene_on || t.scene_end_at <= prev) {
@@ -2685,7 +2755,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             Log("test: god: invincible (chr +0x1E1 bit 14)");
         }
     }
-    if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= 1.0) {
+    if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= t.log_pos_every) {
         // Every second: the physics position (as DescribeHere; the map man's +0xAAC is the last
         // grounded / area position and goes stale after a re-created PlayerIns) and the area id.
         t.pos_at = now;
@@ -2795,7 +2865,17 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             std::string& last = t.log_objanim_last[e];
             if (last != buf) {
                 last = buf;
-                Log("test: object %d %s", e, buf);
+                // liftfix: where the local chr stands at each change (a lift car's ride and end against
+                // its rider: in the car, out of it, falling) and its +0x1E1 flags.
+                float p[3] = {};
+                std::uint64_t a = 0, f = 0;
+                if (s.player && SafeGet(s.player + 0x58, &a) && a && SafeGet(a + 8, &a) && a && SafeGet(a + 0x3b0, &a) &&
+                    a && SafeGet(a + 0x68, &a) && a) {
+                    SafeRead(a + 0x1e0, p, 12);
+                }
+                if (s.player) SafeRead(s.player + 0x1e1, &f, 5);
+                Log("test: object %d %s; chr at (%.2f, %.2f, %.2f) f %010llx", e, buf, p[0], p[1], p[2],
+                    static_cast<unsigned long long>(f));
             }
         }
     }
@@ -3299,11 +3379,21 @@ void PartyDirector::ConfigureFromEnv() {
             // "?FLAG=V" (V 0 / 1, default 1) at the end of a travel step: its flag condition.
             std::uint32_t wait_flag = 0;
             bool wait_value = true;
+            bool wait_near = false;
+            float near_pos[3] = {0, 0, 0}, near_r = 0;
+            std::int32_t wait_obj = 0, wait_obj_anim = -1;
             if (item.rfind("host_", 0) == 0 || item.rfind("guest_", 0) == 0) {
                 if (const std::size_t q = item.find('?'); q != std::string::npos) {
                     unsigned long f = 0;
                     int v = 1;
-                    if (std::sscanf(item.c_str() + q + 1, "%lu=%d", &f, &v) >= 1 && f > 0 && f <= 0xffffffffull) {
+                    if (item.compare(q + 1, 4, "obj=") == 0) {
+                        if (std::sscanf(item.c_str() + q + 5, "%d:%d", &wait_obj, &wait_obj_anim) != 2 || wait_obj <= 0) {
+                            wait_obj = 0;
+                        }
+                    } else if (item.compare(q + 1, 5, "near=") == 0) {
+                        wait_near = std::sscanf(item.c_str() + q + 6, "%f:%f:%f:%f", &near_pos[0], &near_pos[1],
+                                                &near_pos[2], &near_r) == 4 && near_r > 0;
+                    } else if (std::sscanf(item.c_str() + q + 1, "%lu=%d", &f, &v) >= 1 && f > 0 && f <= 0xffffffffull) {
                         wait_flag = static_cast<std::uint32_t>(f);
                         wait_value = v != 0;
                     }
@@ -3439,6 +3529,9 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.god = true;
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
+            } else if (item.rfind("log_pos=", 0) == 0) {
+                st.test.log_pos = true;
+                st.test.log_pos_every = std::min(10.0, std::max(0.2, std::atof(item.c_str() + 8)));
             } else if (item.rfind("watch_text=", 0) == 0) {
                 std::string rest = item.substr(11);
                 for (std::size_t a = 0; a <= rest.size();) {
@@ -3602,6 +3695,11 @@ void PartyDirector::ConfigureFromEnv() {
                     step.map.erase(cut);
                 }
                 step.wait_flag = wait_flag;
+                step.wait_near = wait_near;
+                std::memcpy(step.near_pos, near_pos, sizeof near_pos);
+                step.near_r = near_r;
+                step.wait_obj = wait_obj;
+                step.wait_obj_anim = wait_obj_anim;
                 step.wait_value = wait_value;
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
@@ -3659,6 +3757,11 @@ void PartyDirector::ConfigureFromEnv() {
                     step.map.erase(cut);
                 }
                 step.wait_flag = wait_flag;
+                step.wait_near = wait_near;
+                std::memcpy(step.near_pos, near_pos, sizeof near_pos);
+                step.near_r = near_r;
+                step.wait_obj = wait_obj;
+                step.wait_obj_anim = wait_obj_anim;
                 step.wait_value = wait_value;
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
@@ -4106,6 +4209,11 @@ void PartyDirector::Tick() {
                 where.push_back(w);
             }
             b2::SetWhere(where);
+            {
+                std::lock_guard<std::mutex> lk(g_where_mu);
+                g_where = where;
+                g_where_local = link->local_slot();
+            }
         }
         int b2slot = party::kBroadcast;
         std::string b2body;
