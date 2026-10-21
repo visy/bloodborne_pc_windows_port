@@ -484,10 +484,11 @@ constexpr std::uint64_t kRideFlag1e1 = 0x0200000000ull;
 inline bool RidingObject(std::uint64_t f1e1) {
     return (f1e1 & kRideFlag1e1) != 0;
 }
-// A lift's car is steady and slow (every Bloodborne lift a few m/s); a fall out of the world is not
-// (the kill plane of m24_01, ~1470 m below the Great Bridge, in ~30 s: ~49 m/s on average). A drop
-// faster than this per sample is a fall even with the ride flag on (a stale flag never hides one).
-constexpr double kLiftMaxRate = 10.0;
+// A lift's car is steady and slow (most Bloodborne lifts ~5 m/s; Cainhurst Castle's, the fastest seen,
+// 12.7 m/s at its peak: liftfix run 5); a fall out of the world is not (the kill plane of m24_01, ~1470 m
+// below the Great Bridge, in ~30 s: ~49 m/s on average). A drop faster than this per sample is a fall
+// even with the ride flag on (a stale flag never hides one).
+constexpr double kLiftMaxRate = 16.0;
 /// One recovery sample: the chr dropped `dy` m in `dt` s. A fall sample: at least `min_rate` m/s
 /// down, and not a ride on a moving object at a lift's rate.
 inline bool FallSample(double dy, double dt, double min_rate, bool riding) {
@@ -500,7 +501,7 @@ inline bool FallSample(double dy, double dt, double min_rate, bool riding) {
 // The nets fire after kFallRecoverySeconds of fall samples and only for a real fall's drop over that
 // time: a free fall covers well over 100 m in 6 s; a lift that never set the ride flag 25-30 m.
 // liftfix: and only once a sample of that fall went faster than any lift (`peak_rate`, m/s, the
-// fastest sample since the fall began): a free fall passes kLiftMaxRate within ~1 s, while a lift
+// fastest sample since the fall began): a free fall passes kLiftMaxRate within ~1.6 s, while a lift
 // never does, listed or not (the Chalice Dungeons' generated lifts, a 60 m ride whose car the ride
 // test missed: 0.7.1 still took 40 m of a 5 m/s ride in 8 s for a fall).
 constexpr double kFallRecoverySeconds = 6.0;

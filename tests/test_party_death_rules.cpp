@@ -659,7 +659,7 @@ int main() {
     // liftfix: and only after a sample faster than any lift. A 60 m ride at ~5 m/s whose car the ride
     // test misses (a Chalice Dungeon's generated lift) drops 40 m in 8 s: no fall; a free fall from the
     // Great Bridge passes 10 m/s within a second (full smoke 0.7.1: a fall off the Mensis car, 11-23 m/s).
-    CHECK(!FallRecoveryDue(8.0, 40.0, 5.1) && !FallRecoveryDue(12.0, 60.0, 9.9));
+    CHECK(!FallRecoveryDue(8.0, 40.0, 5.1) && !FallRecoveryDue(12.0, 60.0, 12.7));  // 12.7: Cainhurst's peak
     CHECK(FallRecoveryDue(6.0, 150.0, 23.0) && FallRecoveryDue(6.0, 40.0, kLiftMaxRate));
     // The drop test around a death: the peak counts from the last sample on a moving object.
     {

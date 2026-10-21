@@ -405,7 +405,7 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   stays at the TOP while the car is at the bottom; it fell the 48 m shaft through the switch region, the
   up event ran with nobody in the car and the guest died at the shaft's foot (god mode does not stop a
   fall death; the verdict read flags only). It now steps in beside the car at the bottom.
-* Fall recovery (liftfix): the nets also need one sample faster than any lift (10 m/s), so no lift ride
+* Fall recovery (liftfix): the nets also need one sample faster than any lift (16 m/s; Cainhurst's car peaks at 12.7), so no lift ride
   is a fall even where the ride test misses the car (the Chalice Dungeons' generated lifts).
 * Ladders: the shortcut ladder of Central Yharnam's start (2411204, lowered by lever 2411316, event
   12410285): a guest's pull lowers it on every game (l10: the host's game gets the guest's ObjAct kick

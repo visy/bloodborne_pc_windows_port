@@ -505,7 +505,9 @@ LF_LIFT = "2401102"                # Cathedral Ward <-> lower Cathedral Ward lif
 LF_CAR_LOW = "24.28:-45.3:194.17"  # region 2402059 (the up event's switch): in the car at the bottom
 # the bottom landing between the car (24.28, 194.17) and its bottom lever 2401103 (MSB (29.37, -45.71,
 # 196.88)): 1 m in front of the lever (30.11, 197.56) has no floor (the guest fell to y -118, runs 2 / 3)
-LF_LOW_SIDE = "27.0:-45.4:195.6:0.82"
+LF_LOW_SIDE = "30.11:-45.6:197.56:0.82:native:pin=4"  # in front of the lever, held there 4 s while the floor
+                                                      # streams in (run 5: no collision at the arrival anywhere
+                                                      # near: the guest fell to y -118 from both spots)
 LF_FLAGS = "12400827/12400828/12410285"  # lift position / busy, the ladder lever's event (ladder down)
 LF_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
@@ -528,7 +530,7 @@ def phase_lf(only):
         # and the flags-only checks hid it.)
         # onto the bottom landing beside the car by the game's own in-world warp, then a few seconds for
         # the car object to be active
-        "guest_move=%s:native@8%%m24_0" % LF_LOW_SIDE,
+        "guest_move=%s@8%%m24_0" % LF_LOW_SIDE,
         "guest_move=%s@4%%m24_0" % LF_CAR_LOW,             # into the car: up it goes
         "guest_obj=2401104:1.0:0@0.5%%m24_0?obj=%s:32" % LF_LIFT,  # out at the top on the arrival
         "guest_press=0@10!",                               # (in m24_00 there: no map condition)
@@ -730,7 +732,9 @@ def phase_ch(only):
           "guest_press=0@4%%m25!?%s=0" % CH_BUSY]                                  # (B) over here
     return dict(
         name="ch", seconds=300, count=2, headless=0,
+        # 12500000: the first-arrival cutscene seen (run 5: the host sat 40 s in it, its copies paused)
         env=["BB_PARTY_TEST_START_LAMP=2502950", "BB_PARTY_PROGRESS_TEST_CLEAR=%s,%s" % (CH_POS, CH_BUSY),
+             "BB_PARTY_PROGRESS_TEST_SET=12500000",
              "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12500076,12500077"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
         watch=["--watch", r"object %s stopped at anim (0|10) now=arrive@0.2,2" % CH_CAR],
@@ -1634,7 +1638,7 @@ def check_lf(v, L):
            ("y %.1f at +%.1f s" % (y, arr[0])) if pos else "no arrival seen")
     # liftfix: the ride itself: no drop faster than a lift (god mode would hide a fall down the shaft)
     # from the approach beside the car on (a fall there must show too)
-    into = L.find(1, r"guest_move to \(27\.00, -45\.40")
+    into = L.find(1, r"guest_move to \(30\.11, -45\.60")
     v.step("lf lift: guest 1 reached the car's landing", into is not None, "+%.1f s" % into[0] if into else "no approach")
     for i, who in ((0, "host"), (1, "guest 1")):
         f = falls(L, i, into[0] if into else 0.0)
@@ -2055,8 +2059,8 @@ def check_ch(v, L):
     for i, who in ((0, "host"), (1, "guest")):
         # from the first warp to the lift on: the approach counts too
         start = L.find(i, r"_move to \(-2[0-5]\.")
-        f = falls(L, i, start[0] - 0.1 if start else 0.0)
-        v.step("ch %s: no fall from the approach on (vertical speed under 8 m/s)" % who, start is not None and not f,
+        f = falls(L, i, start[0] - 0.1 if start else 0.0, rate=16.0)  # this car peaks at 12.7 m/s (run 5)
+        v.step("ch %s: no fall from the approach on (vertical speed under 16 m/s)" % who, start is not None and not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else
                ("fastest drop within a lift's speed" if start else "never reached the lift"))
         rw = L.all(i, r"lift ride end: event 1250007[67] waits until every player is out")

@@ -43,8 +43,8 @@ int main() {
         CHECK(cars.insert(l.car).second && flags.insert(l.pos).second);
         CHECK(l.busy == 0 || (!LiftByPosFlag(l.busy) && flags.count(l.busy) == 0));
         CHECK(l.pos / 100000u % 100u == std::uint32_t(l.car) / 100000u % 100u);  // flag and car of one area
-        // Only the lifts with no busy flag replay (their ride ends with the flag alone).
-        CHECK(l.Replays() == (l.busy == 0 && l.host_state == 0));
+        // Replaying lifts: the library lift (no busy flag) and Cainhurst's (a copy that did not follow).
+        CHECK(l.Replays() == (l.car == 2601260 || l.car == 2501010));
     }
     CHECK(!LiftByPosFlag(0) && !LiftByPosFlag(12410351) && !LiftByCar(0) && !LiftByCar(2601261));
 
@@ -64,6 +64,15 @@ int main() {
     const Lift* cy = LiftByPosFlag(12410350);  // Central Yharnam: a busy flag, network-synced, no replay
     CHECK(cy && !cy->Replays() && PhaseOf(*cy, 6) == CarPhase::unknown && !HoldMirrorFlip(*cy, 6) &&
           !MirrorHold(*cy, 6, true));
+
+    // Cainhurst's lift (live run 5: the host's copy did not follow, its intro cutscene ran): it replays; pos 1 = the car at
+    // the bottom (end 1), pos 0 = at the top (end 11); rides 0 (down) / 10 (up).
+    const Lift* ch = LiftByCar(2501010);
+    CHECK(ch && ch->Replays() && ch->busy == 12505074 && ch->gate == 0);
+    CHECK(PhaseOf(*ch, 0) == CarPhase::riding && PhaseOf(*ch, 10) == CarPhase::riding);
+    CHECK(CarAgreesWithFlag(*ch, true, 1) && CarAgreesWithFlag(*ch, false, 11) && !CarAgreesWithFlag(*ch, true, 11));
+    CHECK(LiftNeedsReplay(*ch, true, 11) && !LiftNeedsReplay(*ch, false, 11) && MirrorHold(*ch, 10, false));
+    CHECK(HostLiftSync(false, false, true, true, ch->Replays(), false) == LiftSync::apply);
 
     // The flag hold (the 0.7.1 full smoke's el ride 5: both rode down; the host's copy ended first,
     // and the host's flip reached the guest in the very tick the guest's own end animation 9 stopped:
