@@ -339,6 +339,33 @@ IPv4 endpoints only and need no change:
 - Cost: the member's upload (~3 KB/s per relayed guest in play, more during a join) and one more
   hop of latency for the relayed guest's traffic to the host only.
 
+**Tests** (party-nat-test): three players behind simulated RFC 4787 NATs, each with the real route
+table and reliable-UDP streams, the member already in the party; the relayed link opens and carries
+40 KB each way exactly where the model says (the member reaches the host, the guest reaches the member)
+in **250/250** host x member x guest triples, with and without the guest's endpoint known. Only the
+relay connects in 3 triples with the endpoint known (a port-restricted host, a symmetric guest, an
+open / full-cone / restricted member) and 20 without (a restricted or port-restricted host, any guest,
+an open or full-cone member). Security: another party key is refused, the 6th wrong proof locks the
+address out (the right key too, until the lockout ends), frames from non-members and forged `v`
+frames are dropped, a 5th session is refused, a member cannot pose as a guest the host hears
+directly. IPv6-only pairs (both symmetric for IPv4) through stateful firewalls: 8/8 as the model
+(the host's firewall open, or the host punched the guest's `BBG6`). PeerPaths: IPv6 before the
+host relay, IPv4 again when it answers.
+
+**Live** (loopback, 2026-10-21, `agents/netrelay/runs`):
+
+| Run | Setup | Result |
+|---|---|---|
+| relay3 | host and guest 1 `BB_NET_SIM=lat=20,jit=5,nat=port`, guest 2 open; guest 2's code to the host (it joins by punching), no code of guest 1 anywhere, guest 1 `BB_PARTY_RELAY_VIA=` guest 2 | guest 1: TCP / UDP failed, 23 s after its start `member relay: Hunter2 ... relays for us`, `network path: party link over UDP through Hunter2's relay`; host `Hunter1 ... is in the party through Hunter2's relay`; title join 0.5 m from the host, `cooperators 1 -> 2`; 170 s later the party lamp travel to the Tomb of Oedon (guest 1 arrived with the others), the host's two kills and guest 1's own kill on every game (echoes on both; the host's kill record put guest 1's kill to death). Screenshots: three hunters together in the Dream and at the Tomb, no glitch |
+| ipv6b | host `nat=port` (no TCP listener, no IPv4 UDP from an unknown guest), no guest code, both `BB_PARTY_IPV6_ADDR=::1` | the host's code `BBP3-...+6-...` with [::1]; the guest: TCP failed, `party link over UDP via IPv6 [::1]:48640` 1.6 s after the attempt; the host saw it at `240.105.23.114:48641`; title join, `cooperators 0 -> 1` 20 s after start. Screenshots: side by side in the Dream |
+
+Found live and fixed: the link filtered datagrams the party port had already passed (an IPv6 peer's
+240/4 key, a relayed guest) through the NAT sim again (ipv6a: no link); the host punched a relayed
+guest directly beside its relay, which then dropped the relay as "heard directly" (relay2); a lock
+taken twice in the host's tick that hung the party port's reader (relay2: both links lost 10 s
+after the relayed join). Not tested: a real router, a real IPv6 network (this PC has no global
+IPv6), the DHT discovery of relaying members.
+
 ## 5. Running the profiles
 
 ```
