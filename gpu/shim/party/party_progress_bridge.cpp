@@ -213,7 +213,9 @@ void KillRecordTick(party::PartyLink* link, bool host, bool active, const std::m
     KillRecordGame& k = KR();
     const double now = NowS();
     if (!on) {
-        (void)desync::PopKillRecords();  // nothing kept for later
+        // The host relays nothing while off. A guest keeps what came in: the host's record of a
+        // new world can arrive just before its rules turn the switch on again (live: 40 ms).
+        if (host) (void)desync::PopKillRecords();
         if (k.on) BLog("kill record: off (%s)", host ? "System > Shared world" : "the host's rule");
         k.on = false;
         return;
