@@ -248,6 +248,17 @@ bool ChrPos(u64 chr, float out[3]) {
     return a && SafeRead(a + 0x1e0, out, 12);
 }
 
+/// The game's last safe ground spot of a chr (fallsafe): PlayerIns +0x400 -> +0x30 position, +0x3C
+/// rotation (0x1904660 / 0x1904690). The bloodstain record 0x13D2910 builds the stain there (its
+/// +0x00), and the game's own safe-spot warp 0x13CBAD0 (Lua, entity 10000) puts the player there.
+/// False: no tracker (the getters return zeros then).
+bool GameSafeSpot(u64 chr, float pos[4], float rot[4]) {
+    const u64 t = chr ? Field<u64>(chr, 0x400) : 0;
+    pos[3] = 1.0f;
+    rot[3] = 0.0f;
+    return t && SafeRead(t + 0x30, pos, 12) && SafeRead(t + 0x3c, rot, 12);
+}
+
 std::string DescribeChr(u64 chr) {
     float p[3] = {0, 0, 0};
     char b[192];
@@ -3087,10 +3098,18 @@ void HostWorldFallTick(const GameSnapshot& s, double now) {
     alignas(16) float to[4] = {stable[0], stable[1] + 0.3f, stable[2], 1.0f};
     alignas(16) float rot[4] = {0, 0, 0, 0};
     SafeRead(pm + 0x1d0, rot, 16);
+    // fallsafe: the game's own last safe ground spot (where it would put the bloodstain) when it has
+    // one near; the spot this tick saw it stand still on otherwise.
+    alignas(16) float safe[4], safe_rot[4];
+    const bool game = deathrules::SafeSpotUsable(GameSafeSpot(s.player, safe, safe_rot), safe, stable);
+    if (game) {
+        std::memcpy(to, safe, sizeof to);
+        std::memcpy(rot, safe_rot, sizeof rot);
+    }
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, to, rot, 1);
-    Log("recovery: falling for 6 s in the host's world at (%.1f, %.1f, %.1f); back to (%.1f, %.1f, %.1f) where it last stood",
-        p[0], p[1], p[2], to[0], to[1], to[2]);
+    Log("recovery: falling for 6 s in the host's world at (%.1f, %.1f, %.1f); back to (%.1f, %.1f, %.1f) %s",
+        p[0], p[1], p[2], to[0], to[1], to[2], game ? "on the game's last safe ground spot" : "where it last stood");
 }
 
 void FallRecoveryTick(const GameSnapshot& s, double now) {
@@ -3372,6 +3391,14 @@ void StainFromRecordLocked(int slot, const char* why) {
     p.s.map = Field<u32>(rec, 0x3c);
     p.s.echoes = Field<int>(rec, 0x38);
     SafeRead(rec + 0x18, p.s.pos, 12);
+    {
+        // fallsafe: where the game builds the live stain (+0x00, its last safe ground spot), not the
+        // chr's spot at the death (+0x18: the bottom of a fall, under the level after a void fall).
+        float obj[3] = {};
+        if (deathrules::SafeSpotUsable(SafeRead(rec, obj, 12), obj, p.s.pos)) {
+            std::memcpy(p.s.pos, obj, sizeof obj);
+        }
+    }
     p.have_raw = SafeRead(rec, p.raw, sizeof p.raw);
     p.made_at = Now();
     if (p.s.echoes <= 0) {
@@ -3417,11 +3444,13 @@ void GuestBloodstain() {
     SafeWrite(gsm + 0x1592, &own, 1);
     SafeWrite(gsm + 0x1770, &gate, 1);
     const u64 rec = Field<u64>(Slot(kSlotGameData), 0x30);
-    float pos[3] = {};
+    float pos[3] = {}, obj[3] = {};
     SafeRead(rec + 0x18, pos, 12);
-    Log("guest: bloodstain recorded: echoes %d -> %d, stain %d echoes at (%.1f, %.1f, %.1f) map %#x (gate was %u)", echoes,
+    SafeRead(rec, obj, 12);  // the stain object's spot: the game's last safe ground spot
+    Log("guest: bloodstain recorded: echoes %d -> %d, stain %d echoes at (%.1f, %.1f, %.1f) (stain object at (%.1f, "
+        "%.1f, %.1f)) map %#x (gate was %u)", echoes,
         Field<int>(pgd, 0x94, -1), Field<int>(rec, 0x38, -1), double(pos[0]), double(pos[1]), double(pos[2]),
-        Field<u32>(rec, 0x3c), unsigned(gate));
+        double(obj[0]), double(obj[1]), double(obj[2]), Field<u32>(rec, 0x3c), unsigned(gate));
     if (PartyStainOn()) {
         const int slot = party::flow::CurrentSaveSlot();
         if (slot >= 0) {
@@ -3927,6 +3956,9 @@ CorpseSpot g_host_corpse;
 // Any role: where the local chr stood at its last HP 0 (LocalDeathHeightTick), for a guest's arena
 // revive (the spectate carries the dead chr along afterwards). Main thread.
 CorpseSpot g_local_corpse;
+// Any role: the game's last safe ground spot of the local chr at that HP 0 (GameSafeSpot; valid:
+// deathrules::SafeSpotUsable), where its bloodstain goes: a fall death gets up there. Main thread.
+CorpseSpot g_local_safe;
 std::atomic<bool> g_host_down{false};    // the host's death was taken; not revived yet
 std::atomic<double> g_host_down_at{0};
 std::atomic<int> g_revivals{0};
@@ -4629,9 +4661,11 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
     ReadDeathFields(p, &after);
     g_revivals.fetch_add(1);
     g_seen_dying = false;
-    char where[48];
-    if (sp.exact) {
-        std::snprintf(where, sizeof where, "in the arena (no lamp)");
+    char where[80];
+    if (!sp.valid) {
+        std::snprintf(where, sizeof where, "where it lies");
+    } else if (sp.exact) {
+        std::snprintf(where, sizeof where, "%s", sp.what ? sp.what : "in the arena (no lamp)");
     } else {
         std::snprintf(where, sizeof where, "at lamp %u", sp.lamp);
     }
@@ -4702,8 +4736,47 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         g_local_corpse = CorpseSpot{};
         g_local_corpse.valid = ChrTransform(s.player, g_local_corpse.pos, g_local_corpse.rot) &&
                                std::isfinite(g_local_corpse.pos[1]);
+        // fallsafe: the game's safe spot as it was at HP 0 (the bloodstain's spot; read later, a
+        // spectate's carry or the body's own landing could move it).
+        g_local_safe = CorpseSpot{};
+        const bool read = GameSafeSpot(s.player, g_local_safe.pos, g_local_safe.rot);
+        g_local_safe.valid = deathrules::SafeSpotUsable(read, g_local_safe.pos, p);
+        const double dx = double(g_local_safe.pos[0] - p[0]), dz = double(g_local_safe.pos[2] - p[2]);
+        Log("local death: HP 0 at (%.1f, %.1f, %.1f), dropped %.1f m in the 3 s before%s; the game's last safe ground "
+            "spot (%.1f, %.1f, %.1f), %.1f m away (height %+.1f m)%s",
+            double(p[0]), double(p[1]), double(p[2]), d.peak - d.at_death, d.known ? "" : " (no height history)",
+            double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]),
+            std::sqrt(dx * dx + dz * dz), double(g_local_safe.pos[1] - p[1]),
+            g_local_safe.valid ? "" : read ? " (not usable)" : " (none)");
     }
     was_dead = dead;
+}
+
+/// Any role (fallsafe): this death was a fall - the drop test of the height history (around the
+/// death; `y_now` the chr's height now, NaN: at HP 0 only, a spectate carries the body) or the
+/// game's fall-death flags on the chr (`mask` bits it carried alive left out: the host's arena revive).
+bool LocalFallDeath(u64 chr, double y_now, u64 mask = 0) {
+    const DeathHeight dh = g_death_height;
+    const double y = std::isfinite(y_now) ? y_now : dh.at_death;
+    DeathFields dead;
+    ReadDeathFields(chr, &dead);
+    return deathrules::PlanGuestRevive(deathrules::FallDrop(dh.peak, dh.at_death, y), dh.known,
+                                       deathrules::FallDeathState(dead.f1e1 & ~mask, dead.m20_200)) !=
+           deathrules::GuestRevive::InPlace;
+}
+
+/// A fall death's revive spot (fallsafe): the game's safe spot kept at HP 0, exact (no side step).
+bool SafeFloorSpot(LampSpot* out, u32 map, const char* what) {
+    if (!g_local_safe.valid) {
+        return false;
+    }
+    std::memcpy(out->pos, g_local_safe.pos, sizeof out->pos);
+    std::memcpy(out->rot, g_local_safe.rot, sizeof out->rot);
+    out->pos[3] = 1.0f;
+    out->valid = out->exact = true;
+    out->map = map;
+    out->what = what;
+    return true;
 }
 
 /// Diagnostics (BB_PARTY_B2_REVIVE_DIFF=1), any role: the alive copy for a guest too (the host's is
@@ -4816,28 +4889,30 @@ bool GuestArenaRevive(const GameSnapshot& s, double held_for) {
     if (!s.player || !NearestLivingMember(s.player, &arena)) {
         return false;
     }
-    // The height history's drop (the spectate has carried the chr since: its height now says nothing).
-    const double fell_m = deathrules::FallDrop(g_death_height.peak, g_death_height.at_death, g_death_height.at_death);
-    DeathFields dead;
-    ReadDeathFields(s.player, &dead);
-    const bool fell = deathrules::PlanGuestRevive(fell_m, g_death_height.known, deathrules::FallDeathState(dead.f1e1, dead.m20_200)) !=
-                      deathrules::GuestRevive::InPlace;
+    // The height history's drop at HP 0 (the spectate has carried the chr since: its height now
+    // says nothing) or the fall flags.
+    const bool fell = LocalFallDeath(s.player, std::numeric_limits<double>::quiet_NaN());
     const CorpseSpot& c = g_local_corpse;
     const double dx = double(c.pos[0] - arena.pos[0]), dz = double(c.pos[2] - arena.pos[2]);
     const double horiz = std::sqrt(dx * dx + dz * dz), dy = double(c.pos[1] - arena.pos[1]);
-    const bool corpse = deathrules::ArenaReviveAtCorpse(c.valid, fell, horiz, dy);
-    if (corpse) {
+    // fallsafe: a fall gets up on its last safe floor (the bloodstain's spot), never the corpse's.
+    const deathrules::ArenaSpot where = deathrules::PlanArenaReviveSpot(c.valid, fell, horiz, dy, g_local_safe.valid);
+    if (where == deathrules::ArenaSpot::Corpse) {
         std::memcpy(arena.pos, c.pos, sizeof arena.pos);
         std::memcpy(arena.rot, c.rot, sizeof arena.rot);
+    } else if (where == deathrules::ArenaSpot::SafeFloor) {
+        SafeFloorSpot(&arena, s.map_id, nullptr);
     }
     arena.exact = true;
     arena.map = s.map_id;
-    arena.what = corpse ? "guest revive at its corpse spot (arena)" : "guest revive at the nearest member (arena)";
+    arena.what = where == deathrules::ArenaSpot::Corpse      ? "guest revive at its corpse spot (arena)"
+                 : where == deathrules::ArenaSpot::SafeFloor ? "guest revive on its last safe floor (arena, a fall)"
+                                                             : "guest revive at the nearest member (arena)";
     Log("guest: the boss was killed while it lay dead in the fight (%.1f s after its death): up again in the arena %s at "
         "(%.1f, %.1f, %.1f), no load; the corpse spot was %.1f m from the nearest living member (height %+.1f m)%s; its "
         "echoes stay in its bloodstain",
-        held_for, corpse ? "where it died" : "on the nearest member's spot", double(arena.pos[0]), double(arena.pos[1]),
-        double(arena.pos[2]), horiz, dy, !c.valid ? ", no corpse spot kept" : fell ? ", a fall death" : "");
+        held_for, deathrules::ArenaSpotName(where), double(arena.pos[0]), double(arena.pos[1]), double(arena.pos[2]),
+        horiz, dy, !c.valid ? ", no corpse spot kept" : !fell ? "" : g_local_safe.valid ? ", a fall death" : ", a fall death, no safe spot kept");
     SpectateEnd();
     ReviveLocal(s, arena, false);
     party::status::SetLastEvent("The boss fell: you are back on your feet");
@@ -4852,6 +4927,21 @@ bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
         return false;
     }
     LampSpot none;  // not valid: revived where it lies, no warp
+    // fallsafe: after a fall "where it lies" is the bottom of the fall (often under the level): up
+    // on the game's last safe floor instead (its bloodstain's spot); none kept: the respawn load.
+    float at[3] = {0, 0, 0};
+    ChrPos(s.player, at);
+    const bool fell = LocalFallDeath(s.player, std::isfinite(at[1]) ? double(at[1]) : std::numeric_limits<double>::quiet_NaN());
+    const deathrules::LiesRevive lies = deathrules::PlanLiesRevive(fell, g_local_safe.valid);
+    if (lies == deathrules::LiesRevive::Load) {
+        Log("guest: died alone after a fall, no safe spot kept: no revive where it lies (the respawn load instead)");
+        return false;
+    }
+    if (lies == deathrules::LiesRevive::SafeFloor) {
+        SafeFloorSpot(&none, s.map_id, "guest revive on its last safe floor (a fall)");
+        Log("guest: died alone after a fall at (%.1f, %.1f, %.1f): up on its last safe floor (%.1f, %.1f, %.1f) first",
+            double(at[0]), double(at[1]), double(at[2]), double(none.pos[0]), double(none.pos[1]), double(none.pos[2]));
+    }
     ReviveLocal(s, none, false);
     if (!TravelAlone(lt, AloneWhy::Lamp)) {
         Log("guest: died alone: revived, but the alone travel to %u was refused", own);
@@ -5151,31 +5241,30 @@ void HostDownTick(const GameSnapshot& s, double now) {
     if (plan == deathrules::DownTick::ArenaRevive) {
         // Its corpse spot (by its bloodstain) when safe, else the followed member's own spot. Both
         // short warps inside the arena; the bloodstain (its echoes) stays where it died.
-        const DeathHeight dh = g_death_height;
-        u64 f = 0;
-        SafeRead(s.player + 0x1e1, &f, 5);
         // The fall-death state counts only for bits the chr did not carry alive (live arena run: the
         // host's HP module +0x200 read 0x3800 alive and dead, a normal death taken for a fall).
-        const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x200);
-        const u64 f_new = g_alive_fields_ok ? f & ~g_alive_fields.f1e1 : f;
-        const u16 hp200_new = u16(g_alive_fields_ok ? hp200 & ~g_alive_fields.m20_200 : hp200);
-        const bool fell = (dh.known && deathrules::FallDrop(dh.peak, dh.at_death, dh.at_death) >= deathrules::kGuestReviveFallDrop) ||
-                          deathrules::FallDeathState(f_new, hp200_new);
+        const bool fell = LocalFallDeath(s.player, std::numeric_limits<double>::quiet_NaN(),
+                                         g_alive_fields_ok ? g_alive_fields.f1e1 : 0);
         const CorpseSpot& c = g_host_corpse;
         const double dx = double(c.pos[0] - arena.pos[0]), dz = double(c.pos[2] - arena.pos[2]);
         const double horiz = std::sqrt(dx * dx + dz * dz), dy = double(c.pos[1] - arena.pos[1]);
-        const bool corpse = deathrules::ArenaReviveAtCorpse(c.valid, fell, horiz, dy);
-        if (corpse) {
+        // fallsafe: a fall gets up on its last safe floor (the bloodstain's spot), never the corpse's.
+        const deathrules::ArenaSpot where = deathrules::PlanArenaReviveSpot(c.valid, fell, horiz, dy, g_local_safe.valid);
+        if (where == deathrules::ArenaSpot::Corpse) {
             std::memcpy(arena.pos, c.pos, sizeof arena.pos);
             std::memcpy(arena.rot, c.rot, sizeof arena.rot);
+        } else if (where == deathrules::ArenaSpot::SafeFloor) {
+            SafeFloorSpot(&arena, s.map_id, nullptr);
         }
         arena.exact = true;
         arena.map = s.map_id;
-        arena.what = corpse ? "host revive at its corpse spot (arena)" : "host revive at the followed member (arena)";
+        arena.what = where == deathrules::ArenaSpot::Corpse      ? "host revive at its corpse spot (arena)"
+                     : where == deathrules::ArenaSpot::SafeFloor ? "host revive on its last safe floor (arena, a fall)"
+                                                                 : "host revive at the followed member (arena)";
         Log("host death: up again in the arena %s at (%.1f, %.1f, %.1f): no load for anyone; the corpse spot was "
             "%.1f m from the followed member (height %+.1f m)%s; echoes stay in its bloodstain",
-            corpse ? "where it died" : "on the followed member's spot", double(arena.pos[0]), double(arena.pos[1]),
-            double(arena.pos[2]), horiz, dy, fell ? ", a fall death" : "");
+            deathrules::ArenaSpotName(where), double(arena.pos[0]), double(arena.pos[1]), double(arena.pos[2]), horiz,
+            dy, !fell ? "" : g_local_safe.valid ? ", a fall death" : ", a fall death, no safe spot kept");
         SpectateEnd();
         ReviveLocal(s, arena, true);
         party::status::SetLastEvent("The boss fell: you are back on your feet");

@@ -2639,7 +2639,14 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             SafeGet(a + 0x68, &a) && a) {
             SafeRead(a + 0x1e0, p, 12);
         }
-        Log("test: pos area 0x%08x (%.2f, %.2f, %.2f)", area, p[0], p[1], p[2]);
+        // fallsafe: the game's last safe ground spot (PlayerIns +0x400 -> +0x30, the bloodstain's spot)
+        float safe[3] = {};
+        std::uint64_t tr = 0;
+        if (s.player && SafeGet(s.player + 0x400, &tr) && tr) {
+            SafeRead(tr + 0x30, safe, 12);
+        }
+        Log("test: pos area 0x%08x (%.2f, %.2f, %.2f) safe (%.2f, %.2f, %.2f)", area, p[0], p[1], p[2], safe[0], safe[1],
+            safe[2]);
     }
     if (!t.watch_texts.empty() && Seconds(t.watch_at, now) >= 0.25) {
         t.watch_at = now;

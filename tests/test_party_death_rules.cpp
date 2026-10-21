@@ -157,6 +157,29 @@ int main() {
         CHECK(!ArenaReviveAtCorpse(true, true, 12.0, 0.5));    // a fall death: the member's spot
         CHECK(!ArenaReviveAtCorpse(true, false, 41.0, 0.5));   // not in the arena with the member
         CHECK(!ArenaReviveAtCorpse(true, false, 5.0, -4.5));   // another floor
+        // fallsafe: a fall death gets up on the game's safe spot (the bloodstain's), never the corpse.
+        CHECK(PlanArenaReviveSpot(true, true, 12.0, 0.5, true) == ArenaSpot::SafeFloor);
+        CHECK(PlanArenaReviveSpot(true, true, 12.0, 0.5, false) == ArenaSpot::Member);  // no safe spot read
+        CHECK(PlanArenaReviveSpot(true, true, 2.0, -40.0, true) == ArenaSpot::SafeFloor);  // corpse far below
+        CHECK(PlanArenaReviveSpot(true, false, 12.0, 0.5, true) == ArenaSpot::Corpse);  // no fall: as before
+        CHECK(PlanArenaReviveSpot(true, false, 41.0, 0.5, true) == ArenaSpot::Member);
+        CHECK(PlanArenaReviveSpot(false, false, 1.0, 0.0, true) == ArenaSpot::Member);
+        // The game's value is usable: read, finite, not the origin, near the HP 0 spot horizontally.
+        const float died[3] = {-130.0f, -95.0f, 50.0f};  // 70 m below the bridge
+        const float safe[3] = {-134.6f, -26.6f, 54.7f};
+        CHECK(SafeSpotUsable(true, safe, died));
+        CHECK(!SafeSpotUsable(false, safe, died));
+        const float zero[3] = {0.0f, 0.0f, 0.0f};
+        CHECK(!SafeSpotUsable(true, zero, died));  // no tracker: the getter's zeros
+        const float far[3] = {-200.0f, -26.6f, 54.7f};
+        CHECK(!SafeSpotUsable(true, far, died));   // 70 m away: stale (another place)
+        const float nan3[3] = {std::numeric_limits<float>::quiet_NaN(), 0.0f, 1.0f};
+        CHECK(!SafeSpotUsable(true, nan3, died));
+        CHECK(SafeSpotUsable(true, safe, nan3));   // the death spot unknown: the game's value alone
+        // A revive where it lies (then the alone travel): a fall on the safe spot, or no revive here.
+        CHECK(PlanLiesRevive(false, false) == LiesRevive::WhereItLies);
+        CHECK(PlanLiesRevive(true, true) == LiesRevive::SafeFloor);
+        CHECK(PlanLiesRevive(true, false) == LiesRevive::Load);
     }
     {
         // PR #6's wait: the bar over the dead boss, or 3 s after it went; at most 20 s.
