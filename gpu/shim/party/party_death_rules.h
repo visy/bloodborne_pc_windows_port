@@ -499,10 +499,14 @@ inline bool FallSample(double dy, double dt, double min_rate, bool riding) {
 }
 // The nets fire after kFallRecoverySeconds of fall samples and only for a real fall's drop over that
 // time: a free fall covers well over 100 m in 6 s; a lift that never set the ride flag 25-30 m.
+// liftfix: and only once a sample of that fall went faster than any lift (`peak_rate`, m/s, the
+// fastest sample since the fall began): a free fall passes kLiftMaxRate within ~1 s, while a lift
+// never does, listed or not (the Chalice Dungeons' generated lifts, a 60 m ride whose car the ride
+// test missed: 0.7.1 still took 40 m of a 5 m/s ride in 8 s for a fall).
 constexpr double kFallRecoverySeconds = 6.0;
 constexpr double kFallRecoveryMinDrop = 40.0;
-inline bool FallRecoveryDue(double falling_for, double dropped_m) {
-    return falling_for >= kFallRecoverySeconds && dropped_m >= kFallRecoveryMinDrop;
+inline bool FallRecoveryDue(double falling_for, double dropped_m, double peak_rate) {
+    return falling_for >= kFallRecoverySeconds && dropped_m >= kFallRecoveryMinDrop && peak_rate >= kLiftMaxRate;
 }
 /// The drop test's top (PlanGuestRevive): the highest point since the chr last stood on a moving
 /// object. A ride down (12 m in the 3 s window at a lift's rate) is no fall; a fall off the car or

@@ -3134,7 +3134,7 @@ void RideNotice(const char* net, const float p[3], double dy, double dt) {
 /// own-world net warped the host to its lamp mid-ride on the Nightmare of Mensis' 60 m lift.
 void HostWorldFallTick(const GameSnapshot& s, double now) {
     static float stable[4] = {0, 0, 0, 0}, last_y = 0, from_y = 0;
-    static double last_t = 0, falling_since = 0, still_since = 0;
+    static double last_t = 0, falling_since = 0, still_since = 0, peak_rate = 0;
     static u64 last_player = 0;
     static bool have_stable = false;
     if (!s.world_up || s.loading || !s.player || Field<u8>(Slot(kSlotGsm), 0x1592) != 0) {
@@ -3178,9 +3178,11 @@ void HostWorldFallTick(const GameSnapshot& s, double now) {
     if (falling_since == 0) {
         falling_since = now;
         from_y = p[1] + dy;
+        peak_rate = dy / dt;
         return;
     }
-    if (!deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1]) || !have_stable) {
+    peak_rate = std::max(peak_rate, double(dy) / dt);
+    if (!deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1], peak_rate) || !have_stable) {
         return;
     }
     falling_since = 0;
@@ -3214,7 +3216,7 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
     }
     HostWorldFallTick(s, now);
     static float last_y = 0, from_y = 0;
-    static double last_t = 0, falling_since = 0;
+    static double last_t = 0, falling_since = 0, peak_rate = 0;
     static u64 last_player = 0;
     if (!s.world_up || s.loading || !s.player || Field<u8>(Slot(kSlotGsm), 0x1592) != 1) {
         falling_since = 0;
@@ -3239,10 +3241,11 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
         RideNotice("own world", p, dy, dt);
     }
     if (deathrules::FallSample(dy, dt, 1.5, riding)) {
+        peak_rate = falling_since == 0 ? dy / dt : std::max(peak_rate, double(dy) / dt);
         if (falling_since == 0) {
             falling_since = now;
             from_y = p[1] + dy;
-        } else if (deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1])) {
+        } else if (deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1], peak_rate)) {
             falling_since = 0;
             // A stage request already pending (a death redirect's lamp warp): that one wins.
             if (Field<u8>(Slot(kSlotGsm), 8) != 0) {

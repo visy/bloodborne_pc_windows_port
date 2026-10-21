@@ -654,8 +654,13 @@ int main() {
     CHECK(!FallSample(4.0, 0.0, 1.5, false) && !FallSample(std::nan(""), 1.0, 1.5, false));
     // ... and the nets' decision: 6 s and a real fall's drop. The report: 27 m of the Mensis lift in
     // 6.5 s fired (warped to the lamp); a fall out of the world covers 100+ m in that time.
-    CHECK(!FallRecoveryDue(6.5, 27.0) && !FallRecoveryDue(15.0, 39.0));
-    CHECK(FallRecoveryDue(6.0, 150.0) && !FallRecoveryDue(5.9, 150.0));
+    CHECK(!FallRecoveryDue(6.5, 27.0, 30.0) && !FallRecoveryDue(15.0, 39.0, 30.0));
+    CHECK(FallRecoveryDue(6.0, 150.0, 30.0) && !FallRecoveryDue(5.9, 150.0, 30.0));
+    // liftfix: and only after a sample faster than any lift. A 60 m ride at ~5 m/s whose car the ride
+    // test misses (a Chalice Dungeon's generated lift) drops 40 m in 8 s: no fall; a free fall from the
+    // Great Bridge passes 10 m/s within a second (full smoke 0.7.1: a fall off the Mensis car, 11-23 m/s).
+    CHECK(!FallRecoveryDue(8.0, 40.0, 5.1) && !FallRecoveryDue(12.0, 60.0, 9.9));
+    CHECK(FallRecoveryDue(6.0, 150.0, 23.0) && FallRecoveryDue(6.0, 40.0, kLiftMaxRate));
     // The drop test around a death: the peak counts from the last sample on a moving object.
     {
         std::vector<HeightSample> ride = {{0.0, 1003.8, true}, {1.0, 999.8, true}, {2.0, 995.8, true}, {3.0, 991.8, true}};

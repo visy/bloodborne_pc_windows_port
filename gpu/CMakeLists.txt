@@ -604,6 +604,11 @@ add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-death-rules-test PRIVATE shim)
 set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Lifts in a party: the table and the decisions (party_lift_rules.h). ninja -C out/gpu party-lift-rules-test
+add_executable(party-lift-rules-test EXCLUDE_FROM_ALL ../tests/test_party_lift_rules.cpp)
+target_compile_options(party-lift-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-lift-rules-test PRIVATE shim)
+set_target_properties(party-lift-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # A party member's own values (party_guestvals_rules.h). ninja -C out/gpu party-guestvals-test
 add_executable(party-guestvals-test EXCLUDE_FROM_ALL ../tests/test_party_guestvals.cpp)
 target_compile_options(party-guestvals-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
