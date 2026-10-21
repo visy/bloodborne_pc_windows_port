@@ -59,6 +59,18 @@ int main() {
     r.enemy_poise = 75;
     Rules back;
     assert(FromJson(ToJson(r), &back) && back == r);
+    // 0.7.1: the kill record, the NPC mirror and Gather the party go with the rules; a host from
+    // before them sends none: on.
+    r.kill_record = false;
+    r.gather = false;
+    assert(FromJson(ToJson(r), &back) && back == r && !back.kill_record && back.npc_mirror && !back.gather);
+    r.npc_mirror = false;
+    assert(FromJson(ToJson(r), &back) && !back.npc_mirror && back != Rules{});
+    {
+        Rules old;
+        assert(FromJson("{\"rot\":true,\"host_revive\":false}", &old) && old.kill_record && old.npc_mirror &&
+               old.gather && !old.host_revive);
+    }
     Rules c;
     assert(FromJson("{\"boss_hp\":100000,\"enemy_damage\":-5,\"rot\":7}", &c));
     assert(c.boss_hp == 400 && c.enemy_damage == 0 && c.rot);

@@ -13,6 +13,7 @@
 #include "party_status.h"
 #include "seamless_rules.h"
 #include "../bbport_game_menu_pages.h"
+#include "../bbport_settings.h"
 
 #include <atomic>
 #include <chrono>
@@ -296,7 +297,7 @@ void GuestTick(const GameSnapshot& s, party::PartyLink* link, const std::vector<
         }
         Log("guest: round %u: the host gathers the party (host in %s at (%.1f, %.1f, %.1f))", a.round, MapName(a.map).c_str(),
             double(a.pos[0]), double(a.pos[1]), double(a.pos[2]));
-        if (!Enabled()) {
+        if (!party::status::HostRuleOn(party::status::HostRule::Gather)) {  // the host's rule (late)
             Refuse(link, a, Refusal::Off);
             continue;
         }
@@ -421,11 +422,7 @@ void GuestTick(const GameSnapshot& s, party::PartyLink* link, const std::vector<
 } // namespace
 
 bool Enabled() {
-    static const bool on = [] {
-        const char* v = std::getenv("BB_PARTY_GATHER");
-        return !(v && v[0] == '0');
-    }();
-    return on;
+    return BbSettings::Get().party_gather.load();
 }
 
 void RequestFromMenu() {

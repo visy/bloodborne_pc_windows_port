@@ -24,11 +24,11 @@ Phase s2 (~8 min, the Cleric Beast un-killed: the b2_seamless 6.7 fixture flags)
   guests wait, then are summoned back), the host's Leave (every guest home).
 Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real System menu walked
   by the game's own pad path): host and guest open each party rules page (Deaths & revives, World &
-  PvP, Story & dialogue, Party rewards, Enemy scaling, Party display; a screenshot of each); every
+  PvP, Shared world, Story & dialogue, Party rewards, Enemy scaling, Party display; a screenshot of each); every
   page's rows and values from its trace line ("Game menu: page N rows (k): NAME=VALUE | ...", no
   text cut); the host changes one option per page and sets it back (the menu's "row ... -> ..." line,
   bbport.ini's line, the party's rules line where the rule is the host's); the guest sees the host's
-  friendly fire on its read-only row.
+  friendly fire and Shared world rules on its read-only rows.
 Phase summonfail (~3 min, 3 players): guest 1's party port is held by the smoke (every join of it
   fails); guest 2 starts after guest 1's failed direct summon and must be served within 30 s and end
   up in the host's world (a failed join once locked the host's direct summon for minutes).
@@ -177,7 +177,9 @@ def phase_s2(only):
         name="s2", seconds=480,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD + "," + PEBBLE_FLAG, "BB_PARTY_TEST_INVINCIBLE=1"],
         watch=["--watch", "up again in the arena=arena@1,4", "--watch", r"travel step \d+/\d+: guest_chr=hits@6,10",
-               "--watch", r"test menu: step \d+/\d+: mark=keytab=keytab@0.5"],
+               "--watch", r"test menu: step \d+/\d+: mark=keytab=keytab@0.5",
+               # the restarted host's view of the first guest back (look at its phantom tint)
+               "--watch", r"its member's data after .*crash-restarted=hostback@3,10"],
         # Guest 1, 4 s after it arrives at the Cleric Beast's lamp (summoned): Options > Inventory, two
         # tabs right = Key Items (items.md 10.7, run10), a shot, back out. Its restarts: no walk.
         files={"menu1.txt": "m24_01 4 options/cross/right/right/mark=keytab/circle/circle\n-\n-\n-\n"},
@@ -276,10 +278,15 @@ RULES_PAGES = [
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
+    # 0.7.1: the host's world rules (switches that had only an env variable before)
+    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world"],
+     ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
+      '"kill_record":false')),
     ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
                           "Share cutscenes, endings", "Cutscenes live with host"],
      ("Share NPC dialogue", "", "left", "Off", "right", "party_npc_talk=0", "party_npc_talk=1", None)),
-    ("Party rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Insight for bosses"],
+    ("Party rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Own key items as guest",
+                       "Key items at once", "Insight for bosses"],
      ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
     ("Enemy scaling", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
@@ -290,7 +297,8 @@ RULES_PAGES = [
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
 RULES_INI_RESET = ["party_rot", "party_friendly_fire", "party_npc_talk", "party_full_rewards", "party_boss_hp",
-                   "party_pings", "party_host_revive", "party_share_lamps"]
+                   "party_pings", "party_host_revive", "party_share_lamps", "party_kill_record", "party_gather",
+                   "party_npc_mirror", "party_key_view", "party_key_items_summoned"]
 
 
 def rules_walk_to_first():
@@ -317,8 +325,9 @@ def phase_rules(only):
     host += "/" + "/".join(["wait"] * 12) + "/circle/" + up + "/cross/left/mark=rules_h_ffoff/circle/circle/circle"
     guest += "/circle/circle/circle"
     watch = []
-    for tag in ["rules_h%d" % k for k in range(1, 7)] + ["rules_g%d" % k for k in range(1, 7)] + \
-               ["rules_h%dc" % k for k in range(1, 7)] + ["rules_h_ffoff"]:
+    n = len(RULES_PAGES)
+    for tag in ["rules_h%d" % k for k in range(1, n + 1)] + ["rules_g%d" % k for k in range(1, n + 1)] + \
+               ["rules_h%dc" % k for k in range(1, n + 1)] + ["rules_h_ffoff"]:
         watch += ["--watch", r"step \d+/\d+: ~?mark=%s(@|\s)=%s@1.2" % (tag, tag)]
     return dict(
         name="rules", seconds=300, count=2, headless=0,
@@ -1055,6 +1064,12 @@ def check_s2(v, L, d: Path):
         back = need(v, L, "s2 host crash: the party back together", 0, r"cooperators 0 -> [12]", h[0])
         if back is not None:
             v.step("s2 host crash recovery time (kill -> first guest back)", back - h[0] < 90, "%.1f s (limit 90)" % (back - h[0]))
+        # The restarted host's copies of the guests: built, then shown by the game when their data
+        # arrives (the draw bit with it), never by the port before it (the safety net firing early).
+        # chr +0xC0 is not checked: it keeps the creation spot on every join, not the drawn position.
+        need(v, L, "s2 host crash: a guest's chr gets its data, shown by the game", 0,
+             r"its member's data after [\d.]+ s, drawn by the game .*crash-restarted", h[0])
+        none_of(v, L, "s2 host crash: no guest shown by the safety net", r"shown as InGameStart does \(safety net", h[0], insts=(0,))
         hl = need(v, L, "s2 host Leave (restarted host)", 0, r"host_leave: Party > Leave pressed", h[0])
         if hl is not None:
             for i in (1, 2):
@@ -1109,6 +1124,11 @@ def check_rules(v, L):
     ff = L.find(1, r"Game menu: page \d+ rows \(\d+\): Friendly fire / PvP=")
     v.step("rules guest: sees the host's friendly fire (On, read-only)", ff and "Friendly fire / PvP=On" in ff[1],
            ff[1][:200] if ff else "no World & PvP rows line on the guest")
+    # 0.7.1: the guest's Shared world page shows the host's rules (read-only lines, the host's values)
+    sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
+    v.step("rules guest: sees the host's Shared world rules (read-only)",
+           sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1],
+           sw[1][:200] if sw else "no Shared world rows line on the guest")
     none_of(v, L, "rules: no menu walk stuck", r"STUCK", insts=(0, 1))
     check_common(v, L, "rules")
 

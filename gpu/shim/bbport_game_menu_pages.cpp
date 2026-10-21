@@ -1254,6 +1254,34 @@ void DefineAll() {
         "No co-op walls on area borders: the party walks anywhere. Keep it the same for everyone. Next start",
         "Без стен совместной игры на границах зон: группа ходит везде. Одинаково у всех. Со следующего запуска");
 
+    // ---- Shared world (0.7.1: party_kill_record, party_npc_mirror, party_gather): the host's ----
+    AddPage("Shared world", "Общий мир", "Enemies stay dead, gathering the party, NPCs as in the host's world (bbport)",
+            "Враги не оживают, сбор группы, NPC как в мире хоста (bbport)");
+    host_rule(&Values::party_kill_record, "Enemies stay dead", "Враги не оживают",
+              AddText("A party kill is dead for everyone, also as maps stream in again, until a rest. Party rule",
+                      "Убитый группой враг мёртв у всех, и при новой подгрузке карты, до отдыха. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::KillRecord); },
+              {"The host's rule: an enemy the party killed stays dead for you too, until a rest",
+               "Правило хоста: убитый группой враг мёртв и у вас, до отдыха"},
+              {"The host decides; off: an enemy killed out of your sight may stand again here",
+               "Решает хост; выкл.: враг, убитый не у вас на глазах, может стоять у вас"});
+    host_rule(&Values::party_gather, "Host can gather", "Хост собирает группу",
+              AddText("Party > Gather the party brings every guest to you (each is asked). Party rule",
+                      "Группа > Собрать группу переносит гостей к вам (каждого спросят). Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::Gather); },
+              {"The host may gather the party: you are asked each time and may say no",
+               "Хост может собрать группу: вас каждый раз спросят, можно отказаться"},
+              {"The host turned gathering off: you are never moved to the host",
+               "Хост выключил сбор группы: вас не переносят к нему"});
+    host_rule(&Values::party_npc_mirror, "NPCs as in host's world", "NPC как в мире хоста",
+              AddText("An NPC gone from your world is gone for the guests too (the clinic's door). Party rule",
+                      "NPC, которого нет в вашем мире, нет и у гостей (дверь клиники). Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::NpcMirror); },
+              {"The host's rule: an NPC gone from the host's world is gone here too",
+               "Правило хоста: NPC, которого нет в мире хоста, нет и у вас"},
+              {"The host decides; off: you may see NPCs the host's world no longer has",
+               "Решает хост; выкл.: вы можете видеть NPC, которых нет в мире хоста"});
+
     // ---- Story & dialogue (party_npctalk, party_progress, party_story) ----
     AddPage("Story & dialogue", "Сюжет и диалоги", "Shared NPC dialogue, story progress, NPC quests, cutscenes (bbport)",
             "Общие диалоги NPC, прогресс сюжета, квесты NPC, ролики (bbport)");
@@ -1281,8 +1309,8 @@ void DefineAll() {
         "Гость в мире хоста смотрит ролик вместе с ним. Выкл.: позже, в своём мире. Со следующего запуска");
 
     // ---- Party rewards (party_items, party_director, party_phantom) ----
-    AddPage("Party rewards", "Награды группы", "Echoes and drops, item rewards, bells, Insight for guests (bbport)",
-            "Отголоски и добыча, предметы, колокольчики, озарение гостям (bbport)");
+    AddPage("Party rewards", "Награды группы", "Echoes and drops, item rewards, bells, key items, Insight for guests (bbport)",
+            "Отголоски и добыча, предметы, колокольчики, ключи, озарение гостям (bbport)");
     own(&Values::party_full_rewards, "Full rewards for guests", "Полные награды гостям",
         "While you are a guest: full Blood Echoes and enemy drops, like the host. Off: the game's co-op. Next start",
         "Пока вы гость: полные отголоски крови и добыча, как у хоста. Выкл.: как в игре. Со следующего запуска");
@@ -1292,6 +1320,13 @@ void DefineAll() {
     own(&Values::party_grant_bells, "Give the bells", "Выдать колокольчики",
         "The Beckoning Bell and Small Resonant Bell after the prologue (for ringing by hand). Next start",
         "Колокол призыва и Малый резонирующий колокол после пролога (звонить вручную). Со следующего запуска");
+    // H4 (0.7.1, party_items): the own key section while summoned, and host-world keys given at once.
+    own(&Values::party_key_view, "Own key items as guest", "Свои ключи у гостя",
+        "While you are a guest: your own keys and badges show in Key Items. Off: the game's empty list. Next start",
+        "Пока вы гость: ваши ключи и значки видны в ключевых предметах. Выкл.: пусто, как в игре. Со след. запуска");
+    own(&Values::party_key_items_summoned, "Key items at once", "Ключи сразу",
+        "While you are a guest: a key the host's world gives you is yours at once (needs own key items). Off: at home",
+        "Пока вы гость: ключ из мира хоста ваш сразу (нужны свои ключи). Выкл.: дома, в своём мире");
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_guest_insight.load(), 0, 2); },

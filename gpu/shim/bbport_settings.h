@@ -249,6 +249,15 @@ struct Values {
     std::atomic<bool> party_progress_npc{true};   ///< ... with NPC quest choices
     std::atomic<bool> party_story{true};          ///< cutscenes, time of day, endings shared
     std::atomic<bool> party_story_mirror{true};   ///< ... played live with the host
+    /// 0.7.1 (user rule: every party gameplay switch in the menu, the launcher and the ini). Not put
+    /// into the environment (PartySwitch::env_export false): read live from here; an explicit env
+    /// variable still wins at start. The host's (party_balance Rules; a guest follows the host's):
+    std::atomic<bool> party_kill_record{true};  ///< enemies stay dead for the party (party_kill_record.h)
+    std::atomic<bool> party_npc_mirror{true};   ///< an NPC gone from the host's world is gone on guests
+    std::atomic<bool> party_gather{true};       ///< I5: the host may gather the party (party_gather.h)
+    /// Each player's own (while it is a guest; party_items):
+    std::atomic<bool> party_key_view{true};     ///< the own key items while summoned (next start)
+    std::atomic<bool> party_key_items_summoned{true}; ///< a host-world key item given at once (needs key_view)
     /// Insight a guest gets for a boss the host kills (party_phantom InsightMode): 0 same as the
     /// host (parity), 1 full bonus, 2 the game's own +1 (ini party_guest_insight parity|full|0; env
     /// BB_PARTY_GUEST_INSIGHT). Next start.
@@ -299,6 +308,9 @@ struct PartySwitch {
     const char* key;
     const char* env;
     std::atomic<bool> Values::*member;
+    /// Load puts the ini's value into `env` when it is unset (for modules reading it at start);
+    /// false: the module reads the member, only an explicit variable is taken (never exported).
+    bool env_export = true;
 };
 extern const PartySwitch PartySwitches[];
 extern const int PartySwitchCount;
