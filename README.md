@@ -352,7 +352,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
 | The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
-| Anyone, during a boss fight | Watches a living party member fight (press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.
@@ -478,7 +478,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
-| vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); co-op bug reports |
+| vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); Chalice Dungeon entry with a party (PR #8); co-op bug reports |
 | zackcage6 | Testing and bug reports |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
