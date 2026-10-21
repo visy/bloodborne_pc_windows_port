@@ -254,6 +254,47 @@ int main() {
         CHECK(!JoinBesideWaits(Busy::None, lamp));
         CHECK(!JoinBesideWaits(Busy::OtherMap, lamp));
     }
+    // Chalice Dungeons (after PR #8, live): the direct summon's message carries the host's ChannelId,
+    // else the guest's game builds no dungeon and the guest falls through an empty m29.
+    {
+        Room c = r;
+        c.area = 0x1d0a5a00;
+        c.channel = 1110692594440089ull;  // 0x3f22b458bd799, the shared fixed Pthumeru dungeon
+        Room cd;
+        CHECK(DecodeRoom(EncodeRoom(c), &cd, &refused, &err) && cd.channel == c.channel && cd.area == c.area);
+        const auto cp = BuildPayload(id, c);
+        std::memcpy(&q, &cp[0x28], 8); CHECK(q == 1110692594440089ull);
+        // An older host (no "channel" key) decodes as none.
+        CHECK(DecodeRoom("{\"op\":\"dsum_room\",\"room\":\"00112233445566778899\",\"area\":486539264,\"pos\":[0,0,0],\"level\":0}",
+                         &cd, &refused, &err) && cd.channel == kNoChannel);
+        CHECK(ChannelSet(1110692594440089ull) && !ChannelSet(0) && !ChannelSet(kNoChannel) && !ChannelSet(0x8000000000000001ull));
+        CHECK(ChaliceMap(0x1d000000) && ChaliceMap(0x1d0a5a00) && !ChaliceMap(0x15000000) && !ChaliceMap(0xffffffffu));
+        // The guest keeps a dungeon room without a ChannelId out of its game (waited, no gather).
+        Guest cg; OnAsked(cg, 0); OnRoom(cg, 1, false);
+        CHECK(RoomLacksDungeon(cg, 2, cd) && cg.phase == Phase::Failed && cg.waited && !cg.gather);
+        Guest cg2; OnAsked(cg2, 0); OnRoom(cg2, 1, false);
+        CHECK(!RoomLacksDungeon(cg2, 2, c) && cg2.phase == Phase::HaveRoom);
+        Room plain = r;  // a room outside the dungeons needs none
+        CHECK(!RoomLacksDungeon(cg2, 2, plain) && cg2.phase == Phase::HaveRoom);
+        // The host refuses while its dungeon's ChannelId is not ready, with the Chalice wait (the guest asks again).
+        HostView hv; hv.world_up = true; hv.ms_since_sign_summon = 30000;
+        hv.chalice_unready = true;
+        CHECK(HostRefusal(hv) && std::strstr(HostRefusal(hv), "ChannelId") && RefusalWait(hv) == Busy::Chalice);
+        hv.chalice_unready = false; CHECK(!HostRefusal(hv));
+        CHECK(WaitOf(EncodeRefuse(Busy::Chalice)) == Busy::Chalice);
+        Guest rg; OnAsked(rg, 0); OnRoom(rg, 1, true, Busy::Chalice);
+        CHECK(rg.phase == Phase::Asked && rg.reask_at > 1);
+        CHECK(Step(rg, 1 + kReaskWait + 0.1, false, false) == Action::Reask);
+        // Title join: only a joiner whose own slot holds the host's dungeon comes in from its title.
+        CHECK(!TitleJoinChaliceElsewhere(0x15000000, kNoChannel, 0));
+        CHECK(TitleJoinChaliceElsewhere(0x1d000000, 1110692594440089ull, 0));
+        CHECK(TitleJoinChaliceElsewhere(0x1d000000, 1110692594440089ull, 42));
+        CHECK(TitleJoinChaliceElsewhere(0x1d000000, kNoChannel, kNoChannel));
+        CHECK(!TitleJoinChaliceElsewhere(0x1d000000, 1110692594440089ull, 1110692594440089ull));
+        CHECK(TitleJoinBusy(false, false, true, false, true) == Busy::Chalice &&
+              TitleJoinBusy(true, false, true, false, true) == Busy::Boss);
+        CHECK(!BusyText(Busy::Chalice, false).empty() && std::string(BusyWord(Busy::Chalice)) == "chalice");
+    }
     std::printf("party-dsummon-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
