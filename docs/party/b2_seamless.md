@@ -679,6 +679,14 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   dead, the other guest's kill: the host by `DownTick::ArenaRevive`, the guest by this rule (it waits
   while the host's chr is down, at most 30 s from its death, as before). Switch off, a bar that went
   without a kill, or nobody alive here: the host's lamp as before; a wipe: the host's death load.
+  Live (arenaguest, 3 players, Father Gascoigne, `host_kill=2410810:hp` on the host's game): A2 guest 1
+  died by script, guest 2 was killed by Gascoigne 6 s before the kill (its hold came after it): both
+  `up again in the arena where it died ... no load`, the host re-created both chrs; guest 1 rolled,
+  walked 6 m away and back onto its stain (`party stain: recovered 5000 Blood Echoes`), then took
+  enemy hits next to 2410100 (`hit: HP 719 -> 662 (-57)` ... 495). B2 host and guest 1 dead, guest 2
+  alive: the host's `ArenaRevive` and then guest 1's (it waited while the host's chr was down), both at
+  their corpse spots, no loading screen anywhere; stain recovered; hits taken. Smoke group `arena`
+  (s2, Cleric Beast: guest 2 dead in the fight, up in the arena, an enemy hit, no load) passes.
 * Shared boss lamp (design decision, ERSC_PARITY @ 7552b38): every respawn after a boss fight goes to
   the same lamp - the host's last lamp (a guest's lone respawn already uses the host's last lamp, or
   a lit lamp of the loaded map, 6.10; the wipe and the host use the host's lamp).

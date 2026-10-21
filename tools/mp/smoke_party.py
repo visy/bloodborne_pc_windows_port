@@ -151,6 +151,7 @@ def phase_s2(only):
         "guest_die@3%m24_01",                               # dead in the fight: its limbo
         "guest_press=0x0@3%m24_01!",                        # waits until it is up again (logs its HP)
         "guest_chr=2410100@3%m24_01",                       # next to an enemy on that enemy's floor
+    ] + ["guest_press=0x800@1.5%m24_01"] * 4 + [            # R1: draws the enemy (A2: hit 8 s after)
         "guest_press=0x0@12%m24_01",                        # its HP after the enemy's hits
         "guest_move=%s@1%%m24_01" % CLERIC_TRIGGER_HOST,    # back to the arena (invincible)
     ])
