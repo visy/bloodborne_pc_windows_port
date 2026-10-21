@@ -36,6 +36,7 @@
 #include "party_remote_show_rules.h"
 #include "party_ping.h"
 #include "party_flow.h"
+#include "party_worldact.h"
 #include "../bbport_camera.h"
 #include "../bbport_frame_state.h"
 #include "../bbport_settings.h"
@@ -3072,6 +3073,23 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
     return true;
 }
 
+/// liftfall: the local chr rides a moving object: the chr's ride flag (seen on remote chrs in a lift
+/// car) or a lift car playing a ride animation right where it stands (worldact::OnMovingLiftCar;
+/// the local chr does not carry the flag: live, Mensis lift 2601240).
+bool LocalRiding(u64 chr, const float p[3]) {
+    if (deathrules::RidingObject(Field<u64>(chr, 0x1e1))) {
+        return true;
+    }
+    static double at = -1;  // the car scan at most every 0.25 s (the death-height tick runs every frame)
+    static bool on_car = false;
+    const double now = Now();
+    if (now - at >= 0.25) {
+        at = now;
+        on_car = worldact::OnMovingLiftCar(p);
+    }
+    return on_car;
+}
+
 /// A recovery net saw a ride down on a moving object: one line per ride (none for 20 s before).
 void RideNotice(const char* net, const float p[3], double dy, double dt) {
     static double last = -100;
@@ -3130,7 +3148,7 @@ void HostWorldFallTick(const GameSnapshot& s, double now) {
         return;
     }
     still_since = 0;
-    const bool riding = deathrules::RidingObject(Field<u64>(s.player, 0x1e1));
+    const bool riding = dy > 0.0f && LocalRiding(s.player, p);
     if (!deathrules::FallSample(dy, dt, 1.4, riding)) {  // 0.5 s: more than 0.7 m down is a fall
         if (riding && dy > 0.0f) RideNotice("host's world", p, dy, dt);
         falling_since = 0;
@@ -3195,7 +3213,7 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
     last_y = p[1];
     last_t = now;
     last_player = s.player;
-    const bool riding = deathrules::RidingObject(Field<u64>(s.player, 0x1e1));
+    const bool riding = dy > 0.0f && LocalRiding(s.player, p);
     if (riding && dy > 0.0f && !deathrules::FallSample(dy, dt, 1.5, riding)) {
         RideNotice("own world", p, dy, dt);
     }
@@ -4960,7 +4978,7 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
             }
         }
     }
-    const bool riding = deathrules::RidingObject(Field<u64>(s.player, 0x1e1));
+    const bool riding = LocalRiding(s.player, p);
     if (!dead) {
         hist.push_back({now, double(p[1]), riding});
         while (!hist.empty() && now - hist.front().t > 3.0) hist.pop_front();
