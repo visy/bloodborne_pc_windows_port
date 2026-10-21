@@ -360,8 +360,8 @@ class RendezvousSetting(unittest.TestCase):
 
 
 class NetRouteSettings(unittest.TestCase):
-    """F2 (0.7.1): the member relay and IPv6 checkboxes: BB_PARTY_MEMBER_RELAY / BB_PARTY_IPV6, on by
-    default, off when unticked, unset solo."""
+    """F2 (0.7.1): the member relay and IPv6 checkboxes: BB_PARTY_MEMBER_RELAY on by default,
+    BB_PARTY_IPV6 off by default (the game's default too), each as ticked, unset solo."""
     @classmethod
     def setUpClass(cls):
         try:
@@ -372,8 +372,9 @@ class NetRouteSettings(unittest.TestCase):
     def test_default_on_and_off(self):
         for mode in ("host", "join"):
             base = {"party_mode": mode, "party_name": "A"}
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_MEMBER_RELAY"], "1")
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_IPV6"], "0")  # IPv6 off unless ticked
             for key, env in (("party_member_relay", "BB_PARTY_MEMBER_RELAY"), ("party_ipv6", "BB_PARTY_IPV6")):
-                self.assertEqual(self.L.party_env(base)[env], "1")
                 self.assertEqual(self.L.party_env(dict(base, **{key: False}))[env], "0")
                 self.assertEqual(self.L.party_env(dict(base, **{key: True}))[env], "1")
         for env in ("BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6"):
@@ -382,7 +383,7 @@ class NetRouteSettings(unittest.TestCase):
     def test_tooltips(self):
         for words in ("party members", "guest code", "upload", "128 KB/s", "Default: on"):
             self.assertIn(words, self.L.PARTY_MEMBER_RELAY_TIP)
-        for words in ("IPv6", "before any relay", "party code", "privacy address", "Default: on"):
+        for words in ("IPv6", "before any relay", "party code", "privacy address", "Default: off"):
             self.assertIn(words, self.L.PARTY_IPV6_TIP)
 
 

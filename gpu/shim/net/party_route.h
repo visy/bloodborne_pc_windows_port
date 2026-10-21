@@ -151,8 +151,12 @@ public:
     static constexpr std::size_t kQ1Size = 72;
     // Relay handshakes per source /56 and per second (Q1 and Q3 each), and for everyone together.
     static constexpr double kHandshakeRatePerGroup = 5, kHandshakeRateGlobal = 200;
+    // Of the global budget, this much is kept for sources whose /56 completed a handshake within the
+    // last hour or holds a party member's key (L2: a flood of strangers cannot starve the party).
+    static constexpr double kHandshakeRateReserved = 50;
     // A member whose confirmation failed (an impostor, or another party's) is not asked again for
-    // kBackoffFirst, doubling to kBackoffMax.
+    // kBackoffFirst, doubling to kBackoffMax. An unauthenticated refusal (Q5) sets at most
+    // kBackoffFirst and never grows it (L1: anyone can send one).
     static constexpr auto kBackoffFirst = std::chrono::seconds(30);
     static constexpr auto kBackoffMax = std::chrono::hours(1);
     enum Refusal : std::uint8_t { kWrongKey = 1, kLockedOut = 2, kNotServing = 3, kFull = 4, kBackoff = 0xfe, kTimeout = 0xff };
@@ -310,8 +314,8 @@ private:
     void client_send_auth(RClock::time_point now, std::vector<Wire>* out);
     void cookie(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, const std::uint8_t* ya, const std::uint8_t* yb,
                 std::int64_t minute, std::uint8_t out[16]) const;
-    bool budget(bool confirm, std::uint32_t group, RClock::time_point now);
-    void member_failed(RClock::time_point now);
+    bool budget(bool confirm, std::uint32_t group, bool party, RClock::time_point now);
+    void member_failed(RClock::time_point now, bool authenticated);
     bool valid_guest_key(std::uint32_t ga, std::uint16_t gp, std::uint32_t member_src) const;
     bool on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<std::uint8_t>& d, RClock::time_point now,
                   std::uint32_t* src_addr, std::uint16_t* src_port, std::vector<Wire>* out, bool* via_relay);
@@ -350,8 +354,13 @@ private:
     std::uint16_t sv_h_port_ = 0;
     Pake sv_pake_;
     std::array<std::uint8_t, 32> sv_cookie_key_{};
-    Bucket hello_budget_{0, kHandshakeRateGlobal, 2 * kHandshakeRateGlobal, {}};
-    Bucket confirm_budget_{0, kHandshakeRateGlobal, 2 * kHandshakeRateGlobal, {}};
+    Bucket hello_budget_{0, kHandshakeRateGlobal - kHandshakeRateReserved,
+                         2 * (kHandshakeRateGlobal - kHandshakeRateReserved), {}};
+    Bucket confirm_budget_{0, kHandshakeRateGlobal - kHandshakeRateReserved,
+                           2 * (kHandshakeRateGlobal - kHandshakeRateReserved), {}};
+    Bucket hello_reserved_{0, kHandshakeRateReserved, 2 * kHandshakeRateReserved, {}};
+    Bucket confirm_reserved_{0, kHandshakeRateReserved, 2 * kHandshakeRateReserved, {}};
+    std::map<std::uint32_t, RClock::time_point> good_groups_;  // /56 groups with a recent handshake
     std::map<std::uint32_t, std::pair<Bucket, Bucket>> group_budget_;  // by /56 group: hellos, confirms
     std::uint64_t curve_ops_ = 0;
     struct Backoff {

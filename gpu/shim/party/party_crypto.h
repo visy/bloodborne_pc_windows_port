@@ -63,6 +63,10 @@ private:
 // "bbport member relay v1"), and the relay's MAC: keyed BLAKE2b-128 under it.
 Key relay_key(const Key& party_key);
 void mac16(const Key& key, const std::uint8_t* d, std::size_t n, std::uint8_t out[kMacSize]);
+// The party's relay key as every side derives it (L3): with a password, from the password alone
+// (secret zero: the key a plain host:port member also has, so code and plain-address members relay
+// for each other); without one, from the code's secret. The PAKE keeps either from offline guessing.
+Key relay_key_for(const std::string& password, const std::uint8_t secret[8]);
 // The relay handshake's PAKE (CPace on X25519, net/party_route.h): the generator for session id
 // `sid` = Elligator2(keyed BLAKE2b-256(relay key, "bbport cpace generator v1" || sid)), and X25519
 // (false when the result is all zero: a low-order point).

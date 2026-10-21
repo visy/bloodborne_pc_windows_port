@@ -676,7 +676,7 @@ void Router::cookie(std::uint32_t a, std::uint16_t p, const std::uint8_t* cn, co
 }
 
 // Handshake budgets: per /56 group (5 a second each for Q1 and Q3) and for everyone (200).
-bool Router::budget(bool confirm, std::uint32_t group, RClock::time_point now) {
+bool Router::budget(bool confirm, std::uint32_t group, bool party, RClock::time_point now) {
     if (group_budget_.size() > 4096) {
         for (auto i = group_budget_.begin(); i != group_budget_.end();)
             i = now - i->second.first.at > std::chrono::minutes(1) && now - i->second.second.at > std::chrono::minutes(1)
@@ -691,13 +691,26 @@ bool Router::budget(bool confirm, std::uint32_t group, RClock::time_point now) {
         b.burst = 2 * kHandshakeRatePerGroup;
     }
     if (!b.take(1, now)) return false;
-    return (confirm ? confirm_budget_ : hello_budget_).take(1, now);
+    if ((confirm ? confirm_budget_ : hello_budget_).take(1, now)) return true;
+    // The general budget is spent (a flood): the reserved part for the party's own sources.
+    if (!party) {
+        auto g = good_groups_.find(group);
+        party = g != good_groups_.end() && now - g->second < std::chrono::hours(1);
+    }
+    return party && (confirm ? confirm_reserved_ : hello_reserved_).take(1, now);
 }
 
 // The guest's side: the member's confirmation failed (an impostor or another party): not asked
 // again for a while, doubling (R3).
-void Router::member_failed(RClock::time_point now) {
+void Router::member_failed(RClock::time_point now, bool authenticated) {
     Backoff& b = backoff_[k(cl_.m_addr, cl_.m_port)];
+    if (!authenticated) {
+        // An unauthenticated refusal (anyone may forge one): this handshake ends, the wait is at most
+        // kBackoffFirst and the failure count does not grow (L1).
+        if (b.until < now + kBackoffFirst) b.until = now + kBackoffFirst;
+        if (backoff_.size() > 256) backoff_.erase(backoff_.begin());
+        return;
+    }
     ++b.failures;
     auto wait = kBackoffFirst;
     for (int i = 1; i < b.failures && wait < kBackoffMax; ++i) wait *= 2;
@@ -764,7 +777,9 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 return false;
             }
             // Each hello costs two curve operations: budgets per /56 and for everyone (R1).
-            if (!kmac_ || !budget(false, tkey, now)) return false;
+            auto src6 = v6_by_key_.find(k(sa, sp));
+            const bool party_src = src6 != v6_by_key_.end() && src6->second.trusted;
+            if (!kmac_ || !budget(false, tkey, party_src, now)) return false;
             const std::uint8_t* ya = d.data() + 19;
             std::uint8_t g[32], yb_s[32], yb[32], ck[16];
             sv_pake_.generator(cn, g);
@@ -800,7 +815,8 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 }
             }
             if (!fresh) return false;  // stale or not ours: the guest says hello again
-            if (!budget(true, tkey, now)) return false;
+            auto src6 = v6_by_key_.find(k(sa, sp));
+            if (!budget(true, tkey, src6 != v6_by_key_.end() && src6->second.trusted, now)) return false;
             std::uint8_t yb_s[32];
             member_scalar(sa, sp, cn, ya, at, yb_s);
             std::int64_t remaining = 0;
@@ -825,6 +841,8 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 return false;
             }
             if (sv_throttle_.success) sv_throttle_.success(tkey);
+            if (good_groups_.size() > 4096) good_groups_.clear();
+            good_groups_[tkey] = now;  // its /56 may use the reserved budget during a flood (L2)
             std::array<std::uint8_t, 16> cna;
             std::memcpy(cna.data(), cn, 16);
             auto it = sessions_.find(k(sa, sp));
@@ -913,7 +931,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
                 if (!cl_.impostor_noted) {
                     note("member relay: " + key_text(cl_.m_addr, cl_.m_port) +
                          " does not know our party key (not a party member): not asked again for a while");
-                    member_failed(now);
+                    member_failed(now, true);  // its confirmation failed: an impostor
                     cl_.st = ClientState::Refused;
                     cl_.code = kWrongKey;
                 }
@@ -936,7 +954,7 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, bool v6, std::vector<s
             cl_.code = d[19];
             cl_.wait_s = d[20] << 8 | d[21];
             cl_.st = ClientState::Refused;
-            if (cl_.code == kWrongKey) member_failed(now);  // our confirmation failed there
+            if (cl_.code == kWrongKey) member_failed(now, false);  // a hint only (unauthenticated)
             static const char* why[] = {"", "it has another party key (a different code or password)",
                                         "too many wrong attempts from here", "it does not relay now",
                                         "it relays for others already"};

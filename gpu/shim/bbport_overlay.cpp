@@ -1868,10 +1868,10 @@ void PartyTab() {
              "исходящего канала (~3 КБ/с на игрока в игре, не более 128 КБ/с). Ретрансляция следует переключателю сразу."),
            on);
     Toggle("party_ipv6", T("IPv6 for the party", "IPv6 для группы"), s.party_ipv6,
-           T("When both PCs have a global IPv6 address, the party tries IPv6 before any relay (no NAT in the "
-             "way; helps behind carrier-grade NAT). A host without an open IPv4 port then puts its IPv6 "
-             "address into the party code (a temporary privacy address where Windows has one: the code shows it "
-             "and changes with it). From the next party start.",
+           T("Lets players reach you over IPv6 (both PCs need it on; tried before any relay, helps behind "
+             "carrier-grade NAT). A host without an open IPv4 port then puts its IPv6 address into the party "
+             "code (a temporary privacy address where Windows has one: the code shows it and changes when "
+             "Windows rotates it). Off by default. From the next party start.",
              "Если у обоих ПК есть глобальный адрес IPv6, группа пробует IPv6 до ретрансляции (без NAT; "
              "помогает за CGNAT провайдера). Хост без открытого порта IPv4 добавляет свой адрес IPv6 в код "
              "группы. Со следующего запуска группы."),

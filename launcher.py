@@ -512,7 +512,7 @@ PARTY_IPV6_TIP = (
     "relay: no NAT in the way, which helps players behind carrier-grade NAT. A host whose IPv4 port is not "
     "open then puts its IPv6 address into the party code (a longer code that shows this PC's IPv6 address: "
     "a temporary privacy address where Windows has one, so the code changes when it does). Also in the game: System > Party "
-    "network. Default: on (BB_PARTY_IPV6=1/0).")
+    "network. Default: off (BB_PARTY_IPV6=1/0).")
 
 
 def party_env(s: dict) -> dict:
@@ -545,9 +545,9 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
     # Hole punching through the public BitTorrent DHT: opt-in (it shares the IP with DHT nodes).
     env["BB_PARTY_RENDEZVOUS"] = "1" if s.get("party_rendezvous", False) else "0"
-    # F2 (0.7.1): a member relays for a guest that cannot reach the host; IPv6 before any relay (both on).
+    # F2 (0.7.1): a member relays for a guest that cannot reach the host (on); IPv6 before any relay (off).
     env["BB_PARTY_MEMBER_RELAY"] = "1" if s.get("party_member_relay", True) else "0"
-    env["BB_PARTY_IPV6"] = "1" if s.get("party_ipv6", True) else "0"
+    env["BB_PARTY_IPV6"] = "1" if s.get("party_ipv6", False) else "0"  # off by default (0.7.1 decision)
     env["BB_PARTY_STUN"] = stun or None  # game default: stun.l.google.com:19302; "off" disables
     env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
     env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
@@ -1864,7 +1864,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
         self.party_rendezvous = tk.BooleanVar(value=bool(self.settings.get("party_rendezvous", False)))
         self.party_member_relay = tk.BooleanVar(value=bool(self.settings.get("party_member_relay", True)))
-        self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", True)))
+        self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
         self.party_public_var = tk.StringVar(value=str(self.settings.get("party_public_addr", "") or ""))
         self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
         self.party_password_var = tk.StringVar(value=str(self.settings.get("party_password", "") or ""))

@@ -1132,12 +1132,12 @@ void DefineAll() {
     party.net_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Network", "Сеть"), party.net_help, {party.net_value}, Kind::Button);
     AddRow(Flag(&Values::party_member_relay), AddText("Relay for members", "Ретранслятор"),
-           AddText("Relay a party member that cannot reach the host, or join through one. Party members only",
-                   "Ретранслировать участника, не достающего до хоста, или войти через него. Только группа"),
+           AddText("Relays a party member that cannot reach the host (or you through one). Party members only",
+                   "Ретрансляция для участника, не достающего до хоста (или вас через него). Только группа"),
            toggle, Kind::Toggle);
     AddRow(Flag(&Values::party_ipv6), AddText("IPv6", "IPv6"),
-           AddText("Try IPv6 when both PCs have it, before any relay (helps behind CGNAT). Next party start",
-                   "Пробовать IPv6, если он есть у обоих ПК, до ретрансляции (CGNAT). Со следующей группы"),
+           AddText("IPv6: players reach you over it; the party code then holds your IPv6 address, changing when Windows rotates it",
+                   "IPv6: связь по нему; код группы тогда содержит ваш адрес IPv6 и меняется вместе с ним"),
            toggle, Kind::Toggle);
     AddRow(Button([] { party::status::RequestAddRelayCodeFromClipboard(); }), AddText("Join via a member", "Через участника"),
            AddText("Guest: copy a member's guest code (BBG1-...) and press: its relay if the host is out of reach",

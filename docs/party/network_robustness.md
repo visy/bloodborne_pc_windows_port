@@ -335,7 +335,8 @@ IPv4 endpoints only and need no change:
   member behind a port-restricted NAT: every guest endpoint it punches (guest code / DHT) also goes
   to the members (`relay_punch`), which open their NAT towards it.
 - **Switches**: `BB_PARTY_MEMBER_RELAY` (bbport.ini `party_member_relay`, launcher Party tab,
-  System > Party network; on: party members only, capped) and `BB_PARTY_IPV6` (`party_ipv6`; on).
+  System > Party network; on: party members only, capped) and `BB_PARTY_IPV6` (`party_ipv6`; **off**
+  by default, user decision for 0.7.1: with it the code carries the PC's IPv6 address).
   The *Network* line and the log say which path the link took: `party link over UDP via IPv6
   [addr]:port` / `through Hunter1's relay`; the member logs whom it relays for.
 - **Security review fixes (2026-10-21, before the merge)**: V / v frames carry a counter and a MAC
@@ -362,7 +363,12 @@ IPv4 endpoints only and need no change:
   again for 30 s, doubling to an hour; IPv6 nonce frames carry a MAC under the party's relay key, so
   strangers cannot fill their slots; a member marks the IPv6 guests it relays as trusted. The curve
   work still runs under the route table's lock on the party port's reader; the budgets bound it to
-  ~400 X25519 a second at most. A member's IPv6 endpoint enters `net6_table` only after a nonce the
+  ~400 X25519 a second at most. Final follow-ups: a refusal (Q5, unauthenticated) only ends that handshake and holds the member
+  back 30 s at most, only a failed member confirmation (Q4) grows the wait toward an hour; 50 of the
+  200 handshakes a second are kept for networks that completed a handshake in the last hour or hold a
+  party member's IPv6 key; with a password the relay and nonce keys come from the password alone, so
+  members who joined with a plain host:port relay and verify IPv6 with code members (the log names
+  the key type). A member's IPv6 endpoint enters `net6_table` only after a nonce the
   host sent there came back over its link (`net6_echo`). Nonces, session ids and salts from
   BCryptGenRandom; a replayed or recent handshake never replaces a live session; each session is
   capped at 300 datagrams and 128 KB/s. The host's IPv6 address in the code is a temporary privacy

@@ -495,7 +495,9 @@ void Configure(Env env) {
 void HostStart(bool loopback, const std::string& password, const std::array<std::uint8_t, 8>& secret) {
     // The party's nonce key for the IPv6 checks (R4: strangers cannot fill the members' slots).
     bbnet::p2p_router().set_keyed_mac(keyed_mac);
-    bbnet::p2p_router().set_nonce_key(crypto::relay_key(crypto::derive_party_key(password, secret.data())));
+    bbnet::p2p_router().set_nonce_key(crypto::relay_key_for(password, secret.data()));
+    log(std::string("member relay key: from ") +
+        (password.empty() ? "the party code (no password)" : "the password (members who joined with a plain address too)"));
     {
         std::lock_guard<std::mutex> lk(S().mu);
         if (S().started) return;
@@ -534,9 +536,10 @@ void HostStart(bool loopback, const std::string& password, const std::array<std:
 }
 
 bool HostCodeIpv6(bool port_open, std::array<std::uint8_t, 16>* out) {
-    if (!ipv6_on() || port_open || !bbnet::p2p_ipv6_open()) return false;
     udp::Ip6 a;
-    if (!bbnet::local_ipv6(&a)) return false;
+    const bool on = ipv6_on();
+    if (!netpath::code_carries_ipv6(on, on && bbnet::p2p_ipv6_open(), on && bbnet::local_ipv6(&a), port_open))
+        return false;
     std::memcpy(out->data(), a.b.data(), 16);
     return true;
 }
@@ -579,7 +582,11 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
         log("IPv6: off (BB_PARTY_IPV6=0 / System > Party network)");
     }
     bbnet::p2p_router().set_keyed_mac(keyed_mac);
-    const crypto::Key party_key = crypto::derive_party_key(cfg.password, code.secret.data());
+    const crypto::Key relay = crypto::relay_key_for(cfg.password, code.secret.data());
+    log(std::string("member relay key: from ") +
+        (cfg.password.empty() ? "the party code (no password); members who joined with a plain address and a "
+                                "password cannot relay with us"
+                              : "the password (the same for code and plain-address members)"));
     {
         std::lock_guard<std::mutex> lk(s.mu);
         s.started = true;
@@ -591,7 +598,7 @@ void GuestStart(PartyLink* link, const LinkConfig& cfg, const PartyCode& code, s
         s.own6 = own6;
         s.host6 = host6 && have6;
         s.host_ip6 = h6;
-        s.rkey = crypto::relay_key(party_key);
+        s.rkey = relay;
         bbnet::p2p_router().set_nonce_key(s.rkey);
         s.have_key = true;
         s.own_name = cfg.name;

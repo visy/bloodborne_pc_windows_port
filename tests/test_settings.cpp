@@ -75,12 +75,15 @@ int main() {
     // F2 (0.7.1): the member relay and IPv6, on by default; the launcher's env wins over the ini.
     assert(bb_test_setenv("BB_PARTY_MEMBER_RELAY", "") == 0 && bb_test_setenv("BB_PARTY_IPV6", "") == 0);
     BbSettings::Load();
-    assert(s.party_member_relay && s.party_ipv6);
+    assert(s.party_member_relay && !s.party_ipv6);  // relay on, IPv6 off by default (0.7.1 decision)
     assert(Read(path).find("party_member_relay=1\n") != std::string::npos);
-    s.party_ipv6 = false;
+    assert(Read(path).find("party_ipv6=0\n") != std::string::npos);
+    s.party_ipv6 = true;
     BbSettings::Save();  // System > Party network
     BbSettings::Load();
-    assert(!s.party_ipv6 && Read(path).find("party_ipv6=0\n") != std::string::npos);
+    assert(s.party_ipv6 && Read(path).find("party_ipv6=1\n") != std::string::npos);
+    s.party_ipv6 = false;
+    BbSettings::Save();
     assert(bb_test_setenv("BB_PARTY_IPV6", "1") == 0 && bb_test_setenv("BB_PARTY_MEMBER_RELAY", "0") == 0);
     BbSettings::Load();
     assert(s.party_ipv6 && !s.party_member_relay);

@@ -227,7 +227,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "party_member_relay") {
         v.party_member_relay = party::traversal::rendezvous_switch(value.c_str(), true);
     } else if (key == "party_ipv6") {
-        v.party_ipv6 = party::traversal::rendezvous_switch(value.c_str(), true);
+        v.party_ipv6 = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_guest_insight") {

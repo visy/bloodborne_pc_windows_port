@@ -71,6 +71,11 @@ static Key keyed(const Key& k, const char* label, const Nonce& a, const Nonce& b
     return out;
 }
 
+Key relay_key_for(const std::string& password, const std::uint8_t secret[8]) {
+    static const std::uint8_t kZero[8] = {};
+    return relay_key(derive_party_key(password, password.empty() ? secret : kZero));
+}
+
 Key relay_key(const Key& party_key) {
     static const char kLabel[] = "bbport member relay v1";
     Key out{};

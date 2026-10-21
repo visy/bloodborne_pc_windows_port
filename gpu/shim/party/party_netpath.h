@@ -80,4 +80,11 @@ private:
     int stick_left_ = 0;
 };
 
+// The host's Internet code carries its IPv6 address ("+6" tail) only with IPv6 on, an IPv6 socket
+// on the party port, a global address and an IPv4 port that is not open (UPnP, forward or public
+// IP: then the code is exactly the 0.7.0 one).
+inline bool code_carries_ipv6(bool ipv6_on, bool ipv6_socket, bool have_address, bool v4_port_open) {
+    return ipv6_on && ipv6_socket && have_address && !v4_port_open;
+}
+
 }  // namespace party::netpath

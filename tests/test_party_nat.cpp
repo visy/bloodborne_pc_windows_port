@@ -643,6 +643,23 @@ static void test_route_basics() {
     gbad[6] = gbad[6] == '0' ? '1' : '0';
     CHECK(!rudp::decode_guest_code6(gbad, back, &gp) && !rudp::decode_guest_code6(rudp::encode_guest_code(1, 2), back, &gp));
     std::printf("  guest code with IPv6: %s\n", gc6.c_str());
+    // 0.7.1 defaults (member relay on, IPv6 off): a host's code is exactly the 0.7.0 one. The
+    // documented 0.7.0 examples decode and encode back unchanged, with no "+6" tail.
+    for (const char* ex : {PARTY_CODE_EXAMPLE, PARTY_LAN_CODE_EXAMPLE}) {
+        PartyCode pc0;
+        CHECK(decode_party_code(ex, &pc0, &err) && !pc0.has_ipv6);
+        const std::string again = make_party_code(pc0.ipv4, pc0.port, pc0.secret, pc0.flags);
+        if (!pc0.lan_partial) CHECK(again == ex);
+        CHECK(again.find('+') == std::string::npos);
+    }
+    // The tail only with IPv6 on, its socket, an address and no open IPv4 port.
+    using netpath::code_carries_ipv6;
+    for (int m = 0; m < 16; ++m) {
+        const bool on = m & 1, sock = m & 2, addr = m & 4, open = m & 8;
+        CHECK(code_carries_ipv6(on, sock, addr, open) == (on && sock && addr && !open));
+    }
+    CHECK(!code_carries_ipv6(false, true, true, false));  // IPv6 off (the default): never
+    CHECK(!code_carries_ipv6(true, true, true, true));    // UPnP / forward / public IP: never
 }
 
 static void test_chooser() {
@@ -1456,7 +1473,8 @@ static void test_member_relay_security() {
         sec_pump(x, M, P, gg, G, t0, &r, &got);  // replayed
         CHECK(got.size() == 1);
     }
-    // R3: a member whose confirmation failed is not asked again for a while, across relay_use calls.
+    // R3 / L1: a refusal (Q5, unauthenticated) only ends the handshake and holds that member back for
+    // at most 30 s, without growing; a failed member confirmation (Q4) grows the wait toward an hour.
     {
         Router imp, gg;
         imp.set_keyed_mac(sim3::kmac());
@@ -1466,13 +1484,79 @@ static void test_member_relay_security() {
               c == Router::kWrongKey);
         CHECK(sec_handshake(gg, G, imp, M, P, H, sim3::pake(good), at(5000), &c) == Router::ClientState::Refused &&
               c == Router::kBackoff);
-        // after the first backoff (30 s) one more try, which fails again: then 60 s
         CHECK(sec_handshake(gg, G, imp, M, P, H, sim3::pake(good), at(31000), &c) == Router::ClientState::Refused &&
               c == Router::kWrongKey);
-        CHECK(sec_handshake(gg, G, imp, M, P, H, sim3::pake(good), at(80000), &c) == Router::ClientState::Refused &&
-              c == Router::kBackoff);
-        CHECK(sec_handshake(gg, G, imp, M, P, H, sim3::pake(good), at(92000), &c) == Router::ClientState::Refused &&
+        // refused again: still 30 s, not 60 (anyone can forge a Q5)
+        CHECK(sec_handshake(gg, G, imp, M, P, H, sim3::pake(good), at(62000), &c) == Router::ClientState::Refused &&
               c == Router::kWrongKey);
+        // A failed confirmation in Q4 (authenticated failure): 30 s, then 60 s.
+        Router g3;
+        g3.set_keyed_mac(sim3::kmac());
+        auto fake_q4 = [&](rudp::Clock::time_point t) {
+            g3.relay_use(M, P, H, P, sim3::pake(good), t);
+            if (g3.relay_state() != Router::ClientState::Handshake) return;
+            std::vector<Wire> go, io;
+            g3.poll(t, &go);
+            sec_pump(go, G, nbo(7000), imp, M, t, &io);
+            sec_pump(io, M, P, g3, G, t, &go);  // Q2 -> our Q3 (its cn)
+            if (go.size() != 1) return;
+            std::vector<Wire> fake{Wire{}};
+            fake[0].addr = G;
+            fake[0].data = {0xfc, 'Q', 4};
+            fake[0].data.insert(fake[0].data.end(), go[0].data.begin() + 3, go[0].data.begin() + 19);
+            fake[0].data.insert(fake[0].data.end(), {0, 0, 0, 7, 3, 'I', 'm', 'p'});
+            fake[0].data.resize(fake[0].data.size() + 16, 0x33);
+            std::vector<Wire> none;
+            sec_pump(fake, M, P, g3, G, t, &none);
+        };
+        fake_q4(at(100000));
+        CHECK(g3.relay_state(nullptr, &c) == Router::ClientState::Refused && c == Router::kWrongKey);
+        g3.relay_use(M, P, H, P, sim3::pake(good), at(120000));
+        CHECK(g3.relay_state(nullptr, &c) == Router::ClientState::Refused && c == Router::kBackoff);
+        fake_q4(at(131000));  // allowed again after 30 s; fails again
+        g3.relay_use(M, P, H, P, sim3::pake(good), at(180000));
+        CHECK(g3.relay_state(nullptr, &c) == Router::ClientState::Refused && c == Router::kBackoff);  // 60 s now
+        g3.relay_use(M, P, H, P, sim3::pake(good), at(192000));
+        CHECK(g3.relay_state() == Router::ClientState::Handshake);
+    }
+    // L2: a flood of hellos from hundreds of /56s spends the general budget; a source whose network
+    // completed a handshake recently still gets an answer (the reserved part).
+    {
+        Router mm, gg;
+        mm.set_keyed_mac(sim3::kmac());
+        mm.serve(true, H, P, sim3::pake(good), "M", {}, mk);
+        CHECK(sec_handshake(gg, G, mm, M, P, H, sim3::pake(good), at(500000)) == Router::ClientState::Ready);
+        int answered = 0;
+        for (int i = 0; i < 1000; ++i) {
+            std::vector<Wire> q{Wire{}};
+            q[0].addr = M;
+            q[0].data = {0xfc, 'Q', 1};
+            q[0].data.resize(Router::kQ1Size, 1);
+            std::vector<Wire> ans;
+            sec_pump(q, ip(10, i / 250, i % 250, 1), P, mm, M, at(501000), &ans);
+            answered += static_cast<int>(ans.size());
+        }
+        CHECK(answered <= static_cast<int>(2 * (Router::kHandshakeRateGlobal - Router::kHandshakeRateReserved)));
+        std::vector<Wire> q{Wire{}};
+        q[0].addr = M;
+        q[0].data = {0xfc, 'Q', 1};
+        q[0].data.resize(Router::kQ1Size, 2);
+        std::vector<Wire> ans;
+        sec_pump(q, ip(203, 0, 113, 77), P, mm, M, at(501000), &ans);
+        CHECK(ans.empty());  // a stranger: nothing left for it
+        q = {Wire{}};
+        q[0].addr = M;
+        q[0].data = {0xfc, 'Q', 1};
+        q[0].data.resize(Router::kQ1Size, 3);
+        sec_pump(q, G, nbo(9999), mm, M, at(501000), &ans);  // the earlier guest's network
+        CHECK(ans.size() == 1);
+    }
+    // L3: the relay key is the same for a member with the party code and one with a plain address.
+    {
+        const std::uint8_t secret[8] = {9, 8, 7, 6, 5, 4, 0, 0}, zero[8] = {};
+        CHECK(crypto::relay_key_for("pw", secret) == crypto::relay_key_for("pw", zero));
+        CHECK(crypto::relay_key_for("pw", secret) != crypto::relay_key_for("other", secret));
+        CHECK(crypto::relay_key_for("", secret) != crypto::relay_key_for("", zero));  // no password: the secret
     }
     // At most kMaxSessions guests per member.
     {
