@@ -1010,6 +1010,15 @@ static void test_member_relay_security() {
         v.data.push_back(0xff);
         CHECK(!h2.incoming(v, t0 + std::chrono::seconds(2), &d, &sa, &sp, &rr));
         CHECK(h2.incoming(v, t0 + std::chrono::seconds(12), &d, &sa, &sp, &rr) && sa == G);  // quiet for 10 s: allowed
+        // A running route keeps working when the guest is heard directly too (live relay2: the host's
+        // punch opened its NAT, the guest's probe answer came straight in, the relay must not stop).
+        CHECK(h2.incoming(direct, t0 + std::chrono::seconds(13), &d, &sa, &sp, &rr));
+        CHECK(h2.incoming(v, t0 + std::chrono::seconds(14), &d, &sa, &sp, &rr) && sa == G);
+        // ... but another member cannot take it over meanwhile.
+        Wire v2 = v;
+        v2.addr = ip(192, 0, 2, 51);
+        h2.accept_relayed(true, [&](std::uint32_t a, std::uint16_t) { return a == M || a == ip(192, 0, 2, 51); });
+        CHECK(!h2.incoming(v2, t0 + std::chrono::seconds(15), &d, &sa, &sp, &rr));
     }
     // Wrong keys: refused, counted per address, then a lockout (the F3 rule) that holds the right key too.
     {

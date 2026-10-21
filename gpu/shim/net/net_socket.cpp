@@ -2390,6 +2390,12 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
         std::uint16_t sa_port = 0;
         if (g_relay.frame_for(addr, bswap16(port_host), hdr, &sa_addr, &sa_port)) return;  // the relay needs no hole
     }
+    // A guest a member relays for (party_route.h): its traffic goes through that member; raw
+    // probes would only open a direct flow beside the relayed one.
+    if (router().relayed_guest(addr, bswap16(port_host))) {
+        log("punch %s: through a member's relay (no direct punch)", label ? label : "peer");
+        return;
+    }
     std::vector<sockaddr_in> targets;
     sockaddr_in a{};
     a.sin_family = AF_INET;

@@ -1015,8 +1015,11 @@ struct PartyLink::Impl {
         uport = ntohs(b.sin_port);
         return true;
     }
-    void udp_in(rudp::Endpoint from, const std::uint8_t* d, std::size_t n, Clock::time_point now) {
-        if (bbnet::netsim::config().nat && !bbnet::netsim::nat_allow_in(from.addr, from.port)) return;
+    // `external`: from the party port (on_udp_datagram), whose reader applied the simulated NAT to
+    // the wire already: an IPv6 peer (its 240/4 key) or a guest a member relays (F2 0.7.1) arrives
+    // from an endpoint we never sent to directly, and must not be filtered again here.
+    void udp_in(rudp::Endpoint from, const std::uint8_t* d, std::size_t n, Clock::time_point now, bool external = false) {
+        if (!external && bbnet::netsim::config().nat && !bbnet::netsim::nat_allow_in(from.addr, from.port)) return;
         umux.on_datagram(from, d, n, now);
     }
     // Guest: the TCP connect got no answer (or was refused): the same connection over UDP.
@@ -1083,7 +1086,7 @@ struct PartyLink::Impl {
                     if (ext_heard.size() > 64) ext_heard.clear();
                     ext_heard[ep_key(ep)] = now;
                 }
-                udp_in(ep, d.data(), d.size(), now);
+                udp_in(ep, d.data(), d.size(), now, true);
             }
         }
         if (host) {

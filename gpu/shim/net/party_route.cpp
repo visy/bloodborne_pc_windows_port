@@ -600,9 +600,14 @@ bool Router::on_frame(std::uint32_t sa, std::uint16_t sp, std::vector<std::uint8
         std::uint16_t gp;
         get_key(d.data() + 2, &ga, &gp);
         if ((ga == sa && gp == sp) || !ga || !gp || is_route_frame(d.data() + 8, n - 8) || n == 8) return false;
-        if (auto dir = direct_.find(k(ga, gp)); dir != direct_.end() && now - dir->second < kDirectGuard)
-            return false;  // heard directly: a member cannot pose as it
         auto it = host_routes_.find(k(ga, gp));
+        // A new route for an endpoint heard directly: a member cannot pose as it. A route that runs
+        // already keeps working through its member when the guest's own datagrams start to arrive
+        // too (a punch from our side opened the simulated / real NAT meanwhile).
+        const bool known = it != host_routes_.end() && it->second.r.member_addr == sa && it->second.r.member_port == sp;
+        if (!known)
+            if (auto dir = direct_.find(k(ga, gp)); dir != direct_.end() && now - dir->second < kDirectGuard)
+                return false;
         if (it == host_routes_.end()) {
             if (host_routes_.size() >= kMaxHostRoutes) {
                 auto old = host_routes_.begin();

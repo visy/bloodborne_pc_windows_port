@@ -25,8 +25,8 @@
 //  - Security (F3): a member serves only while told to (in the party, its own link not relayed, the
 //    switch on); wrong proofs go to a Throttle (party_link.h AuthThrottle); it forwards only between
 //    its sessions (kMaxSessions, rate-limited, idle kSessionIdle) and its own host endpoint. The
-//    host accepts V only from a member (is_member) and only for a guest endpoint it has not heard
-//    directly within kDirectGuard (a member cannot pose as another member).
+//    host accepts V only from a member (is_member) and, for a new route, only for a guest endpoint
+//    it has not heard directly within kDirectGuard (a member cannot pose as another member).
 // Pure state machine plus a mutex: no sockets, no threads (party-nat-test drives it over
 // simulated NATs).
 #pragma once

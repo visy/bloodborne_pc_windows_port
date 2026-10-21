@@ -43,7 +43,6 @@ struct Net6 {
 
 struct State {
     std::mutex mu;
-    Env env;
     bool started = false, host = false, lb = false;
     // guest
     netpath::Chooser chooser;
@@ -103,9 +102,14 @@ udp::Router::Throttle throttle() {
     return t;
 }
 
+// The runtime's callbacks under a lock of their own: logging while S().mu is held must not take it
+// again (live relay2: host_tick logged a relayed guest under S().mu, deadlocked, and the party port's
+// reader then waited on it forever in the member check).
+std::mutex g_env_mu;
+Env g_env;
 Env env_copy() {
-    std::lock_guard<std::mutex> lk(S().mu);
-    return S().env;
+    std::lock_guard<std::mutex> lk(g_env_mu);
+    return g_env;
 }
 void log(const std::string& line) {
     const Env e = env_copy();
@@ -384,8 +388,8 @@ void guest_tick(bool* serving, std::size_t* served_n, bool* net6_sent, bool* dia
 }  // namespace
 
 void Configure(Env env) {
-    std::lock_guard<std::mutex> lk(S().mu);
-    S().env = std::move(env);
+    std::lock_guard<std::mutex> lk(g_env_mu);
+    g_env = std::move(env);
 }
 
 // ---- host ----
@@ -557,7 +561,7 @@ void GuestLinkState(LinkState st) {
     if (next == before && next.route != netpath::Route::Relay) return;
     apply_locked(next);
     if (!(next == before)) {
-        const Env e = s.env;
+        const Env e = env_copy();
         const std::string line = "network path: the attempt over " + s.chooser.describe(before) +
                                  " failed; next: " + s.chooser.describe(next);
         if (e.log) e.log(line);
@@ -576,7 +580,7 @@ int AddRelayText(const std::string& text, const std::string& label) {
             std::lock_guard<std::mutex> lk(S().mu);
             if (!(a == S().host_addr && p == S().host_port) && S().chooser.add_relay(a, p, label)) {
                 ++added;
-                const Env e = S().env;
+                const Env e = env_copy();
                 if (e.log)
                     e.log("member relay: " + udp::key_text(a, p) + " (" + label +
                           ") may relay for us if the host cannot be reached directly");
