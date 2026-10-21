@@ -105,10 +105,13 @@ inline bool LocalEndRideEvent(std::int32_t event_id) {
 /// liftfix: instruction (bank, id) with `args` (`size` bytes) of event `event_id` is such an end check
 /// (3[2]: s8 group, u8 state 0 = outside, s32 entity 10000 = the local player, s32 region): it becomes
 /// 3[7] (s8 group, u8 state, s32 region): the region moves to +4. True when `args` was changed (the
-/// caller then writes id 7). Start checks (state 1, inside) stay the local player's.
+/// caller then writes id 7). Start checks (state 1, inside) stay the local player's. Also for id 7 with
+/// the old bytes: the id the caller wrote stays in the loaded script, but every run of the event gets
+/// its argument bytes afresh from it (live run 3: the second ride's 3[07] read 10000 as its region and
+/// never ended), so each dispatch moves the region again.
 inline bool LocalEndToAllPlayers(std::int32_t event_id, std::int32_t bank, std::int32_t id, std::uint8_t* args,
                                  std::uint32_t size) {
-    if (bank != 3 || id != 2 || size < 12 || !LocalEndRideEvent(event_id) || args[1] != 0) {
+    if (bank != 3 || (id != 2 && id != 7) || size < 12 || !LocalEndRideEvent(event_id) || args[1] != 0) {
         return false;
     }
     std::int32_t entity = 0, region = 0;

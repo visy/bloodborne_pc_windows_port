@@ -656,7 +656,8 @@ LT_CAR, LT_POS, LT_BUSY = "2411320", "12410350", "12415350"
 LT_TOP_C = "-128.72:-44.3:-9.73"       # region 2412321's box (the down ride's trigger)
 LT_TOP_A = "-128.19:-44.3:-9.20"       # on the car, 0.75 m beside the trigger (across the car's way out)
 LT_BOT_C = "-128.72:-58.0:-9.73"       # region 2412322's box (the up ride's trigger)
-LT_BOT_A = "-128.19:-58.0:-9.20"
+LT_BOT_A = "-129.25:-58.0:-10.26"      # beside the trigger on the other side (the host's (A) spot arrives
+                                       # at (-128.19, -58.1, -9.20): a `?near=` there passed at once, run 3)
 LT_TOP_OUT = "-130.27:-44.4:-6.27"     # the top landing (lifts071: players stood here)
 LT_BOT_OUT = "-125.28:-58.4:-11.69"    # the bottom landing
 LT_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
@@ -1583,8 +1584,11 @@ def check_lf(v, L):
     v.step("lf guest's lift ride: guest 1 at the top on the car's arrival", y is not None and y > -5.0,
            ("y %.1f at +%.1f s" % (y, arr[0])) if pos else "no arrival seen")
     # liftfix: the ride itself: no drop faster than a lift (god mode would hide a fall down the shaft)
+    # the ride: from the step into the car (the approach warp beside it is the test's: its floor may not
+    # be in yet, run 3)
+    into = L.find(1, r"guest_move to \(24\.28, -45\.30")
     for i, who in ((0, "host"), (1, "guest 1")):
-        f = falls(L, i)
+        f = falls(L, i, into[0] if into else 0.0)
         v.step("lf lift: %s no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
     none_of(v, L, "lf lift: nobody died", r"local death: HP 0", 0, 1e9, (0, 1, 2))
@@ -1896,7 +1900,7 @@ def check_lt(v, L):
         up = k == 1
         v.step("lt %s: one ride on both games" % name, rh["up"] == up and rg["up"] == up and
                abs(rh["start"] - rg["start"]) < 1.0, "start host %.2f / guest %.2f" % (rh["start"] % 3600, rg["start"] % 3600))
-        w = max(rh["end"], rg["end"]) + 2.0
+        w = max(rh["end"], rg["end"]) + 0.5  # the next ride may start ~1 s after
         fh, fg = lt_flags_at(L, 0, w), lt_flags_at(L, 1, w)
         want = (1 if up else 0, 0)
         ah, ag = car_anim_lt(L, 0, w), car_anim_lt(L, 1, w)

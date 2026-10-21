@@ -130,11 +130,17 @@ int main() {
         CHECK(region == 2502001);
         // not a listed event, not 3[2], another entity, already rewritten, short args: untouched
         std::uint8_t o[12] = {0x05, 0x00, 0, 0, 0x10, 0x27, 0, 0, 0x01, 0xb5, 0x27, 0x00};
-        CHECK(!LocalEndToAllPlayers(12410322, 3, 2, o, sizeof o) && !LocalEndToAllPlayers(12601352, 3, 7, o, sizeof o));
+        CHECK(!LocalEndToAllPlayers(12410322, 3, 2, o, sizeof o) && !LocalEndToAllPlayers(12601352, 3, 3, o, sizeof o));
         CHECK(!LocalEndToAllPlayers(12601352, 3, 2, o, 8));
         std::uint8_t e[12] = {0x05, 0x00, 0, 0, 0x11, 0x27, 0, 0, 0x01, 0xb5, 0x27, 0x00};  // entity 10001
         CHECK(!LocalEndToAllPlayers(12601352, 3, 2, e, sizeof e));
         CHECK(!LocalEndToAllPlayers(12601352, 3, 2, a, sizeof a));  // the rewritten bytes again: entity 2602241
+        CHECK(!LocalEndToAllPlayers(12601352, 3, 7, a, sizeof a));  // ... also once the id is 7
+        // a later run of the event: id 7 already, its argument bytes afresh from the script (live run 3)
+        std::uint8_t again[12] = {0x05, 0x00, 0, 0, 0x10, 0x27, 0, 0, 0x02, 0xb5, 0x27, 0x00};
+        CHECK(LocalEndToAllPlayers(12601352, 3, 7, again, sizeof again));
+        std::memcpy(&region, again + 4, 4);
+        CHECK(region == 2602242);
         CHECK(LocalEndRideEvent(12500077) && !LocalEndRideEvent(12410323) && !LocalEndRideEvent(0));
     }
 
