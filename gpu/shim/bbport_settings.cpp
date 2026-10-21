@@ -30,6 +30,7 @@ const PartySwitch PartySwitches[] = {
     {"party_guest_revive_inplace", "BB_PARTY_GUEST_REVIVE_INPLACE", &Values::party_guest_revive_inplace},
     {"party_guest_respawn", "BB_PARTY_GUEST_RESPAWN", &Values::party_guest_respawn},
     {"party_guest_refill", "BB_PARTY_GUEST_REFILL", &Values::party_guest_refill},
+    {"party_chalice_rejoin", "BB_PARTY_CHALICE_REJOIN", &Values::party_chalice_rejoin},
     {"party_guest_mark", "BB_PARTY_GUEST_MARK", &Values::party_guest_mark},
     {"party_full_rewards", "BB_PARTY_FULL_REWARDS", &Values::party_full_rewards},
     {"party_items", "BB_PARTY_ITEMS", &Values::party_items},

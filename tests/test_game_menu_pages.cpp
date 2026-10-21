@@ -469,6 +469,7 @@ static void RulesPages() {
                      u"Open world"};
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
+    const V chalice = {u"Stay in Chalice Dungeons"};
     const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world"};
     const V rewards = {u"Full rewards for guests", u"Host's item rewards", u"Give the bells", u"Own key items as guest",
                        u"Key items at once", u"Insight for bosses"};
@@ -493,6 +494,7 @@ static void RulesPages() {
         assert(names(u"Story & dialogue") == story);
         assert(names(u"Party rewards") == rewards);
         assert(names(u"Party display") == display);
+        assert(names(u"Chalice Dungeons") == chalice);
         assert(names(u"Enemy scaling").size() == 6);
         const bool guest = role == ps::Role::Guest;
         const auto k = kinds(u"Deaths & revives");
