@@ -3,6 +3,8 @@
 
   python tools/mp/smoke_party.py [--root DIR] [--build DIR] [--game DIR] [--out DIR] [--phase s1,s2]
   python tools/mp/smoke_party.py --check-only --out DIR     (verdict again from the saved logs)
+  python tools/mp/smoke_party.py --real-net --only join ...  (the same phases on the real network, all
+      players on this PC: instances.py --real-net; tools/mp/realnet_party.py is the VPN session)
 
 Mandatory after every merge to master (agents/RULES_062.txt). Runs through tools/mp/instances.py
 (the shared game queue; 3 players: host and guest 1 rendered, guest 2 headless-lite; 127.0.0.1,
@@ -697,7 +699,9 @@ def run_phase(a, ph, out: Path):
            "--headless", str(ph.get("headless", 1)), "--party"] + (["--fresh-saves"] if ph.get("fresh", True) else []) + [
            "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
-           "--label", "smoke %s" % ph["name"]]
+           "--label", "smoke %s" % ph["name"]] + ph.get("args", [])
+    if getattr(a, "real_net", False):
+        cmd += ["--real-net"]  # the real network instead of loopback (instances.py --real-net)
     for e in ph["env"]:
         cmd += ["--env", e.replace("{root}", str(root))]
     for e in ph["ienv"]:
@@ -1297,6 +1301,8 @@ def main():
     ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
+    ap.add_argument("--real-net", action="store_true",
+                    help="the phases on the real network (instances.py --real-net: public STUN, UPnP, the Internet code)")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
     a = ap.parse_args()
     RUN_ROOT[0] = a.root
