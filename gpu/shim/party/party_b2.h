@@ -122,7 +122,8 @@ void SetWhere(const std::vector<Where>& members);
 /// Why a member travels alone (logs; Death keeps the player's own respawn records).
 /// Join (A5): a cross-map direct summon joined the host's room from another map; the one load
 /// into the host's map (its lamp nearest the host; the own last lamp is not changed).
-enum class AloneWhy { Lamp, Headstone, HuntersMark, Death, Join };
+/// Gather (I5): the host gathered the party and this guest said YES from another map.
+enum class AloneWhy { Lamp, Headstone, HuntersMark, Death, Join, Gather };
 const char* AloneWhyName(AloneWhy w);
 /// Guest, main thread: loads t's destination ALONE and stays in the session; the other members
 /// do not load. Destination in the host's area: a B2 re-join (the host re-sends its snapshot; one
@@ -153,6 +154,19 @@ bool AtLampSpot(std::uint32_t id);
 /// in-world and EVENT b2 {"op":"warp","lamp":id} moves the guests of this map beside it (others,
 /// apart, travel there with one load of their own). False: not in this block.
 bool HostPartyWarpNoLoad(std::uint32_t id);
+/// I5 gather (guest, main thread): the host's chr in this world, placed where the host reports
+/// itself (the vitals), in the block this guest stands in: true and its distance. False: not here.
+bool HostChrHere(float* distance_m);
+/// I5 gather (guest, main thread): an in-world warp beside the host's chr (BesideHost: the B2
+/// spacing by party slot, the host's facing), no load. False: the host's chr is not here (HostChrHere)
+/// or this guest is dead.
+bool GatherBesideHost(const char* why);
+/// I5 gather (guest, main thread): the party's one-load travel into the host's map (TravelAlone,
+/// AloneWhy::Gather, to the lamp of the host's map nearest the host: a re-join with the host's
+/// snapshot). The caller puts the guest beside the host once it has arrived. False: not possible now.
+bool GatherTravelToHost();
+/// C5: this player is dead in a boss-fight limbo and follows a living member (spectating).
+bool Spectating();
 /// Lamp / return point `id` lies in the block the local player stands in (playtest 1 bug 10: a
 /// guest's warp there is its own loading screen, never a party move).
 bool LampInLoadedMap(std::uint32_t id);

@@ -30,6 +30,7 @@
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
 #include "party_split.h"
+#include "party_gather.h"
 #include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
@@ -54,6 +55,7 @@
 #include "../net/np_session.h"
 #include "../net/party_util.h"
 #include "../../party_env.h"
+#include "../bbport_settings.h"
 
 #include <algorithm>
 
@@ -144,6 +146,8 @@ struct TravelStep {
         // host_alone=ID: the host travels to ID alone, decided (no question).
         HostLamp, GuestLamp, HostAlone, GuestKill,
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
+        HostSpfx, // host_spfx=ENTITY:ID: SpEffect ID on that entity's chr by its ApplySpEffect (D7 doping dedupe)
+        HostPoise, // host_poise=N: the Enemy poise setting (party_enemy_poise, % of the step) set live, not saved (D7 A/B)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestFixture, // guest_fixture@S: the BB_PARTY_WORLDACT_TEST objects / pickups again (worldact::FixtureRearm)
@@ -155,7 +159,9 @@ struct TravelStep {
         // RequestLeave / RequestRejoin): host_leave / guest_leave wait for the join like any step;
         // host_rejoin / guest_rejoin run S s after this player went out of the party (or after the
         // previous step, the later), while it is out (repeat cycles: tools/mp/smoke_party.py).
-        HostLeave, GuestLeave, HostRejoin, GuestRejoin
+        HostLeave, GuestLeave, HostRejoin, GuestRejoin,
+        // I5: the Party page's Gather the party as the host presses it (party_status RequestGather).
+        HostGather
     } kind = HostWarp;
     bool after_scene = false; // "~": the delay counts from the end of a cutscene after the previous step
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -304,6 +310,7 @@ struct Test {
     Clock::time_point release_at{};  // a press step's buttons are released then
     bool pressing = false;
     std::uint32_t chr_target = 0;  // the last host_chr / guest_chr entity (press logs its HP)
+    Clock::time_point press_at{};  // the last host_press / guest_press tap (BB_PARTY_TARGET_ANIM)
     bool step_waiting = false;  // the next step waits (dead chr / a re-join running), logged once
     Clock::time_point left_at{};  // the last time this player went out of the party (host_rejoin / guest_rejoin)
 };
@@ -1150,6 +1157,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostPress: return "host_press";
     case TravelStep::GuestPress: return "guest_press";
     case TravelStep::HostOutage: return "host_outage";
+    case TravelStep::HostPoise: return "host_poise";
+    case TravelStep::HostSpfx: return "host_spfx";
     case TravelStep::GuestOutage: return "guest_outage";
     case TravelStep::HostMark: return "host_mark";
     case TravelStep::GuestMark: return "guest_mark";
@@ -1182,6 +1191,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestLeave: return "guest_leave";
     case TravelStep::HostRejoin: return "host_rejoin";
     case TravelStep::GuestRejoin: return "guest_rejoin";
+    case TravelStep::HostGather: return "host_gather";
     }
     return "?";
 }
@@ -1587,8 +1597,60 @@ void DieForTest() {
 
 /// The live travel test chain (TravelStep): joins are tracked in any state; a step runs in the
 /// world, with no loading screen and no stage request pending.
+/// Test aid (D7 stagger, BB_PARTY_TARGET_ANIM=1): every new animation of the host_chr / guest_chr
+/// target, from its TimeAct ring ([[chr+0x3B0]+0x18]: 10 x {anim id, ...} at +0x20, the next
+/// write index at +0xC0; the same ring as the player's), with its HP and the time since the last
+/// press tap, so hit reactions (staggers) can be counted per hit. `=keep`: its HP is put back to
+/// max whenever it falls below half (many hits on one enemy: an A/B with host_poise in one run).
+void TargetAnimTick(Test& t, Clock::time_point now) {
+    static const char* mode = std::getenv("BB_PARTY_TARGET_ANIM");
+    if (!mode || mode[0] == '0' || !mode[0] || !t.chr_target) return;
+    static std::uint32_t entity = 0;
+    static std::uint64_t chr = 0;
+    static Clock::time_point refresh{};
+    static std::int32_t last_idx = -1;
+    if (entity != t.chr_target || now >= refresh) {
+        if (entity != t.chr_target) last_idx = -1;
+        entity = t.chr_target;
+        chr = 0;
+        for (const auto& e : balance::LoadedEnemies()) {
+            if (e.entity == entity) chr = e.chr;
+        }
+        refresh = now + std::chrono::seconds(1);
+    }
+    std::uint64_t cm = 0, ta = 0, dm = 0;
+    std::int32_t idx = -1;
+    if (!chr || !SafeGet(chr + 0x3b0, &cm) || !cm || !SafeGet(cm + 0x18, &ta) || !ta || !SafeGet(ta + 0xc0, &idx) ||
+        idx < 0 || idx >= 10) {
+        return;
+    }
+    SafeGet(cm + 0x20, &dm);
+    std::int32_t hp = -1, mhp = -1;
+    if (dm) {
+        SafeGet(dm + 0xf8, &hp);
+        SafeGet(dm + 0xfc, &mhp);
+    }
+    if (idx != last_idx) {
+        // Every entry written since the last look (a hit can start two animations in one frame).
+        const int from = last_idx < 0 ? (idx + 9) % 10 : last_idx;
+        for (int k = from; k != idx; k = (k + 1) % 10) {
+            std::int32_t anim = 0;
+            SafeGet(ta + 0x20 + std::uint64_t(k) * 0x10, &anim);
+            const double since = t.press_at == Clock::time_point{} ? -1.0 : Seconds(t.press_at, now);
+            Log("test: target anim: entity %u animation %d (HP %d/%d, %.2f s = %d frame(s) at 30 fps after the last press)",
+                entity, anim, hp, mhp, since, since < 0 ? -1 : int(since * 30.0 + 0.5));
+        }
+        last_idx = idx;
+    }
+    if (mode[0] == 'k' && hp > 0 && mhp > 0 && hp < mhp / 2) {
+        SafeWrite(dm + 0xf8, &mhp, 4);
+        Log("test: target anim: entity %u HP %d -> %d (keep)", entity, hp, mhp);
+    }
+}
+
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
+    TargetAnimTick(t, now);
     // BB_PARTY_DIRECTOR_TEST_SOLO=1: the host steps without a cooperator, "joined" from the first
     // steady world on: in single player (no BB_PARTY) or as a party host alone (vanilla comparisons,
     // e.g. streamsync: does a neighbour map's kill stay dead when that map streams out and in).
@@ -1744,6 +1806,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // step's delay then counts from the end of the wait.
         const TravelStep::Kind k = t.steps[t.next_step].kind;
         const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
+                               k == TravelStep::HostPoise || k == TravelStep::HostSpfx ||
                                k == TravelStep::GuestOutage || k == TravelStep::HostFlag || k == TravelStep::GuestFlag ||
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
                                k == TravelStep::HostLastLamp || k == TravelStep::GuestLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
@@ -1861,6 +1924,18 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: %s %#llx -> %#llx", TravelStepName(step.kind), static_cast<unsigned long long>(rec),
                 static_cast<unsigned long long>(now_rec));
         }
+    } else if (step.kind == TravelStep::HostSpfx) {
+        int entity = 0, id = 0;
+        std::sscanf(step.args.c_str(), "%d:%d", &entity, &id);
+        std::string what;
+        const bool ok = balance::ApplySpEffectToEntity(entity, id, &what);
+        Log("test: host_spfx: SpEffect %d on entity %d: %s", id, entity, ok ? what.c_str() : "FAILED: no such chr loaded");
+    } else if (step.kind == TravelStep::HostPoise) {
+        // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the
+        // balance pass rewrites row 7503 and sends the rules on.
+        const int was = BbSettings::Get().party_enemy_poise.load();
+        BbSettings::Get().party_enemy_poise = std::clamp(std::atoi(step.args.c_str()), -100, 300);
+        Log("test: host_poise: Enemy poise %d -> %d %% of the step", was, BbSettings::Get().party_enemy_poise.load());
     } else if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
         bbnet::netsim::outage_now(double(step.buttons));
         Log("test: %s %u ms (%s)", TravelStepName(step.kind), step.buttons, Describe(s).c_str());
@@ -1877,6 +1952,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         }
         if (!locked) {
             runtime_pad_director_press(step.buttons);
+            t.press_at = now;
             t.pressing = true;
             t.release_at = now + std::chrono::milliseconds(150);
         } else {
@@ -1938,6 +2014,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             target += b;
         }
         Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
+    } else if (step.kind == TravelStep::HostGather) {
+        const bool queued = ::party::status::RequestGather();
+        Log("test: host_gather: Party > Gather the party pressed%s (%s)", queued ? "" : " - NOT queued (not the host)",
+            Describe(s).c_str());
     } else if (step.kind == TravelStep::HostLeave || step.kind == TravelStep::GuestLeave) {
         ::party::status::RequestLeave();
         Log("test: %s: Party > Leave pressed (%s)", TravelStepName(step.kind), Describe(s).c_str());
@@ -3267,13 +3347,16 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_lastlamp=", 0) == 0 || item.rfind("guest_lastlamp=", 0) == 0 || item.rfind("host_lamp=", 0) == 0 ||
                        item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 || item.rfind("guest_kill=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
+                       item.rfind("host_poise=", 0) == 0 || item.rfind("host_spfx=", 0) == 0 ||
                        item.rfind("guest_home", 0) == 0 || item.rfind("host_leave", 0) == 0 ||
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
-                       item.rfind("guest_rejoin", 0) == 0) {
+                       item.rfind("guest_rejoin", 0) == 0 || item.rfind("host_gather", 0) == 0) {
                 TravelStep step;
                 step.after_scene = after_scene;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
+                            : item.rfind("host_poise", 0) == 0    ? TravelStep::HostPoise
+                            : item.rfind("host_spfx", 0) == 0     ? TravelStep::HostSpfx
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
                             : item.rfind("host_press", 0) == 0   ? TravelStep::HostPress
@@ -3288,6 +3371,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_leave", 0) == 0  ? TravelStep::GuestLeave
                             : item.rfind("host_rejoin", 0) == 0  ? TravelStep::HostRejoin
                             : item.rfind("guest_rejoin", 0) == 0 ? TravelStep::GuestRejoin
+                            : item.rfind("host_gather", 0) == 0  ? TravelStep::HostGather
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -3319,6 +3403,9 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
+                }
+                if (step.kind == TravelStep::HostPoise || step.kind == TravelStep::HostSpfx) {
+                    step.args = item.substr(item.find('=') + 1, item.find_first_of("@%") - item.find('=') - 1);
                 }
                 if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 0));
@@ -3893,6 +3980,9 @@ void PartyDirector::Tick() {
     worldact::Tick(s, link);
     npctalk::Tick(s, link);  // shared NPC dialogue (party_npctalk.h)
     split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
+    if (role != PartyRole::None) {
+        gather::Tick(s, link, role == PartyRole::Host);  // I5 Gather the party (party_gather.h)
+    }
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
     }

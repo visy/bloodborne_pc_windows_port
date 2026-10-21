@@ -46,6 +46,8 @@ struct Companion {
     float pos[3] = {0, 0, 0};
     std::uint32_t age_ms = 0;  // VITALS age (0 for a local read)
     bool local_dead = false;   // its chr here reads HP 0 (a corpse left behind, a held death)
+    bool spectating = false;   // dead in a boss fight, spectating (C5, kVitalsSpectating): pos is its
+                               // body's spot (its chr is carried along with the followed member)
     int level = 0;             // VITALS extras (0 = unknown): the overhead display (E2)
     int deaths = 0;
     int rot = 0;
@@ -289,6 +291,11 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
 /// (the one the game draws, read now), when it is still a live chr within 10 m of `near` (the
 /// board's position from the last tick); false otherwise (freed, disabled, moved far).
 bool PartyHudChrPos(std::uint64_t chr, const float near[3], float out[3]);
+/// Main thread (party_b2 C5 spectate): this player spectates from now on (`body`: where its chr
+/// lay when the spectate began) or no longer (`on` false). Its VITALS then carry
+/// kVitalsSpectating and the body's spot instead of the carried chr's (the others' panels showed
+/// the spectator "0.2 m" from the member it follows).
+void PartyHudSpectating(bool on, const float body[3]);
 /// Any thread: the party member's name the last HUD tick matched to the remote PlayerIns `chr`
 /// (empty when none; C5 spectate notice).
 std::string PartyHudChrName(std::uint64_t chr);

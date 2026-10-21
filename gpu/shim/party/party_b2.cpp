@@ -105,6 +105,8 @@ constexpr u64 kUidLeaveCall = 0x193c657;    // e8 44 41 59 00 -> 0x1ed07a0
 constexpr u64 kUidDropCall = 0x193c689;     // e8 82 26 c8 ff -> 0x15bed10
 constexpr u64 kMatchCheckCall = 0x13809b7;  // e8 e4 fd b4 00 -> 0x1ed07a0
 constexpr u64 kMatchErrorCall = 0x1380a65;  // e8 36 fd b4 00 -> 0x1ed07a0 (Lua OnMatchingError)
+constexpr u64 kOwnNumberRecvCall = 0x17831ae;  // e8 2d 62 00 00 -> 0x17893e0 (packet 7: the own player number)
+constexpr u64 kRecvFromHost = 0x17893e0;       // int (net man, packet type, buffer, size): read from the host
 constexpr u64 kJoinStartCall = 0x178524f;   // e8 2c 25 b9 ff -> 0x1317780
 constexpr u64 kFunnelLeaveJne = 0x13cdeae;  // 75 6c (cmp [GSM+0x1592],0 ; jne skip-leave)
 constexpr u64 kHostDeathReturnCall = 0x18c4d7d; // e8 2e 00 59 00 -> 0x1e54db0 (ChrIns_OnDeath, role 3)
@@ -901,8 +903,11 @@ BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
 BB_COOP_SYSV u64 MatchErrorHook(u64 session) {
     const double since = Now() - g_renumber_at.load();
     if (g_on.load() && Role() == RoleClient && since < 10.0) {
-        Log("K5b: OnMatchingError leave ignored: the host checked player number %d %.1f s after this guest "
-            "changed it from %d, before its chr there was rebuilt with it (cleared: that error only)",
+        // The packet 7 receive (OwnNumberRecvHook) numbers the guest before its chr exists, so this
+        // should not happen any more: loud when it does.
+        Log("K5b: WARNING (unexpected since the packet 7 fix): OnMatchingError leave ignored: the host checked "
+            "player number %d %.1f s after this guest changed it from %d, before its chr there was rebuilt with it "
+            "(cleared: that error only)",
             g_renumber_to.load(), since, g_renumber_from.load());
         return 0;
     }
@@ -6196,11 +6201,13 @@ void SpectateBegin(const char* who) {
     char b[128];
     std::snprintf(b, sizeof b, "{\"op\":\"spectating\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
     Send(-1, b);
+    PartyHudSpectating(true, p);  // the others' panels: "Spectating", the body's spot (not the carried chr's)
     Log("%s: spectating a living party member until the respawn (%s)", who,
         SpectateSmooth(1e9) ? "smooth follow" : "BB_PARTY_SPECTATE_SMOOTH=0: the old 0.2 s follow");
 }
 void SpectateEnd() {
     if (g_spectating.exchange(false)) {
+        PartyHudSpectating(false, nullptr);
         Log("spectating ended");
     }
 }
@@ -6485,6 +6492,34 @@ int OwnGuestNumber() {
     return slot >= 1 ? coop::fourp::PlayerNumberForSlot(slot) : 2;
 }
 
+/// Packet 7 (the host's game hands a joining guest its player number; 0x1783160 writes it to the
+/// own GameData +0x10 and the local chr +0x3B8 right after this read): the guest's party-slot
+/// number instead (OwnGuestNumber), before its chr and its record exist. The host's game hands out
+/// its next free number (2 for slot 2 while slot 1 is absent); taken as it was, PlayerNumberTick
+/// had to change it after the arrival load, and the summon's OnMatchingCheck then reached the host
+/// with the new number while its copy of the chr still had the old one: the host's OnMatchingError
+/// sent the guest home 0.2 s after arriving (K5b). BB_PARTY_PLAYER_NUMBERS=0: as the host sent it.
+BB_COOP_SYSV u64 OwnNumberRecvHook(u64 net, u64 type, u64 buf, u64 size) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64);
+    const u64 r = reinterpret_cast<Fn>(Guest(kRecvFromHost))(net, type, buf, size);
+    static const bool on = !EnvOff("BB_PARTY_PLAYER_NUMBERS");
+    int got = -1;
+    if (!u32(r) || !buf || !SafeGet(buf, &got)) {
+        return r;
+    }
+    const int slot = g_local_slot.load();
+    const int want = OwnGuestNumber();
+    if (on && g_on.load() && slot >= 1 && got != want && coop::fourp::PlayerNumberValid(got) &&
+        coop::fourp::PlayerNumberValid(want)) {
+        SafeWrite(buf, &want, 4);
+        Log("player number: packet 7 from the host gives %d; this guest (party slot %d) takes %d before its chr "
+            "exists (session %d)", got, slot, want, Role());
+    } else {
+        Log("player number: packet 7 from the host gives %d (party slot %d; kept)", got, slot);
+    }
+    return r;
+}
+
 /// Host and guests in a session: the own player number kept (host 1, guest OwnGuestNumber()) once
 /// the world is up in the session (flow 4); a load or a late packet 7 that changed it is undone and
 /// the own record re-broadcast with a rebuild request (the mirror's path: the peers rebuild this
@@ -6519,8 +6554,9 @@ void PlayerNumberTick(const GameSnapshot& s, double now) {
             g_renumber_at = Now();  // K5b: the host's copy keeps the old number until its rebuild
         }
         NoteOwnAppearanceChanged();             // own record again (with the number), peers rebuild this chr
-        Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr",
-            was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load());
+        Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr%s",
+            was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load(),
+            guest ? " (WARNING: a guest's number should be right from packet 7 on)" : "");
     }
     std::string clash;
     const u64 rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
@@ -9111,6 +9147,8 @@ void Init() {
                 "B2 K5 OnMatchingCheck leave");
     InstallCall(kMatchErrorCall, kBeginLeave, reinterpret_cast<const void*>(&MatchErrorHook),
                 "B2 K5b OnMatchingError leave");
+    InstallCall(kOwnNumberRecvCall, kRecvFromHost, reinterpret_cast<const void*>(&OwnNumberRecvHook),
+                "B2 packet 7 own player number");
     InstallCall(kJoinStartCall, kJoinStartLua, reinterpret_cast<const void*>(&JoinStartHook), "B2 K6 OnBeJoinStart");
     InstallCall(kHostDeathReturnCall, kRequestReturn, reinterpret_cast<const void*>(&HostDeathReturnHook),
                 "B2 K8 host death return-all");
@@ -10124,6 +10162,84 @@ bool HostPartyWarpNoLoad(std::uint32_t id) {
     return true;
 }
 
+namespace {
+/// I5 gather: the host's chr in this world and its transform, when it stands where the host reports
+/// itself (vitals, fresh) in the block this guest stands in.
+bool HostChrTransform(float pos[4], float rot[4]) {
+    if (!g_on.load() || Role() != RoleClient) {
+        return false;
+    }
+    const Where* w = WhereOf(0);
+    const bool vit = w && w->has_pos && w->age_ms < 2000;
+    if (!vit || !InLoadedBlock(w->map)) {
+        return false;
+    }
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 host = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        alignas(16) float hp[4], hr[4];
+        if (host && ChrTransform(host, hp, hr) && deathrules::HostChrPlaced(hp, true, w->pos)) {
+            std::memcpy(pos, hp, sizeof hp);
+            std::memcpy(rot, hr, sizeof hr);
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+bool HostChrHere(float* distance_m) {
+    alignas(16) float hp[4], hr[4], me[4], mr[4];
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player || !HostChrTransform(hp, hr) || !ChrTransform(player, me, mr)) {
+        return false;
+    }
+    if (distance_m) {
+        const float dx = hp[0] - me[0], dy = hp[1] - me[1], dz = hp[2] - me[2];
+        *distance_m = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    return true;
+}
+
+bool GatherBesideHost(const char* why) {
+    alignas(16) float hp[4], hr[4];
+    if (LocalHp() <= 0 || !HostChrTransform(hp, hr)) {
+        return false;
+    }
+    float pos[4];
+    std::memcpy(pos, hp, sizeof pos);
+    BesideHost(pos, hr, g_local_slot.load());
+    pos[3] = 1.0f;
+    char b[96];
+    std::snprintf(b, sizeof b, "%s: beside the host", why ? why : "gather");
+    if (!WarpLocal(pos, hr[1], b)) {
+        return false;
+    }
+    Log("gather: put beside the host (%.1f, %.1f, %.1f), the host at (%.1f, %.1f, %.1f), no load", double(pos[0]),
+        double(pos[1]), double(pos[2]), double(hp[0]), double(hp[1]), double(hp[2]));
+    return true;
+}
+
+bool Spectating() {
+    return g_spectating.load();
+}
+
+bool GatherTravelToHost() {
+    const u32 host = HostMap();
+    if (!g_on.load() || Role() != RoleClient || host == 0 || host == 0xffffffffu) {
+        Log("gather: no travel to the host (role %d, host map %#x)", Role(), host);
+        return false;
+    }
+    const u32 lamp = LampNearHost(host);
+    TravelIntent t;
+    if (lamp == 0 || !LampIntent(lamp, &t)) {
+        Log("gather: no lamp of the host's map %s known", MapName(host).c_str());
+        return false;
+    }
+    Log("gather: one load into the host's map %s (lamp %u, nearest the host), then beside the host", MapName(host).c_str(),
+        lamp);
+    return TravelAlone(t, AloneWhy::Gather);
+}
+
 void SetWhere(const std::vector<Where>& members) {
     g_where = members;
 }
@@ -10139,6 +10255,7 @@ const char* AloneWhyName(AloneWhy w) {
     case AloneWhy::HuntersMark: return "hunters_mark";
     case AloneWhy::Death: return "death";
     case AloneWhy::Join: return "join";
+    case AloneWhy::Gather: return "gather";
     }
     return "?";
 }

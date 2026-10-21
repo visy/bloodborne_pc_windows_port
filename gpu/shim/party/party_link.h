@@ -162,7 +162,9 @@ enum : std::uint8_t {
     kVitalsValid = 1,   // hp / max_hp / stamina read from a live player
     kVitalsAlive = 2,   // hp > 0
     kVitalsHasPos = 4,  // pos / yaw valid
-    kVitalsKnownFlags = 7,
+    kVitalsSpectating = 8,  // dead in a boss fight, spectating (C5): pos is where its body fell, not
+                            // the carried spot its camera orbits (older peers drop the bit)
+    kVitalsKnownFlags = 15,
 };
 struct MemberVitals {
     int slot = -1;

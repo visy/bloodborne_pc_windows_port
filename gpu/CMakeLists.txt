@@ -588,6 +588,11 @@ add_executable(party-spectate-test EXCLUDE_FROM_ALL ../tests/test_party_spectate
 target_compile_options(party-spectate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-spectate-test PRIVATE shim)
 set_target_properties(party-spectate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# I5 gather the party (party_gather_rules.h). ninja -C out/gpu party-gather-test
+add_executable(party-gather-test EXCLUDE_FROM_ALL ../tests/test_party_gather.cpp)
+target_compile_options(party-gather-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-gather-test PRIVATE shim)
+set_target_properties(party-gather-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Deaths, rests and same-map lamps (party_death_rules.h). ninja -C out/gpu party-death-rules-test
 add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death_rules.cpp)
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -732,6 +737,11 @@ set_target_properties(party-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
 if (WIN32)
     target_link_libraries(party-hud-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# NPC presence mirror (shim/party/party_npc_mirror.h, header only): the guest's plan, the event
+# body. cmake --build out/gpu --target party-npc-mirror-test
+add_executable(party-npc-mirror-test EXCLUDE_FROM_ALL ../tests/test_party_npc_mirror.cpp)
+target_compile_options(party-npc-mirror-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-npc-mirror-test PRIVATE shim)
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp

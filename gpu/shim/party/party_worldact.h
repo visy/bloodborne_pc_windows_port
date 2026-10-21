@@ -238,8 +238,11 @@ const KeyItemGate* KeyItemGateByOpenFlag(std::uint32_t open_flag);
 /// condition `group`: the data's own (held_group: 1, the other: 0), both flipped when `invert`.
 std::uint8_t KeyItemGateHeldState(const KeyItemGate& g, int group, bool invert);
 /// Guest: invert the gate's checks? Only a summoned guest (role 6, the host-world overlay) whose
-/// own save or the host's world has the item's pickup flag.
-bool KeyItemGateInvert(bool summoned_guest, bool own_flag, bool host_world_flag);
+/// own save or the host's world has the item's pickup flag, and whose inventory reads the item as
+/// not held (`held` <= 0). In the game's summoned key view every key reads 0; with the own key
+/// section shown (items.md 10.7, BB_PARTY_KEY_VIEW) a held emblem reads 1 and the data's own check
+/// opens the gate - inverted, it would take the "need the emblem" branch.
+bool KeyItemGateInvert(bool summoned_guest, bool own_flag, bool host_world_flag, int held);
 /// The visit is over (put the host back): the event went on (the boss-started flag, the intro's
 /// boss-area flag 9180 - not for a chained spot - or a cutscene) or it timed out.
 bool FirstFightVisitDone(bool host_flag_on, bool flag9180_on, bool cutscene, double visit_s, bool chained = false,

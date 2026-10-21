@@ -2561,7 +2561,11 @@ void PartyHud() {
         const float name_h = ImGui::GetItemRectSize().y;
         ImGui::PopFont();
         float right_edge = row.x + width;
-        if (c.same_map) {
+        if (c.spectating && here) {
+            // C5: dead in the boss fight, its camera following a member (its chr is carried along:
+            // a distance would say "0.2 m" from that member).
+            std::snprintf(right_text, sizeof right_text, "%s", BbSettings::MenuText("Spectating", "Наблюдает"));
+        } else if (c.same_map) {
             const float d = party::hud::Distance(b.me_pos, c.pos);
             const float r = 5.5f * s;
             const ImVec2 centre(right_edge - r, row.y + name_h * 0.5f);
