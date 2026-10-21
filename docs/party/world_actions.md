@@ -348,7 +348,8 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   there, `loaded` when the car is loaded but its copy did not follow: left alone, a flag alone would
   not move the car). l9: `lift 2401102 12400827=1(applied: the lift's block is not loaded here)`,
   then the host's init at the stream-in took anim 0 (the top), where the guest's car was. Lift table:
-  `worldact::Lifts()` (12 lifts, from the EMEVD of every up / down event).
+  `worldact::Lifts()` (20 lifts, from the EMEVD of every up / down event; liftfall added Cainhurst 12500074, the six Nightmare of Mensis lifts of its common up / down events 12601320 / 12601330 and the Nightmare Frontier's 13300115; the Mensis library lift 12601352 has no position flag).
+* Long lifts (liftfall): the fall recovery nets took the Nightmare of Mensis' 60 m lift 2601240 (~4 m/s, 15 s) for a fall out of the world (a player's report: the host warped to its lamp mid-ride, the guest put back on the top floor while the car went on). A ride on a moving object (PlayerIns +0x1E5 bit 0x02) is no fall sample and the nets need 40 m in their 6 s (`deathrules::FallSample` / `FallRecoveryDue`); the fall-death drop test counts from the last ride sample (`PeakSinceRide`). Smoke group `elevator` (phase el).
 * Ladders: the shortcut ladder of Central Yharnam's start (2411204, lowered by lever 2411316, event
   12410285): a guest's pull lowers it on every game (l10: the host's game gets the guest's ObjAct kick
   natively, anim 1 -> 2 and 12410285 = 1 on all three games, screenshots). The raised ladders of the
