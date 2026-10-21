@@ -28,6 +28,7 @@
 #include "party/party_ping.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
+#include "party/seamless_rules.h"
 #include "party/world_warper.h"
 #include "bbport_camera.h"
 #include "imgui.h"
@@ -1825,6 +1826,12 @@ void PartyTab() {
              "Маленький ромб с расстоянием на каждом спутнике на вашей карте, поверх стен и деревьев, "
              "цветом спутника."),
            on);
+    Toggle("party_stain_marker", T("Bloodstain marker", "Метка пятна крови"), s.party_stain_marker,
+           T("A red drop with \"Blood Echoes\" and the distance on your lost echoes' bloodstain in the "
+             "host's world, drawn over walls. The bloodstain is there either way.",
+             "Красная капля с \"Отголосками крови\" и расстоянием на пятне крови с вашими потерянными "
+             "отголосками в мире хоста, поверх стен. Пятно есть в любом случае."),
+           on);
     Toggle("party_rendezvous", T("Find each other via the public DHT", "Поиск друг друга через публичный DHT"),
            s.party_rendezvous,
            T("When a direct connection fails, your address is posted on the public BitTorrent DHT under a "
@@ -2558,6 +2565,42 @@ void PartyHud() {
         }
         ImGui::Dummy(ImVec2(width, used + 1.0f * s));
     }
+    {   // C4: this player's own rot under the companions ("Rot 2/5: max HP -20 %"), while it has any.
+        int kind[party::status::kRotKinds];
+        party::status::Rot(kind);
+        const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
+        const std::string head = coop::balance::DescribeRotHead(kind, ru);
+        if (!head.empty()) {
+            // Each effect in its own colour: max HP red as the HP bar, max stamina green as the
+            // stamina bar, stamina costs amber, rally orange, item discovery pale blue.
+            static const ImVec4 kEffect[party::status::kRotKinds] = {
+                ImVec4(0.86f, 0.30f, 0.27f, 0.95f), ImVec4(0.46f, 0.76f, 0.40f, 0.95f),
+                ImVec4(0.88f, 0.74f, 0.34f, 0.95f), ImVec4(0.96f, 0.56f, 0.24f, 0.95f),
+                ImVec4(0.58f, 0.72f, 0.92f, 0.95f)};
+            ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
+            ImGui::PushFont(game_font, 14.0f);
+            const float x0 = ImGui::GetCursorPosX();
+            // While a boss bar is up only "Rot N/5": the full line can wrap to three lines and the
+            // taller panel would cover the boss's name and the left end of its bar.
+            const bool compact = coop::BossBarShown();
+            ImGui::TextColored(ImVec4(0.74f, 0.52f, 0.40f, 0.95f), "%s",
+                               compact ? head.substr(0, head.find(':')).c_str() : head.c_str());
+            bool first = true;
+            for (int k = 0; k < party::status::kRotKinds && !compact; ++k) {
+                const std::string e = coop::balance::DescribeRotEffect(k, kind[k], ru);
+                if (e.empty()) continue;
+                const std::string part = first ? e : ", " + e;
+                first = false;
+                // The next effect on the same line while it fits the panel, else on a new one.
+                ImGui::SameLine(0.0f, 0.0f);
+                if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(part.c_str()).x > x0 + width) {
+                    ImGui::NewLine();
+                }
+                ImGui::TextColored(kEffect[k], "%s", part.c_str());
+            }
+            ImGui::PopFont();
+        }
+    }
     party_hud_top = ImGui::GetWindowPos().y;
     ImGui::End();
     ImGui::PopStyleVar(3);
@@ -2712,7 +2755,12 @@ void PartyHud() {
 /// Statsaudit finding 1: the guest's own bloodstain in the host's world (party_ping.h StainMark),
 /// a blood-red drop through walls with "Blood Echoes N" and the distance (clamped to the screen
 /// edge when off screen). Hidden under the game's menus, dialogs, cutscenes and loading screens.
+/// An option, off by default (bbport.ini party_stain_marker; env BB_PARTY_STAIN_MARKER=0/1 over it).
 bool PartyStainWanted() {
+    static const char* const env = std::getenv("BB_PARTY_STAIN_MARKER");
+    if (!(env && *env ? env[0] != '0' : BbSettings::Get().party_stain_marker.load())) {
+        return false;
+    }
     party::ping::StainMark m;
     return party::status::Enabled() && party::ping::GetStain(&m) && party::hud::Shown() && !party::hud::GameDialog();
 }
