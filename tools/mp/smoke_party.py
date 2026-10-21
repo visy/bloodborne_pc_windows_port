@@ -454,7 +454,8 @@ def phase_sk(only):
 # (already beside the host). Answers: BB_PARTY_GATHER_TEST (party_gather.h).
 GA_FAR = SK_FAR  # 130 m from the Tomb of Oedon lamp, same map
 GA_ARRIVED = r"guest: arrived in the host's map"
-GA_UNTIL = ["0:round 3 over", "1:" + GA_ARRIVED, "2:" + GA_ARRIVED]
+# the host chain's last step (20 s after round 3: guest 1's arrival and its screenshots) and both arrivals
+GA_UNTIL = [r"0:travel step (\d+)/: ", "1:" + GA_ARRIVED, "2:" + GA_ARRIVED]
 
 
 def phase_ga(only):
@@ -463,17 +464,20 @@ def phase_ga(only):
         "host_warp=2412953@15",          # party lamp travel: the Tomb of Oedon (everyone in m24_01)
         "host_gather@45%m24_01",         # round 1
         "host_gather@5%m24_01",          # refused: the cooldown
-        "host_gather@35%m24_01",         # round 2
+        "host_gather@28%m24_01",         # round 2
         "host_gather@45%m24_01",         # round 3
         "host_press=0@15%m24_01!",
     ])
-    g1 = ",".join(["god", "guest_move=%s@30%%m24_01" % GA_FAR,   # far away in the same map
+    # guest 2's alone lamp (a rest) gives the host a rest load that guest 1 follows: guest 1 walks
+    # off after it (60 s), and to the Dream after round 2
+    g1 = ",".join(["god", "guest_move=%s@60%%m24_01" % GA_FAR,   # far away in the same map
                    "guest_lamp=2102950@75%m24_01"])              # after round 2: alone to the Dream
     g2 = ",".join(["god", "guest_lamp=2102950@35%m24_01"])       # alone to the Dream (another map)
     watch = ["--grey"]
     for rx, tag in ((r"round \d+: Gather the party: \d+ guest", "gather"), (r"gather: put beside the host", "beside"),
                     (GA_ARRIVED, "arrived"), (r"round 2 refused: in a menu", "menu")):
         watch += ["--watch", "%s=%s@0.5,3" % (rx, tag)]
+    watch += ["--watch", "round 3 over=r3arrived@14,18"]  # guest 1's travel from the Dream (~12 s)
     return dict(
         name="ga", seconds=360,
         env=[],
@@ -1038,45 +1042,47 @@ def check_sk(v, L):
     check_common(v, L, "sk")
 
 
-def _ga_warp_distance(line):
-    """The in-world warp line's move in metres: "(x, y, z) -> (x, y, z) in ..."."""
-    m = re.search(r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\) -> \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", line)
-    if not m:
-        return 0.0
-    a = [float(x) for x in m.groups()]
-    return ((a[0] - a[3]) ** 2 + (a[1] - a[4]) ** 2 + (a[2] - a[5]) ** 2) ** 0.5
+def _ga_first(L, rx, after=0.0):
+    """The first match on either guest: (inst, t, line) or None."""
+    hits = [(i,) + h for i in (1, 2) for h in [L.find(i, rx, after)] if h]
+    return min(hits, key=lambda h: h[1]) if hits else None
+
+
+def _ga_need(v, L, name, rx, after=0.0):
+    h = _ga_first(L, rx, after)
+    v.step(name, h, ("+%.1f s inst%d: %s" % (h[1], h[0], h[2][:150])) if h else "missing on both guests: /%s/" % rx)
+    return h
 
 
 def check_ga(v, L):
+    """Rounds and guests as the run's timing gives them (which guest is far / apart when the host presses
+    depends on the loads): each case must show up once, in any round, on either guest."""
     need(v, L, "ga join: 3 players", 0, r"cooperators [01] -> 2")
     r1 = need(v, L, "ga round 1: the host asks 2 guests", 0, r"round 1: Gather the party: 2 guest")
     if r1 is None:
         check_common(v, L, "ga")
         return
-    yes1 = need(v, L, "ga round 1: guest 1 (same map) YES -> in-world", 1, r"guest: round 1: YES -> inworld", r1)
-    w = L.find(1, r"in-world warp \(gather: beside the host\)", r1)
-    d = _ga_warp_distance(w[1]) if w else 0.0
-    v.step("ga round 1: guest 1 came from > 100 m, no load", w and d > 100.0,
-           "%.0f m: %s" % (d, w[1][:150]) if w else "no in-world warp line on inst1")
-    none_of(v, L, "ga round 1: guest 1 no loading screen", r"guest: (host snapshot applied|travels alone)", r1, r1 + 10, (1,))
-    need(v, L, "ga round 1: guest 2 (another map) YES -> travel", 2, r"guest: round 1: YES -> travel", r1)
-    a2 = need(v, L, "ga round 1: guest 2 arrived beside the host", 2, GA_ARRIVED, r1)
-    need(v, L, "ga round 1: summary (both coming)", 0, r"round 1 over .*Gather: .* coming$", r1)
+    far = _ga_first(L, r"guest: YES: route inworld \(.*, ([\d.]+) m\)")
+    d = float(re.search(r"([\d.]+) m\)$", far[2]).group(1)) if far else 0.0
+    v.step("ga same map, > 100 m: YES -> in-world warp", far and d > 100.0,
+           "inst%d +%.1f s: %.0f m" % (far[0], far[1], d) if far else "no in-world route on either guest")
+    if far:
+        w = L.find(far[0], r"gather: put beside the host .* no load", far[1])
+        v.step("ga in-world: put beside the host, no load", w, w[1][:150] if w else "missing")
+        none_of(v, L, "ga in-world: no loading screen", r"guest: (host snapshot applied|travels alone)", far[1],
+                far[1] + 5, (far[0],))
+    tr = _ga_need(v, L, "ga another map: YES -> travel", r"guest: round \d+: YES -> travel")
+    if tr:
+        need(v, L, "ga another map: arrived beside the host (one load)", tr[0], GA_ARRIVED, tr[1])
+    need(v, L, "ga round 1: summary", 0, r"round 1 over .*Gather: ", r1)
     need(v, L, "ga cooldown: a press within 30 s refused", 0, r"Gather the party refused: too soon", r1)
-    r2 = need(v, L, "ga round 2: the host asks again", 0, r"round 2: Gather the party: 2 guest", r1 + 30)
-    if r2 is not None:
-        need(v, L, "ga round 2: guest 1 refused (in a menu)", 1, r"guest: round 2 refused: in a menu", r2)
-        need(v, L, "ga round 2: guest 2 answers No", 2, r"guest: round 2: NO", r2)
-        need(v, L, "ga round 2: summary (said no, in a menu)", 0, r"round 2 over .*said no.*in a menu", r2)
-        v.step("ga round 2 at least 30 s after round 1", r2 - r1 >= 30.0, "%.1f s" % (r2 - r1))
-    r3 = need(v, L, "ga round 3: the host asks again", 0, r"round 3: Gather the party: 2 guest", (r2 or r1) + 30)
-    if r3 is not None:
-        need(v, L, "ga round 3: guest 1 (Dream) YES -> travel", 1, r"guest: round 3: YES -> travel", r3)
-        need(v, L, "ga round 3: guest 1 arrived beside the host", 1, GA_ARRIVED, r3)
-        need(v, L, "ga round 3: guest 2 YES", 2, r"guest: round 3: YES -> (here|inworld)", r3)
-        need(v, L, "ga round 3: summary", 0, r"round 3 over", r3)
+    _ga_need(v, L, "ga refusal: a guest in a menu", r"guest: round \d+ refused: in a menu")
+    _ga_need(v, L, "ga a guest answers No", r"guest: round \d+: NO")
+    need(v, L, "ga host summary names the No and the menu", 0, r"round \d+ over .*said no.*in a menu")
+    r2 = L.find(0, r"round 2: Gather the party", r1)
+    v.step("ga rounds at least 30 s apart", r2 and r2[0] - r1 >= 30.0, "%.1f s" % (r2[0] - r1) if r2 else "no round 2")
+    need(v, L, "ga round 3 over", 0, r"round 3 over", r1)
     check_common(v, L, "ga")
-
 
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
