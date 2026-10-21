@@ -1952,7 +1952,21 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                        list.end());
             float me[3] = {};
             const std::uint64_t player = LocalPlayer();
-            const int k = player && balance::ChrPosition(player, me) ? PickEnemyKillTarget(list, 0, me, 100.0f) : -1;
+            const bool here = player && balance::ChrPosition(player, me);
+            // Only enemies on the own floor (within 3 m of height): the stand spot is beside the enemy
+            // at its height, so one on a ledge above or below was a warp into a fall (hostcheck: the
+            // nearest enemy to the Gascoigne arena stood 28 m higher, the host fell to its death).
+            list.erase(std::remove_if(list.begin(), list.end(),
+                                      [&](const auto& e) {
+                                          float at[3] = {};
+                                          return !balance::ChrPosition(e.chr, at) || std::fabs(at[1] - me[1]) > 3.0f;
+                                      }),
+                       list.end());
+            const int k = here ? PickEnemyKillTarget(list, 0, me, 500.0f) : -1;
+            if (k < 0) {
+                Log("test: %s 0: no living enemy on this floor (height %.1f, +-3 m) within 500 m", TravelStepName(step.kind),
+                    double(me[1]));
+            }
             if (k >= 0) {
                 entity = static_cast<int>(list[size_t(k)].entity);
                 Log("test: %s 0: the nearest living enemy is entity %d (HP %d)", TravelStepName(step.kind), entity,
@@ -2013,6 +2027,18 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             ok = worldact::ObjectPoint(entity, odist, oangle, p);
             x = p[0], z = p[2];
             Log("test: %s: object %d %s", TravelStepName(step.kind), entity, ok ? "found" : "NOT loaded");
+        } else if (step.args.rfind("stain", 0) == 0) {
+            // stain[:R[:STEPS]]: onto the own bloodstain (GameDataMan +0x28 flag, +0x30 record:
+            // position +0x18), walked, so its pickup prompt comes up the way it does in play.
+            std::uint64_t rec = 0;
+            std::uint8_t flag = 0;
+            float p[3] = {};
+            std::sscanf(step.args.c_str(), "stain:%f:%d", &r, &steps);
+            ok = s.game_data_man && SafeGet(s.game_data_man + 0x28, &flag) && flag &&
+                 SafeGet(s.game_data_man + 0x30, &rec) && rec && SafeRead(rec, p, sizeof p);
+            x = p[0], z = p[2];
+            Log("test: %s: own bloodstain %s at (%.1f, %.1f, %.1f)", TravelStepName(step.kind), ok ? "found" : "NOT there",
+                double(p[0]), double(p[1]), double(p[2]));
         } else {
             ok = ParseStickArgs(step.args, &x, &z, &r, &steps);
         }
