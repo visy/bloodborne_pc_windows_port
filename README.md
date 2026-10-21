@@ -173,7 +173,10 @@ Nothing to set up outside the game, and later sessions are a single press.
 | 3 | Allow the Windows Firewall prompt once; copy your code (*System → Party → Copy Internet code*) and send it | The game restarts into party mode and puts you beside the host |
 
 Code and password are remembered, so later sessions are just *Continue party game* for everyone
-(the options that restart the game ask for a second press). *Continue party game* shows whenever
+(the options that restart the game ask for a second press). The host's party code stays the
+same every time it hosts, so friends can keep it; *System → Party mode → New party code* (or **New
+code** in the launcher's Party tab) makes a new one and the old one stops working. Setting or
+removing a password also changes the code once. *Continue party game* shows whenever
 the party saves hold a character, also if you started party games from the launcher.
 Settings: *System → Party* pages in the game's menu.
 
@@ -416,6 +419,9 @@ To skip the code, turn on *Find each other through the public DHT* (launcher *Pa
 *System > Party rules*) on **both** PCs: the guest's address is then exchanged through the public
 BitTorrent DHT under a hash only the party knows. It is off by default because DHT nodes see your
 IP address, as with any torrent client.
+If the guest's game gets no UDP answer from the host ("UDP to the guest is blocked" /
+"UDP to the host is blocked"), nobody rings until it does: it keeps retrying and the summon
+then starts by itself.
 The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
 connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 

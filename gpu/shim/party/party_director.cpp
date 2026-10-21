@@ -50,6 +50,8 @@
 
 #include "../net/bbnet_internal.h"
 #include "../net/party_host_service.h"
+#include "../net/np_session.h"
+#include "../net/party_util.h"
 #include "../../party_env.h"
 
 #include <algorithm>
@@ -366,6 +368,11 @@ struct State {
     int watchdog_stops = 0;
     bool watchdog_check = false; // after a stop: log the session / phantoms once it is idle
     Clock::time_point watchdog_at{};
+    // Summons that cannot work (summon_endpoint_unusable, UdpReachTick): host: the members with no
+    // usable UDP endpoint; guest: this game (no STUN-mapped endpoint, the host is remote).
+    std::vector<std::string> unreachable;
+    bool self_unreachable = false;
+    Clock::time_point reach_at{}, reach_said{};
 };
 
 State& S() {
@@ -2162,6 +2169,7 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     if (link) {
         in.roster = link->roster();
     }
+    in.unreachable = st.unreachable;
     if (st.watchdog_check && s.session_role == RoleIdle && Seconds(st.watchdog_at, now) >= 2.0) {
         st.watchdog_check = false;
         Log("host watchdog: session idle %.1f s after the stop; %s; cooperators %d", Seconds(st.watchdog_at, now),
@@ -2204,6 +2212,101 @@ void HostWatchdogTick(State& st, const GameSnapshot& s, party::PartyLink* link, 
     st.watchdog_check = true;
     st.watchdog_at = now;
     st.rung_ever = false; // ring again as soon as the session is idle and a member waits
+}
+
+// ---- Summons that cannot work (party_util.h summon_endpoint_unusable) ----
+// 2026-10-20: a remote guest whose game had only its private LAN address (no STUN answer from the
+// host's party port): 4 summons of 20 s punching that address, then the host watchdog's stop.
+// Now neither side rings for it, both players get a notice, and it recovers on its own: the
+// guest's keepalive retries STUN (np_session.cpp) and its signaling_update clears the hold.
+// BB_PARTY_TEST_UNREACHABLE=1 (tests, loopback): every member (host) / this game (guest) counts
+// as unreachable.
+bool TestUnreachable() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_TEST_UNREACHABLE");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+void UdpReachTick(State& st, PartyRole role, party::PartyLink* link, Clock::time_point now) {
+    if (role == PartyRole::None || !link || Seconds(st.reach_at, now) < 1.0) {
+        return;
+    }
+    st.reach_at = now;
+    if (role == PartyRole::Host) {
+        std::vector<std::pair<std::string, std::string>> bad = bbnet::party::PartyHostService::instance().unusable_endpoints();
+        std::vector<std::string> names;
+        for (const party::RosterEntry& e : link->roster()) {
+            if (e.slot == party::kHostSlot || !e.connected) {
+                continue;
+            }
+            std::string where;
+            bool hit = TestUnreachable();
+            for (const auto& [id, at] : bad) {
+                if (id == e.name) {
+                    hit = true;
+                    where = at;
+                }
+            }
+            if (!hit) {
+                continue;
+            }
+            names.push_back(e.name);
+            if (std::find(st.unreachable.begin(), st.unreachable.end(), e.name) == st.unreachable.end()) {
+                Log("summon: UDP to %s is blocked: its game has only the LAN address %s (no public UDP endpoint: "
+                    "the STUN on our party port gave it no answer); no bell or summon for it until it has one "
+                    "(it retries in the background)",
+                    e.name.c_str(), where.empty() ? "(test)" : where.c_str());
+                party::status::SetLastEvent("UDP to " + e.name +
+                                            " is blocked: their game has no public UDP address yet; no summon "
+                                            "until it has one (retrying)");
+            }
+        }
+        for (const std::string& n : st.unreachable) {
+            if (std::find(names.begin(), names.end(), n) == names.end()) {
+                Log("summon: UDP to %s works again (its public endpoint is known): summons resume", n.c_str());
+                party::status::SetLastEvent("UDP to " + n + " works again: summoning");
+                st.rung_ever = false;
+            }
+        }
+        st.unreachable = std::move(names);
+        return;
+    }
+    std::string stun_host;
+    bool asked = false;
+    const bool known = bbnet::session::mapped_known(&stun_host, &asked);
+    const bool blocked =
+        link->state() == party::LinkState::Connected && asked &&
+        (TestUnreachable() ||
+         (!known && bbnet::party::summon_endpoint_unusable(bbnet::party::ip_parse(stun_host),
+                                                           bbnet::party::ip_parse(bbnet::session::local_addr_text()), 0, 0)));
+    if (blocked != st.self_unreachable) {
+        st.self_unreachable = blocked;
+        st.reach_said = now;
+        if (blocked) {
+            Log("summon: UDP to the host is blocked: the host's party port gives no STUN answer, so this game has no "
+                "public UDP address; no bell until it answers (retrying every 40 s)");
+            party::status::SetLastEvent("UDP to the host is blocked: no answer from the host's party port; no summon "
+                                        "until it answers (retrying)");
+        } else {
+            Log("summon: UDP to the host works again (STUN answered): ringing resumes");
+            party::status::SetLastEvent("UDP to the host works again: joining");
+            st.rung_ever = false;
+        }
+    }
+}
+
+/// The roster without the members nobody can summon (State::unreachable).
+std::vector<party::RosterEntry> SummonableRoster(const State& st, const std::vector<party::RosterEntry>& roster) {
+    std::vector<party::RosterEntry> out;
+    for (const party::RosterEntry& e : roster) {
+        if (e.slot == party::kHostSlot ||
+            std::find(st.unreachable.begin(), st.unreachable.end(), e.name) == st.unreachable.end()) {
+            out.push_back(e);
+        }
+    }
+    return out;
 }
 
 void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
@@ -3712,6 +3815,7 @@ void PartyDirector::Tick() {
         st.poll_logged = true;
         Log("bell +2.5 s: %s", DescribeSignPolling().c_str());
     }
+    UdpReachTick(st, role, link, now);
     // Automatic summoning. The host also rings while hosting: the 2nd / 3rd cooperator of a
     // 3- / 4-player party (HostMayRing checks the count).
     if (!st.auto_ring || role == PartyRole::None || !link || !s.world_up || s.loading || !st.world_seen ||
@@ -3797,6 +3901,14 @@ void PartyDirector::Tick() {
                     OthersInPrologue().c_str());
             }
         }
+        if (st.self_unreachable && GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected, party_ready)) {
+            // No usable UDP endpoint (UdpReachTick): a summon could only time out.
+            if (Seconds(st.reach_said, now) >= 30.0) {
+                st.reach_said = now;
+                Log("bell: not ringing: UDP to the host is blocked (no STUN answer yet; retrying)");
+            }
+            return;
+        }
         if (GuestMayRing(st.start_ready, link->state() == party::LinkState::Connected, party_ready)) {
             // Not before the host's map is known (it is still loading): the gather below needs it,
             // and a guest that rang meanwhile was summoned at its own world's spot (the Hunter's
@@ -3841,12 +3953,14 @@ void PartyDirector::Tick() {
         if (st.summons_seen && Seconds(st.summon_at, now) < 20.0) {
             return;
         }
+        // Members nobody can summon (UdpReachTick) do not count: no bell for them alone.
+        const std::vector<party::RosterEntry> roster = SummonableRoster(st, link->roster());
         const bool may = link->state() == party::LinkState::Hosting &&
-                         HostMayRing(st.start_ready, s.cooperators, max_players, link->roster());
+                         HostMayRing(st.start_ready, s.cooperators, max_players, roster);
         // A waiting member still in another map than ours (it gathers to our lamp first, with a
         // loading screen) is not waiting for this bell yet: the grace starts once it is here.
         bool member_elsewhere = false;
-        for (const party::RosterEntry& e : link->roster()) {
+        for (const party::RosterEntry& e : roster) {
             if (e.slot != party::kHostSlot && e.connected &&
                 (e.state == party::MemberState::Home || e.state == party::MemberState::Joining) &&
                 dsummon::MapKnown(e.map_id) && dsummon::MapKnown(s.map_id) && !dsummon::SameMap(e.map_id, s.map_id)) {
@@ -3872,7 +3986,8 @@ void PartyDirector::Tick() {
             st.bell_hold_logged = false;
             Ring(st, kHostBell, "host ready, a ready party member waits", now);
         } else if (link->state() == party::LinkState::Hosting && st.start_ready && b2::TitleJoinPending() &&
-                   s.cooperators + 1 < max_players && !AnyMemberInPrologue(link->roster())) {
+                   s.cooperators + 1 < max_players && !AnyMemberInPrologue(link->roster()) &&
+                   roster.size() == link->roster().size()) {
             // A guest at its title asks for this room (title join): the room comes with the bell.
             Ring(st, kHostBell, "host ready, a guest joins from its title", now);
         }
