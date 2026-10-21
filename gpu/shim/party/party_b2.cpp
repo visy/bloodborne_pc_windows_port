@@ -1230,6 +1230,11 @@ struct LimboKillWatch {
     bool pending = false;  // deathrules::DefeatPending: the defeat is not saved yet
 };
 LimboKillWatch g_limbo_kill;
+// The local chr's last HP 0 (LocalDeathHeightTick): when, and whether a living boss bar was up then
+// (the game's death state, and with it a guest's held death, comes ~8 s later: the boss can be
+// killed in between, live arenaguest A1). Main thread.
+double g_local_death_at = 0;
+bool g_local_death_in_fight = false;
 void LimboKillTick(bool loading, double now) {
     LimboKillWatch& w = g_limbo_kill;
     if (loading) {
@@ -3770,7 +3775,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         // its limbo, or in the grace with the fight on at its death): it gets up in the arena, no
         // load, once the defeat is saved (PR #6's wait, as the host's arena revive).
         const LimboKillWatch& kw = g_limbo_kill;
-        const bool in_fight = limbo_logged == at || (kw.gone_at > 0 && kw.gone_at >= at);
+        const bool in_fight = limbo_logged == at || (g_local_death_in_fight && kw.killed && g_local_death_at > 0 &&
+                                                     kw.gone_at >= g_local_death_at && at - g_local_death_at < 60.0);
         const deathrules::GuestLimboEnd end =
             in_fight ? deathrules::PlanGuestLimboEnd(kw.killed, HostLimboReviveOn(), kw.pending,
                                                      s.player && LivingMemberHere(s.player))
@@ -4645,6 +4651,8 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         d.peak = p[1];
         for (const auto& h : hist) d.peak = std::max(d.peak, double(h.second));
         g_death_height = d;
+        g_local_death_at = now;
+        g_local_death_in_fight = LivingBossHandle() != ~0u;
         g_local_corpse = CorpseSpot{};
         g_local_corpse.valid = ChrTransform(s.player, g_local_corpse.pos, g_local_corpse.rot) &&
                                std::isfinite(g_local_corpse.pos[1]);

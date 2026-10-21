@@ -661,7 +661,9 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
   respawn (6.9) at the host's last lamp; a host travel (wipe, rest) takes it along as before.
 * **Guest arena revive** (arenaguest 2026-10-21, the same switch `BB_PARTY_HOST_LIMBO_REVIVE`, each
   game for its own player; `party_death_rules.h` `PlanGuestLimboEnd`): the boss KILLED while the
-  guest lay dead in the fight (in its limbo, or still in the grace with the fight on at its death).
+  guest lay dead in the fight (in its limbo, or before its held death: the game's death state runs
+  ~8 s after HP 0, so a death with a living boss bar up (`LocalDeathHeightTick`) and a kill after it
+  count too - live A1: guest 2 died at +174.7, the kill came at +181.8, its hold at +183.3).
   `LimboKillTick` keeps the last living boss bar's chr; once no living bar is up, a kill is the bar
   over a dead chr or that chr at HP 0 (`boss fight: the boss was killed (...)`), and
   `DefeatPending` is PR #6's wait (bar still up, or < 3 s after it went, at most 20 s):
