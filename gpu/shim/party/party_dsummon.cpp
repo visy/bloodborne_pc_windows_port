@@ -355,6 +355,11 @@ bool GatherFirst(bool direct_on, Phase last, bool last_waited) {
 Action Step(Guest& g, double now, bool entry_waiting, bool joined) {
     switch (g.phase) {
     case Phase::Asked:
+        if (joined) {  // the sign path brought it in while it asked (smoke k1: 8 more asks, all refused)
+            g.phase = Phase::Done;
+            g.reask_at = 0;
+            return Action::ReportOk;
+        }
         if (g.reask_at > 0 && now >= g.reask_at) {
             g.reask_at = 0;
             ++g.reasks;
