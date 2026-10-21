@@ -433,7 +433,16 @@ bool SendHomeVeto(u64 site) {
     // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped -
     // also for a title-joined guest (B5, live parab2 b5e: it left the host's world 6 s after the
     // host's alone travel and loaded its own map). The player's own Leave is never dropped here.
-    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && SplitHostReachable()) {
+    // A host in a Chalice Dungeon this game does not have: the send-home goes through, so this
+    // guest is in its own world and the bell's summon brings it into the dungeon (chalice.md 4;
+    // live, beta 6: dropped here, the guest stayed in the host's Dream and was never summoned).
+    const bool host_in_chalice = HostInOtherChalice();
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && host_in_chalice) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) not dropped: the host is in a Chalice Dungeon this game "
+            "does not have; the summon brings this game in from its own world");
+    }
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && !host_in_chalice &&
+        SplitHostReachable()) {
         Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
             "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f%s)",
             Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
@@ -8893,6 +8902,16 @@ bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo) {
 bool OnHostTravel(const TravelIntent& t) {
     if (!g_on.load() || Role() != RoleClient) {
         return false;
+    }
+    if (GuestSkipsChaliceTravel(t)) {
+        // Live (beta 5, 3 guests): the B2 re-join loaded the host's dungeon lamp without the
+        // dungeon in the guest's slot (m255, an empty world): every guest fell and died, then
+        // respawned at that lamp and fell again. The guest stays, as for a host travelling alone;
+        // the summon's quick join brings it in.
+        g_host_left = true;
+        g_host_alone_seen = Now();
+        NoteAway(0);
+        return true;
     }
     if (t.alone) {
         // Split travel: the host goes alone; this guest stays and does not load. Its chr here
