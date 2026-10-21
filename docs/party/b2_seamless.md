@@ -939,6 +939,18 @@ opt-in. The decisions are pure functions in `party_death_rules.h` (unit party-de
 * Wipe race (bug 18): the dead are recounted every frame while the host is down (`PlanDownTick`), and
   a guest's chr at HP 0 sends `member_down` at once (`GuestDownNoticeTick`) instead of only when its
   death state runs seconds later.
+* Late wipe (player report 2026-10-21, Logarius): that early notice makes the last guest's HP 0 start
+  the wipe while its death animation still runs (the game takes the death ~8.6 s later). Followed at
+  once, the load moved the dying body to the host's lamp, the death was taken there (bloodstain at the
+  lamp) and the held death revived the guest alone at its own last lamp beside the arena. Now
+  `OnHostTravel` parks a host-death travel while the own chr is at HP 0 and the death is not taken
+  (`deathrules::PlanWipeFollow`); `WipeFollowTick` follows it as a dead follow once the death is held
+  (at most `kWipeDeathWait` 15 s, then the hold is taken there) and asks the host for a fresh snapshot
+  (`respawn`). Safety nets: a death taken within 30 s after such an arrival belongs to the wipe
+  (`PlanHeldAfterWipe`: up already = dropped, down = the host's lamp, never its own); the bloodstain
+  record goes to the HP 0 spot when a load began before the death was taken (`StainAtDeathSpot`); a
+  dead guest holds while the host's chr is down up to `kGuestHostDownHold` 120 s (was 30 s). Smoke:
+  `--only wipe_late`.
 * Guest rest (bug 3): a guest that answers NO at a lamp / headstone travels alone as before and sends
   a `rest` lamp request; the host (`HostRestLoadTick`, gate `PlanRestLoad`: in the world, alive, no
   boss fight, not in the Dream, nothing pending, 20 s apart) runs `HostTravelTransformNow`: its own
