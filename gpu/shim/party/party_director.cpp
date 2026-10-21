@@ -146,6 +146,7 @@ struct TravelStep {
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
+        GuestFixture, // guest_fixture@S: the BB_PARTY_WORLDACT_TEST objects / pickups again (worldact::FixtureRearm)
         GuestStick, // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
         HostStick,  // the same on the host
         HostRoute, GuestRoute, // a stick walk along waypoints X:Z[:R]/...: a real path through the level (B1)
@@ -1175,6 +1176,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestRoute: return "guest_route";
     case TravelStep::HostUse: return "host_use";
     case TravelStep::GuestUse: return "guest_use";
+    case TravelStep::GuestFixture: return "guest_fixture";
     case TravelStep::GuestHome: return "guest_home";
     case TravelStep::HostLeave: return "host_leave";
     case TravelStep::GuestLeave: return "guest_leave";
@@ -1612,7 +1614,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
-                step.kind == TravelStep::GuestRoute ||
+                step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
                 step.kind == TravelStep::GuestLastLamp || step.kind == TravelStep::GuestLeave ||
                 step.kind == TravelStep::GuestRejoin) == (role == PartyRole::Guest);
@@ -1690,7 +1692,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::HostOutage || next_kind == TravelStep::GuestOutage ||
          next_kind == TravelStep::HostLastLamp || next_kind == TravelStep::GuestLastLamp || next_kind == TravelStep::HostLamp || next_kind == TravelStep::HostObj ||
          next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
-         next_kind == TravelStep::HostUse || next_kind == TravelStep::GuestUse ||
+         next_kind == TravelStep::HostUse || next_kind == TravelStep::GuestUse || next_kind == TravelStep::GuestFixture ||
          next_kind == TravelStep::GuestStick || next_kind == TravelStep::HostStick ||
          next_kind == TravelStep::HostRoute || next_kind == TravelStep::GuestRoute ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
@@ -1861,6 +1863,39 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 target = b;
             }
         }
+        {
+            // The own HP / max (HP module [+0x3B0] +0x20: +0xF8 / +0xFC; rally and vial checks) and
+            // lock-on (chr +0xF8, the behaviour variable IsLockon in 0x1A18BF0; 0x188E900 sets it
+            // with the target entry's first 16 bytes at +0x100, the target's chr handle first).
+            const std::uint64_t player = LocalPlayer();
+            std::uint64_t cm = 0, dm = 0;
+            std::int32_t hp = -1, mhp = -1;
+            std::uint8_t lock = 0;
+            std::uint32_t lh = 0;
+            if (player && SafeGet(player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
+                SafeGet(dm + 0xf8, &hp);
+                SafeGet(dm + 0xfc, &mhp);
+            }
+            if (player) {
+                SafeGet(player + 0xf8, &lock);
+                SafeGet(player + 0x100, &lh);
+            }
+            std::uint32_t lent = 0;
+            int lhp = -1;
+            if (lock) {
+                for (const auto& e : balance::LoadedEnemies()) {
+                    std::uint32_t h = 0;
+                    if (SafeGet(e.chr + 8, &h) && h == lh) {
+                        lent = e.entity;
+                        lhp = balance::EnemyHp(e.chr);
+                    }
+                }
+            }
+            char b[200];
+            std::snprintf(b, sizeof b, "; own HP %d/%d, lock-on %u (target handle %#x = entity %u, HP %d)", hp, mhp,
+                          unsigned(lock), lh, lent, lhp);
+            target += b;
+        }
         Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
     } else if (step.kind == TravelStep::HostLeave || step.kind == TravelStep::GuestLeave) {
         ::party::status::RequestLeave();
@@ -1870,6 +1905,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // bell then rings again from its own world.
         const bool left = LeaveGameSession();
         Log("test: guest_home: the game's own leave %s (%s)", left ? "run" : "NOT available", Describe(s).c_str());
+    } else if (step.kind == TravelStep::GuestFixture) {
+        worldact::FixtureRearm();
     } else if (step.kind == TravelStep::HostUse || step.kind == TravelStep::GuestUse) {
         UseGoodsForTest(TravelStepName(step.kind), static_cast<std::uint32_t>(std::strtoul(step.args.c_str(), nullptr, 10)));
     } else if (step.kind == TravelStep::HostMark || step.kind == TravelStep::GuestMark) {
@@ -3266,7 +3303,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
                        item.rfind("guest_stick=", 0) == 0 || item.rfind("host_use=", 0) == 0 ||
                        item.rfind("host_stick=", 0) == 0 || item.rfind("host_route=", 0) == 0 ||
-                       item.rfind("guest_route=", 0) == 0 ||
+                       item.rfind("guest_route=", 0) == 0 || item.rfind("guest_fixture", 0) == 0 ||
                        item.rfind("guest_use=", 0) == 0) {
                 TravelStep step;
                 step.kind = item.rfind("host_obj=", 0) == 0     ? TravelStep::HostObj
@@ -3287,6 +3324,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_route=", 0) == 0   ? TravelStep::GuestRoute
                             : item.rfind("host_use=", 0) == 0      ? TravelStep::HostUse
                             : item.rfind("guest_use=", 0) == 0     ? TravelStep::GuestUse
+                            : item.rfind("guest_fixture", 0) == 0  ? TravelStep::GuestFixture
                                                                 : TravelStep::HostHeadstone;
                 if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                     step.map = item.substr(pc + 1); // only while the current map name contains it
