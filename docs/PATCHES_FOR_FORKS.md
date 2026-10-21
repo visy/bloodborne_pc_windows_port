@@ -76,6 +76,7 @@ join is needed. Dependency: **layer** (needs our party flow).
 | K3 | 0x193C657 | No leave on a stage-record change with a session |
 | K4 | 0x193C689 | Skip the presentation-member clear with a session |
 | K5 | 0x13809B7 | No leave in OnMatchingCheck while a re-join runs |
+| K5b | 0x1380A65 | No leave in OnMatchingError for 10 s after a guest changed its own player number |
 | K6 | 0x178524F | Skip vanilla SummonReloadStart while a guest re-join runs |
 | K7 | 0x13CDEAE | `75 6c` to `eb 6c`, written and restored around the guest's own warp |
 | K8 | 0x18C4D7D | Host skips the "return" request to every human task when the host dies |

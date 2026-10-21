@@ -75,6 +75,8 @@ void SetState(State state, const std::string& detail = {});
 void SetMembers(const std::vector<Member>& members);
 /// A one-line event for the log line and the toast ("Hunter1 joined", "Travelling to ...").
 void SetLastEvent(const std::string& text);
+/// How long the toast shows `text`: 3 s plus 60 ms per character (UTF-8 code points), at most 10 s.
+std::int64_t ToastMs(const std::string& text);
 /// An important notice shown as a message box in the middle of the screen for a while (lines
 /// split by '\n'; the first is its title). Empty clears it.
 void SetAlert(const std::string& text);

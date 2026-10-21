@@ -51,6 +51,9 @@ def main():
     a = ap.parse_args()
     env = os.environ.copy()
     env["PATH"] = MINGW + os.pathsep + env.get("PATH", "")
+    # GCC's lto-wrapper runs -flto=auto's LTRANS jobs in parallel through `make` (MAKE); mingw64
+    # only has mingw32-make, so without this the release link compiled its 174 jobs one by one.
+    env.setdefault("MAKE", os.path.join(MINGW, "mingw32-make.exe"))
     if not env.get("BB_KEEP_TMP"):
         tmp = BBPORT / "tmp"
         tmp.mkdir(exist_ok=True)
