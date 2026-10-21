@@ -195,7 +195,8 @@ plays the remo there as its own event would and sends it up.
 * Insight items: white-enabled (`phantom_limits.md` 1.1); they act on the guest's own record.
 * Bath Messengers (t210691/694/695/699 shops, t210698 Insight shop, t210697 dress-up): open to
   guests (guest_services.md 2.2), purchases on the guest's own echoes / Insight and own stock flags
-  (6000-8999 stay in the own pool).
+  (6000-8999 stay in the own pool; the one-time stock flags 70009xxx / 72101xxx are overlay groups:
+  the guest's shop shows its own pool's stock and its purchases go there, event_flags.md 3).
 
 ## 7. Catch-up of a guest behind the host
 

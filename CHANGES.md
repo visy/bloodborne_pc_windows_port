@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: each player can buy the shop's one-of-a-kind items** (player report): when the host bought an armour set from the Bath Messengers (or attire from the Insight shop), it showed as sold out for a guest in the host's Hunter's Dream too, although the guest never had it; a guest's own purchase there was also forgotten after it went home. Shop stock is now per player: in the host's world a guest's shop shows what the guest has bought, and what it buys there is saved to its own game.
 - **Fixed: joining over a VPN when the host has no open port** (PR #7, vladtepes22): the 0.6.9 VPN fix rewrote the host's address but not its STUN-found public address, which the guest's game still preferred, so the join timed out (live over Radmin). Both now take the address the party connection reached.
 - **Added: your rot is shown**: the *Party* page of the System menu has a *Rot* row ("3/5", and on its help line what it does, e.g. "Rot 3/5: max HP -20 %, stamina costs +10 %"), and the party HUD shows the same line under your companions while you carry rot. Each player sees their own; a lamp rest still cleanses it.
 - **Changed: the bloodstain marker is an option, off by default**: the red "Blood Echoes N" marker with its distance on a guest's lost-echoes bloodstain now shows only with *System > Pings > Bloodstain marker* (also a launcher checkbox, `bbport.ini party_stain_marker`, `BB_PARTY_STAIN_MARKER=1`). The bloodstain and its echoes are unchanged.
