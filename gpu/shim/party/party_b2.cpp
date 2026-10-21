@@ -10124,6 +10124,84 @@ bool HostPartyWarpNoLoad(std::uint32_t id) {
     return true;
 }
 
+namespace {
+/// I5 gather: the host's chr in this world and its transform, when it stands where the host reports
+/// itself (vitals, fresh) in the block this guest stands in.
+bool HostChrTransform(float pos[4], float rot[4]) {
+    if (!g_on.load() || Role() != RoleClient) {
+        return false;
+    }
+    const Where* w = WhereOf(0);
+    const bool vit = w && w->has_pos && w->age_ms < 2000;
+    if (!vit || !InLoadedBlock(w->map)) {
+        return false;
+    }
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 host = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        alignas(16) float hp[4], hr[4];
+        if (host && ChrTransform(host, hp, hr) && deathrules::HostChrPlaced(hp, true, w->pos)) {
+            std::memcpy(pos, hp, sizeof hp);
+            std::memcpy(rot, hr, sizeof hr);
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+bool HostChrHere(float* distance_m) {
+    alignas(16) float hp[4], hr[4], me[4], mr[4];
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (!player || !HostChrTransform(hp, hr) || !ChrTransform(player, me, mr)) {
+        return false;
+    }
+    if (distance_m) {
+        const float dx = hp[0] - me[0], dy = hp[1] - me[1], dz = hp[2] - me[2];
+        *distance_m = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    return true;
+}
+
+bool GatherBesideHost(const char* why) {
+    alignas(16) float hp[4], hr[4];
+    if (LocalHp() <= 0 || !HostChrTransform(hp, hr)) {
+        return false;
+    }
+    float pos[4];
+    std::memcpy(pos, hp, sizeof pos);
+    BesideHost(pos, hr, g_local_slot.load());
+    pos[3] = 1.0f;
+    char b[96];
+    std::snprintf(b, sizeof b, "%s: beside the host", why ? why : "gather");
+    if (!WarpLocal(pos, hr[1], b)) {
+        return false;
+    }
+    Log("gather: put beside the host (%.1f, %.1f, %.1f), the host at (%.1f, %.1f, %.1f), no load", double(pos[0]),
+        double(pos[1]), double(pos[2]), double(hp[0]), double(hp[1]), double(hp[2]));
+    return true;
+}
+
+bool Spectating() {
+    return g_spectating.load();
+}
+
+bool GatherTravelToHost() {
+    const u32 host = HostMap();
+    if (!g_on.load() || Role() != RoleClient || host == 0 || host == 0xffffffffu) {
+        Log("gather: no travel to the host (role %d, host map %#x)", Role(), host);
+        return false;
+    }
+    const u32 lamp = LampNearHost(host);
+    TravelIntent t;
+    if (lamp == 0 || !LampIntent(lamp, &t)) {
+        Log("gather: no lamp of the host's map %s known", MapName(host).c_str());
+        return false;
+    }
+    Log("gather: one load into the host's map %s (lamp %u, nearest the host), then beside the host", MapName(host).c_str(),
+        lamp);
+    return TravelAlone(t, AloneWhy::Gather);
+}
+
 void SetWhere(const std::vector<Where>& members) {
     g_where = members;
 }
@@ -10139,6 +10217,7 @@ const char* AloneWhyName(AloneWhy w) {
     case AloneWhy::HuntersMark: return "hunters_mark";
     case AloneWhy::Death: return "death";
     case AloneWhy::Join: return "join";
+    case AloneWhy::Gather: return "gather";
     }
     return "?";
 }

@@ -586,6 +586,11 @@ add_executable(party-spectate-test EXCLUDE_FROM_ALL ../tests/test_party_spectate
 target_compile_options(party-spectate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-spectate-test PRIVATE shim)
 set_target_properties(party-spectate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# I5 gather the party (party_gather_rules.h). ninja -C out/gpu party-gather-test
+add_executable(party-gather-test EXCLUDE_FROM_ALL ../tests/test_party_gather.cpp)
+target_compile_options(party-gather-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-gather-test PRIVATE shim)
+set_target_properties(party-gather-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Deaths, rests and same-map lamps (party_death_rules.h). ninja -C out/gpu party-death-rules-test
 add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death_rules.cpp)
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

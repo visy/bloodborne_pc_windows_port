@@ -30,6 +30,7 @@
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
 #include "party_split.h"
+#include "party_gather.h"
 #include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
@@ -155,7 +156,9 @@ struct TravelStep {
         // RequestLeave / RequestRejoin): host_leave / guest_leave wait for the join like any step;
         // host_rejoin / guest_rejoin run S s after this player went out of the party (or after the
         // previous step, the later), while it is out (repeat cycles: tools/mp/smoke_party.py).
-        HostLeave, GuestLeave, HostRejoin, GuestRejoin
+        HostLeave, GuestLeave, HostRejoin, GuestRejoin,
+        // I5: the Party page's Gather the party as the host presses it (party_status RequestGather).
+        HostGather
     } kind = HostWarp;
     bool after_scene = false; // "~": the delay counts from the end of a cutscene after the previous step
     std::uint32_t id = 0; // HostWarp: the ReturnPointParam row for 0x13CDF30; HostKill: the entity id
@@ -1182,6 +1185,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestLeave: return "guest_leave";
     case TravelStep::HostRejoin: return "host_rejoin";
     case TravelStep::GuestRejoin: return "guest_rejoin";
+    case TravelStep::HostGather: return "host_gather";
     }
     return "?";
 }
@@ -1938,6 +1942,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             target += b;
         }
         Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
+    } else if (step.kind == TravelStep::HostGather) {
+        const bool queued = ::party::status::RequestGather();
+        Log("test: host_gather: Party > Gather the party pressed%s (%s)", queued ? "" : " - NOT queued (not the host)",
+            Describe(s).c_str());
     } else if (step.kind == TravelStep::HostLeave || step.kind == TravelStep::GuestLeave) {
         ::party::status::RequestLeave();
         Log("test: %s: Party > Leave pressed (%s)", TravelStepName(step.kind), Describe(s).c_str());
@@ -3269,7 +3277,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
                        item.rfind("guest_home", 0) == 0 || item.rfind("host_leave", 0) == 0 ||
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
-                       item.rfind("guest_rejoin", 0) == 0) {
+                       item.rfind("guest_rejoin", 0) == 0 || item.rfind("host_gather", 0) == 0) {
                 TravelStep step;
                 step.after_scene = after_scene;
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
@@ -3288,6 +3296,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_leave", 0) == 0  ? TravelStep::GuestLeave
                             : item.rfind("host_rejoin", 0) == 0  ? TravelStep::HostRejoin
                             : item.rfind("guest_rejoin", 0) == 0 ? TravelStep::GuestRejoin
+                            : item.rfind("host_gather", 0) == 0  ? TravelStep::HostGather
                             : item[0] == 'g'                     ? TravelStep::GuestDie
                             : item.rfind("host_die", 0) == 0     ? TravelStep::HostDie
                             : item.rfind("host_kill", 0) == 0    ? TravelStep::HostKill
@@ -3893,6 +3902,9 @@ void PartyDirector::Tick() {
     worldact::Tick(s, link);
     npctalk::Tick(s, link);  // shared NPC dialogue (party_npctalk.h)
     split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
+    if (role != PartyRole::None) {
+        gather::Tick(s, link, role == PartyRole::Host);  // I5 Gather the party (party_gather.h)
+    }
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
     }

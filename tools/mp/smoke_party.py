@@ -445,20 +445,61 @@ def phase_sk(only):
     )
 
 
+# Phase ga (gather, ~4 min, 3 players; ERSC_PARITY I5): the host's System > Party > Gather the party
+# three times. After a party travel to the Tomb of Oedon (m24_01) guest 1 stands 130 m away in the
+# same map and guest 2 travels alone to the Hunter's Dream. Round 1: both YES (guest 1 an in-world
+# warp beside the host, no load; guest 2 the one-load travel, then beside the host). A press 5 s later
+# is refused (cooldown). Round 2: guest 1 has its in-game menu open (refused: in a menu), guest 2
+# answers No. Then guest 1 travels alone to the Dream; round 3: guest 1 YES (the travel), guest 2 YES
+# (already beside the host). Answers: BB_PARTY_GATHER_TEST (party_gather.h).
+GA_FAR = SK_FAR  # 130 m from the Tomb of Oedon lamp, same map
+GA_ARRIVED = r"guest: arrived in the host's map"
+GA_UNTIL = ["0:round 3 over", "1:" + GA_ARRIVED, "2:" + GA_ARRIVED]
+
+
+def phase_ga(only):
+    host = ",".join([
+        "god",
+        "host_warp=2412953@15",          # party lamp travel: the Tomb of Oedon (everyone in m24_01)
+        "host_gather@45%m24_01",         # round 1
+        "host_gather@5%m24_01",          # refused: the cooldown
+        "host_gather@35%m24_01",         # round 2
+        "host_gather@45%m24_01",         # round 3
+        "host_press=0@15%m24_01!",
+    ])
+    g1 = ",".join(["god", "guest_move=%s@30%%m24_01" % GA_FAR,   # far away in the same map
+                   "guest_lamp=2102950@75%m24_01"])              # after round 2: alone to the Dream
+    g2 = ",".join(["god", "guest_lamp=2102950@35%m24_01"])       # alone to the Dream (another map)
+    watch = ["--grey"]
+    for rx, tag in ((r"round \d+: Gather the party: \d+ guest", "gather"), (r"gather: put beside the host", "beside"),
+                    (GA_ARRIVED, "arrived"), (r"round 2 refused: in a menu", "menu")):
+        watch += ["--watch", "%s=%s@0.5,3" % (rx, tag)]
+    return dict(
+        name="ga", seconds=360,
+        env=[],
+        watch=watch,
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
+              "1:BB_PARTY_TRAVEL_CHOICE=alone", "2:BB_PARTY_TRAVEL_CHOICE=alone",
+              "1:BB_PARTY_GATHER_TEST=yes,menu,yes", "2:BB_PARTY_GATHER_TEST=yes,no,yes"],
+        crash=[],
+        until=GA_UNTIL,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
-              "host_revive": r"^s3 ", "streamkill": r"^sk "}
+              "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -481,6 +522,7 @@ GROUP_UNTIL = {
     # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
     "summonfail": [r"0:cooperators 0 -> 1"],
     "streamkill": [SK_UNTIL],
+    "gather": GA_UNTIL,
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
@@ -994,9 +1036,50 @@ def check_sk(v, L):
     check_common(v, L, "sk")
 
 
+def _ga_warp_distance(line):
+    """The in-world warp line's move in metres: "(x, y, z) -> (x, y, z) in ..."."""
+    m = re.search(r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\) -> \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", line)
+    if not m:
+        return 0.0
+    a = [float(x) for x in m.groups()]
+    return ((a[0] - a[3]) ** 2 + (a[1] - a[4]) ** 2 + (a[2] - a[5]) ** 2) ** 0.5
+
+
+def check_ga(v, L):
+    need(v, L, "ga join: 3 players", 0, r"cooperators [01] -> 2")
+    r1 = need(v, L, "ga round 1: the host asks 2 guests", 0, r"round 1: Gather the party: 2 guest")
+    if r1 is None:
+        check_common(v, L, "ga")
+        return
+    yes1 = need(v, L, "ga round 1: guest 1 (same map) YES -> in-world", 1, r"guest: round 1: YES -> inworld", r1)
+    w = L.find(1, r"in-world warp \(gather: beside the host\)", r1)
+    d = _ga_warp_distance(w[1]) if w else 0.0
+    v.step("ga round 1: guest 1 came from > 100 m, no load", w and d > 100.0,
+           "%.0f m: %s" % (d, w[1][:150]) if w else "no in-world warp line on inst1")
+    none_of(v, L, "ga round 1: guest 1 no loading screen", r"guest: (host snapshot applied|travels alone)", r1, r1 + 10, (1,))
+    need(v, L, "ga round 1: guest 2 (another map) YES -> travel", 2, r"guest: round 1: YES -> travel", r1)
+    a2 = need(v, L, "ga round 1: guest 2 arrived beside the host", 2, GA_ARRIVED, r1)
+    need(v, L, "ga round 1: summary (both coming)", 0, r"round 1 over .*Gather: .* coming$", r1)
+    need(v, L, "ga cooldown: a press within 30 s refused", 0, r"Gather the party refused: too soon", r1)
+    r2 = need(v, L, "ga round 2: the host asks again", 0, r"round 2: Gather the party: 2 guest", r1 + 30)
+    if r2 is not None:
+        need(v, L, "ga round 2: guest 1 refused (in a menu)", 1, r"guest: round 2 refused: in a menu", r2)
+        need(v, L, "ga round 2: guest 2 answers No", 2, r"guest: round 2: NO", r2)
+        need(v, L, "ga round 2: summary (said no, in a menu)", 0, r"round 2 over .*said no.*in a menu", r2)
+        v.step("ga round 2 at least 30 s after round 1", r2 - r1 >= 30.0, "%.1f s" % (r2 - r1))
+    r3 = need(v, L, "ga round 3: the host asks again", 0, r"round 3: Gather the party: 2 guest", (r2 or r1) + 30)
+    if r3 is not None:
+        need(v, L, "ga round 3: guest 1 (Dream) YES -> travel", 1, r"guest: round 3: YES -> travel", r3)
+        need(v, L, "ga round 3: guest 1 arrived beside the host", 1, GA_ARRIVED, r3)
+        need(v, L, "ga round 3: guest 2 YES", 2, r"guest: round 3: YES -> (here|inworld)", r3)
+        need(v, L, "ga round 3: summary", 0, r"round 3 over", r3)
+    check_common(v, L, "ga")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
-          "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L)}
+          "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
+          "ga": lambda v, L, d: check_ga(v, L)}
 
 
 def main():
@@ -1005,7 +1088,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -1016,7 +1099,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
