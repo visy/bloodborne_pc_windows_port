@@ -11,6 +11,8 @@
 //       stage-record UID changed): no leave, no presentation reset while a session is up.
 //   K5  0x13809B7 call BeginLeaveSession (Lua OnMatchingCheck: a member's chr is missing):
 //       suppressed while a B2 re-join is in flight.
+//   K5b 0x1380A65 call BeginLeaveSession (Lua OnMatchingError: the host's check missed this
+//       guest's chr under its player number): ignored for 10 s after the guest changed its number.
 //   K6  0x178524F call 0x1317780 (Lua OnBeJoinStart_* after the host's flag snapshot): suppressed
 //       while a guest B2 re-join is in flight (the vanilla SummonReloadStart would overwrite the
 //       guest's own-world return snapshot 0x16 90/B0/D0 and start its own warp).

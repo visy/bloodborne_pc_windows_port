@@ -119,6 +119,9 @@ bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint1
 void p2p_set_relay_admit(std::function<bool(std::uint32_t addr)> admit);
 void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port, std::uint32_t local_addr,
                std::uint16_t local_port);
+// How long ago the party port last heard addr (network order) : port (host order), anything (a
+// probe's answer too), ms; -1: never (or no party port).
+std::int64_t p2p_ms_since_heard(std::uint32_t addr, std::uint16_t port_host);
 // One line about the party port (counters), for the status line.
 std::string p2p_status();
 // This machine's LAN IPv4 address (network order), BB_PARTY_LOCAL_IP overriding; 0 when none.

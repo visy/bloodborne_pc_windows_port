@@ -4,6 +4,7 @@
 
 #include "../../party_env.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -158,6 +159,12 @@ void SetLastEvent(const std::string& text) {
     board.event_ms = NowMs();
     board.event_seq = event_seq.fetch_add(1) + 1;
     ++board.version;
+}
+
+std::int64_t ToastMs(const std::string& text) {
+    std::int64_t chars = 0;
+    for (const char c : text) chars += (static_cast<unsigned char>(c) & 0xc0) != 0x80;  // not a continuation byte
+    return std::min<std::int64_t>(3000 + 60 * chars, 10000);
 }
 
 void SetAlert(const std::string& text) {

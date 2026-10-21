@@ -197,6 +197,12 @@ int main() {
         OnRoom(h, 30.0, true, Busy::Sign);  // still summoning: the bell sign path, not a wait
         CHECK(h.phase == Phase::Failed && !h.waited);
     }
+    // An unreachable joiner (its last join failed, nothing heard since) is not summoned again
+    CHECK(!UnreachableHold(0, 0, 100.0));                       // never failed
+    CHECK(UnreachableHold(50.0, 0, 60.0));                      // failed, never heard
+    CHECK(UnreachableHold(50.0, 40.0, 60.0));                   // heard only before the failure
+    CHECK(!UnreachableHold(50.0, 50.5, 60.0));                  // heard after it (a probe's answer)
+    CHECK(!UnreachableHold(50.0, 0, 50.0 + kUnreachableMax));   // the hold runs out
     // Playtest 1 #9: the guest in another map gathers first (refused with "wait":"map")
     CHECK(MapKnown(0x15000000) && !MapKnown(0) && !MapKnown(0xffffffffu));
     CHECK(SameMap(0x18010000, 0x18010000) && SameMap(0x18010000, 0x18010001) && !SameMap(0x18010000, 0x18000000));

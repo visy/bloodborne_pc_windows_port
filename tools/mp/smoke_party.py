@@ -326,6 +326,7 @@ def phase_rules(only):
 # must serve its direct summon within 30 s of its first ask and it must end up in the host's world.
 # Before the fix every such ask was refused ("the host's game is summoning a sign") for minutes.
 SF_FAILED = r"direct summon: FAILED"
+SF_STAY = 60  # s guest 2 must stay in the host's world after its join (an unreachable joiner made it leave)
 
 
 def phase_summonfail(only):
@@ -334,6 +335,7 @@ def phase_summonfail(only):
         env=[], ienv=["1:BB_PARTY_PORT={hold}"],
         hold_ports=16,
         start_when=["2/1:" + SF_FAILED],
+        until_hold=SF_STAY + 5,  # guest 2 must stay in the host's world this long
         crash=[],
         until=GROUP_UNTIL["summonfail"],
     )
@@ -406,20 +408,57 @@ def phase_s3(only):
     )
 
 
+# Phase sk (streamsync, ~3 min, 3 players): a neighbouring map's enemy killed by the host and its map
+# streamed out and in again. 2400125 is a Cathedral Ward enemy (m24_00) 28 m from the Tomb of Oedon
+# lamp (m24_01); the game brings such an enemy back alive when its map streams in again, with no load
+# (vanilla, in single player too: streamsync solo run), and only the game that streamed it showed it
+# alive. The host kills it, walks 130 m away within 3 s (the census never saw the kill: respawnE),
+# waits there (m24_00's enemies stream out), comes back. Every game must keep it dead: the guests get
+# the kill from the kill record, the host puts it to death again with no echoes and no drop, and the
+# guests' census then matches the host's.
+SK_FAR = "-158.10:-41.72:16.93"   # 130 m from the lamp (m24_01): m24_00 streams out
+SK_BACK = "-36.8:-40.75:84.3"     # next to the lamp
+SK_ENEMY = "2400125"
+SK_UNTIL = r"0:travel step (\d+)/\1: "
+
+
+def phase_sk(only):
+    host = ",".join([
+        "god",
+        "host_warp=2412953@20",                                    # the Tomb of Oedon lamp (party travel)
+        "host_kill=%s:hp@8%%m24_01" % SK_ENEMY,                     # the neighbour map's enemy, 28 m away
+        "host_move=%s@3%%m24_01" % SK_FAR,                         # away before any census
+        "host_press=0@14%m24_01!",                                 # there: m24_00 streams out
+        "host_kill=%s:hp@1%%m24_01" % SK_ENEMY,                    # not loaded here (no target)
+        "host_move=%s@1%%m24_01" % SK_BACK,                        # back: m24_00 streams in again
+        "host_press=0@14%m24_01!",
+        "host_press=0@20%m24_01!",                                 # a census digest or two (every 15 s)
+        "host_kill=%s:hp@1%%m24_01" % SK_ENEMY,                    # still dead on the host (no target)
+        "host_press=0@3%m24_01!",
+    ])
+    return dict(
+        name="sk", seconds=420,
+        env=["BB_PARTY_ENEMY_CENSUS=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=god", "2:BB_PARTY_DIRECTOR_TEST=god"],
+        crash=[],
+        until=[SK_UNTIL],
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3}
+          "s3": phase_s3, "sk": phase_sk}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3"}
+          "host_revive": "s3", "streamkill": "sk"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
-              "host_revive": r"^s3 "}
+              "host_revive": r"^s3 ", "streamkill": r"^sk "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -440,8 +479,8 @@ GROUP_UNTIL = {
     "keyitems": [r"1:key goods held: .*load mode 0\)"],  # guest 1 back in its own world after the Leave
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
     # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
-    "summonfail": [r"0:cooperators 0 -> 1[\s\S]{40000}"],
-    "host_revive": [S3_UNTIL],
+    "summonfail": [r"0:cooperators 0 -> 1"],
+    "streamkill": [SK_UNTIL],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
@@ -515,6 +554,8 @@ def run_phase(a, ph, out: Path):
         # the stick walks (host_stick) write the in-process pad script
         (root / "pad0.txt").write_text("lx=128 ly=128\n")
         cmd += ["--ienv", "0:BB_PAD_FILE=" + str(root / "pad0.txt")]
+    if ph.get("until_hold"):
+        cmd += ["--until-hold", str(ph["until_hold"])]
     for c in ph["crash"]:
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
@@ -803,12 +844,26 @@ def check_summonfail(v, L):
         return
     ask = need(v, L, "summonfail: guest 2 asks for a direct summon", 2, r"direct summon: asked the host for its room", f)
     if ask is not None:
-        served = need(v, L, "summonfail: the host serves guest 2's direct summon", 0,
-                      r"direct summon: slot 2 \(.*\) gets this host's room", ask)
+        # guest 2 comes in by the direct summon or by its sign (the host's sign summon of it can win)
+        hit = L.find(0, r"direct summon: slot 2 \(.*\) gets this host's room", ask)
+        sign = None if hit else L.find(2, r"chalice: summon message type 1", ask)
+        served = hit[0] if hit else None
+        v.step("summonfail: the host summons guest 2 (direct or by its sign)", hit or sign,
+               ("+%.1f s inst%d: %s" % ((hit or sign)[0], 0 if hit else 2, (hit or sign)[1][:150])) if hit or sign
+               else "neither a direct summon served nor a sign summon message on inst2 after +%.0f s" % ask)
         if served is not None:
             v.step("summonfail: served within 30 s of guest 2's first ask", served - ask < 30,
                    "%.1f s (limit 30)" % (served - ask))
-        need(v, L, "summonfail: guest 2 in the host's world (cooperators 0 -> 1)", 0, r"cooperators 0 -> 1", ask)
+        j = need(v, L, "summonfail: guest 2 in the host's world (cooperators 0 -> 1)", 0, r"cooperators 0 -> 1", ask)
+        if j is not None:
+            end = max([t for t, _ in L.all(0, r".", j)] or [j])
+            v.step("summonfail: the run lasted %d s past guest 2's join" % SF_STAY, end - j >= SF_STAY,
+                   "%.0f s" % (end - j))
+            left = L.find(0, r"cooperators 1 -> 0", j, j + SF_STAY) or L.find(2, r"BeginLeaveSession|session client .* -> leaving", j, j + SF_STAY)
+            v.step("summonfail: guest 2 stays in the host's world for %d s" % SF_STAY, not left,
+                   "left at +%.1f s: %s" % (left[0], left[1][:150]) if left else "no leave")
+            unr = L.find(0, r"slot 1 \(.*\) (refused \(its last join failed|reports a failure: its UDP is not heard)", f - 5)
+            v.step("summonfail: the unreachable guest 1 is held back", unr, unr[1][:150] if unr else "no hold line")
     stuck = L.all(0, r"refused \(the host's game is summoning a sign", f)
     v.step("summonfail: sign-summon refusals after the failure (info)", True, "%d" % len(stuck))
     check_common(v, L, "summonfail")
@@ -879,9 +934,46 @@ def check_s3(v, L):
 
 
 
+def check_sk(v, L):
+    need(v, L, "sk join: 3 players", 0, r"cooperators [01] -> 2")
+    kill = need(v, L, "sk host kills the neighbour map's enemy %s" % SK_ENEMY, 0,
+                r"test: host_kill: entity %s HP \d+ -> 0" % SK_ENEMY)
+    if kill is None:
+        check_common(v, L, "sk")
+        return
+    away = need(v, L, "sk host 130 m away", 0, r"test: host_move to \(-158\.10", kill)
+    if away is not None:
+        v.step("sk host left within 5 s of the kill (before any census)", away - kill < 5, "%.1f s" % (away - kill))
+        gone = need(v, L, "sk host far: %s not loaded (its map streamed out)" % SK_ENEMY, 0,
+                    r"test: host_kill: no target \(entity %s\)" % SK_ENEMY, away)
+    for i in (1, 2):
+        need(v, L, "sk guest %d: %s dead there too (the kill record)" % (i, SK_ENEMY), i,
+             r"kill record: entity %s alive here, killed by the party 3 s ago: put to death|kill seen: entity %s died here"
+             % (SK_ENEMY, SK_ENEMY), kill, kill + 20)
+    back = need(v, L, "sk host back at the lamp", 0, r"test: host_move to \(-36\.80", away or kill)
+    if back is None:
+        check_common(v, L, "sk")
+        return
+    rk = need(v, L, "sk host: %s back alive after the stream-in, put to death again" % SK_ENEMY, 0,
+              r"kill record: entity %s alive again after its map streamed in .*: put to death again" % SK_ENEMY, back)
+    if rk is not None:
+        need(v, L, "sk host: no drop from the second death", 0, r"drops: .*no drop \(put to death again by the kill record", rk,
+             rk + 5)
+        # The director logs every change of the own Echoes ("Echoes 258 -> 516"); none may follow it
+        ech = L.all(0, r"\] Echoes \d+ -> \d+", rk - 0.1, rk + 6)
+        v.step("sk host: no echoes from the second death", not ech, "none in 6 s" if not ech else ech[0][1][:160])
+    end = need(v, L, "sk host: %s still dead at the end (no target)" % SK_ENEMY, 0,
+               r"test: host_kill: no target \(entity %s\)" % SK_ENEMY, (rk or back) + 15)
+    for i in (1, 2):
+        need(v, L, "sk guest %d census matches the host's after the return" % i, i,
+             r"enemy census: digest \d+ matches the host's", rk or back, (end or 1e9) + 1)
+    none_of(v, L, "sk: no census difference", r"enemy census: DIFFERS", kill, 1e9)
+    check_common(v, L, "sk")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
-          "s3": lambda v, L, d: check_s3(v, L)}
+          "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L)}
 
 
 def main():
@@ -890,7 +982,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -901,7 +993,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)

@@ -1589,12 +1589,24 @@ void DieForTest() {
 /// world, with no loading screen and no stage request pending.
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
+    // BB_PARTY_DIRECTOR_TEST_SOLO=1: the host steps without a cooperator, "joined" from the first
+    // steady world on: in single player (no BB_PARTY) or as a party host alone (vanilla comparisons,
+    // e.g. streamsync: does a neighbour map's kill stay dead when that map streams out and in).
+    static const bool solo = [] {
+        const char* v = std::getenv("BB_PARTY_DIRECTOR_TEST_SOLO");
+        return v && v[0] == '1';
+    }();
+    const bool solo_now = solo && (role == PartyRole::None || role == PartyRole::Host);
+    if (solo_now) {
+        role = PartyRole::Host;
+    }
     if (t.steps.empty() || role == PartyRole::None) {
         return;
     }
     // Guest: in once a client with the world loaded; out only when the session ends (the summon's
     // own map reload into the host world is still in).
-    const bool joined = role == PartyRole::Host ? s.cooperators >= 1
+    const bool joined = solo_now                  ? t.joined || (s.world_up && !s.loading)
+                        : role == PartyRole::Host ? s.cooperators >= 1
                         : t.joined                ? s.session_role == RoleClient
                                                   : s.session_role == RoleClient && s.world_up && !s.loading;
     if (joined != t.joined) {
