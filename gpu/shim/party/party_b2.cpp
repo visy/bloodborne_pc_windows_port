@@ -4954,8 +4954,13 @@ void HostDownTick(const GameSnapshot& s, double now) {
         const DeathHeight dh = g_death_height;
         u64 f = 0;
         SafeRead(s.player + 0x1e1, &f, 5);
+        // The fall-death state counts only for bits the chr did not carry alive (live arena run: the
+        // host's HP module +0x200 read 0x3800 alive and dead, a normal death taken for a fall).
+        const u16 hp200 = Field<u16>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x200);
+        const u64 f_new = g_alive_fields_ok ? f & ~g_alive_fields.f1e1 : f;
+        const u16 hp200_new = u16(g_alive_fields_ok ? hp200 & ~g_alive_fields.m20_200 : hp200);
         const bool fell = (dh.known && deathrules::FallDrop(dh.peak, dh.at_death, dh.at_death) >= deathrules::kGuestReviveFallDrop) ||
-                          deathrules::FallDeathState(f, Field<u16>(Field<u64>(Field<u64>(s.player, 0x3b0), 0x20), 0x200));
+                          deathrules::FallDeathState(f_new, hp200_new);
         const CorpseSpot& c = g_host_corpse;
         const double dx = double(c.pos[0] - arena.pos[0]), dz = double(c.pos[2] - arena.pos[2]);
         const double horiz = std::sqrt(dx * dx + dz * dz), dy = double(c.pos[1] - arena.pos[1]);
@@ -9523,6 +9528,9 @@ void OnLinkEvent(int from_slot, const std::string& body) {
     }
     if (body.find("\"host_revived\"") != std::string::npos) {
         g_host_revived_note = true;
+        // Its limbo is over (the arena revive): its new copy here is not disabled as a spectator's
+        // (live: the re-created chr read HP 0 for a frame and was disabled again).
+        g_spectator_until = 0;
         Log("guest: the host was revived in place (no load)");
         return;
     }
