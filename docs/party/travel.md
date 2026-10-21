@@ -237,7 +237,10 @@ if (own && n < 2)                   → state "SoloPlayDeath"   (solo)
   that fails, fires OnMatchingError with the sender's number as param 3; the player whose own number
   (`GameDataMan+8 -> +0x10`) equals it leaves (`BeginLeaveSession` at `0x1380A65`). Live sf3 / integ s2:
   a guest renumbered by PlayerNumberTick (2 -> 3) right after its load was checked by the host under 3
-  while the host's copy of its chr still had 2 (rebuilt 1.5 s later): left 0.2 s after arrival. K5b.
+  while the host's copy of its chr still had 2 (rebuilt 1.5 s later): left 0.2 s after arrival. Fixed at
+  the packet 7 read (0x17831AE, the host hands the joining guest its number): the guest takes its slot's
+  number there, before its chr exists (`player number: packet 7 from the host gives 2; this guest (party
+  slot 2) takes 3`); K5b stays as a safety net and logs a WARNING if it ever fires.
 
 ### 1.6 Call sites of `0x13CDE30` → travel kind (for the hook in 3.1)
 
