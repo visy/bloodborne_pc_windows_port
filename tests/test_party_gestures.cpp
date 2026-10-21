@@ -107,7 +107,7 @@ static void test_decide() {
     CHECK(Decide(false, -1, false) == Step::Wait);
     // Learned while summoned: owed until the own world reads it.
     CHECK(Decide(false, 1, true) == Step::Wait);
-    CHECK(Decide(false, 0, true) == Step::Wait);
+    CHECK(Decide(false, 0, true) == Step::Learn);  // lost again (a restart before the save): again
 }
 
 int main() {

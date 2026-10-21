@@ -82,10 +82,13 @@ enum class Step : std::uint8_t {
     Have,  ///< this save holds it: the owed entry goes
     Learn, ///< learn it now
     Wait,  ///< keep it owed (learned while summoned: only the own world can say the save kept it)
+           ///< or the state is unreadable
 };
 const char* StepName(Step s);
 /// What to do with an owed gesture. `home`: own world, load mode 0; else summoned. `learned`:
-/// its bit 0 (-1 unreadable); `summoned_before`: it was learned while summoned.
+/// its bit 0 (-1 unreadable); `summoned_before`: it was learned while summoned. A missing bit is
+/// learned in any world (a bit cannot be doubled); a set one learned while summoned stays owed
+/// until the own world reads it.
 Step Decide(bool home, int learned, bool summoned_before);
 
 #ifndef BB_PARTY_GESTURES_NO_GAME
