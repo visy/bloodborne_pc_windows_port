@@ -155,6 +155,19 @@ static void ComposeBoard() {
     in.local_state = MemberState::InHostWorld;
     hud::Compose(in, &b);
     assert(b.c[0].same_world && b.c[0].same_map);
+    // C5: a spectating member reports its body's spot; the chr matched by its name here is the copy
+    // carried along with the member it follows (the panel showed "0.2 m"): not read.
+    std::snprintf(chr.name, sizeof chr.name, "Hunter0");
+    v[0].flags = kVitalsValid | kVitalsHasPos | kVitalsSpectating;
+    v[0].hp = 0;
+    v[0].pos[0] = 30;
+    hud::Compose(in, &b);
+    assert(b.c[0].spectating && !b.c[0].local_read && b.c[0].chr == 0 && !b.c[0].alive);
+    assert(Near(b.c[0].pos[0], 30) && b.c[0].have_pos && b.c[1].spectating == false);
+    v[0].flags = kVitalsValid | kVitalsAlive | kVitalsHasPos;  // up again: the local read as before
+    v[0].hp = 500;
+    hud::Compose(in, &b);
+    assert(!b.c[0].spectating && b.c[0].local_read && Near(b.c[0].pos[0], 3));
 }
 
 static void Geometry() {

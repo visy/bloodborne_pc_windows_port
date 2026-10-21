@@ -7,6 +7,7 @@
 #ifndef BB_PARTY_BRIDGE_NO_GAME
 #include "party_runtime.h"
 #include "party_director.h"
+#include "party_gather.h"
 #endif
 
 #include <chrono>
@@ -135,6 +136,7 @@ Actions DefaultActions() {
             status::SetLastEvent(message);
         }).detach();
     };
+    a.gather = [] { coop::gather::RequestFromMenu(); };
     return a;
 }
 #else
@@ -188,6 +190,12 @@ void HandleCommand(Bridge& b, const status::Command& c, const TickIn& in, TickOu
         if (!in.host) break;
         Log("status: New party code pressed");
         if (a.new_code) a.new_code();
+        break;
+    }
+    case status::CommandType::Gather: {
+        if (!in.host) break;
+        Log("status: Gather the party pressed");
+        if (a.gather) a.gather();
         break;
     }
     case status::CommandType::Kick: {
@@ -598,6 +606,7 @@ void RunScript(Bridge& b, bool host, Clock::time_point now) {
             else if (cmd == "rejoin") s.type = status::CommandType::Rejoin;
             else if (cmd == "kick") s.type = status::CommandType::Kick;
             else if (cmd == "newcode") s.type = status::CommandType::NewCode;
+            else if (cmd == "gather") s.type = status::CommandType::Gather;
             else continue;
             b.script.push_back(s);
             Log("status test: %s%s%s at %.0f s", status::CommandName(s.type), s.name.empty() ? "" : " ",
@@ -615,6 +624,9 @@ void RunScript(Bridge& b, bool host, Clock::time_point now) {
             it->name.c_str());
         if (it->type == status::CommandType::Leave) status::RequestLeave();
         else if (it->type == status::CommandType::Rejoin) status::RequestRejoin();
+        else if (it->type == status::CommandType::Gather) {
+            if (!status::RequestGather()) Log("status test: gather refused by the board (not the host)");
+        }
         else if (it->type == status::CommandType::NewCode) {
             if (!status::RequestNewCode()) Log("status test: new code refused by the board (not the host)");
         }

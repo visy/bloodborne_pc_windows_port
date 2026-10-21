@@ -149,6 +149,8 @@ struct Actions {
     /// Host: New party code (party_runtime.h runtime_new_code; it runs off the main thread and
     /// reports through the last event).
     std::function<void()> new_code;
+    /// Host: I5 Gather the party (party_gather.h RequestFromMenu: the party tick asks the guests).
+    std::function<void()> gather;
 };
 
 /// Tests: the bridge's own state back to the start (no actions until SetActionsForTest).

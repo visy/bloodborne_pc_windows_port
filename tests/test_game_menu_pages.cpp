@@ -303,16 +303,33 @@ static void Party() {
         const int none[ps::kRotKinds] = {};
         ps::SetRot(none);
     }
-    // One code (no LAN code): one copy row, the code as its value; the LAN row hidden.
+    // One code (no LAN code): one copy row, the code as its value; the LAN row (on the Party mode
+    // page: the Party page is full with Gather the party) hidden.
+    const P::Page& mode = PageNamed(u"Party mode");
+    const P::Row& lan = RowNamed(mode, u"Copy LAN code");
     assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy party code");
     assert(std::u16string(P::Text(party.rows[2].choices[0], false)) == u"Copy");
     assert(std::u16string(P::Text(party.rows[2].help, true)).find(u"BBP1-ABCD-EFGH-IJKL") != std::u16string::npos);
-    assert(!party.rows[3].visible());
+    assert(!lan.visible());
     ps::SetLanCode("BBP1-LLLL-AAAA-NNNN");
     P::Load();
-    assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy Internet code" && party.rows[3].visible());
-    assert(std::u16string(P::Text(party.rows[3].name, false)) == u"Copy LAN code");
-    assert(std::u16string(P::Text(party.rows[3].help, false)).find(u"BBP1-LLLL-AAAA-NNNN") != std::u16string::npos);
+    assert(std::u16string(P::Text(party.rows[2].name, false)) == u"Copy Internet code" && lan.visible());
+    assert(std::u16string(P::Text(lan.help, false)).find(u"BBP1-LLLL-AAAA-NNNN") != std::u16string::npos);
+    // I5: Gather the party, the host's row (one press queues the command; a guest's board has none).
+    {
+        const P::Row& gather = RowNamed(party, u"Gather the party");
+        assert(gather.visible && gather.visible());
+        ps::Command c;
+        while (ps::PopCommand(&c)) {}
+        Press(gather);
+        assert(ps::PopCommand(&c) && c.type == ps::CommandType::Gather);
+        ps::SetRole(ps::Role::Guest);
+        P::Load();
+        assert(!gather.visible());
+        assert(!ps::RequestGather());
+        ps::SetRole(ps::Role::Host);
+        P::Load();
+    }
 
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
@@ -400,7 +417,7 @@ static void Party() {
     // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
-    assert(P::PartyRowCount() == 8); // status, rot, copy, LAN copy, rejoin, new party code, leave + the extension row
+    assert(P::PartyRowCount() == 9); // status, rot, copy, LAN copy, rejoin, gather, new party code, leave + the extension row
     assert(!hud.visible()); // the party HUD switch: party mode only
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);

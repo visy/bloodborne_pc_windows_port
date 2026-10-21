@@ -244,6 +244,11 @@ before anyone is in the game):
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later.
+- **Gather the party.** The host's *System → Party → Gather the party* brings every guest to the
+  host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
+  no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
+  who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
+  cannot gather during its own boss fight or cutscene, and only once every 30 s.
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
   lamps, headstones and the Hunter's Mark work exactly as in single player.

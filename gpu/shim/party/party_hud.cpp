@@ -103,9 +103,12 @@ void Compose(const ComposeIn& in, Board* out) {
                 c.have_pos = true;
                 std::memcpy(c.pos, v.pos, sizeof c.pos);
             }
+            c.spectating = (v.flags & kVitalsSpectating) != 0;
         }
-        // Its PlayerIns here: the game's own copy, current every frame.
-        if (c.same_world)
+        // Its PlayerIns here: the game's own copy, current every frame. Not for a spectator: its
+        // copy is hidden here and its chr is carried along with the member it follows (a chr that
+        // matches by name is that carried copy: "0.2 m"); its VITALS give the body's spot.
+        if (c.same_world && !c.spectating)
             for (int i = 0; i < in.chrs_n; ++i) {
                 const LocalChr& l = in.chrs[i];
                 if (std::strncmp(l.name, c.name, kNameBytes) != 0) continue;

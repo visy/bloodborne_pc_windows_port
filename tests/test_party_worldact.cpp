@@ -249,9 +249,13 @@ int main() {
             assert(!KeyItemGateFor(12400761) && KeyItemGateByOpenFlag(12400160u) == kg && !KeyItemGateByOpenFlag(12400161u));
             assert(KeyItemGateHeldState(*kg, 1, false) == 0 && KeyItemGateHeldState(*kg, 2, false) == 1);  // the data
             assert(KeyItemGateHeldState(*kg, 1, true) == 1 && KeyItemGateHeldState(*kg, 2, true) == 0);   // guest: 0 opens
-            assert(KeyItemGateInvert(true, true, false) && KeyItemGateInvert(true, false, true));
-            assert(!KeyItemGateInvert(true, false, false));  // no emblem anywhere: "need the emblem", as in vanilla
-            assert(!KeyItemGateInvert(false, true, true));   // the host / a guest at home reads its real inventory
+            assert(KeyItemGateInvert(true, true, false, 0) && KeyItemGateInvert(true, false, true, 0));
+            assert(KeyItemGateInvert(true, true, false, -1));  // unknown held count: as 0
+            assert(!KeyItemGateInvert(true, false, false, 0));  // no emblem anywhere: "need the emblem", as in vanilla
+            assert(!KeyItemGateInvert(false, true, true, 0));   // the host / a guest at home reads its real inventory
+            // H4 (0.7.1): the own key section shown while summoned: a held emblem reads 1 and the
+            // data's own check opens the gate (inverted it would say "need the emblem").
+            assert(!KeyItemGateInvert(true, true, true, 1));
         }
         assert(FirstFightSpotFor(13401801)->chained && !FirstFightSpotFor(13501851)->chained);
         assert(!FirstFightSpotFor(12401802)->chained);

@@ -170,6 +170,7 @@ std::vector<Page> pages;
 u32 split_text[1] = {0};
 u32 notice_text[1] = {0};
 u32 ending_text[1] = {0};
+u32 gather_text[1] = {0};
 
 /// A confirmed button's help line: the row's own help, or "press again to confirm" while armed
 /// (a run-time text of its own wrapping the row's).
@@ -533,6 +534,7 @@ void DefineBuiltinPartyRows() {
 
     PartyRow lan;
     lan.order = 21;
+    lan.page = 1;  // the Party page is full with Gather the party (only a host has two codes)
     lan.name = [](const B&) { return T2("Copy LAN code", "Копировать код LAN"); };
     lan.value = [](const B& b) { return CopyValue(b.lan_code, 1); };
     lan.help = [](const B& b) {
@@ -570,6 +572,24 @@ void DefineBuiltinPartyRows() {
         if (Active(b)) ps::RequestRejoin();
     };
     party_rows.push_back({rejoin});
+
+    // I5: the host brings every guest to it (party_gather.h): each guest is asked first; an
+    // in-world warp in the host's map, one load from another map. The Party page holds six rows
+    // for a running host: the LAN code row is on the Party mode page (below).
+    PartyRow gather;
+    gather.order = 32;
+    gather.name = [](const B&) { return T2("Gather the party", "Собрать группу"); };
+    gather.value = [](const B&) { return T2("Gather", "Собрать"); };
+    gather.help = [](const B&) {
+        return T2("Press: bring every guest to you (each is asked; not in boss fights; 30 s between gathers)",
+                  "Нажмите: перенести всех гостей к вам (каждого спросят; не в бою с боссом; раз в 30 с)");
+    };
+    gather.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host; };
+    gather.press = PartyRow::Press::Once;
+    gather.run = [](const B& b) {
+        if (Running(b) && b.role == ps::Role::Host) ps::RequestGather();
+    };
+    party_rows.push_back({gather});
 
     // The host's code stays the same from one launch to the next until it asks for a new one here
     // (or in the launcher's Party tab): for a code that went to someone it should not have. On the
@@ -1025,11 +1045,11 @@ void DefineAll() {
     const u32 off_on[2] = {off, on};
     for (int page = 0; page < 2; ++page) {
         if (page == 0) {
-            AddPage("Party", "Группа", "Party co-op: status, codes, rejoin, leave (bbport)",
-                    "Совместная игра: состояние, коды, возврат, выход (bbport)");
+            AddPage("Party", "Группа", "Party co-op: status, codes, rejoin, gather, leave (bbport)",
+                    "Совместная игра: состояние, коды, возврат, сбор, выход (bbport)");
         } else {
-            AddPage("Party mode", "Режим группы", "Party co-op: host, join, back to single player (bbport)",
-                    "Совместная игра: хост, вход, одиночная игра (bbport)");
+            AddPage("Party mode", "Режим группы", "Party co-op: host, join, LAN code, back to single player (bbport)",
+                    "Совместная игра: хост, вход, код LAN, одиночная игра (bbport)");
         }
         for (std::size_t i = 0; i < party_rows.size(); ++i) {
             const PartyEntry& e = party_rows[i];
@@ -1093,6 +1113,10 @@ void DefineAll() {
     // game's EventText 10012014, as its English / Russian text.
     notice_text[0] = AddText("Ritual secret broken.\nSeek the nightmare newborn.",
                              "Тайна ритуала раскрыта. Ищите новорождённого кошмара.");
+
+    // I5: the host gathers the party (party_gather.cpp): each guest is asked first.
+    gather_text[0] = AddText("The host gathers the party.\nYES: go to the host now.  NO: stay where you are.",
+                             "Хозяин собирает группу.\nДА: перейти к хозяину сейчас.  НЕТ: остаться здесь.");
 
     // The host's ending (party_story GuestStory::AnswerEnding): each guest is asked first.
     ending_text[0] = AddText("The host has reached an ending.\nYES: play this ending now (staff roll, then New Game+ in your save).\n"
@@ -1332,6 +1356,11 @@ void RefreshBalance() {
 u32 EndingQuestionText() {
     Define();
     return ending_text[0];
+}
+
+u32 GatherQuestionText() {
+    Define();
+    return gather_text[0];
 }
 
 u32 StoryNoticeText(u32 game_message) {

@@ -94,6 +94,7 @@ const char* CommandName(CommandType type) {
     case CommandType::Kick: return "kick";
     case CommandType::AddGuestCode: return "add_guest_code";
     case CommandType::NewCode: return "new_code";
+    case CommandType::Gather: return "gather";
     }
     return "?";
 }
@@ -249,6 +250,13 @@ bool RequestNewCode() {
     std::scoped_lock lock{mutex};
     if (board.role != Role::Host) return false;
     Queue({CommandType::NewCode, {}});
+    return true;
+}
+
+bool RequestGather() {
+    std::scoped_lock lock{mutex};
+    if (board.role != Role::Host) return false;
+    Queue({CommandType::Gather, {}});
     return true;
 }
 

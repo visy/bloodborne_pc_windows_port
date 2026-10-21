@@ -109,7 +109,7 @@ void Rot(int kind[kRotKinds]);
 bool Enabled();
 
 // --- commands: UI -> party code ---
-enum class CommandType : std::uint8_t { Leave, Rejoin, Kick, AddGuestCode, NewCode };
+enum class CommandType : std::uint8_t { Leave, Rejoin, Kick, AddGuestCode, NewCode, Gather };
 const char* CommandName(CommandType type);
 
 struct Command {
@@ -122,6 +122,8 @@ void RequestRejoin();
 /// Host: a new party code (the old one stops working). False (nothing queued) when this player
 /// is not the host.
 bool RequestNewCode();
+/// Host: I5 "Gather the party" (party_gather.h). False (nothing queued) when this player is not the host.
+bool RequestGather();
 /// Host only: false (nothing queued) when this player is not the host, the name is empty or
 /// not a remote member of the current roster.
 bool KickMember(const std::string& name);
