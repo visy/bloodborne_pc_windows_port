@@ -2407,6 +2407,23 @@ bool GuestSvcPromptUp(std::uint32_t* id) {
     return PromptUp(id);
 }
 
+bool GuestSvcOnlyPrompt(std::uint32_t id, std::uint32_t* other) {
+    std::uint32_t ids[256];
+    const int n = BbGameMenu::RecentLookups(400, ids, 256);
+    bool seen = false;
+    *other = 0;
+    for (int i = 0; i < n; ++i) {
+        if ((ids[i] >= 10010000 && ids[i] < 10020000) || (ids[i] >= 70000000 && ids[i] < 70010000)) {
+            if (ids[i] == id) {
+                seen = true;
+            } else if (!*other) {
+                *other = ids[i];
+            }
+        }
+    }
+    return seen && !*other;
+}
+
 bool GuestServicesOpen() {
     return g.open;
 }

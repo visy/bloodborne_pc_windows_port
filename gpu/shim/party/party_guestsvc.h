@@ -205,6 +205,9 @@ bool GuestServicesOpen();
 std::uint64_t GuestSvcFindChr(std::uint32_t id);
 /// An action-button prompt text was looked up in the last 400 ms (*id: its text id).
 bool GuestSvcPromptUp(std::uint32_t* id);
+/// Tests: the action prompt `id` is on screen and no other action-button text (`*other`: the first
+/// other one seen, e.g. a floor message's "View Notes" next to Gehrman's "Talk").
+bool GuestSvcOnlyPrompt(std::uint32_t id, std::uint32_t* other);
 #endif
 
 } // namespace coop
