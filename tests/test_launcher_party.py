@@ -391,5 +391,36 @@ class TracingWarning(unittest.TestCase):
         self.assertEqual(self.L.party_tracing_warning(None, True), "")
 
 
+class RevokeCode(unittest.TestCase):
+    """New party code in the launcher: the game's saved secret goes, nothing else in party.json."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_revoke(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            u = Path(d)
+            (u / "party_secret.txt").write_text("a1b2c3d4e5f60000\n")
+            (u / "party_code.txt").write_text("internet=BBP3-AAAA\nlan=BBP3-BBBB\n")
+            (u / "party_state.json").write_text('{"pid":1,"secret":"a1b2c3d4e5f60000"}')
+            (u / "party.json").write_text(json.dumps({"name": "Hunter", "role": "host",
+                                                      "host_secret": "a1b2c3d4e5f60000",
+                                                      "password_protected": "AAAA"}))
+            changed = self.L.revoke_party_code(u)
+            self.assertEqual(sorted(changed), ["party.json", "party_code.txt", "party_secret.txt",
+                                               "party_state.json"])
+            for name in ("party_secret.txt", "party_code.txt", "party_state.json"):
+                self.assertFalse((u / name).exists())
+            left = json.loads((u / "party.json").read_text())
+            self.assertEqual(left, {"name": "Hunter", "role": "host", "password_protected": "AAAA"})
+            self.assertEqual(self.L.revoke_party_code(u), [])  # nothing left to forget
+
+
 if __name__ == "__main__":
     unittest.main()

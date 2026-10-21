@@ -80,6 +80,15 @@ inline bool PlanTakesFunnel(HostDeathPlan p) {
     return p == HostDeathPlan::BossLimbo || p == HostDeathPlan::ReviveInPlace;
 }
 
+// ---- A guest gets the host's death event (K12, the HostDead Lua state 0x1381870) ----
+/// The guest's HostDead state is skipped: a B2 party guest (session role 6) whose chr is not an
+/// invader (type 2: the "PK success" path) or type 8 (the game returns early for it anyway).
+/// `skip_from` is BB_PARTY_HOSTDEAD_SKIP (0: never; N: from the Nth host death on), `nth` this
+/// host death's number in the run (1 = the first).
+inline bool SkipGuestHostDead(bool party_on, int role, int chr_type, int skip_from, int nth) {
+    return party_on && role == 6 && chr_type != 2 && chr_type != 8 && skip_from > 0 && nth >= skip_from;
+}
+
 // ---- Each frame while the host is down (a taken death) ----
 enum class DownTick {
     Wait,           ///< not yet (the revive delay, or the boss still fights)

@@ -434,8 +434,9 @@ Texts CopyValue(const std::string& code, int which) {
 }
 
 /// The Party page's own rows (orders 10..40): status, rot, copy code (two rows for a host with an
-/// Internet and a LAN code), rejoin, leave. The join/leave notices switch and the last event are
-/// on the Party members page (room for the party flow's rows here).
+/// Internet and a LAN code), rejoin, leave; New party code (host) is on the Party mode page. The
+/// join/leave notices switch and the last event are on the Party members page (room for the party
+/// flow's rows here).
 void DefineBuiltinPartyRows() {
     namespace ps = party::status;
     using B = ps::Board;
@@ -565,6 +566,25 @@ void DefineBuiltinPartyRows() {
         if (Active(b)) ps::RequestRejoin();
     };
     party_rows.push_back({rejoin});
+
+    // The host's code stays the same from one launch to the next until it asks for a new one here
+    // (or in the launcher's Party tab): for a code that went to someone it should not have. On the
+    // Party mode page (hosting): the Party page already shows six rows for a running host.
+    PartyRow newcode;
+    newcode.order = 27;
+    newcode.page = 1;
+    newcode.name = [](const B&) { return T2("New party code", "Новый код группы"); };
+    newcode.value = [](const B&) { return T2("Make new", "Создать"); };
+    newcode.help = [](const B&) {
+        return T2("Press twice: the old code stops working; send friends the new one (a password change also gives a new code)",
+                  "Нажмите дважды: старый код перестанет работать; отправьте друзьям новый (смена пароля тоже меняет код)");
+    };
+    newcode.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host; };
+    newcode.press = PartyRow::Press::Confirm;
+    newcode.run = [](const B& b) {
+        if (Running(b) && b.role == ps::Role::Host) ps::RequestNewCode();
+    };
+    party_rows.push_back({newcode});
 
     PartyRow leave;
     leave.order = 40;

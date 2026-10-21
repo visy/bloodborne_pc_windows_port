@@ -872,6 +872,7 @@ struct LevelUpScript {
     enum Stage { Off, WaitPlaced, Greeting, MenuUp, WaitScreen, Raise, Confirm, Accept, WaitLevel, BackOut, Done, Keys };
     std::uint32_t menus0 = 0;
     bool shop = false;                 ///< "buy": a messenger's Purchase instead of the Doll's level up
+    bool keybuy = false;               ///< keys=...,buy: the dialog's cursor found by trying Left / Right / Down
     bool open = false;                 ///< "open[=TEXT]": open a menu, then press "keys=" one by one
     std::string keys;                  ///< "cross,left,..." pressed 1.5 s apart once the menu is open
     std::size_t key_at = 0;
@@ -1076,6 +1077,18 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             go(LevelUpScript::WaitLevel, "the purchase went through");
         } else if (s.level > L.level0 && L.level0 >= 0) {
             go(LevelUpScript::WaitLevel, "level changed already");
+        } else if (L.keybuy && since >= 1.2) {
+            // Cancel just closes the dialog and the next Cross opens it again on the same row.
+            static const std::uint32_t seq[] = {kPadLeft, kPadCross, kPadCross, kPadRight, kPadCross, kPadCross, kPadDown, kPadCross};
+            static const char* const names[] = {"Left", "Cross", "Cross", "Right", "Cross", "Cross", "Down", "Cross"};
+            if (L.tries >= 8) {
+                go(LevelUpScript::WaitLevel, "no purchase after the dialog presses");
+                break;
+            }
+            Tap(seq[L.tries], now);
+            Log("test: levelup: buy dialog: %s (Insight %d, echoes %d)", names[L.tries], s.insight, s.echoes);
+            ++L.tries;
+            L.at = now;
         } else if (since >= 1.2) {
             if (++L.tries > 2) {
                 go(LevelUpScript::WaitLevel, "no level change after the confirm presses");
@@ -1122,6 +1135,17 @@ void LevelUpTick(const GameSnapshot& s, double now) {
             }
             const std::string k = L.keys.substr(L.key_at, end - L.key_at);
             L.key_at = end + 1;
+            if (k == "buy") {
+                // The shop's purchase dialog ("Buy X for N Insight?", cursor on CANCEL): Left / Cross
+                // until the echoes or Insight change (Accept), then the purchase is logged.
+                L.shop = true;
+                L.keybuy = true;
+                L.echoes0 = s.echoes;
+                L.insight0 = s.insight;
+                Tap(kPadCross, now);
+                go(LevelUpScript::Accept, "key buy: Cross on the selected row, then the dialog");
+                break;
+            }
             const std::uint32_t b = k == "cross" ? kPadCross : k == "circle" ? kPadCircle : k == "left" ? kPadLeft
                                     : k == "right" ? kPadRight : k == "up" ? kPadUp : k == "down" ? kPadDown : 0;
             if (b) {

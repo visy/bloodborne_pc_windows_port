@@ -400,6 +400,18 @@ bool ShowItemGet(std::uint32_t type_bits, std::uint32_t id, int count) {
     return true;
 }
 
+bool ShowItemGetNotice(std::uint32_t type_bits, std::uint32_t id, int count) {
+    const std::uint64_t list = Slot(kItemGetList);
+    if (!list || (!Field<std::uint64_t>(list, 0x10, 0) && !Field<std::uint64_t>(list, 8, 0)) || !ItemGetOk()) {
+        return false;
+    }
+    // The talk scripts' item notice (ESD command 0x41 in 0x203FFD0): a null handle, no inventory entry.
+    std::uint32_t handle[2] = {0, 0};
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t, std::uint32_t*, std::uint32_t, std::uint32_t, std::int32_t, std::uint32_t);
+    reinterpret_cast<Fn>(Guest(kItemGetPush))(list, handle, type_bits, id & 0x0fffffffu, count, 0);
+    return true;
+}
+
 int ItemGetEntries() {
     const std::uint64_t list = Slot(kItemGetList);
     if (!list) {

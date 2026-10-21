@@ -25,6 +25,7 @@
 #include "../net/np_hle.h"
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
+#include "party_chalice.h"
 #include "party_status_bridge.h"
 #include "party_spectate.h"
 #include "party_director.h"
@@ -425,15 +426,25 @@ std::atomic<bool> g_force_load_warp{false};
 std::atomic<bool> g_title_continuing{false};  // the director's AutoContinue is pressing Continue  // the next lamp warp loads (title-join home)
 std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
 std::atomic<bool> g_title_home_now{false};
+std::atomic<bool> g_chalice_bail{false};  // the guest left a host's dungeon it loaded without the dungeon
 
 bool SendHomeVeto(u64 site) {
-    const bool own_leave = SendHomeVetoForOwnLeave();
+    const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
     // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
     // home 5 s after the host travelled alone (live split4) although the room and the party link
     // were up. While the host is apart (or just left alone) and its link is fresh, it is dropped -
     // also for a title-joined guest (B5, live parab2 b5e: it left the host's world 6 s after the
     // host's alone travel and loaded its own map). The player's own Leave is never dropped here.
-    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && SplitHostReachable()) {
+    // A host in a Chalice Dungeon this game does not have: the send-home goes through, so this
+    // guest is in its own world and the bell's summon brings it into the dungeon (chalice.md 4;
+    // live, beta 6: dropped here, the guest stayed in the host's Dream and was never summoned).
+    const bool host_in_chalice = HostInOtherChalice();
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && host_in_chalice) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) not dropped: the host is in a Chalice Dungeon this game "
+            "does not have; the summon brings this game in from its own world");
+    }
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && !host_in_chalice &&
+        SplitHostReachable()) {
         Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
             "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f%s)",
             Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
@@ -458,6 +469,147 @@ bool SendHomeVeto(u64 site) {
         return true;
     }
     return false;
+}
+
+// K12: the guest's HostDead Lua state 0x1381870 (event 4000: the host's death event, packet 0x0E,
+// ~4.5 s after the host's HP 0). Its member path sets flag 4047 (0x132E5A0), runs 0x1386960 (the
+// "host died" banner 103101, the death-pending byte [0x553B130] +0x70) and starts the Lua timer
+// 4000 (0x132B1C0): "EventMenuBrake" for its 5 s (the menu brake) and then HostDead_1 0x1381A60
+// (*0x553B0D8 = 2, GSM +0x1520 = 1, the last-lamp selector 0x1332BC0(-1), the send-home 0x13CDE30
+// that K9 drops). Nothing but a load cleared them: the guest stood frozen until the party's
+// respawn load, the whole boss-fight limbo, or (host revive in place) until its next load
+// (triage bugs 6, 12, 18). With B2 the host's death travel (or its limbo / revive) moves the
+// party, so on a party guest the state does nothing: an early return, like the game's own for
+// role 3 (it then leaves the state's +0x8D unset too). An invader (chr type 2: the "PK success"
+// path) and type 8 keep the game's code. Lead: deadinside's BBSC notes (docs/upstream/
+// deadinside_0.6-pre1.md); facts only.
+// BB_PARTY_HOSTDEAD_SKIP (test fixture): 0 = the game's HostDead on a guest too (K9 then drops
+// only the send-home, as before); N >= 2 = the game's for the first N - 1 host deaths of this run,
+// skipped from the Nth (a before / after in one session). Default 1: always skipped.
+constexpr u64 kHostDeadState = 0x1381870;
+void* g_hostdead_orig = nullptr;
+std::atomic<int> g_hostdead_runs{0};      // HostDead entries on a party guest (this process)
+std::atomic<double> g_hostdead_at{0};     // the last one (BB_HOSTDEAD_LOG)
+std::atomic<bool> g_hostdead_skipped{false};
+
+int HostDeadSkipFrom() {
+    static const int from = [] {
+        const char* v = std::getenv("BB_PARTY_HOSTDEAD_SKIP");
+        return v && v[0] ? std::max(0, std::atoi(v)) : 1;
+    }();
+    return from;
+}
+
+BB_COOP_SYSV void HostDeadHook(u64 ctx, u64 state) {
+    if (g_on.load() && Role() == RoleClient) {
+        const int n = ++g_hostdead_runs;
+        g_hostdead_at = Now();
+        const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+        const int type = Field<int>(me, 0x78, -1);
+        const int from = HostDeadSkipFrom();
+        if (deathrules::SkipGuestHostDead(true, RoleClient, type, from, n)) {
+            g_hostdead_skipped = true;
+            Log("K12: the host's death event: the guest's HostDead state skipped (no flag 4047, death-pending byte, "
+                "menu brake or send-home; the party's own host-death path moves this guest; #%d)", n);
+            return;
+        }
+        g_hostdead_skipped = false;
+        Log("K12: the host's death event: the game's HostDead state runs (chr type %d, BB_PARTY_HOSTDEAD_SKIP=%d, #%d)",
+            type, from, n);
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64);
+    reinterpret_cast<Fn>(g_hostdead_orig)(ctx, state);
+}
+
+/// BB_HOSTDEAD_LOG=1 (launcher: Diagnostics > Party host-death lock log; off by default): on a
+/// party guest, from the host's death (its chr here at HP 0, or the HostDead event) until the next
+/// load, the host alive again or 3 min: every 0.25 s the HostDead locks (flag 4047, [0x553B130]
+/// +0x70, the menu brake MenuMan +0x2DC, *0x553B0D8, GSM +0x1520), the own ChrCtrl +0x114, the
+/// left stick the game read and how far the own chr moved (a frozen guest: stick held, 0 m).
+bool HostDeadLogOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_HOSTDEAD_LOG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+extern "C" std::uint32_t runtime_pad_last_left(void);  // src/runtime_pad.c
+
+void HostDeadLockTick(const GameSnapshot& s, double now) {
+    if (!HostDeadLogOn() || !g_on.load()) {
+        return;
+    }
+    static double start = 0, next = 0, alive_since = 0;
+    static float last[3] = {};
+    static bool have_last = false, host_was_down = false;
+    static double seen_event = 0;
+    // The host's chr here (its member task: slot 0) at HP 0.
+    int host_hp = -1;
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode == 1 || t.mode == 2) && t.slot == 0) {
+            const u64 c = PlayerForPeer(t.task + kTaskPeer);
+            host_hp = c ? Field<int>(Field<u64>(Field<u64>(c, 0x3b0), 0x20), 0xf8, -1) : -1;
+            break;
+        }
+    }
+    const bool host_down = host_hp == 0;
+    const double ev = g_hostdead_at.load();
+    const bool loading = s.loading || !s.world_up;
+    if (start <= 0) {
+        if (Role() == RoleClient && !loading && ((host_down && !host_was_down) || (ev > 0 && ev != seen_event))) {
+            start = now;
+            next = now;
+            alive_since = 0;
+            have_last = false;
+            Log("hostdead lock log: start (%s)", host_down ? "the host's chr here at HP 0" : "HostDead event");
+        }
+        host_was_down = host_down;
+        seen_event = ev;
+        if (start <= 0) {
+            return;
+        }
+    }
+    host_was_down = host_down;
+    seen_event = ev;
+    alive_since = host_hp > 0 ? (alive_since > 0 ? alive_since : now) : 0;
+    const char* end = loading ? "a load" : (alive_since > 0 && now - alive_since >= 2.0) ? "the host alive again"
+                                           : now - start > 180.0 ? "3 min" : nullptr;
+    if (end) {
+        Log("hostdead lock log: end after %.1f s (%s)", now - start, end);
+        start = 0;
+        return;
+    }
+    if (now < next) {
+        return;
+    }
+    next = now + 0.25;
+    bool f4047 = false;
+    const bool f_ok = ReadEventFlag(4047, &f4047);
+    const u8 pending = Field<u8>(Slot(kSlotGameData), 0x70);
+    const u8 brake = Field<u8>(Slot(0x5562878), 0x2dc);
+    const int evstate = Field<int>(Slot(0x553b0d8), 0, -1);
+    const u8 forced = Field<u8>(Slot(kSlotGsm), 0x1520);
+    const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    const u32 ctrl = Field<u32>(Field<u64>(me, 0x58), 0x114);
+    const u32 stick = runtime_pad_last_left();
+    const int lx = int(stick & 0xff), ly = int((stick >> 8) & 0xff);
+    float p[3] = {};
+    float moved = -1.0f;
+    if (me && ChrPos(me, p)) {
+        if (have_last) {
+            const float dx = p[0] - last[0], dz = p[2] - last[2];
+            moved = std::sqrt(dx * dx + dz * dz);
+        }
+        std::memcpy(last, p, sizeof last);
+        have_last = true;
+    }
+    Log("hostdead lock: +%.2f s flag4047 %s gdm+0x70 %u menu+0x2dc %u *0x553b0d8 %d gsm+0x1520 %u ctrl+0x114 %08x "
+        "stick %d,%d%s moved %.2f m hp %d host hp %d menu+0x78 %d%s",
+        now - start, f_ok ? (f4047 ? "1" : "0") : "?", unsigned(pending), unsigned(brake), evstate, unsigned(forced),
+        ctrl, lx, ly, (std::abs(lx - 128) > 48 || std::abs(ly - 128) > 48) ? " (held)" : "", double(moved),
+        Field<int>(Field<u64>(Field<u64>(me, 0x3b0), 0x20), 0xf8, -1), host_hp, Field<int>(Slot(0x5562878), 0x78, -1),
+        g_hostdead_skipped.load() ? " [K12 skipped]" : "");
 }
 
 // K10: the boss-clear Lua states' BeginLeaveSession (0x13858F5 in BlockClear2_1 0x13858A0,
@@ -876,6 +1028,7 @@ void ShowLikeInGameStart(u64 c, const char* why) {
 
 std::atomic<double> g_rejoin_banner_at{0};  // Now() of the last B2 re-join (or a member chr rebuilt by a rewind)
 
+std::string DescribePlayerNumbers();
 int RewindRemoteTasks(const char* why) {
     int n = 0;
     // A member's chr rebuilt here (a revive in place, a new look, the host's revive): its task's
@@ -901,6 +1054,7 @@ int RewindRemoteTasks(const char* why) {
         g_rewound[t.task] = Now();
         Log("%s: task mode %d (step %d) rewound to STEP_Create", why, t.mode, t.step);
     }
+    if (n > 0) Log("%s: player numbers at the rewind: %s", why, DescribePlayerNumbers().c_str());
     return n;
 }
 
@@ -1071,6 +1225,25 @@ bool BossBarDying() {
 /// The presentation slot table (GSM +0x16F8): 5 entries at +0x1C (stride 0x14: chr handle, kind,
 /// state, a, b), the counts +0x8/+0xC/+0x10/+0x14, the handle list +0x80..+0x8C (+0x90 count)
 /// and the max (flow +0xC). The game's cooperator count (0x15BDC20) walks the entries.
+/// The player numbers (PlayerGameData +0x10: the host's packet 7 sets the own one, packet 8 a
+/// member's row) that STEP_Create's chr build 0x18D8100 looks the chr's game data up by: the own
+/// record first, then the 4 remote rows (GameDataMan +0x10, 0x6A0 apart; occupancy *(+0x18)).
+/// A member whose row number equals the own one is drawn from the own record (look, equipment).
+std::string DescribePlayerNumbers() {
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 own = Field<u64>(gdm, 8), rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
+    char b[96];
+    std::snprintf(b, sizeof b, "own %d (type %d)", own ? Field<int>(own, 0x10, -1) : -1, own ? Field<int>(own, 0xa4, -1) : -1);
+    std::string out = b;
+    for (int i = 0; rows && i < 4; ++i) {
+        const u64 r = rows + u64(i) * 0x6a0;
+        std::snprintf(b, sizeof b, "; row %d occ %#x no %d type %d st %d", i, unsigned(occ ? Field<u8>(occ, u64(i)) : 0),
+                      Field<int>(r, 0x10, -1), Field<int>(r, 0xa4, -1), Field<int>(r, 0x5d8, -1));
+        out += b;
+    }
+    return out;
+}
+
 std::string DescribePresence(bool deep = false) {
     const u64 t = Field<u64>(Slot(kSlotGsm), 0x16f8);
     if (!t) {
@@ -1192,6 +1365,7 @@ void ProbeTick(const GameSnapshot& s) {
             unsigned(Field<u8>(gsm, 0x1593)), Field<u32>(gsm, 0x1594), unsigned(Field<u8>(gsm, 0x1598)),
             Field<u32>(gsm, 0x159c), Field<u32>(Slot(kSlotGameData), 0x68), Field<u32>(gsm, 0x0c));
         Log("B2 load report: blobs %s", DescribeBlobs().c_str());
+        Log("B2 load report: player numbers: %s", DescribePlayerNumbers().c_str());
     }
     st.was_loading = loading;
 }
@@ -3457,6 +3631,17 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why);
 int ChrHp(u64 chr);
 void SpectateBegin(const char* who);
 void SpectateEnd();
+extern std::atomic<bool> g_spectating;
+/// Guest: the host's chr here is at HP 0 (the host is down too).
+bool HostChrDown() {
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c && ChrHp(c) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     if (g_dead_follow.load() && !SessionUp()) {
@@ -3481,7 +3666,19 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         Log("guest: held death goes with the host's travel (%.1f s after it); no redirect, no leave", now - at);
         return;
     }
-    if (now - at < DeathGrace() || s.loading) {
+    // The grace waits for a host travel that would take this guest along (a wipe's death load, a
+    // limbo). With the host alive and no boss bar up nothing is coming: 2 s, not 8 (every guest
+    // death takes the respawn load since 0.6.9; the 8 s wait was most of the delay before it).
+    const double grace = HostChrDown() || BossFightActive(nullptr) ? DeathGrace() : std::min(DeathGrace(), 2.0);
+    if (now - at < grace || s.loading) {
+        // The spectate starts at the hold in a boss fight, not after the grace (the guest's view
+        // stayed on its corpse 8 s longer than the host's): the limbo decision below still waits
+        // for the grace (a host death travel in it takes the guest along and ends the spectate).
+        if (!s.loading && !g_spectating.load() && !HostChrDown() && BossFightActive(nullptr)) {
+            Log("guest: dead in a boss fight: spectating from the hold (%.1f s after it), the limbo is decided "
+                "after the grace", now - at);
+            SpectateBegin("guest");
+        }
         return;
     }
     static double limbo_logged = 0;
@@ -3490,16 +3687,13 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         // this guest along. Live parx deaths (3 players): the guest died 11 s before the host and
         // was revived in place while the host lay dead, 4 s before the party's respawn load.
         static double host_down_logged = 0;
-        for (const TaskInfo& t : Tasks(false)) {
-            const u64 c = t.mode == 2 ? PlayerForPeer(t.task + kTaskPeer) : 0;
-            // At most 30 s (a stale host chr must not hold the respawn for good).
-            if (c && ChrHp(c) == 0 && now - at < 30.0) {
-                if (host_down_logged != at) {
-                    host_down_logged = at;
-                    Log("guest: dead while the host is down too: no revive; the host's death load takes it along");
-                }
-                return;
+        // At most 30 s (a stale host chr must not hold the respawn for good).
+        if (now - at < 30.0 && HostChrDown()) {
+            if (host_down_logged != at) {
+                host_down_logged = at;
+                Log("guest: dead while the host is down too: no revive; the host's death load takes it along");
             }
+            return;
         }
     }
     {
@@ -3516,8 +3710,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         }
         if (limbo_logged == at) {
             Log("guest: the boss fight is over (%.1f s after the death); respawning", now - at);
-            SpectateEnd();
         }
+        SpectateEnd();  // also one begun at the hold, when the boss died in the grace
     }
     g_death_held_at = 0;
     // Design decisions (ERSC_PARITY.md): outside a boss fight a dead player respawns at its OWN last
@@ -3656,6 +3850,19 @@ std::vector<RawPart> SnapshotRaw(u64 chr) {
     add("ctrl", Field<u64>(chr, 0x58), 0x400);
     add("ctrl38", Field<u64>(Field<u64>(chr, 0x58), 0x38), 0x100);
     add("upd18", Field<u64>(chr, 0x18), 0x80);
+    // The chr's and ChrCtrl's other parts (pointers), e.g. ChrCtrl +0x20: the model whose hit mask
+    // Lua SetHitMask writes (+0x118, parts +0x70).
+    static const char* cn[] = {"ctrl+10", "ctrl+18", "ctrl+20", "ctrl+28", "ctrl+30", "ctrl+40", "ctrl+48", "ctrl+50"};
+    for (int i = 0; i < 8; ++i) {
+        const u64 off = i < 5 ? 0x10 + u64(i) * 8 : 0x40 + u64(i - 5) * 8;
+        add(cn[i], Field<u64>(Field<u64>(chr, 0x58), off), 0x300);
+    }
+    add("ctrl+20 +70", Field<u64>(Field<u64>(Field<u64>(chr, 0x58), 0x20), 0x70), 0x200);
+    static const char* hn[] = {"chr+20", "chr+28", "chr+30", "chr+40", "chr+48", "chr+50", "chr+60", "chr+68"};
+    static const u32 ho[] = {0x20, 0x28, 0x30, 0x40, 0x48, 0x50, 0x60, 0x68};
+    for (int i = 0; i < 8; ++i) {
+        add(hn[i], Field<u64>(chr, ho[i]), 0x300);
+    }
     static const char* names[] = {"mod+0", "mod+8", "mod+10", "mod+18", "mod+20", "mod+28", "mod+30", "mod+38",
                                   "mod+40", "mod+48", "mod+50", "mod+58", "mod+60", "mod+68", "mod+70", "mod+78",
                                   "mod+80", "mod+88", "mod+90", "mod+98"};
@@ -3737,6 +3944,10 @@ void LogRawDiff(u64 chr) {
                 std::snprintf(t, sizeof t, " +%zx:%08x->%08x(%g->%g)", o, x, y, double(fx), double(fy));
                 line += t;
                 ++shown;
+                if (line.size() > 700) {  // the log truncates long lines
+                    Log("revive diff %s (%#llx):%s", a.name, ull(a.base), line.c_str());
+                    line.clear();
+                }
             }
             if (!line.empty()) {
                 Log("revive diff %s (%#llx):%s", a.name, ull(a.base), line.c_str());
@@ -3771,7 +3982,7 @@ bool RecipeHas(const char* step) {
     // '|' separates the recipes of successive revivals (the last one repeats): one run tries several.
     static const std::vector<std::string> list = [] {
         const char* v = std::getenv("BB_PARTY_B2_REVIVE_RECIPE");
-        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,warp,gsm,rearm";
+        std::string all = v && v[0] ? v : "recover,flags,ctrl,fade,reset,idle,hitbody,warp,gsm,rearm";
         std::vector<std::string> out;
         for (std::size_t a = 0;;) {
             const std::size_t b = all.find('|', a);
@@ -4006,8 +4217,41 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host);
 // while alive, for a guest's in-place revive (issue #4 item 4). LocalDeathHeightTick, main thread.
 float g_local_draw_alive = 1.0f;
 u64 g_local_draw_chr = 0;
+constexpr u32 kDeadHitLayer = 0x36;   // a dead chr's hit bodies (filter info low 6 bits)
+constexpr u32 kAliveHitLayer = 0x08;  // a living player's (live: 0x01000008)
+// The collision filter of the local chr's hit bodies while alive (ChrCtrl +0x20 +0xA8, see
+// RestoreHitBodies), kept by LocalDeathHeightTick with the draw factor.
+u32 g_local_hitfilter_alive = 0;
 void ReviveHost(const GameSnapshot& s) {
     ReviveLocal(s, g_lamp_spot, true);
+}
+
+/// BB_PARTY_B2_REVIVE_HITBODY=0 (A/B, diagnostics): the in-place revive leaves the hit bodies dead.
+bool ReviveHitBodyOn() {
+    static const bool on = !(std::getenv("BB_PARTY_B2_REVIVE_HITBODY") && std::getenv("BB_PARTY_B2_REVIVE_HITBODY")[0] == '0');
+    return on;
+}
+
+/// Why a player revived in place could not be hit (live revivehit x1/w3): its hit bodies (the
+/// Havok bodies of ChrCtrl +0x20, which attacks query in the hit world [0x553D700]+0x28, query
+/// 0x185FBE0 -> 0x1860FB0 -> hit record 0x185B200 -> 0x18B79E0 -> damage module) get collision
+/// layer 0x36 at the death (filter info 0x01000008 -> 0x01000036, ChrCtrl +0x20 +0xA8/+0xAC), which
+/// attacks and other chrs do not collide with; only a chr rebuild (a load) sets them back. The
+/// game's own setter (vfunc +0x30 of that object, 0x1812400(obj, filter): every body's filter
+/// through 0xB6A370, then +0xA8/+0xAC) puts the alive filter back.
+void RestoreHitBodies(u64 p, bool host) {
+    const u64 hb = Field<u64>(Field<u64>(p, 0x58), 0x20);
+    const u32 now = Field<u32>(hb, 0xa8);
+    if (!hb || (now & 0x3f) != kDeadHitLayer) {
+        Log("%s revive: hit bodies not dead (filter %08x); left alone", host ? "host" : "guest", now);
+        return;
+    }
+    // The alive filter seen on this chr, else the dead one with the alive layer (8).
+    const bool seen = g_local_draw_chr == p && g_local_hitfilter_alive != 0;
+    const u32 alive = seen ? g_local_hitfilter_alive : ((now & ~0x3fu) | kAliveHitLayer);
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1812400))(hb, alive);
+    Log("%s revive: hit bodies back to the alive collision filter %08x -> %08x (%s; now %08x)", host ? "host" : "guest",
+        now, alive, seen ? "as seen alive" : "layer 8", Field<u32>(hb, 0xa8));
 }
 
 /// Main thread: the local player's chr revived where it lies and put on `sp` (its lamp's spawn
@@ -4051,11 +4295,19 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         // game's revive (body form, SpEffects) runs for the guest too, its phantom type put back after
         // (0x1900710 writes +0x78 = 0, which would turn the phantom into a body); then the draw
         // factor it had alive. BB_PARTY_GUEST_REVIVE_BODY=0: as before (no revive call).
-        const int type = Field<int>(p, 0x78, -1);
+        const int type = Field<int>(p, 0x78, -1), team0 = Field<int>(p, 0x88, -1);
         const float draw0 = Field<float>(p, 0x208);
         reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x1900710))(p);
         if (type >= 0 && Field<int>(p, 0x78, -1) != type) {
             SafeWrite(p + 0x78, &type, 4);
+        }
+        if (Field<int>(p, 0x88, -1) != team0) {
+            // 0x1900710 also re-resolved the team from type 0 (19, the host's body; a cooperator is 20,
+            // live revivehit w3 / x1: +0x88 0x14 -> 0x13): the game's team resolver 0x18C2A00 again
+            // with the phantom type back.
+            const int t1 = Field<int>(p, 0x88, -1);
+            reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x18c2a00))(p);
+            Log("guest revive: team %d -> %d -> %d (type %d)", team0, t1, Field<int>(p, 0x88, -1), type);
         }
         const float alive = g_local_draw_chr == p ? g_local_draw_alive : 1.0f;
         const float draw1 = Field<float>(p, 0x208);
@@ -4140,6 +4392,9 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         } else {
             Log("host revive: no behavior to reset (gate %u)", unsigned(Field<u8>(m30, 0x384)));
         }
+    }
+    if (RecipeHas("hitbody") && ReviveHitBodyOn()) {
+        RestoreHitBodies(p, host);
     }
     if (RecipeHas("anim")) {
         // Lua ForcePlayAnimation (0x132E290 -> 0x13CBFD0(entity, anim, 0, 0)); 10000 = local player.
@@ -4230,6 +4485,10 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         if (draw > 0.5f && draw <= 1.0f) {
             g_local_draw_alive = draw;
             g_local_draw_chr = s.player;
+            const u32 hf = Field<u32>(Field<u64>(Field<u64>(s.player, 0x58), 0x20), 0xa8);
+            if (hf != 0 && (hf & 0x3f) != kDeadHitLayer) {
+                g_local_hitfilter_alive = hf;
+            }
         }
     }
     if (!dead) {
@@ -4246,6 +4505,46 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
     was_dead = dead;
 }
 
+/// Diagnostics (BB_PARTY_B2_REVIVE_DIFF=1), any role: the alive copy for a guest too (the host's is
+/// taken in HostDownTick), and 3 s after each revive what still differs from it.
+void ReviveDiffTick(const GameSnapshot& s, double now) {
+    static const bool diff = std::getenv("BB_PARTY_B2_REVIVE_DIFF") && std::getenv("BB_PARTY_B2_REVIVE_DIFF")[0] == '1';
+    if (!diff || !s.world_up || s.loading || !s.player) return;
+    static int revivals = 0;
+    static double due = 0, next_raw = 0;
+    if (g_revivals.load() != revivals) {
+        revivals = g_revivals.load();
+        due = now + 3.0;
+    }
+    // The SpEffects with their entry flags (+0x1C) and param stateInfo (+0x156).
+    auto effects = [](u64 chr) {
+        std::string out;
+        u64 node = Field<u64>(Field<u64>(chr, 0x1c8), 8);
+        for (int guard = 0; node && guard < 128; ++guard) {
+            char b[64];
+            std::snprintf(b, sizeof b, " %d/%x/si%d", Field<int>(node, 0x40, -1), Field<u32>(node, 0x1c),
+                          int(Field<u16>(Field<u64>(node, 0x48), 0x156)));
+            out += b;
+            node = Field<u64>(node, 0x58);
+        }
+        return out;
+    };
+    static std::string alive_fx;
+    if (due > 0 && now >= due) {
+        due = 0;
+        Log("revive diff (3 s after revive #%d; +0x1e4 %02x): alive -> now", revivals, unsigned(Field<u8>(s.player, 0x1e4)));
+        LogRawDiff(s.player);
+        Log("revive diff speffects alive:%s", alive_fx.c_str());
+        Log("revive diff speffects now:%s", effects(s.player).c_str());
+    }
+    if (Role() != RoleHost && due == 0 && ChrHp(s.player) > 0 && !(Field<u64>(s.player, 0x1e1) & 0x10000) &&
+        g_revivals.load() == 0 && now >= next_raw) {
+        next_raw = now + 1.0;
+        g_alive_raw = SnapshotRaw(s.player);
+        alive_fx = effects(s.player);
+    }
+}
+
 bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     static const bool on = !(std::getenv("BB_PARTY_GUEST_REVIVE") && std::getenv("BB_PARTY_GUEST_REVIVE")[0] == '0');
     const u32 stage = Field<u32>(s.player, 0x3f8);
@@ -4260,10 +4559,10 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // guest's camera underground and its controls broken); any other death revives in place at
         // any distance. BB_PARTY_GUEST_REVIVE_FAR=1: the in-place revive after a fall too.
         // 0.6.9, correct over seamless: every death takes the respawn load. A guest revived in place
-        // could not be hit until its next load (enemy attacks passed through it; PR #6 report, live
-        // revive1 runs 2-7: with or without the body revive 0x1900710 and with the "restore" step;
-        // a flags word of the chr's module [+0x3B0]+0x80 +0x2A0 (bit 0x01000000) and chr
-        // +0x218..+0x26C stay as in death). BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
+        // could not be hit until its next load (enemy attacks passed through it; PR #6 report). The
+        // cause: the death puts the chr's hit bodies on the dead collision layer; the revive's
+        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3).
+        // BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
         static const bool inplace = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE"));
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
         float p[3] = {0, 0, 0};
@@ -5533,23 +5832,58 @@ extern "C" std::uint32_t runtime_pad_cross_presses(void); // src/runtime_pad.c
 
 // ---- C5: spectate in a boss-fight limbo (BB_PARTY_SPECTATE, default on) ----
 // The dead player's camera follows its own chr: that chr (dissolved, draw 0) is carried along
-// 3 m behind a living party member with the chr warp, so the camera shows the fight. Peers remove
-// the dead copy meanwhile ("spectating"); the respawn (revive, a wipe load) builds it again.
+// with a living party member with the chr warp, so the camera shows the fight. Peers remove the
+// dead copy meanwhile ("spectating"); the respawn (revive, a wipe load) builds it again.
+// Smooth follow (default; user report "spectator cam is weird", 2026-10-20): the chr is carried
+// every frame onto the followed member's own spot with a short lag, so the camera orbits the
+// member as in normal play (the player's right stick turns it; the game's camera keeps itself
+// out of walls, from a spot that is never inside one). Before, the chr hopped every 0.2 s to a
+// point 3 m behind the member's body yaw (rolls and lock-on strafing swung it around a 3 m
+// circle, through pillars and arena walls), and the camera was reset behind it at every 35-degree
+// turn of the member (constant snaps against the right stick). BB_PARTY_SPECTATE_SMOOTH=0: that
+// old follow (comparison); BB_PARTY_SPECTATE_LAG=S: the lag (default 0.15 s).
 std::atomic<bool> g_spectating{false};
+std::atomic<double> g_spectate_at{0};
 bool SpectateOn() {
     static const bool on = !(std::getenv("BB_PARTY_SPECTATE") && std::getenv("BB_PARTY_SPECTATE")[0] == '0');
     return on;
+}
+/// BB_PARTY_SPECTATE_LOG=1 (launcher: Advanced / Debug > Diagnostics, off by default): a camera
+/// line every 10 s while spectating (camera resets per minute, the largest carry step and render
+/// camera move / turn between two frames, how near the camera came to the followed member).
+bool SpectateLogOn() {
+    static const bool on = std::getenv("BB_PARTY_SPECTATE_LOG") && std::getenv("BB_PARTY_SPECTATE_LOG")[0] == '1';
+    return on;
+}
+/// The smooth follow; test aid BB_PARTY_SPECTATE_SMOOTH_AFTER=S: the old follow for the first S s
+/// of each spectate, then the smooth one (an A/B in one session).
+bool SpectateSmooth(double spectating_for) {
+    static const bool on = !(std::getenv("BB_PARTY_SPECTATE_SMOOTH") && std::getenv("BB_PARTY_SPECTATE_SMOOTH")[0] == '0');
+    static const double after = [] {
+        const char* v = std::getenv("BB_PARTY_SPECTATE_SMOOTH_AFTER");
+        return v && v[0] ? std::atof(v) : 0.0;
+    }();
+    return on && spectating_for >= after;
+}
+float SpectateLag() {
+    static const float lag = [] {
+        const char* v = std::getenv("BB_PARTY_SPECTATE_LAG");
+        return v && v[0] ? float(std::atof(v)) : 0.15f;
+    }();
+    return lag;
 }
 void SpectateBegin(const char* who) {
     if (!SpectateOn() || g_spectating.exchange(true)) {
         return;
     }
+    g_spectate_at = Now();
     float p[3] = {0, 0, 0};
     ChrPos(Field<u64>(Slot(kSlotWorldChrMan), 0x60), p);
     char b[128];
     std::snprintf(b, sizeof b, "{\"op\":\"spectating\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
     Send(-1, b);
-    Log("%s: spectating a living party member until the respawn", who);
+    Log("%s: spectating a living party member until the respawn (%s)", who,
+        SpectateSmooth(1e9) ? "smooth follow" : "BB_PARTY_SPECTATE_SMOOTH=0: the old 0.2 s follow");
 }
 void SpectateEnd() {
     if (g_spectating.exchange(false)) {
@@ -5557,26 +5891,85 @@ void SpectateEnd() {
     }
 }
 void SpectateTick(const GameSnapshot& s, double now) {
-    static double next = 0;
+    static double next = 0, last = 0, window_at = 0;
     static int target = -1;            // the followed member's task slot
     static u32 cross_seen = 0;
-    if (!g_spectating.load()) {
+    static bool smooth_was = false;
+    static SpectateFollow follow;
+    static SpectateCamStats stats;
+    static std::int64_t cam_ms = 0;
+    static float cam_prev[3] = {}, fwd_prev[3] = {}, put[3] = {};
+    static bool put_have = false;
+    static int pushed = 0;
+    alignas(16) static float carry_rot[4] = {0, 0, 0, 0};
+    const auto flush = [&](const char* why) {
+        if (SpectateLogOn() && window_at > 0 && stats.ticks > 0) {
+            const double secs = now - window_at;
+            Log("spectate cam (%s, %.1f s, %s): %d camera reset(s) (%.1f/min), carried spot largest step %.2f m/tick "
+                "(%d tick(s), %d jump(s), pushed off %d time(s)); render camera largest move %.2f m, turn %.1f deg "
+                "between frames, nearest to the followed member %.1f m",
+                why, secs, smooth_was ? "smooth" : "old 0.2 s follow", stats.resets,
+                double(stats.ResetsPerMinute(secs)), double(stats.max_step), stats.ticks, stats.snaps, pushed,
+                double(stats.max_cam_move), double(stats.max_cam_turn) * 57.29578,
+                stats.min_cam_dist < 1e8f ? double(stats.min_cam_dist) : -1.0);
+        }
+        stats.Reset();
+        pushed = 0;
+        window_at = now;
+    };
+    const auto stop = [&] {
+        if (target >= 0) flush("ended");
         target = -1;
+        window_at = 0;
+        cam_ms = 0;
+        follow.have = put_have = false;
+    };
+    if (!g_spectating.load()) {
+        stop();
         return;
     }
     if (!SessionUp() || s.loading || !s.world_up || !s.player || ChrHp(s.player) > 0) {
         SpectateEnd();  // a load or a revive took over
-        target = -1;
+        stop();
         return;
     }
     // Cross (does nothing while dead) switches to the next living member (C5 member switch).
     const u32 cross = runtime_pad_cross_presses();
     const bool advance = target >= 0 && cross != cross_seen;
     cross_seen = cross;
-    if (now < next && !advance) {
-        return;
+    const bool smooth = SpectateSmooth(now - g_spectate_at.load());
+    if (smooth != smooth_was && target >= 0) {
+        flush("follow mode changed");
+        follow.have = false;
+    }
+    smooth_was = smooth;
+    if (window_at <= 0) window_at = now;
+    if (now - window_at >= 10.0) flush("10 s");
+    if (SpectateLogOn()) {
+        // What the player sees: the render camera between two ticks (a new frame only).
+        const BbCamera::State cam = BbCamera::Latest(250);
+        if (cam.valid && cam.at_ms != cam_ms) {
+            const auto c = BbCamera::Position(cam);
+            const float f[3] = {cam.view[8], cam.view[9], cam.view[10]};
+            if (cam_ms != 0 && target >= 0) {
+                const float dx = c[0] - cam_prev[0], dy = c[1] - cam_prev[1], dz = c[2] - cam_prev[2];
+                const float dot = std::clamp(f[0] * fwd_prev[0] + f[1] * fwd_prev[1] + f[2] * fwd_prev[2], -1.0f, 1.0f);
+                // The followed member's spot (the old follow: 3 m in front of the carried chr).
+                const float ax = follow.at[0] - c[0], az = follow.at[2] - c[2];
+                const float dm = follow.have ? std::sqrt(ax * ax + az * az) : 1e9f;
+                stats.Camera(std::sqrt(dx * dx + dy * dy + dz * dz), std::acos(dot), dm);
+            }
+            cam_ms = cam.at_ms;
+            std::memcpy(cam_prev, c.data(), sizeof cam_prev);
+            std::memcpy(fwd_prev, f, sizeof fwd_prev);
+        }
+    }
+    if (!smooth && now < next && !advance) {
+        return;  // the old follow: 5 carries a second
     }
     next = now + 0.2;
+    const float dt = std::clamp(float(now - last), 0.0f, 0.1f);
+    last = now;
     int living[8];
     u64 chrs[8];
     int n = 0;
@@ -5606,30 +5999,75 @@ void SpectateTick(const GameSnapshot& s, double now) {
     }
     const bool new_target = pick != target || advance;
     target = pick;
+    using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
+    using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+    const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8);
     for (int i = 0; i < n; ++i) {
         alignas(16) float pos[4], rot[4];
         if (living[i] != pick || !ChrTransform(chrs[i], pos, rot)) {
             continue;
         }
         const float yaw = rot[1];
+        if (smooth) {
+            // Did the game move the carried chr since the last tick (pushed out of the member's
+            // capsule, a fall)? Counted for the diagnostics line; the next carry puts it back.
+            alignas(16) float mine[4], mrot[4];
+            if (put_have && ChrTransform(s.player, mine, mrot)) {
+                const float ox = mine[0] - put[0], oz = mine[2] - put[2];
+                pushed += (ox * ox + oz * oz > 1.0f || std::fabs(mine[1] - put[1]) > 1.0f) ? 1 : 0;
+            }
+            if (new_target) {
+                follow.have = false;  // a new member: straight there
+                std::memcpy(carry_rot, rot, sizeof carry_rot);
+            }
+            // The member's own spot (never inside a wall; a little up so the carried chr does not
+            // start in the floor); the camera keeps its own distance and wall collision.
+            const float want[3] = {pos[0], pos[1] + 0.2f, pos[2]};
+            bool snapped = false;
+            const float step = follow.Step(want, dt, SpectateLag(), 8.0f, &snapped);
+            stats.Step(step, snapped);
+            alignas(16) const float at[4] = {follow.at[0], follow.at[1], follow.at[2], 1.0f};
+            if (fn) {
+                reinterpret_cast<Warp>(fn)(s.player, at, carry_rot, 1);
+            }
+            std::memcpy(put, at, sizeof put);
+            put_have = true;
+            // The camera keeps its own direction when the dead chr is carried (parx2 smoke2: the
+            // host's view showed a wall for 106 s): the Lua CamReset (as WarpLocal) puts it behind
+            // the carried chr, which faces the way the member faced - once per member; after that
+            // the player's right stick turns it.
+            if (new_target) {
+                reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+                ++stats.resets;
+                Log("spectating: camera put behind the followed member (yaw %.2f)", double(yaw));
+            }
+            return;
+        }
+        // The old follow (BB_PARTY_SPECTATE_SMOOTH=0): 3 m behind the member's body yaw every 0.2 s,
+        // the camera reset behind it at a new member and whenever the member turned > ~35 degrees.
+        const bool had = follow.have;
+        follow.at[0] = pos[0], follow.at[1] = pos[1], follow.at[2] = pos[2];  // the member (diagnostics)
+        follow.have = true;
         pos[0] -= std::sin(yaw) * 3.0f;
         pos[2] -= std::cos(yaw) * 3.0f;
         pos[1] += 0.5f;
         pos[3] = 1.0f;
-        if (const u64 fn = Field<u64>(Field<u64>(s.player, 0), 0x5f8)) {
-            reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u32)>(fn)(s.player, pos, rot, 1);
+        if (had) {
+            const float dx = pos[0] - put[0], dy = pos[1] - put[1], dz = pos[2] - put[2];
+            stats.Step(std::sqrt(dx * dx + dy * dy + dz * dz), false);
         }
-        // The camera keeps its own direction when the dead chr is carried (parx2 smoke2: the host's
-        // view showed a wall for 106 s, the two living members 3-5 m away off screen): the Lua
-        // CamReset (as WarpLocal) puts it behind the carried chr, which faces the way the followed
-        // member faces - at a new target and when the member has turned by more than ~35 degrees.
+        std::memcpy(put, pos, sizeof put);
+        put_have = false;
+        if (fn) {
+            reinterpret_cast<Warp>(fn)(s.player, pos, rot, 1);
+        }
         static float reset_yaw = 0.0f;
         float turn = std::fabs(yaw - reset_yaw);
         if (turn > 3.14159265f) turn = 6.2831853f - std::fmod(turn, 6.2831853f);
         if (new_target || turn > 0.6f) {
             reset_yaw = yaw;
-            using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
             reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+            ++stats.resets;
             if (new_target) Log("spectating: camera put behind the followed member (yaw %.2f)", double(yaw));
         }
         return;
@@ -5723,6 +6161,75 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
     }
 }
 
+/// This guest's player number (PlayerGameData +0x10): its party slot's (coop::fourp::
+/// PlayerNumberForSlot: slot N -> N + 1, the host 1), so no two players share one. Every remote
+/// chr is built from the record whose number matches its row's (0x18D8100, the own record first):
+/// with the 2 every title-joined guest used to write, a 3-player party drew both guests from one
+/// row (one look for both), and a guest numbered like the host was drawn with the host's look.
+int OwnGuestNumber() {
+    const int slot = g_local_slot.load();
+    return slot >= 1 ? coop::fourp::PlayerNumberForSlot(slot) : 2;
+}
+
+/// Host and guests in a session: the own player number kept (host 1, guest OwnGuestNumber()) once
+/// the world is up in the session (flow 4); a load or a late packet 7 that changed it is undone and
+/// the own record re-broadcast with a rebuild request (the mirror's path: the peers rebuild this
+/// chr). Also logs a clash in the remote rows (two rows, or a row and the own record, one number).
+/// BB_PARTY_PLAYER_NUMBERS=0: off.
+void PlayerNumberTick(const GameSnapshot& s, double now) {
+    static const bool on = !EnvOff("BB_PARTY_PLAYER_NUMBERS");
+    static double next = 0;
+    static std::string last_clash;
+    if (!on || !g_on.load() || !s.world_up || s.loading || !s.player || now < next) {
+        return;
+    }
+    next = now + 0.5;
+    const bool host = Role() == RoleHost && s.cooperators > 0;
+    const bool guest = Role() == RoleClient && g_local_slot.load() >= 1 && !g_rejoin.load();
+    if ((!host && !guest) || Field<int>(Slot(kSlotFlow), 0x84, -1) != 4) {
+        return;
+    }
+    const u64 gdm = Slot(kSlotGameData);
+    const u64 own = Field<u64>(gdm, 8);
+    if (!own) {
+        return;
+    }
+    const int want = host ? 1 : OwnGuestNumber();
+    const int was = Field<int>(own, 0x10, -1);
+    if (was != want) {
+        SafeWrite(own + 0x10, &want, 4);
+        SafeWrite(s.player + 0x3b8, &want, 4);  // as the packet 7 receive writes both
+        NoteOwnAppearanceChanged();             // own record again (with the number), peers rebuild this chr
+        Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr",
+            was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load());
+    }
+    std::string clash;
+    const u64 rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
+    for (int i = 0; rows && occ && i < 4; ++i) {
+        if (!Field<u8>(occ, u64(i))) continue;
+        const int no = Field<int>(rows + u64(i) * 0x6a0, 0x10, -1);
+        if (!coop::fourp::PlayerNumberValid(no)) continue;
+        bool dup = no == want;
+        for (int j = 0; j < i && !dup; ++j) {
+            dup = Field<u8>(occ, u64(j)) && Field<int>(rows + u64(j) * 0x6a0, 0x10, -1) == no;
+        }
+        if (dup) {
+            char b[48];
+            std::snprintf(b, sizeof b, " row %d no %d", i, no);
+            clash += b;
+        }
+    }
+    if (clash != last_clash) {
+        last_clash = clash;
+        if (!clash.empty()) {
+            Log("player number clash (a remote chr drawn with another player's look):%s; %s", clash.c_str(),
+                DescribePlayerNumbers().c_str());
+        } else {
+            Log("player numbers unique again: %s", DescribePlayerNumbers().c_str());
+        }
+    }
+}
+
 /// A5 (one-load cross-map join, BB_PARTY_GATHER_DSUM, default on): the direct summon of a guest
 /// in another map than the host's joins the host's room without loading the host's map (live a5,
 /// 2026-10-13: a client still in its own m21_00). Set when that join is reported; the arrival
@@ -5753,12 +6260,12 @@ void CarryGameDataTick(const GameSnapshot& s, double now) {
     g_carry_gd_at = -1;
     if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
         const int was = Field<int>(gd, 0x5d8, -1);
-        const int two = 2, one = 1, seven = 7;
+        const int two = OwnGuestNumber(), one = 1, seven = 7;
         SafeWrite(gd + 0x10, &two, 4);
         SafeWrite(gd + 0xa4, &one, 4);
         SafeWrite(gd + 0x5d8, &seven, 4);
         RebroadcastOwnRecord("A5 arrival: a summoned guest's session type");
-        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 %d -> 7)", was);
+        Log("A5: arrived in the host's map: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 %d -> 7)", two, was);
     }
 }
 
@@ -6687,6 +7194,7 @@ struct TitleJoin {
     float pos[4] = {}, rot[4] = {};
     int last_role = -2, last_state = -2;
     std::vector<int> requests;  // host: slots that asked
+    std::map<int, std::uint64_t> channels;  // host: the dungeon each asking slot's own save holds (0: none / unknown)
 };
 TitleJoin& TJ() {
     static TitleJoin t;
@@ -6819,6 +7327,35 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         const dsummon::Busy busy = dsummon::TitleJoinBusy(Role() == RoleHost && BossBarShown(),
                                                           Role() == RoleHost && CutscenePlaying(), ready,
                                                           !coop::OthersInPrologue().empty());
+        // A Chalice Dungeon: a title join loads the joiner's own slot's dungeon (no quick join), so
+        // only a joiner whose slot holds this dungeon comes in that way; the others continue into
+        // their own world and the summon brings them in (an empty m29 otherwise).
+        const std::uint64_t host_channel = Field<u64>(Field<u64>(Guest(0x553b120), 0, 0), 0xa88, dsummon::kNoChannel);
+        std::vector<int> into_chalice;
+        if (busy == dsummon::Busy::None) {
+            std::lock_guard<std::mutex> lk(TJ().mu);
+            for (int slot : req) {
+                const auto it = TJ().channels.find(slot);
+                const std::uint64_t guest_channel = it == TJ().channels.end() ? 0 : it->second;
+                if (dsummon::TitleJoinChaliceElsewhere(s.map_id, host_channel, guest_channel)) {
+                    into_chalice.push_back(slot);
+                    Log("title join: slot %d refused: this host is in Chalice Dungeon %#llx, the joiner's slot holds "
+                        "%#llx (it continues into its own world; the summon's quick join brings it in)",
+                        slot, ull(host_channel), ull(guest_channel));
+                }
+            }
+        }
+        for (int slot : into_chalice) {
+            Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") +
+                           dsummon::BusyWord(dsummon::Busy::Chalice) + "\"}");
+        }
+        if (!into_chalice.empty()) {
+            req.erase(std::remove_if(req.begin(), req.end(),
+                                     [&](int x) { return std::find(into_chalice.begin(), into_chalice.end(), x) !=
+                                                         into_chalice.end(); }),
+                      req.end());
+            if (req.empty()) return;
+        }
         if (busy != dsummon::Busy::None) {
             for (int slot : req) {
                 Send(slot, std::string("{\"op\":\"title_room\",\"room\":\"\",\"wait\":\"") + dsummon::BusyWord(busy) + "\"}");
@@ -7044,6 +7581,18 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
         Log("direct summon: the game's wrapper constructor refused");
         return false;
     }
+    // A Chalice Dungeon: the handler takes the message's ChannelId only with FrpgNetMan +0xb14 bit 0
+    // (the vanilla Dream bell's chalice wait, SpEffect 9900; the director applies it while the host
+    // is in a dungeon). Set it for this call too, so the quick join cannot be skipped by a late effect.
+    const u64 net = Field<u64>(Guest(kNetMan), 0, 0);
+    if (dsummon::ChannelSet(room.channel) && net) {
+        const u8 wait = Field<u8>(net, 0xb14, 0);
+        if (!(wait & 1)) {
+            const u8 set = u8(wait | 1);
+            SafeWrite(net + 0xb14, &set, 1);
+            Log("direct summon: chalice wait bit (FrpgNetMan +0xb14 bit 0) was clear: set for the quick join");
+        }
+    }
     // The sender as the handler sees it: +0x20 -> the sender's 16-byte online id.
     char ident[17] = {};
     std::snprintf(ident, sizeof ident, "%s", host_name.c_str());
@@ -7055,6 +7604,11 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
     const u32 state = Field<u32>(entry, 0xc8, 0);
     Log("direct summon: the host's room (%zu bytes) handed to the game as a type-1 summon message: entry state %u",
         room.data.size(), state);
+    if (dsummon::ChannelSet(room.channel)) {
+        // +0xc0: the channel request by id (get_details_info) that becomes the quick join.
+        Log("direct summon: Chalice Dungeon %llu (ChannelId %#llx): channel request %s", ull(room.channel), ull(room.channel),
+            Field<u64>(entry, 0xc0, 0) ? "made (the quick join follows the join)" : "NOT made");
+    }
     return state != 0;
 }
 
@@ -7095,6 +7649,14 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         // us our game ended that session itself, and a room served in between was gone before the
         // guest got in. Until our game is out of it (a fresh room is created then), the guest waits.
         v.settling = Role() == RoleHost && s.cooperators <= 0 && bbnet::np::ms_since_member_left() < 8000;
+        // A Chalice Dungeon: the room carries the host's ChannelId (FrpgNetMan +0xa88), which the
+        // guest's game quick-joins (chalice.md 4). Right after the host's arrival it is still 0 (live:
+        // ~1.5 s), and the summoned game fetches the dungeon from the board: until both are there,
+        // the guest asks again (a room without it loaded the guest into an empty m29 and it fell).
+        const std::uint64_t host_channel = Field<u64>(Field<u64>(Guest(kNetMan), 0, 0), 0xa88, dsummon::kNoChannel);
+        v.chalice_unready = dsummon::ChaliceMap(s.map_id) &&
+                            (!dsummon::ChannelSet(host_channel) ||
+                             !bbnet::party::FromApi::instance().channels().known(host_channel));
         const std::string name = names.count(slot) ? names[slot] : std::string();
         // F5: a member back from a network outage: its sign hold ends once the scan for its old
         // game connection ran (NrDropAfterOutage, ~1.5 s after it was back); the answer waits for
@@ -7164,6 +7726,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         room.area = Field<u32>(net, 0xa7c, 0);
         room.level = 0;  // bbhost's FrpgNetMan +0xaa8 holds a float on our 1.09 (live: 0x3f49...): not sent
         SafeRead(net + 0xaac, room.pos, 12);
+        room.channel = dsummon::ChaliceMap(s.map_id) || dsummon::ChaliceMap(room.area) ? host_channel : dsummon::kNoChannel;
         // A4 (parab3 a4t2, live): a host left alone counts its room down (flow +0xB8, ~10 s after the
         // last member left; 0x1789B60 raises OnRoomTimeOut and the game leaves the room at 0). A
         // room served 27 ms before that ended was gone when the guest's JoinRoom came ("Room not
@@ -7185,8 +7748,8 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             DS().served_at = now;
             DS().refused_wait = false;
         }
-        Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u); its signs are held", slot,
-            name.c_str(), room.data.size(), room.area, room.level);
+        Log("direct summon: slot %d (%s) gets this host's room (%zu bytes, area %#x, level %u, ChannelId %#llx); its signs "
+            "are held", slot, name.c_str(), room.data.size(), room.area, room.level, ull(room.channel));
     }
     if (keep.empty()) first = 0;
     {
@@ -7211,6 +7774,12 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             a = dsummon::Action::ReportFail;
             Log("direct summon: the host's room is in %s, this guest in %s: not delivered",
                 MapName(DS().room.area).c_str(), MapName(s.map_id).c_str());
+        } else if (dsummon::RoomLacksDungeon(DS().g, now, DS().room)) {
+            a = dsummon::Action::ReportFail;
+            Log("direct summon: the host's room is in its Chalice Dungeon (%s) without a ChannelId: not delivered, this "
+                "game stays in its own world", MapName(DS().room.area).c_str());
+            party::status::SetAlert("The host is in a Chalice Dungeon this game cannot be summoned into yet. You stay in your "
+                             "own world; ring the bell again in a moment.");
         } else {
             const bool entry = s.world_up && !s.loading && WaitingGuestEntry() != 0;
             // Playtest 1 G4: say once per request what keeps a room from being handed over.
@@ -7272,6 +7841,41 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
                        : "the bell sign path takes over");
         }
     }
+}
+
+/// Guest: a summon or title join that loaded the host's Chalice Dungeon without the dungeon (the
+/// map stays unknown: m255, an empty world; live: the guest fell to y -1500 and died, a grey screen,
+/// again at every respawn). Whatever path brought it, it leaves the session at once and goes home
+/// (the game's own send-home, or the title join's lamp warp) with a notice; the summon's quick join
+/// brings it in properly next.
+void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
+    static double since = 0;
+    static bool bailed = false;
+    int host_state = -1;
+    u32 host_map = 0;
+    coop::MemberRoster(0, &host_state, &host_map);
+    const bool empty = Role() == RoleClient && s.world_up && !s.loading && !dsummon::MapKnown(s.map_id) &&
+                       dsummon::ChaliceMap(host_map);
+    if (!empty) {
+        since = 0;
+        if (s.loading) bailed = false;
+        return;
+    }
+    if (since == 0) since = now;
+    if (bailed || now - since < 3.0) return;
+    bailed = true;
+    float p[3] = {};
+    const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    if (me) ChrPos(me, p);
+    Log("chalice: this guest is in the host's Chalice Dungeon (%s) without the dungeon (map unknown for %.1f s, at "
+        "(%.1f, %.1f, %.1f)): leaving the session, home to its own world",
+        MapName(host_map).c_str(), now - since, double(p[0]), double(p[1]), double(p[2]));
+    g_chalice_bail = !g_title_joined.load();
+    if (g_title_joined.load()) g_title_home_now = true;
+    using Fn = u8(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    party::status::SetAlert("This game loaded the host's Chalice Dungeon without the dungeon. You are sent back to your own "
+                     "world; the party's summon brings you into the dungeon.");
 }
 
 void DirectSummonEvent(int from_slot, const std::string& body) {
@@ -7495,11 +8099,11 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         Field<int>(Slot(kSlotFlow), 0x84, -1) == 4 && Field<u64>(Slot(kSlotWorldChrMan), 0x60)) {
         if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
             gd_set = true;
-            const int two = 2, one = 1, seven = 7;
+            const int two = OwnGuestNumber(), one = 1, seven = 7;
             SafeWrite(gd + 0x10, &two, 4);
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
-            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7) at flow 4 (%s)",
+            Log("title join: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 7) at flow 4 (%s)", two,
                 s.loading ? "loading screen still up" : "in the world");
         }
     }
@@ -7571,11 +8175,11 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
         // +0x10 2 (the 0x168 record and the first-sync packet 0xC are sent only with it set),
         // +0xA4 1 (white phantom, packet 0xB), +0x5D8 7 (session type).
         if (const u64 gd = Field<u64>(Slot(kSlotGameData), 8)) {
-            const int two = 2, one = 1, seven = 7;
+            const int two = OwnGuestNumber(), one = 1, seven = 7;
             SafeWrite(gd + 0x10, &two, 4);
             SafeWrite(gd + 0xa4, &one, 4);
             SafeWrite(gd + 0x5d8, &seven, 4);
-            Log("title join: own GameData as a summoned guest's (+0x10 2, +0xA4 1, +0x5D8 7)");
+            Log("title join: own GameData as a summoned guest's (+0x10 %d, +0xA4 1, +0x5D8 7)", two);
         }
     }
     // Ready (Continue pressed, the load not started): the save's spawn is the forced placement
@@ -7922,7 +8526,15 @@ bool TitleJoinHold(const GameSnapshot& s) {
             }
             return false;
         }
-        Send(0, "{\"op\":\"title_req\"}");
+        {
+            // The dungeon this save holds (its current slot), if the flags are readable at the title:
+            // a host in a Chalice Dungeon lets only a joiner with that dungeon title-join into it.
+            const chalice::State cs = chalice::Read();
+            const std::uint64_t own = cs.valid && cs.load_mode == 0 ? cs.channel : chalice::LocalChannel();
+            char req[96];
+            std::snprintf(req, sizeof req, "{\"op\":\"title_req\",\"chalice\":\"%llx\"}", ull(own));
+            Send(0, req);
+        }
         std::lock_guard<std::mutex> lk(t.mu);
         t.phase = TitlePhase::Requested;
         t.since = now;
@@ -8107,6 +8719,12 @@ void Init() {
                                   0xec, 0xf8, 0x07, 0x00, 0x00},
                       &ChrPreStepHook, "remote chr stale map hit guard (0x18CB0E0)")) {
         Log("remote chr stale map hit guard: NOT installed (bytes differ)");
+    }
+    // K12: the guest's HostDead state (push rbp; mov rbp, rsp; push r15: 6 bytes, position-independent).
+    if (!ReplacePrologue(kHostDeadState, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&HostDeadHook),
+                         &g_hostdead_orig, "B2 K12 guest HostDead state (0x1381870)")) {
+        g_hostdead_orig = nullptr;
+        Log("K12: guest HostDead state hook NOT installed (bytes differ)");
     }
     SetSendHomeVeto(&SendHomeVeto);
     SetGuestDeathHold(&HoldGuestDeath);
@@ -8457,6 +9075,7 @@ void Tick(const GameSnapshot& s) {
     }
     ProbeTick(s);
     DirectSummonTick(s, now);
+    ChaliceEmptyWorldTick(s, now);
     if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);
@@ -8466,6 +9085,7 @@ void Tick(const GameSnapshot& s) {
     TestBossTick(s, now);
     ArrivalWatchTick(s, now);
     ArrivalRenderCheckTick(s, now);
+    HostDeadLockTick(s, now);
     MemberSessionTypeTick(s);
     GuestChrTypeTick(s);
     BannerRejoinTick();
@@ -8480,6 +9100,7 @@ void Tick(const GameSnapshot& s) {
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
     CarryGameDataTick(s, Now());
+    PlayerNumberTick(s, now);
     SpectatorRemoveTick(s);
     SpectateTick(s, Now());
     OwnStainLogTick(s);
@@ -8499,6 +9120,7 @@ void Tick(const GameSnapshot& s) {
     K10ProbeTick(s, now);
     K10ActionHoldTick(s, now);
     LocalDeathHeightTick(s, now);
+    ReviveDiffTick(s, now);
     {
         GuestPhase gp;
         {
@@ -8591,6 +9213,16 @@ bool OnHostTravel(const TravelIntent& t) {
     if (!g_on.load() || Role() != RoleClient) {
         return false;
     }
+    if (GuestSkipsChaliceTravel(t)) {
+        // Live (beta 5, 3 guests): the B2 re-join loaded the host's dungeon lamp without the
+        // dungeon in the guest's slot (m255, an empty world): every guest fell and died, then
+        // respawned at that lamp and fell again. The guest stays, as for a host travelling alone;
+        // the summon's quick join brings it in.
+        g_host_left = true;
+        g_host_alone_seen = Now();
+        NoteAway(0);
+        return true;
+    }
     if (t.alone) {
         // Split travel: the host goes alone; this guest stays and does not load. Its chr here
         // goes (main thread, SplitTick); the two meet again when they share an area.
@@ -8679,7 +9311,10 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             return;  // the guest's ack timeout sends it the usual way
         }
         Send(from_slot, "{\"op\":\"title_ack\"}");
+        unsigned long long ch = 0;
+        if (const char* pc = std::strstr(body.c_str(), "\"chalice\":\"")) std::sscanf(pc + 11, "%llx", &ch);
         std::lock_guard<std::mutex> lk(TJ().mu);
+        TJ().channels[from_slot] = ch;
         TJ().requests.push_back(from_slot);
         return;
     }
@@ -8854,7 +9489,19 @@ void OnLinkEvent(int from_slot, const std::string& body) {
             std::lock_guard<std::mutex> lk(g_member_revived_mu);
             if (g_appearance_todo.size() < 8) g_appearance_todo.push_back({Now() + 1.5, {p[0], p[1], p[2]}});
         }
-        Log("slot %d changed its appearance: its chr here is rebuilt from its new record in 1.5 s", from_slot);
+        // The host passes it on to the other guests (a guest's events reach only the host): their
+        // copy of the member's chr was built from the same old record (samemodel run A: guest 1
+        // never rebuilt guest 2's chr after its new look).
+        int origin = from_slot;
+        if (const char* pf = std::strstr(body.c_str(), "\"from\":")) std::sscanf(pf, "\"from\":%d", &origin);
+        if (Role() == RoleHost && from_slot > 0 && body.find("\"from\":") == std::string::npos) {
+            std::string fwd = body;
+            fwd.insert(fwd.size() - 1, ",\"from\":" + std::to_string(from_slot));
+            for (int slot = 1; slot < party::kMaxPartyPlayers; ++slot) {
+                if (slot != from_slot) Send(slot, fwd);  // absent slots: the link drops it
+            }
+        }
+        Log("slot %d changed its appearance: its chr here is rebuilt from its new record in 1.5 s", origin);
         return;
     }
     if (body.find("\"member_revived\"") != std::string::npos) {

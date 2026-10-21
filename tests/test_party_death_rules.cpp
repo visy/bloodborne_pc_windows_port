@@ -413,6 +413,16 @@ int main() {
     CHECK(FallDrop(-20.0, -21.0, -21.0) == 1.0);
     CHECK(GuestReviveName(GuestRevive::LoadFall)[0] != '?');
     CHECK(RestLoadName(RestLoad::TooSoon)[0] != '?');
+    // K12: the guest's HostDead state (the host's death event) on a party guest.
+    CHECK(SkipGuestHostDead(true, 6, 1, 1, 1));      // a summoned guest, default: skipped
+    CHECK(SkipGuestHostDead(true, 6, 0, 1, 4));      // chr type 0 after a B2 load: skipped too
+    CHECK(!SkipGuestHostDead(false, 6, 1, 1, 1));    // no B2 party: the game's
+    CHECK(!SkipGuestHostDead(true, 3, 1, 1, 1));     // the host: the game's (it returns at once)
+    CHECK(!SkipGuestHostDead(true, 6, 2, 1, 1));     // an invader: the game's PK-success path
+    CHECK(!SkipGuestHostDead(true, 6, 8, 1, 1));
+    CHECK(!SkipGuestHostDead(true, 6, 1, 0, 5));     // BB_PARTY_HOSTDEAD_SKIP=0: never
+    CHECK(!SkipGuestHostDead(true, 6, 1, 3, 2));     // =3: the first two host deaths the game's
+    CHECK(SkipGuestHostDead(true, 6, 1, 3, 3));
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;

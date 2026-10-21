@@ -88,7 +88,7 @@ LEAVE_OUT = r"the host ended the party|host lost \(the host left its room\)"
 def phase_s1(only):
     host = ",".join([
         "host_warp=2412953@70",             # party lamp travel: the Tomb of Oedon (after the leave/rejoin and death)
-        "host_die@88%m24_01",               # in the fight: the guest at the fog ~20 s, the intro ~24-72 s (48 s)
+        "host_die@6%m24_01~",               # in the fight: 6 s after the boss intro (the guest went in first)
     ])
     g1 = ",".join([
         "echoes=5000",                        # Blood Echoes to drop (the bloodstain)
@@ -96,9 +96,9 @@ def phase_s1(only):
         "guest_die@12",                       # a death outside a fight: bloodstain, respawn at the host's lamp
         "guest_obj=2411810@20%m24_01",        # at Gascoigne's fog, facing it
         "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # Cross: the guest goes in first
-        "guest_die@84%m24_01",                # ~18 s after the host's death in the fight: the wipe
+        "guest_die@20%m24_01~",               # 14 s after the host's death in the fight: the wipe
     ])
-    g2 = "guest_die@118%m24_01"                # the headless guest: down too (everyone down: a wipe)
+    g2 = "guest_die@26%m24_01~"                # the headless guest: down too (everyone down: a wipe)
     return dict(
         name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -152,6 +152,32 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "wipe": r"wipe", "kill": r"boss kill|party stays", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave"}
+
+
+# --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
+# --only ends once the chosen groups' lines are all seen, so the steps after them never run.
+GROUP_UNTIL = {
+    "join": ["0:cooperators [01] -> 2"],
+    "leave": ["1:guest_rejoin: Party > Rejoin pressed", "0:cooperators 1 -> 2"],
+    "death": ["1:guest: respawned at the host's lamp|guest: died alone: revived|revived at"],
+    "travel": ["1:map - -> m24_01", "2:map - -> m24_01"],
+    "boss": ["1:cutscene 24010010"],
+    "host_death": ["0:spectating: following"],
+    "wipe": ["0:a wipe"],
+    "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
+    "itembox": ["1:item notice closed|lot 50000010 .*not given while summoned|owed key item: lot 50000010"],
+    "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
+}
+NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
+
+
+def narrow_phase(ph, only):
+    """--only: end the phase on the chosen groups' lines; drop the s2 crash plan nobody asked for."""
+    mine = [g for g in only if GROUPS[g] == ph["name"]]
+    if not mine or NEEDS_CRASH & set(mine):
+        return ph
+    ph = dict(ph, until=[u for g in mine for u in GROUP_UNTIL.get(g, [])] or ph["until"], crash=[])
+    return ph
 
 
 def run_phase(a, ph, out: Path):
@@ -313,7 +339,8 @@ def check_s2(v, L, d: Path):
         need(v, L, "s2 boss kill reached guest 2", 2, r"host boss kill", k)
         need(v, L, "s2 the party stays after the boss (K10)", 0, r"K10: boss-clear leave suppressed", k)
         # The Cleric Beast's reward (lot 50000010, Sword Hunter Badge) is a key item: a summoned guest
-        # gets it owed to its own world (pard2, D4), not as a box; any other reward shows the box.
+        # gets it at once and owed to its own world too (items.md 10.3; pard2, D4); any other reward
+        # shows the box.
         ib = need(v, L, "s2 reward on the summoned guest (item box or owed key item)", 1,
                   r"item notice up on a summoned guest|lot 50000010 .*not given while summoned; waits for the own world|"
                   r"owed key item: lot 50000010", 0)
@@ -376,6 +403,8 @@ def main():
     t_all = time.time()
     for name in [p.strip() for p in a.phase.split(",") if p.strip()]:
         ph = PHASES[name](only)
+        if only:
+            ph = narrow_phase(ph, only)
         if not a.check_only:
             run_phase(a, ph, out / name)
         print("[smoke] verdict %s" % name, flush=True)
