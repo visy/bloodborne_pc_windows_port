@@ -556,11 +556,23 @@ def phase_ga(only):
 # itself from the Dream (a headstone's travel: a rest the re-join carries, the host's rest load for it
 # and guest 2 following: the report's host log). After each everyone is back (the host rewinds its
 # member tasks for the arrivals); no crash, no device lost.
+# The host's Marks come first (hostmark; the host answers "Travel with the party?" by
+# BB_PARTY_SPLIT_TEST, its last lamp the Cathedral Ward's): (h1) the Bold Mark in its own map, YES:
+# the in-world party move, no load for anyone, both guests follow beside it; (h2) the Bold Mark
+# again, NO: the host alone in-world, the guests stay, no load; (h3) the Hunter's Mark from the
+# Dream (the party went there with it), YES: the party's travel, one load each into m24_00, every
+# guest placed beside the host. Guest 1's chain waits for the Dream (its first step there) and
+# starts again once the party is back.
 MK_LAMP = "2402950"    # Cathedral Ward (m24_00)
 MK_DREAM = "2102950"   # the Hunter's Dream lamp
 MK_UNTIL = r"1:travel step (\d+)/\1: "  # guest 1's last step
 MK_CASES = (("Bold Mark in the host's map", "mark_here"), ("Hunter's Mark from the Dream", "mark"),
             ("Bold Mark from the Dream", "mark"), ("lamp from the Dream (a rest)", "rest"))
+# the host's cases: (name, goods, the answer, in its own map)
+MK_HOST_CASES = (("h1 host Bold Mark in its map, with the party", 1400, "yes", True),
+                 ("h2 host Bold Mark in its map, alone", 1400, "no", True),
+                 ("h3 host Hunter's Mark from the Dream, with the party", 100, "yes", False))
+MK_OFF_LAMP = "13.3:105.1:1.2:25"  # a walk 5 m off the Cathedral Ward lamp's spot (17.6, 102.7)
 
 
 def _mk_to_dream():
@@ -570,8 +582,17 @@ def _mk_to_dream():
 
 
 def phase_mk(only):
-    host = ",".join(["god", "host_warp=%s@15" % MK_LAMP])
+    host = ",".join(["god", "host_warp=%s@15" % MK_LAMP,
+                     "host_lastlamp=%s@3%%m24_00^2" % MK_LAMP,             # both guests in
+                     "host_stick=%s@1%%m24_00!" % MK_OFF_LAMP,             # off the lamp, walked
+                     "host_use=1400@2%m24_00",                             # (h1) YES
+                     "host_stick=%s@6%%m24_00!" % MK_OFF_LAMP,
+                     "host_use=1400@2%m24_00",                             # (h2) NO
+                     "host_warp=%s@6%%m24_00" % MK_DREAM,                  # the party to the Dream
+                     "host_lastlamp=%s@5%%m21_00^2" % MK_LAMP,
+                     "host_use=100@2%m21_00"])                             # (h3) YES: the party back
     g1 = ",".join(["god",
+                   "guest_lastlamp=%s@1%%m21_00" % MK_LAMP,               # waits for the host's cases
                    "guest_lastlamp=%s@12%%m24_00" % MK_LAMP,
                    "guest_use=1400@2%m24_00",                     # (1) the Bold Mark in the host's map
                    ] + _mk_to_dream() + ["guest_use=100@2%m21_00"]   # (2) the Hunter's Mark from the Dream
@@ -579,10 +600,14 @@ def phase_mk(only):
                   + _mk_to_dream() + ["guest_lamp=%s@2%%m21_00" % MK_LAMP,  # (4) the lamp from the Dream
                                       "guest_press=0@25%m24_00!"])  # back in the host's world: the end
     return dict(
-        name="mk", seconds=480,
+        name="mk", seconds=600, pad=True,
         env=[],
-        watch=["--watch", r"test: guest_use goods=mark@2,8", "--watch", r"a guest arrived; \d+ member task=back@1,4"],
+        watch=["--grey", "--watch", r"test: guest_use goods=mark@2,8", "--watch", r"a guest arrived; \d+ member task=back@1,4",
+               "--watch", r"host: party move to lamp \d+ inside the loaded map=h1@1,4",
+               "--watch", r"lamp \d+ \(host\): .*-> travel alone=h2@1,4",
+               "--watch", r"test: host_use goods 100 =h3@12,18"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god",
+              "0:BB_PARTY_SPLIT_TEST=" + ",".join(c[2] for c in MK_HOST_CASES),
               "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         crash=[],
         until=[MK_UNTIL],
@@ -1318,9 +1343,53 @@ def check_ga(v, L):
     need(v, L, "ga round 3 over", 0, r"round 3 over", r1)
     check_common(v, L, "ga")
 
+def check_mk_host(v, L, guests_from):
+    """The host's Marks (MK_HOST_CASES): the question and its answer, then per the travel rules: in
+    its own map no load for anyone (YES: both guests follow in-world; NO: they stay); from another
+    map (YES) one load each into m24_00, every guest placed beside the host."""
+    uses = L.all(0, r"test: host_use goods (100|1400) ")
+    for k, (name, goods, answer, here) in enumerate(MK_HOST_CASES):
+        u = uses[k] if k < len(uses) else None
+        v.step("mk %s: used (host)" % name, u and ("goods %d " % goods) in u[1],
+               ("+%.1f s: %s" % (u[0], u[1][:150])) if u else "case never ran")
+        if not u:
+            continue
+        t = u[0]
+        end = (uses[k + 1][0] if k + 1 < len(uses) else guests_from) if here else min(t + 60, guests_from)
+        need(v, L, "mk %s: \"Travel with the party?\" asked" % name, 0,
+             r"lamp %s: asking \"Travel with the party\?\"" % MK_LAMP, t, end)
+        need(v, L, "mk %s: answered %s" % (name, answer), 0,
+             r"lamp %s \(host\): .*-> travel %s" % (MK_LAMP, "with the party" if answer == "yes" else "alone"), t, end)
+        if here:
+            if answer == "yes":
+                need(v, L, "mk %s: the host's in-world party move" % name, 0,
+                     r"host: party move to lamp %s inside the loaded map: no load" % MK_LAMP, t, end)
+                for g in (1, 2):
+                    need(v, L, "mk %s: guest %d followed in-world" % (name, g), g,
+                         r"guest: followed the host inside the loaded map", t, end)
+            else:
+                need(v, L, "mk %s: the host's own in-world warp" % name, 0, r"in-world warp \(own move\).*no load", t, end)
+                none_of(v, L, "mk %s: the guests stay" % name, r"guest: (the host moved to lamp|followed the host)",
+                        t, end, (1, 2))
+            none_of(v, L, "mk %s: no load for anyone" % name, r"map \S+ -> ", t, end)
+        else:
+            for i in (0, 1, 2):
+                loads = L.all(i, r"map - -> ", t, end)
+                v.step("mk %s: inst%d one load into m24_00" % (name, i),
+                       len(loads) == 1 and "m24_00" in loads[0][1],
+                       "; ".join("+%.1f s %s" % (x[0], x[1][:60]) for x in loads) or "no load")
+            for g in (1, 2):
+                need(v, L, "mk %s: guest %d placed beside the host" % (name, g), g,
+                     r"guest: (arrived by the host's own travel|arrived in the host world)", t, end)
+            need(v, L, "mk %s: host: the guests arrived" % name, 0,
+                 r"a guest arrived; \d+ member task\(s\) rewound", t, end)
+
+
 def check_mk(v, L):
     need(v, L, "mk join: 3 players", 0, r"cooperators [01] -> 2")
     need(v, L, "mk party at the Cathedral Ward lamp (guest 1)", 1, r"map - -> m24_00")
+    g0 = L.find(1, r"test: guest_use goods (100|1400) ")
+    check_mk_host(v, L, g0[0] if g0 else 1e9)
     # each case's start on guest 1: its Mark item use, or (4) its lamp step from the Dream
     starts = L.all(1, r"test: guest_use goods (100|1400) |travel step \d+/\d+: guest_lamp.*map m21_00")
     for k, (name, kind) in enumerate(MK_CASES):
