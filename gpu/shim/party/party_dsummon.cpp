@@ -28,9 +28,19 @@ Busy HostBusy(bool boss_bar_up, bool cutscene_playing) {
     return boss_bar_up ? Busy::Boss : cutscene_playing ? Busy::Cutscene : Busy::None;
 }
 
-Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready, bool member_in_prologue) {
+Busy TitleJoinBusy(bool boss_bar_up, bool cutscene_playing, bool host_ready, bool member_in_prologue,
+                   bool chalice_elsewhere) {
     const Busy b = HostBusy(boss_bar_up, cutscene_playing);
-    return b != Busy::None ? b : !host_ready ? Busy::Prologue : member_in_prologue ? Busy::MemberPrologue : Busy::None;
+    return b != Busy::None         ? b
+           : !host_ready           ? Busy::Prologue
+           : member_in_prologue    ? Busy::MemberPrologue
+           : chalice_elsewhere     ? Busy::Chalice
+                                   : Busy::None;
+}
+
+bool TitleJoinChaliceElsewhere(std::uint32_t host_map, std::uint64_t host_channel, std::uint64_t guest_channel) {
+    if (!ChaliceMap(host_map)) return false;
+    return !ChannelSet(host_channel) || guest_channel != host_channel;
 }
 
 const char* BusyWord(Busy b) {
@@ -41,6 +51,7 @@ const char* BusyWord(Busy b) {
     case Busy::OtherMap: return "map";
     case Busy::MemberPrologue: return "member_prologue";
     case Busy::Settle: return "settle";
+    case Busy::Chalice: return "chalice";
     default: return "none";
     }
 }
@@ -53,6 +64,9 @@ std::string BusyText(Busy b, bool host) {
     case Busy::OtherMap: return host ? "A joiner travels to your area first" : "Travelling to the host's area first";
     case Busy::MemberPrologue:
         return host ? "Joiners wait: a party member is in the prologue" : "Waiting: a party member is in the prologue";
+    case Busy::Chalice:
+        return host ? "Joiners wait: your Chalice Dungeon is being set up for the party"
+                    : "Waiting: the host is in a Chalice Dungeon; you are summoned into it from your own world";
     default: return {};
     }
 }
@@ -64,6 +78,7 @@ Busy WaitOf(const std::string& body) {
     if (body.find("\"wait\":\"map\"") != std::string::npos) return Busy::OtherMap;
     if (body.find("\"wait\":\"member_prologue\"") != std::string::npos) return Busy::MemberPrologue;
     if (body.find("\"wait\":\"settle\"") != std::string::npos) return Busy::Settle;
+    if (body.find("\"wait\":\"chalice\"") != std::string::npos) return Busy::Chalice;
     return Busy::None;
 }
 
@@ -82,9 +97,9 @@ std::string EncodeRoom(const Room& r) {
         std::snprintf(h, sizeof h, "%02x", b);
         s += h;
     }
-    char tail[160];
-    std::snprintf(tail, sizeof tail, "\",\"area\":%u,\"pos\":[%.4f,%.4f,%.4f],\"level\":%u}", r.area, double(r.pos[0]),
-                  double(r.pos[1]), double(r.pos[2]), r.level);
+    char tail[200];
+    std::snprintf(tail, sizeof tail, "\",\"area\":%u,\"pos\":[%.4f,%.4f,%.4f],\"level\":%u,\"channel\":\"%llx\"}", r.area,
+                  double(r.pos[0]), double(r.pos[1]), double(r.pos[2]), r.level, static_cast<unsigned long long>(r.channel));
     return s + tail;
 }
 
@@ -142,6 +157,12 @@ bool DecodeRoom(const std::string& body, Room* out, bool* refused, std::string* 
     out->pos[1] = y;
     out->pos[2] = z;
     out->level = level;
+    // An older host sends no ChannelId: none (RoomLacksDungeon keeps such a room out of a dungeon).
+    out->channel = kNoChannel;
+    if (const char* pc = std::strstr(b, "\"channel\":\"")) {
+        unsigned long long c = 0;
+        if (std::sscanf(pc + 11, "%llx", &c) == 1) out->channel = c;
+    }
     return true;
 }
 
@@ -157,8 +178,7 @@ std::vector<std::uint8_t> BuildPayload(const std::uint8_t entry_id[8], const Roo
     std::memcpy(&p[0x0c], &r.area, 4);
     std::memcpy(&p[0x10], r.pos, 12);
     std::memcpy(&p[0x1c], &r.level, 4);
-    const std::uint64_t no_channel = 0x8000000000000000ull;
-    std::memcpy(&p[0x28], &no_channel, 8);
+    std::memcpy(&p[0x28], &r.channel, 8);  // the host's ChannelId in a Chalice Dungeon, else none
     const std::uint32_t n = std::uint32_t(r.data.size());
     std::memcpy(&p[0x30], &n, 4);
     if (n) std::memcpy(&p[kHeadSize], r.data.data(), n);
@@ -190,6 +210,8 @@ const char* HostRefusal(const HostView& v) {
     if (v.ms_since_sign_summon < 20000) return "the host's game is summoning a sign";
     if (v.settling) return "a member just left this host's room and its game is still ending that session (a fresh room follows)";
     if (v.other_hold_ms > 0) return "a crashed member's connection is still held";
+    if (v.chalice_unready)
+        return "the host's Chalice Dungeon has no ChannelId on the party's board yet: the summon could not carry the dungeon";
     return nullptr;
 }
 
@@ -201,6 +223,8 @@ Busy RefusalWait(const HostView& v) {
     if (v.busy != Busy::None) return v.busy;
     if (OtherMap(v)) return Busy::OtherMap;
     if (v.cooperators < v.max_cooperators && v.ms_since_sign_summon >= 20000 && v.settling) return Busy::Settle;
+    if (v.cooperators < v.max_cooperators && v.ms_since_sign_summon >= 20000 && v.other_hold_ms <= 0 && v.chalice_unready)
+        return Busy::Chalice;
     return Busy::None;
 }
 
@@ -266,7 +290,7 @@ void OnAsked(Guest& g, double now) {
 
 void OnRoom(Guest& g, double now, bool refused, Busy wait) {
     if (g.phase != Phase::Asked) return;  // late or unasked: ignored
-    if (refused && wait == Busy::Settle && g.reasks < kMaxReasks) {
+    if (refused && (wait == Busy::Settle || wait == Busy::Chalice) && g.reasks < kMaxReasks) {
         g.reask_at = now + kReaskWait;  // the host's game is ending a session: ask again soon
         g.since = now;
         return;
@@ -287,6 +311,16 @@ bool RoomElsewhere(Guest& g, double now, std::uint32_t room_area, std::uint32_t 
     g.fail_why = MapKnown(own_map) ? "the host's room is in another map (gather first)"
                                    : "this guest's own map is not known yet";
     g.gather = MapKnown(own_map);
+    return true;
+}
+
+bool RoomLacksDungeon(Guest& g, double now, const Room& r) {
+    if (g.phase != Phase::HaveRoom || !ChaliceMap(r.area) || ChannelSet(r.channel)) return false;
+    g.phase = Phase::Failed;
+    g.since = now;
+    g.fail_why = "the host's room is in a Chalice Dungeon but carries no ChannelId (this game would load an empty world)";
+    g.gather = false;
+    g.waited = true;
     return true;
 }
 
