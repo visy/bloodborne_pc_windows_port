@@ -358,8 +358,8 @@ before anyone is in the game):
 | Who dies | What happens |
 |---|---|
 | A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
-| The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies (then gets up at the host's lamp), everyone dies, or someone travels |
+| The host | Everyone gets one respawn loading screen at the host's lamp, as in the original game, and the world resets; the host's echoes stay in a bloodstain. In a boss fight the guests kill: the host gets up in the arena with no loading screen for anyone (see below) |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss dies the host gets up right there in the arena, where it fell (or beside the hunter it watched), no load, its echoes still in its bloodstain; a guest gets up at the host's lamp. *Party Rules & Sync → Host gets up after a boss kill* off: the party's respawn load instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A guest's death brings no enemies back; a host death, a rest at a lamp (anyone's) or a party wipe resets them.

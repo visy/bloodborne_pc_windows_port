@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -96,6 +97,7 @@ enum class DownTick {
     Revive,         ///< revive in place (opt-in) at the lamp here
     PartyLoad,      ///< the stock funnel: the respawn load for everyone
     AloneLoad,      ///< the lamp is in another map: the host loads it alone (revive mode)
+    ArenaRevive,    ///< the boss died while the host lay in limbo: it gets up in the arena, no load
 };
 inline const char* DownTickName(DownTick d);
 struct DownView {
@@ -107,6 +109,12 @@ struct DownView {
     /// The boss's HP reached 0 but the game's defeat event has not cleared its bar yet (it saves the
     /// defeat flag): a respawn load now would bring the boss back (Father Gascoigne, host in limbo).
     bool boss_dying = false;
+    /// The limbo's boss was seen killed (its bar up over a chr at HP 0), not a bar that just went.
+    bool boss_killed = false;
+    /// BB_PARTY_HOST_LIMBO_REVIVE (default on; "0": the respawn load as before).
+    bool arena_revive_on = true;
+    /// A living member is in the world to get up beside (the one the host spectated).
+    bool member_here = false;
     bool revive_opt_in = false;
     bool lamp_here = false;
     double down_for = 0;       ///< s since the death was taken
@@ -124,6 +132,13 @@ inline DownTick PlanDownTick(const DownView& v) {
     if (v.limbo && (v.boss_active || v.boss_dying)) {
         return DownTick::Wait;
     }
+    // User request (2026-10-21): the guests killed the boss while the host lay dead in the fight:
+    // the host gets up in the arena beside the member it followed and nobody loads (the defeat is
+    // saved by now: the wait above). A wipe (above), a bar that went without a kill, or the switch
+    // off: the respawn load as before.
+    if (v.limbo && v.boss_killed && v.arena_revive_on && v.member_here) {
+        return DownTick::ArenaRevive;
+    }
     if (!v.revive_opt_in) {
         return DownTick::PartyLoad;
     }
@@ -131,6 +146,17 @@ inline DownTick PlanDownTick(const DownView& v) {
         return DownTick::AloneLoad;
     }
     return DownTick::Revive;
+}
+
+// ---- Where the host gets up in the arena (DownTick::ArenaRevive) ----
+// Its corpse spot (where it stood when it died, by its bloodstain) when that is in the arena with
+// the member it followed and the death was no fall; else the followed member's own spot (a spot a
+// living chr stands on: never inside a wall or over the void). Both are a short warp from where
+// the spectating chr was carried (a 250 m in-map warp broke occlusion, playtest 1 bug 7).
+constexpr double kArenaCorpseNear = 40.0;  ///< m (horizontal) from the followed member
+constexpr double kArenaCorpseRise = 4.0;   ///< m (height) from the followed member
+inline bool ArenaReviveAtCorpse(bool corpse_known, bool fall_death, double horiz_m, double dy_m) {
+    return corpse_known && !fall_death && horiz_m <= kArenaCorpseNear && std::fabs(dy_m) <= kArenaCorpseRise;
 }
 
 // ---- The host's record of members that are down (issue #4 item 6) ----
@@ -636,6 +662,7 @@ inline const char* DownTickName(DownTick d) {
     case DownTick::Revive: return "revive";
     case DownTick::PartyLoad: return "party load";
     case DownTick::AloneLoad: return "alone load";
+    case DownTick::ArenaRevive: return "arena revive";
     }
     return "?";
 }

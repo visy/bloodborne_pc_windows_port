@@ -124,6 +124,40 @@ int main() {
     d.boss_active = false;
     d.revive_opt_in = false;
     CHECK(PlanDownTick(d) == DownTick::PartyLoad);  // boss gone: one respawn load for everyone
+    {
+        // The guests killed the boss while the host lay in limbo: it gets up in the arena, no load.
+        DownView a = d;
+        a.boss_killed = true;
+        a.member_here = true;
+        CHECK(PlanDownTick(a) == DownTick::ArenaRevive);
+        a.revive_opt_in = true;
+        a.lamp_here = true;
+        CHECK(PlanDownTick(a) == DownTick::ArenaRevive);  // beside the member, not the lamp warp
+        a.boss_dying = true;
+        CHECK(PlanDownTick(a) == DownTick::Wait);  // the defeat is saved first (PR #6)
+        a.boss_dying = false;
+        a.down_seen = 1;
+        CHECK(PlanDownTick(a) == DownTick::Wipe);  // a wipe still loads
+        a.down_seen = 0;
+        a.arena_revive_on = false;
+        CHECK(PlanDownTick(a) == DownTick::Revive);  // the switch off: as before (here the opt-in lamp revive)
+        a.revive_opt_in = false;
+        CHECK(PlanDownTick(a) == DownTick::PartyLoad);
+        a.arena_revive_on = true;
+        a.member_here = false;
+        CHECK(PlanDownTick(a) == DownTick::PartyLoad);  // nobody alive to stand beside
+        a.member_here = true;
+        a.boss_killed = false;
+        CHECK(PlanDownTick(a) == DownTick::PartyLoad);  // the bar went without a kill
+        a.boss_killed = true;
+        a.limbo = false;
+        CHECK(PlanDownTick(a) == DownTick::PartyLoad);  // a death outside a boss fight: unchanged
+        CHECK(ArenaReviveAtCorpse(true, false, 12.0, 0.5));
+        CHECK(!ArenaReviveAtCorpse(false, false, 12.0, 0.5));  // no corpse spot kept
+        CHECK(!ArenaReviveAtCorpse(true, true, 12.0, 0.5));    // a fall death: the member's spot
+        CHECK(!ArenaReviveAtCorpse(true, false, 41.0, 0.5));   // not in the arena with the member
+        CHECK(!ArenaReviveAtCorpse(true, false, 5.0, -4.5));   // another floor
+    }
 
     // The split question closes on a load, a death or after 30 s (bug 12).
     CHECK(PlanAskClose(true, false, false, 5) == AskClose::Keep);
