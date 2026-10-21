@@ -1292,6 +1292,10 @@ LinkCallbacks make_callbacks(bool host) {
                 coop::b2::OnLinkEvent(slot, body);
                 return;
             }
+            if (name == "npc_off") {  // the NPCs off in the host's world (party_npc_mirror.h)
+                if (!coop::balance::OnNpcOff(slot, body)) plog("npc_off event refused (slot %d)", slot);
+                return;
+            }
             if (name == coop::balance::kEventName) {  // the host's party rules (party_balance.h)
                 std::string err;
                 if (!coop::balance::OnHostRules(body, &err)) plog("balance event refused: %s", err.c_str());

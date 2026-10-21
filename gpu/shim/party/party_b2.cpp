@@ -6196,11 +6196,13 @@ void SpectateBegin(const char* who) {
     char b[128];
     std::snprintf(b, sizeof b, "{\"op\":\"spectating\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
     Send(-1, b);
+    PartyHudSpectating(true, p);  // the others' panels: "Spectating", the body's spot (not the carried chr's)
     Log("%s: spectating a living party member until the respawn (%s)", who,
         SpectateSmooth(1e9) ? "smooth follow" : "BB_PARTY_SPECTATE_SMOOTH=0: the old 0.2 s follow");
 }
 void SpectateEnd() {
     if (g_spectating.exchange(false)) {
+        PartyHudSpectating(false, nullptr);
         Log("spectating ended");
     }
 }
