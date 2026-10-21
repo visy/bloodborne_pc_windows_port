@@ -196,6 +196,14 @@ int main() {
         }
         OnRoom(h, 30.0, true, Busy::Sign);  // still summoning: the bell sign path, not a wait
         CHECK(h.phase == Phase::Failed && !h.waited);
+        // The host's sign summon brought the guest in while it was asking: no more asks.
+        Guest j;
+        OnAsked(j, 0.0);
+        OnRoom(j, 0.2, true, Busy::Sign);
+        CHECK(Step(j, 0.5, false, true) == Action::ReportOk && j.phase == Phase::Done);
+        CHECK(Step(j, 0.2 + kReaskWait, false, true) == Action::None);
+        OnRoom(j, 2.0, true, Busy::Sign);  // a late refusal: ignored
+        CHECK(j.phase == Phase::Done && Step(j, 4.0, false, true) == Action::None);
     }
     // An unreachable joiner (its last join failed, nothing heard since) is not summoned again
     CHECK(!UnreachableHold(0, 0, 100.0));                       // never failed
