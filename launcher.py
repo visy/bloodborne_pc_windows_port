@@ -500,12 +500,26 @@ PARTY_RENDEZVOUS_TIP = (
     "or a VPN. Also in the game: System > Party members. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
 
 
+PARTY_MEMBER_RELAY_TIP = (
+    "When a guest cannot reach the host directly but can reach another party member, it joins through "
+    "that member, who forwards its traffic to the host (the stuck guest pastes the member's guest code, or "
+    "both find each other through the DHT option). Only party members (the party code and password are "
+    "checked), at most 4 per member; it uses some of the member's upload (~3 KB/s per relayed player). "
+    "Also in the game: System > Party network. Default: on (BB_PARTY_MEMBER_RELAY=1/0).")
+PARTY_IPV6_TIP = (
+    "When both PCs have a global IPv6 address, the party link and the game's traffic try IPv6 before any "
+    "relay: no NAT in the way, which helps players behind carrier-grade NAT. A host whose IPv4 port is not "
+    "open then puts its IPv6 address into the party code (a longer code). Also in the game: System > Party "
+    "network. Default: on (BB_PARTY_IPV6=1/0).")
+
+
 def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
-            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS"]
+            "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS",
+            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     # bbport.ini's (unset here, so a stale variable never overrides the ini; BB_PARTY_GUEST_INSIGHT too)
     keys += [env_name for _, env_name, _ in PARTY_INI_SWITCHES]
@@ -529,6 +543,9 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
     # Hole punching through the public BitTorrent DHT: opt-in (it shares the IP with DHT nodes).
     env["BB_PARTY_RENDEZVOUS"] = "1" if s.get("party_rendezvous", False) else "0"
+    # F2 (0.7.1): a member relays for a guest that cannot reach the host; IPv6 before any relay (both on).
+    env["BB_PARTY_MEMBER_RELAY"] = "1" if s.get("party_member_relay", True) else "0"
+    env["BB_PARTY_IPV6"] = "1" if s.get("party_ipv6", True) else "0"
     env["BB_PARTY_STUN"] = stun or None  # game default: stun.l.google.com:19302; "off" disables
     env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
     env["BB_PARTY_MAX"] = max_players if max_players in PARTY_MAX_CHOICES else "3"
@@ -1844,6 +1861,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
         self.party_rendezvous = tk.BooleanVar(value=bool(self.settings.get("party_rendezvous", False)))
+        self.party_member_relay = tk.BooleanVar(value=bool(self.settings.get("party_member_relay", True)))
+        self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", True)))
         self.party_public_var = tk.StringVar(value=str(self.settings.get("party_public_addr", "") or ""))
         self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
         self.party_password_var = tk.StringVar(value=str(self.settings.get("party_password", "") or ""))
@@ -2573,6 +2592,10 @@ class BloodborneLauncher(tk.Tk):
                          "support it. Default: on (BB_PARTY_UPNP=1/0).")
         rdv_cb = self._check(sec, "Find each other through the public DHT (shares your IP)", self.party_rendezvous,
                              PARTY_RENDEZVOUS_TIP, command=self.save_settings)
+        relay_cb = self._check(sec, "Relay for party members that cannot reach the host", self.party_member_relay,
+                               PARTY_MEMBER_RELAY_TIP, command=self.save_settings)
+        ipv6_cb = self._check(sec, "Use IPv6 when both PCs have it", self.party_ipv6, PARTY_IPV6_TIP,
+                              command=self.save_settings)
         public_lbl, self.party_public_entry, _, _ = self._entry(
             sec, "Public address:", self.party_public_var,
             "Host only: the address put into the party code. Empty (recommended) = found automatically "
@@ -2632,7 +2655,8 @@ class BloodborneLauncher(tk.Tk):
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
                                  dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, stain_cb, save_cb,
-                                 port_lbl, self.party_port_entry, upnp_cb, rdv_cb, stun_lbl, self.party_stun_entry,
+                                 port_lbl, self.party_port_entry, upnp_cb, rdv_cb, relay_cb, ipv6_cb, stun_lbl,
+                                 self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
@@ -3821,6 +3845,8 @@ class BloodborneLauncher(tk.Tk):
             "party_port": self.party_port_var.get().strip(),
             "party_upnp": self.party_upnp.get(),
             "party_rendezvous": self.party_rendezvous.get(),
+            "party_member_relay": self.party_member_relay.get(),
+            "party_ipv6": self.party_ipv6.get(),
             "party_public_addr": self.party_public_var.get().strip(),
             "party_stun": self.party_stun_var.get().strip(),
             "party_password": self.party_password_var.get(),

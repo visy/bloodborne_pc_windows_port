@@ -224,6 +224,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_share_lamps = i != 0;
     } else if (key == "party_rendezvous") {
         v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
+    } else if (key == "party_member_relay") {
+        v.party_member_relay = party::traversal::rendezvous_switch(value.c_str(), true);
+    } else if (key == "party_ipv6") {
+        v.party_ipv6 = party::traversal::rendezvous_switch(value.c_str(), true);
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_guest_insight") {
@@ -358,6 +362,9 @@ void Load() {
     }
     // The DHT rendezvous opt-in: the launcher's Party tab (BB_PARTY_RENDEZVOUS) wins over the ini.
     v.party_rendezvous = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_RENDEZVOUS"), v.party_rendezvous);
+    // F2 (0.7.1): the member relay and IPv6 (on by default): the launcher's Party tab wins over the ini.
+    v.party_member_relay = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_MEMBER_RELAY"), v.party_member_relay);
+    v.party_ipv6 = party::traversal::rendezvous_switch(std::getenv("BB_PARTY_IPV6"), v.party_ipv6);
     // I1 friendly fire (tests, scripted hosts): BB_PARTY_FRIENDLY_FIRE=0/1 wins over the ini.
     if (const char* ff = std::getenv("BB_PARTY_FRIENDLY_FIRE"); ff && (ff[0] == '0' || ff[0] == '1'))
         v.party_friendly_fire = ff[0] == '1';
@@ -666,6 +673,8 @@ void Save() {
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
     put("party_rendezvous", flag(v.party_rendezvous));
+    put("party_member_relay", flag(v.party_member_relay));
+    put("party_ipv6", flag(v.party_ipv6));
     for (const PartySwitch& sw : PartySwitches) put(sw.key, flag(v.*(sw.member)));
     put("party_guest_insight", GuestInsightName(v.party_guest_insight));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));

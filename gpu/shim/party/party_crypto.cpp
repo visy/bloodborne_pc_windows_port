@@ -71,6 +71,18 @@ static Key keyed(const Key& k, const char* label, const Nonce& a, const Nonce& b
     return out;
 }
 
+Key relay_key(const Key& party_key) {
+    static const char kLabel[] = "bbport member relay v1";
+    Key out{};
+    crypto_blake2b_keyed(out.data(), 32, party_key.data(), 32, reinterpret_cast<const std::uint8_t*>(kLabel),
+                         sizeof kLabel - 1);
+    return out;
+}
+
+void mac16(const Key& key, const std::uint8_t* d, std::size_t n, std::uint8_t out[kMacSize]) {
+    crypto_blake2b_keyed(out, kMacSize, key.data(), 32, d, n);
+}
+
 Key auth_proof(const Key& party_key, const Nonce& host_nonce, const Nonce& guest_nonce) {
     return keyed(party_key, "bbp-auth", host_nonce, guest_nonce);
 }

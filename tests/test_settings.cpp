@@ -72,6 +72,20 @@ int main() {
     BbSettings::Load();
     assert(!s.party_rendezvous);  // the launcher's off wins
 
+    // F2 (0.7.1): the member relay and IPv6, on by default; the launcher's env wins over the ini.
+    assert(bb_test_setenv("BB_PARTY_MEMBER_RELAY", "") == 0 && bb_test_setenv("BB_PARTY_IPV6", "") == 0);
+    BbSettings::Load();
+    assert(s.party_member_relay && s.party_ipv6);
+    assert(Read(path).find("party_member_relay=1\n") != std::string::npos);
+    s.party_ipv6 = false;
+    BbSettings::Save();  // System > Party network
+    BbSettings::Load();
+    assert(!s.party_ipv6 && Read(path).find("party_ipv6=0\n") != std::string::npos);
+    assert(bb_test_setenv("BB_PARTY_IPV6", "1") == 0 && bb_test_setenv("BB_PARTY_MEMBER_RELAY", "0") == 0);
+    BbSettings::Load();
+    assert(s.party_ipv6 && !s.party_member_relay);
+    assert(bb_test_setenv("BB_PARTY_IPV6", "") == 0 && bb_test_setenv("BB_PARTY_MEMBER_RELAY", "") == 0);
+
     // The in-game menu's key rows (after Mrsuss60 90008b39): set, change and remove binding
     // lines, keep the rest of the file, bump the generation runtime_pad.c watches.
     const int generation = BbSettings::BindingsGeneration();

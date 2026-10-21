@@ -355,6 +355,9 @@ public:
     std::string observed_address() const;  // guest: "ip:port" the host saw us at
     // Host: the IPv4 (network byte order) member `slot` is connected from; 0 when not connected.
     std::uint32_t member_ip(int slot) const;
+    // Host: the address and port (network order) member `slot` is connected from (its UDP stream's
+    // endpoint for a link over UDP); false when not connected.
+    bool member_endpoint(int slot, std::uint32_t* ip, std::uint16_t* port_nbo) const;
     RejectCode reject_code() const;
     std::string reject_reason() const;
 
@@ -422,6 +425,11 @@ public:
     using UdpSend = std::function<bool(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n)>;
     void set_udp_transport(UdpSend send);
     void on_udp_datagram(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n);
+    // F2 (0.7.1): the party port's route table reaches the host another way (IPv6, a member relay:
+    // net/party_route.h). `route(addr, port)` (network order): 0 = no route, 1 = routed (the UDP
+    // fallback then dials from the party port, never a separate socket), 2 = routed, UDP at once (no
+    // TCP: a member relay carries datagrams only). Asked at every dial; call before start_guest.
+    void set_udp_route_hint(std::function<int(std::uint32_t addr, std::uint16_t port)> route);
     // Host: open our NAT mapping towards a guest's public endpoint (its guest code) for 60 s.
     void punch_guest(std::uint32_t addr, std::uint16_t port);
     // The link's own UDP socket's port (host order; 0 without one) and whether the guest's

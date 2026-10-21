@@ -276,16 +276,68 @@ on 127.0.0.1.
     the punch; the guest code then goes stale (the guest rejoins to get a new one).
   - **No inbound at all** (some campus / corporate firewalls block unsolicited UDP even after an
     outbound packet) cannot be punched.
-  - There is no third-party relay or TURN server. **Relay through a member with an open port**
-    (considered, not built): when the host cannot be reached at all but member A can, both the host
-    and guest B could connect *out* to A and A would forward the link and the game's UDP between
-    them (the host already relays guest-to-guest game traffic the same way, `PeerPaths`). It would
-    keep the host's world, at the cost of A's upload (~3 KB/s per relayed guest) and one more hop
-    of latency. Not built because the simpler remedies cover it: let A host (the world is then A's),
-    or use a VPN that puts everyone on one network (Tailscale, ZeroTier, Radmin VPN) and the
-    host's VPN address.
+  - There is no third-party relay or TURN server. Since 0.7.1 a **member** that both sides reach
+    relays for a guest that cannot reach the host, and **IPv6** is tried before any relay (§4a).
 - There is no relay server: the host itself is the rendezvous and the relay. That is why only the
   host needs a port (or a guest code per guest).
+
+## 4a. Member relay and IPv6 (F2, 0.7.1, agent netrelay)
+
+The two missing steps of the chain. The guest's party link to the host now tries, in rounds:
+
+| Step | When | Path |
+|---|---|---|
+| 1 TCP | always | TCP to the host's port (IPv4) |
+| 2 IPv6 | both PCs have a global IPv6 address, IPv6 on | the reliable UDP stream to the host's IPv6 address (the party code's `+6` tail) |
+| 3 UDP | always | the reliable UDP stream over IPv4 (straight in / hole punch, §4) |
+| 4 member relay | a member that we reach is known, the relay on | the same UDP stream through that member (below) |
+
+Steps 1-3 run in every round; step 4 joins after 20 s without a link, between the direct ones
+(the host may still punch in). Once a path works the link keeps it for its reconnects; after two
+failed reconnects the rounds start again. The game's UDP to the host takes the link's path.
+Between guests: direct IPv4 -> direct IPv6 -> the host relay (`PeerPaths`).
+
+**One mechanism: the party port's route table** (`gpu/shim/net/party_route.h`, a pure state machine
+used by `net_socket.cpp`, unit-tested in party-nat-test). Every datagram the party port sends or
+receives passes it, so the game, the link's reliable UDP stream, STUN and the host relay still see
+IPv4 endpoints only and need no change:
+
+- **IPv6**: a second UDP socket on the party port (`[::]:port`, IPv6 only). A peer reached over IPv6
+  keeps the IPv4 endpoint the game knows it by (the host: its party code address; a guest: its room
+  address) when one is bound to it, else it gets a **synthetic key** `240.x.y.z:port` (240/4 is
+  reserved and never routed; the key is a hash of the IPv6 address, so every PC derives the same
+  one and room records carry it unchanged). The host's party code carries its IPv6 address
+  (`BBP3-...+6XXXX-...`) only when its IPv4 port is not open; a guest's guest code adds a `BBG6-`
+  part so a host behind an IPv6 firewall can punch it like a `BBG1-` code. Members tell the host
+  their IPv6 endpoint (`net6` event); the host checks it against the member's own room address and
+  sends the table to everyone (`net6_table`), so guest pairs probe IPv6 before the host relay.
+- **Member relay**: frames `[0xfc][type]` on the party port. The stuck guest G and the member M
+  first run a handshake keyed by the party key (G: `Q1` nonce -> M: `Q2` nonce, stateless -> G:
+  `Q3` proof -> M: `Q4` session + its own proof and name; `Q5` refusal). Then G sends everything
+  for the host as `T` (session) to M; M forwards it as `V` (G's endpoint as M sees it) to the host;
+  the host answers G's endpoint with `v` to M, and M passes it on as `t`. The host presents G at its
+  endpoint as seen by M, and G sees the host at the host's own address: the link's AUTH, the room
+  records, STUN, the host relay and the game's session run unchanged end to end (the link is
+  encrypted end to end; M only sees sealed frames).
+- **Security** (F3 rules): M answers a handshake only while it is in the party, its own link is not
+  relayed and the switch is on; a wrong proof counts in an `AuthThrottle` on M (5 free per address
+  and minute, then a lockout that doubles); M forwards only between authenticated sessions and its
+  own host endpoint (no open relay), at most 4 sessions, each rate-limited, idle 30 s = gone. The
+  host takes `V` frames only from a connected member's address and only for an endpoint it has not
+  heard directly in the last 10 s (a member cannot pose as another member), and the relayed guest
+  still passes the link's password check and lockout itself at the host (its own address counts,
+  not M's).
+- **Finding a member**: the member's guest code pasted on the stuck guest's Party page (*Join
+  through a member*) or `BB_PARTY_RELAY_VIA`; with the DHT option on both PCs, members announce
+  themselves under a second hash of the party key and a stuck guest looks them up. The host helps a
+  member behind a port-restricted NAT: every guest endpoint it punches (guest code / DHT) also goes
+  to the members (`relay_punch`), which open their NAT towards it.
+- **Switches**: `BB_PARTY_MEMBER_RELAY` (bbport.ini `party_member_relay`, launcher Party tab,
+  System > Party network; on: party members only, capped) and `BB_PARTY_IPV6` (`party_ipv6`; on).
+  The *Network* line and the log say which path the link took: `party link over UDP via IPv6
+  [addr]:port` / `through Hunter1's relay`; the member logs whom it relays for.
+- Cost: the member's upload (~3 KB/s per relayed guest in play, more during a join) and one more
+  hop of latency for the relayed guest's traffic to the host only.
 
 ## 5. Running the profiles
 

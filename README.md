@@ -443,8 +443,14 @@ IP address, as with any torrent client.
 If the guest's game gets no UDP answer from the host ("UDP to the guest is blocked" /
 "UDP to the host is blocked"), nobody rings until it does: it keeps retrying and the summon
 then starts by itself.
-The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
-connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+If the host cannot be reached at all but another member can, a guest joins **through that member**:
+it copies the member's guest code and presses *Join through a member* on its *Party* page (with the
+DHT option on, members are found by themselves). When both PCs have **IPv6**, the party tries it
+before any relay (a host without an open port then has a longer code with its IPv6 address). Both are
+on by default (launcher *Party* tab, *System > Party network*).
+The *Party* page's *Network* line says which NAT you have, what to do about it and which path the
+link took (TCP, UDP, IPv6 or a member's relay). Two symmetric / carrier-grade NATs with no IPv6 and no
+reachable member still cannot meet; there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 ### Reporting a co-op bug
 

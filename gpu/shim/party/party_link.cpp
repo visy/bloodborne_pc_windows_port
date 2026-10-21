@@ -742,6 +742,7 @@ struct PartyLink::Impl {
     sock::Socket usock = sock::kInvalid;  // own UDP socket (no external transport)
     std::uint16_t uport = 0;
     PartyLink::UdpSend uext;
+    std::function<int(std::uint32_t, std::uint16_t)> route_hint;  // set_udp_route_hint
     // Guest with uext: endpoints whose UDP fallback runs on usock (an ephemeral port, not the
     // party port: udp_fallback_socket), and when each endpoint was last heard on the party port.
     std::set<std::uint64_t> own_peers;
@@ -1028,8 +1029,12 @@ struct PartyLink::Impl {
         const auto heard = ext_heard.find(ep_key(ep));
         const double heard_s = heard == ext_heard.end() ? -1.0 : ms_between(heard->second, Clock::now()) / 1000.0;
         std::string via;
+        const int routed = route_hint ? route_hint(ep.addr, ep.port) : 0;
         if (uext) {
-            if (udp_fallback_socket(true, heard_s) == UdpFallbackSocket::Ephemeral && open_udp_socket(0, true)) {
+            if (routed) {
+                own_peers.erase(ep_key(ep));
+                via = "; from the party port (its route table reaches the host another way)";
+            } else if (udp_fallback_socket(true, heard_s) == UdpFallbackSocket::Ephemeral && open_udp_socket(0, true)) {
                 if (own_peers.insert(ep_key(ep)).second)
                     via = "; from a separate UDP port " + std::to_string(uport) +
                           " until the host is heard on the party port (blind datagrams from the party port can "
@@ -1967,6 +1972,12 @@ struct PartyLink::Impl {
         if (raw->s == sock::kInvalid) return lose(raw, "socket() failed");
         raw->peer_ip = d.ip;
         raw->peer_port = host_port;
+        if (route_hint && uext) {
+            std::uint32_t a = 0;
+            std::memcpy(&a, d.ip.data(), 4);
+            if (route_hint(a, htons(host_port)) >= 2 && switch_to_udp(raw, "the host is reached through a member relay"))
+                return;
+        }
         if (d.failed) {
             if (switch_to_udp(raw, "TCP connect to the host failed")) return;
             return lose(raw, "connect failed");
@@ -2477,6 +2488,16 @@ std::uint32_t PartyLink::member_ip(int slot) const {
     return ip;
 }
 
+bool PartyLink::member_endpoint(int slot, std::uint32_t* ip, std::uint16_t* port_nbo) const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    if (!impl_->host) return false;
+    auto it = impl_->members.find(slot);
+    if (it == impl_->members.end() || !it->second.conn) return false;
+    std::memcpy(ip, it->second.conn->peer_ip.data(), 4);
+    *port_nbo = htons(it->second.conn->peer_port);
+    return true;
+}
+
 RejectCode PartyLink::reject_code() const {
     std::lock_guard<std::mutex> lk(impl_->mu);
     return impl_->reject;
@@ -2837,6 +2858,11 @@ bool PartyLink::reconnect_now() {
 void PartyLink::set_udp_transport(UdpSend send) {
     std::lock_guard<std::mutex> lk(impl_->mu);
     impl_->uext = std::move(send);
+}
+
+void PartyLink::set_udp_route_hint(std::function<int(std::uint32_t, std::uint16_t)> route) {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    impl_->route_hint = std::move(route);
 }
 
 void PartyLink::on_udp_datagram(std::uint32_t addr, std::uint16_t port, const std::uint8_t* d, std::size_t n) {
