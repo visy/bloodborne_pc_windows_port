@@ -4,7 +4,8 @@ import sys
 import subprocess
 from pathlib import Path
 
-out = Path("out")
+# --out <dir>: stage another out folder (a release's) instead of .\out.
+out = Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else Path("out")
 out.mkdir(parents=True, exist_ok=True)
 
 search_dirs = [
@@ -15,6 +16,10 @@ if os.environ.get("W64DEVKIT_DIR"):
     search_dirs.append(Path(os.environ["W64DEVKIT_DIR"]) / "bin")
 if os.environ.get("SDL3_DIR"):
     search_dirs.append(Path(os.environ["SDL3_DIR"]) / "bin")
+
+# The toolchain's own folders. PATH comes after them and can hold other builds of the same
+# names (Git's mingw64, MSYS2's ucrt64): the base list below is only taken from these.
+toolchain_dirs = list(search_dirs)
 
 for p in os.environ.get("PATH", "").split(os.pathsep):
     if p.strip():
@@ -108,7 +113,7 @@ copied_names = set(f.name.lower() for f in out.glob('*.dll'))
 for d in base_dlls:
     if d.lower() in copied_names:
         continue
-    for sdir in search_dirs:
+    for sdir in toolchain_dirs:
         src = sdir / d
         if src.is_file():
             try:
@@ -147,4 +152,40 @@ if objdump:
                             except OSError:
                                 pass
 
+# Drop DLLs an older staging left behind: Windows' own (copied before the check above) and
+# ones the toolchain does not have that nothing staged imports (libnettle-8 from Git's mingw64
+# after MSYS2 moved to -9, ucrt64's libsnappy, ...). No licence could be shipped for them, and
+# nothing loads them.
+own_dlls = {'bbport_dlss.dll', 'nvngx_dlss.dll', 'nvngx_dlssg.dll'}
+removed = []
+while True:  # until nothing more goes: a removed DLL may have been the only importer of another
+    imported = set()
+    if objdump:
+        for f in list(out.glob('*.exe')) + list(out.glob('*.dll')):
+            imported.update(i.lower() for i in get_imported_dlls(f))
+    gone = []
+    for f in sorted(out.glob('*.dll')):
+        name = f.name.lower()
+        if name in own_dlls:
+            continue
+        windows = any((sdir / f.name).is_file() for sdir in system_search_dirs)
+        stale = objdump and name not in imported and not any((sdir / f.name).is_file() for sdir in toolchain_dirs)
+        if windows or stale:
+            try:
+                f.unlink()
+                gone.append(f.name)
+            except OSError:
+                pass
+    removed += gone
+    if not gone:
+        break
+
 print(f"Runtime DLL staging complete ({staged} new DLLs staged).")
+if removed:
+    print(f"Removed {len(removed)} DLLs that are not ours to ship: {', '.join(removed)}")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import stage_licenses
+for problem in stage_licenses.stage(out):
+    print(f"  licence warning: {problem}")
+print(f"Licence texts staged in {out / 'licenses'}.")
