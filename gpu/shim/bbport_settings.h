@@ -231,6 +231,7 @@ struct Values {
     std::atomic<bool> party_guest_revive_inplace{true}; ///< a guest gets up at the lamp without a load
     std::atomic<bool> party_guest_respawn{true};  ///< a dead guest comes back at the host's lamp
     std::atomic<bool> party_guest_refill{true};   ///< vials / bullets refilled with the host's
+    std::atomic<bool> party_chalice_rejoin{true}; ///< a guest stays with / comes back to the host's Chalice Dungeon
     std::atomic<bool> party_guest_mark{true};     ///< guests can use the Hunter's Mark
     std::atomic<bool> party_full_rewards{true};   ///< full echoes and drops for guests
     std::atomic<bool> party_items{true};          ///< the host's item rewards given to guests

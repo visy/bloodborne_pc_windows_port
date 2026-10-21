@@ -3738,6 +3738,7 @@ bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own);
 bool GuestArenaRevive(const GameSnapshot& s, double held_for);
 bool GuestArenaRuleOn();
 bool LivingMemberHere(u64 me);
+bool GuestChaliceRevive(const GameSnapshot& s);
 void HeldDeathTick(const GameSnapshot& s, double now) {
     LimboKillTick(s.loading || !s.world_up, now);
     if (g_dead_follow.load() && !SessionUp()) {
@@ -3847,7 +3848,20 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
         const u32 party = GuestDeathRedirectLamp();
         const bool boss = limbo_logged == at;
-        if (!boss && own_lamp) {
+        // A death in the host's Chalice Dungeon (a tester's report: the guest went to its own lamp
+        // in the Dream and could not get back in): a dungeon is entered only by the summon's quick
+        // join, and its lamps are not in the party's spot table (LampTableSpotTrusted), so the guest
+        // gets up beside the nearest living member, no load; never to its own lamp outside.
+        // bbport.ini party_chalice_rejoin (BB_PARTY_CHALICE_REJOIN=0: the own-lamp rule as elsewhere).
+        const bool dungeon = (s.map_id >> 24) == 29 && BbSettings::Get().party_chalice_rejoin.load();
+        if (dungeon && !boss) {
+            if (GuestChaliceRevive(s)) {
+                return;
+            }
+            Log("guest: died in the host's Chalice Dungeon: nobody alive here to get up beside; the death redirect "
+                "(not its own last lamp %u)", own);
+        }
+        if (!boss && own_lamp && !dungeon) {
             if (GuestReviveInPlace(s, own, "its own last lamp")) {
                 return;
             }
@@ -4195,6 +4209,29 @@ void LampSpotTick(const GameSnapshot& s) {
             unsigned(Field<u8>(gsm, 0x1524)), Field<u32>(gsm, 0x1528), lamp_load ? ": a lamp arrival" : "");
     }
     was_loading = loading;
+    {
+        // A Chalice Dungeon lamp lit (or used) in the world: the last-lamp record names it with no
+        // load, the player stands at it. Its spot is not in the party's table (LampTableSpotTrusted),
+        // so this is where the host's revive puts it (else the party's respawn load).
+        static u32 seen_lamp = 0;
+        const u32 now_lamp = Field<u32>(gsm, 0x1528);
+        if (loading) {
+            seen_lamp = now_lamp;
+        } else if (now_lamp != seen_lamp) {
+            seen_lamp = now_lamp;
+            LampSpot sp;
+            sp.lamp = now_lamp;
+            sp.map = s.map_id;
+            if (!deathrules::LampTableSpotTrusted(now_lamp) && ((s.map_id >> 24) & 0xff) == 29 && s.player &&
+                Field<u8>(gsm, 0x1592) == 1 && ChrHp(s.player) > 0 && ChrTransform(s.player, sp.pos, sp.rot)) {
+                sp.valid = true;
+                g_lamp_spot = sp;
+                Log("lamp spot: Chalice Dungeon lamp %u lit / used in %s at (%.2f, %.2f, %.2f) yaw %.2f (the host's revive "
+                    "spot)", sp.lamp, MapName(sp.map).c_str(), double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]),
+                    double(sp.rot[1]));
+            }
+        }
+    }
     if (loading || !lamp_load || !s.player) {
         return;
     }
@@ -4318,7 +4355,8 @@ bool HostDeathIntercept() {
     // lamp from the game data (party_ids ReturnSpot, split_travel.md 3a), when it is in this map.
     if (HostReviveOn() && !(g_lamp_spot.valid && g_lamp_spot.lamp == lamp)) {
         float rs[4];
-        if (lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs)) {
+        if (lamp != 0 && lamp != kTravelNone && deathrules::LampTableSpotTrusted(lamp) &&
+            (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs)) {
             LampSpot d;
             d.valid = true;
             d.lamp = lamp;
@@ -4786,8 +4824,8 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
     static const bool on = !(std::getenv("BB_PARTY_GUEST_REVIVE") && std::getenv("BB_PARTY_GUEST_REVIVE")[0] == '0');
     const u32 stage = Field<u32>(s.player, 0x3f8);
     float rs[4];
-    if (!on || !s.player || lamp == 0 || lamp == kTravelNone || (ids::EntityMap(lamp) >> 16) != (stage >> 16) ||
-        !ids::ReturnSpot(lamp, rs)) {
+    if (!on || !s.player || lamp == 0 || lamp == kTravelNone || !deathrules::LampTableSpotTrusted(lamp) ||
+        (ids::EntityMap(lamp) >> 16) != (stage >> 16) || !ids::ReturnSpot(lamp, rs)) {
         return false;
     }
     {
@@ -4878,6 +4916,25 @@ bool GuestArenaRevive(const GameSnapshot& s, double held_for) {
     ReviveLocal(s, arena, false);
     party::status::SetLastEvent("The boss fell: you are back on your feet");
     return true;
+}
+
+/// Guest, main thread: its death in the host's Chalice Dungeon (party_chalice_rejoin). The dungeon's
+/// lamps are not in the party's spot table (deathrules::LampTableSpotTrusted): up beside the nearest
+/// living member, a spot a living chr stands on, no load (as the arena revive). False: nobody alive.
+bool GuestChaliceRevive(const GameSnapshot& s) {
+    LampSpot sp;
+    if (s.player && NearestLivingMember(s.player, &sp)) {
+        sp.exact = false;
+        sp.map = s.map_id;
+        sp.what = "guest revive beside the nearest member (Chalice Dungeon)";
+        Log("guest: died in the host's Chalice Dungeon (%s): up again beside the nearest living member at "
+            "(%.1f, %.1f, %.1f), no load; its echoes stay in its bloodstain", MapName(s.map_id).c_str(),
+            double(sp.pos[0]), double(sp.pos[1]), double(sp.pos[2]));
+        ReviveLocal(s, sp, false);
+        party::status::SetLastEvent("You are back on your feet beside the party");
+        return true;
+    }
+    return false;
 }
 
 bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
@@ -8345,6 +8402,46 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
                      "world; the party's summon brings you into the dungeon.");
 }
 
+/// Guest: still in the host's session but apart from it (split travel: an alone load elsewhere,
+/// e.g. the respawn at its own lamp in the Dream) while the host is in a Chalice Dungeon. No travel
+/// brings it back (a dungeon is entered only by the summon's quick join: the host's travels there
+/// are "not followed"), and its game's send-home is dropped while apart, so it stood there until the
+/// host restarted (a tester's report). After a few steady seconds it leaves the session like a
+/// send-home (its own world, one load); the bell's summon then brings it into the dungeon.
+/// bbport.ini party_chalice_rejoin (BB_PARTY_CHALICE_REJOIN=0: stays apart, as before).
+void ChaliceApartTick(const GameSnapshot& s, double now) {
+    static double since = 0;
+    static bool left = false;
+    int host_state = -1;
+    u32 host_map = 0;
+    coop::MemberRoster(0, &host_state, &host_map);
+    GuestPhase phase;
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        phase = S().gphase;
+    }
+    const bool apart = Role() == RoleClient && s.session_role == RoleClient && s.world_up && !s.loading &&
+                       s.map_id != 0xffffffffu && s.map_id != 0 && ((s.map_id >> 24) & 0xff) != 29 &&
+                       dsummon::ChaliceMap(host_map) && phase == GuestPhase::Idle && g_death_held_at.load() <= 0 &&
+                       !g_dead_follow.load() && BbSettings::Get().party_chalice_rejoin.load();
+    if (!apart) {
+        since = 0;
+        if (s.loading || s.session_role != RoleClient) left = false;
+        return;
+    }
+    if (since == 0) since = now;
+    if (left || now - since < 6.0) return;
+    left = true;
+    Log("chalice: this guest is apart in %s while the host is in its Chalice Dungeon (%s) for %.1f s: leaving the "
+        "session to its own world; the summon brings it into the dungeon",
+        MapName(s.map_id).c_str(), MapName(host_map).c_str(), now - since);
+    g_chalice_bail = !g_title_joined.load();
+    if (g_title_joined.load()) g_title_home_now = true;
+    using Fn = u8(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    party::status::SetLastEvent("The host is in a Chalice Dungeon: back to your world, the summon brings you in");
+}
+
 void DirectSummonEvent(int from_slot, const std::string& body) {
     switch (dsummon::KindOf(body)) {
     case dsummon::Kind::Busy: {  // guest: A11, the host's boss fight / cutscene started or ended
@@ -9559,6 +9656,7 @@ void Tick(const GameSnapshot& s) {
     ProbeTick(s);
     DirectSummonTick(s, now);
     ChaliceEmptyWorldTick(s, now);
+    ChaliceApartTick(s, now);
     if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);

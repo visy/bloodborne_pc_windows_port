@@ -1315,6 +1315,13 @@ void DefineAll() {
             AddText("Name and health", "Имя и здоровье"), AddText("Name and deaths", "Имя и смерти"),
             AddText("Name and ping", "Имя и пинг")},
            Kind::List);
+
+    // ---- Chalice Dungeons (party_guestsvc, party_b2; docs/party/chalice.md): each player's own, read live ----
+    AddPage("Chalice Dungeons", "Подземелья Чаши", "Deaths and getting back in, in a party's Chalice Dungeon (bbport)",
+            "Смерти и возвращение в Подземелье Чаши группы (bbport)");
+    own(&Values::party_chalice_rejoin, "Stay in Chalice Dungeons", "Остаться в Чаше",
+        "Guest in a Chalice Dungeon: a death gets you up at the host's lamp there; away, the summon brings you back",
+        "Гость в Чаше: после смерти вы у фонаря хоста там; ушли - призыв вернёт вас обратно");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

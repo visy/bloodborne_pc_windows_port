@@ -421,6 +421,13 @@ inline bool LampTriggerFlag(std::uint32_t id) {
 inline bool TalkStateFlag(std::uint32_t id) {
     return id >= 70000000u && id < 80000000u && id / 1000 % 10 == 0 && id % 1000 / 100 == 1 && !LampTriggerFlag(id);
 }
+/// The party's lamp spawn table (party_ids ReturnSpot: the MSB revive points) holds this lamp's
+/// real spot. Not for a Chalice Dungeon's lamps (area 29, 2902950..): a dungeon is assembled from
+/// pieces at load time, so its lamps stand elsewhere (a tester's report: the host's revive for lamp
+/// 2902952 put it 80 m from that lamp, at the template's spot); their spot is the one seen there.
+inline bool LampTableSpotTrusted(std::uint32_t lamp) {
+    return lamp / 100000 != 29;
+}
 constexpr double kLampOriginWindow = 10.0;  ///< s from a lamp's flag to its warp (the event waits ~3-4 s)
 enum class LampOrigin { Own, Other };
 /// A lamp warp on this game: this player's own use, or another member's (`local_age` / `remote_age`:

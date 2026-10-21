@@ -137,6 +137,7 @@ PARTY_INI_SWITCHES = [
     ("party_guest_revive_inplace", "BB_PARTY_GUEST_REVIVE_INPLACE", True),
     ("party_guest_respawn", "BB_PARTY_GUEST_RESPAWN", True),
     ("party_guest_refill", "BB_PARTY_GUEST_REFILL", True),
+    ("party_chalice_rejoin", "BB_PARTY_CHALICE_REJOIN", True),
     ("party_guest_mark", "BB_PARTY_GUEST_MARK", True),
     ("party_full_rewards", "BB_PARTY_FULL_REWARDS", True),
     ("party_items", "BB_PARTY_ITEMS", True),
@@ -3058,6 +3059,12 @@ class BloodborneLauncher(tk.Tk):
                     "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
                     "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
                     "guest. Default: on (bbport.ini party_guest_refill; in the game: System > Deaths & revives).", command=save)
+        self._check(sec, "Stay in the host's Chalice Dungeon", var["party_chalice_rejoin"],
+                    "A guest who dies in the host's Chalice Dungeon gets up at the host's lamp there instead of "
+                    "travelling to their own lamp outside (a dungeon can only be entered by the summon); a guest "
+                    "who is away from the host's dungeon goes back to their own world, so the summon brings "
+                    "them in again. Applies to you while you are a guest. Default: on (bbport.ini "
+                    "party_chalice_rejoin; in the game: System > Deaths & revives).", command=save)
         self._check(sec, "Guests can use Hunter's Mark", var["party_guest_mark"],
                     "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
                     "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "

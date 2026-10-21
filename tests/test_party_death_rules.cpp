@@ -302,6 +302,11 @@ int main() {
     }
     CHECK(PlanLampOrigin(-1, -1) == LampOrigin::Other);     // no own flag: another game's warp event
     CHECK(PlanLampOrigin(-1, -1, false) == LampOrigin::Own); // no flag hook: ask as before
+    // A Chalice Dungeon's lamps stand where the generated layout puts them, not at the table's spot.
+    CHECK(LampTableSpotTrusted(2412952) && LampTableSpotTrusted(2102950) && LampTableSpotTrusted(3602952));
+    CHECK(!LampTableSpotTrusted(2902950) && !LampTableSpotTrusted(2902952) && !LampTableSpotTrusted(2902959));
+    // The dungeon lamps' "Return to the Hunter's Dream" flags (m29 event 12907020) are lamp flags.
+    CHECK(LampTriggerFlag(72900100) && LampTriggerFlag(72900108));
     CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag
     // parg: story warps are the triggering player's own use; lamp / warp-object events are not.
     CHECK(StoryWarpEvent(13201803, true));   // Blood Moon -> Yahar'gul, on the host
