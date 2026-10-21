@@ -499,7 +499,8 @@ def phase_lf(only):
 
 
 # Phase ga (gather, ~4 min, 3 players; ERSC_PARITY I5): the host's System > Party > Gather the party
-# three times. After a party travel to the Tomb of Oedon (m24_01) guest 1 stands 130 m away in the
+# three times (round 1 by the hotkey: the touchpad + L3 tapped through the game's pad path). After
+# a party travel to the Tomb of Oedon (m24_01) guest 1 stands 130 m away in the
 # same map and guest 2 travels alone to the Hunter's Dream. Round 1: both YES (guest 1 an in-world
 # warp beside the host, no load; guest 2 the one-load travel, then beside the host). A press 5 s later
 # is refused (cooldown). Round 2: guest 1 has its in-game menu open (refused: in a menu), guest 2
@@ -515,7 +516,7 @@ def phase_ga(only):
     host = ",".join([
         "god",
         "host_warp=2412953@15",          # party lamp travel: the Tomb of Oedon (everyone in m24_01)
-        "host_gather@45%m24_01",         # round 1
+        "host_press=0x100002@45%m24_01",  # round 1: the hotkey, touchpad + L3 (runtime_pad.c ping_combo)
         "host_gather@5%m24_01",          # refused: the cooldown
         "host_gather@28%m24_01",         # round 2
         "host_gather@45%m24_01",         # round 3
@@ -1181,6 +1182,7 @@ def check_ga(v, L):
     """Rounds and guests as the run's timing gives them (which guest is far / apart when the host presses
     depends on the loads): each case must show up once, in any round, on either guest."""
     need(v, L, "ga join: 3 players", 0, r"cooperators [01] -> 2")
+    need(v, L, "ga hotkey: touchpad + L3 gathers", 0, r"Gather the party: touchpad \+ L3 pressed")
     r1 = need(v, L, "ga round 1: the host asks 2 guests", 0, r"round 1: Gather the party: 2 guest")
     if r1 is None:
         check_common(v, L, "ga")
