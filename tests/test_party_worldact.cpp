@@ -383,7 +383,7 @@ int main() {
     // D3 (lifts071): lifts. Every position / busy / host-state flag is a C2 state id (the mirror
     // carries the host's values), never a plain world action; a finished ride goes up as lift_set /
     // lift_clr instead.
-    assert(Lifts().size() == 12);
+    assert(Lifts().size() == 20);  // liftfall: + Cainhurst, six Nightmare of Mensis lifts, Nightmare Frontier
     for (const Lift& l : Lifts()) {
         assert(LiftByPosFlag(l.pos) == &l && !LiftByPosFlag(l.busy) && l.car > 0);
         assert(pg::ModeFor(pg::Policy::Defaults(), l.pos, pg::CategoryOf(l.pos)) == pg::SyncMode::State);
@@ -397,6 +397,9 @@ int main() {
     const Lift* cw = LiftByPosFlag(12400827);  // Cathedral Ward <-> Old Yharnam: the l7 desync
     assert(cw && cw->busy == 12400828 && cw->host_state == 0 && cw->car == 2401102);
     assert(!LiftByPosFlag(12410351) && !LiftByPosFlag(0));
+    const Lift* mensis = LiftByPosFlag(12601256);  // the player's report: the long lift (lever kick 12601241)
+    assert(mensis && mensis->busy == 12605256 && mensis->host_state == 0 && mensis->car == 2601240);
+    assert(!LiftByPosFlag(12601253) && !LiftByPosFlag(12605256));  // the library lift; a busy flag
     // The host: its own copy ran (same), a ride runs there (busy), the car is loaded but its copy did
     // not follow (left alone: a flag alone would not move it), the block is not loaded (apply).
     assert(HostLiftSync(true, false, false, true) == LiftSync::same);

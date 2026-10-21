@@ -3072,6 +3072,17 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
     return true;
 }
 
+/// A recovery net saw a ride down on a moving object: one line per ride (none for 20 s before).
+void RideNotice(const char* net, const float p[3], double dy, double dt) {
+    static double last = -100;
+    const double now = Now();
+    if (now - last >= 20.0) {
+        Log("recovery (%s): riding a moving object (a lift's car) at (%.1f, %.1f, %.1f), %.1f m/s down: no fall", net,
+            double(p[0]), double(p[1]), double(p[2]), dy / dt);
+    }
+    last = now;
+}
+
 /// Recovery net (any role, own world only): a player that keeps falling for 6 s (an endless fall
 /// out of the map after a bad saved position - the game's own death plane did not catch it) is
 /// warped to its own last lamp (0x13CDF30 with the low dword of WorldTransitionState +0x1528).
@@ -3079,8 +3090,11 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
 /// through the host's m24_01 from y -28 to -1500 after the second guest arrived and was never
 /// recovered - own-world recovery only) is put back where it last stood still, in place (the chr
 /// warp +0x5F8, no load).
+/// liftfall: never on a lift or other moving object (the ride flag, deathrules::FallSample) nor for a
+/// slow drop (deathrules::FallRecoveryDue: a real fall's 40 m in the 6 s); in a player's report the
+/// own-world net warped the host to its lamp mid-ride on the Nightmare of Mensis' 60 m lift.
 void HostWorldFallTick(const GameSnapshot& s, double now) {
-    static float stable[4] = {0, 0, 0, 0}, last_y = 0;
+    static float stable[4] = {0, 0, 0, 0}, last_y = 0, from_y = 0;
     static double last_t = 0, falling_since = 0, still_since = 0;
     static u64 last_player = 0;
     static bool have_stable = false;
@@ -3099,6 +3113,7 @@ void HostWorldFallTick(const GameSnapshot& s, double now) {
         return;
     }
     const float dy = last_player == s.player ? last_y - p[1] : 0.0f;
+    const double dt = now - last_t;
     last_y = p[1];
     last_t = now;
     if (last_player != s.player) {
@@ -3115,15 +3130,18 @@ void HostWorldFallTick(const GameSnapshot& s, double now) {
         return;
     }
     still_since = 0;
-    if (dy < 0.7f) {  // 0.5 s: more than 0.7 m down is a fall
+    const bool riding = deathrules::RidingObject(Field<u64>(s.player, 0x1e1));
+    if (!deathrules::FallSample(dy, dt, 1.4, riding)) {  // 0.5 s: more than 0.7 m down is a fall
+        if (riding && dy > 0.0f) RideNotice("host's world", p, dy, dt);
         falling_since = 0;
         return;
     }
     if (falling_since == 0) {
         falling_since = now;
+        from_y = p[1] + dy;
         return;
     }
-    if (now - falling_since < 6.0 || !have_stable) {
+    if (!deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1]) || !have_stable) {
         return;
     }
     falling_since = 0;
@@ -3156,7 +3174,7 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
         return;
     }
     HostWorldFallTick(s, now);
-    static float last_y = 0;
+    static float last_y = 0, from_y = 0;
     static double last_t = 0, falling_since = 0;
     static u64 last_player = 0;
     if (!s.world_up || s.loading || !s.player || Field<u8>(Slot(kSlotGsm), 0x1592) != 1) {
@@ -3173,13 +3191,19 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
         return;
     }
     const float dy = last_player == s.player ? last_y - p[1] : 0.0f;
+    const double dt = now - last_t;
     last_y = p[1];
     last_t = now;
     last_player = s.player;
-    if (dy > 1.5f) {
+    const bool riding = deathrules::RidingObject(Field<u64>(s.player, 0x1e1));
+    if (riding && dy > 0.0f && !deathrules::FallSample(dy, dt, 1.5, riding)) {
+        RideNotice("own world", p, dy, dt);
+    }
+    if (deathrules::FallSample(dy, dt, 1.5, riding)) {
         if (falling_since == 0) {
             falling_since = now;
-        } else if (now - falling_since >= 6.0) {
+            from_y = p[1] + dy;
+        } else if (deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1])) {
             falling_since = 0;
             // A stage request already pending (a death redirect's lamp warp): that one wins.
             if (Field<u8>(Slot(kSlotGsm), 8) != 0) {
@@ -4857,13 +4881,16 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
 /// no known spawn spot (the caller loads as before).
 // The local chr's height around its death (issue #4 item 7): the highest point in the 3 s before
 // HP 0 and the height at HP 0, for PlanGuestRevive's fall test. Main thread, every role.
+// liftfall: the peak counts from the last sample on a moving object (deathrules::PeakSinceRide: a
+// ride down in a lift's car is no fall), and a body lying in the car (`riding`) is not followed down.
 struct DeathHeight {
     bool known = false;
+    bool riding = false;
     double peak = 0, at_death = 0;
 };
 DeathHeight g_death_height;
 void LocalDeathHeightTick(const GameSnapshot& s, double now) {
-    static std::deque<std::pair<double, float>> hist;
+    static std::deque<deathrules::HeightSample> hist;
     static bool was_dead = false;
     static u64 chr = 0;
     if (!s.world_up || s.loading || !s.player) {
@@ -4895,15 +4922,16 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
             }
         }
     }
+    const bool riding = deathrules::RidingObject(Field<u64>(s.player, 0x1e1));
     if (!dead) {
-        hist.emplace_back(now, p[1]);
-        while (!hist.empty() && now - hist.front().first > 3.0) hist.pop_front();
+        hist.push_back({now, double(p[1]), riding});
+        while (!hist.empty() && now - hist.front().t > 3.0) hist.pop_front();
     } else if (!was_dead) {
         DeathHeight d;
-        d.known = !hist.empty() && now - hist.front().first >= 1.0;
+        d.known = !hist.empty() && now - hist.front().t >= 1.0;
         d.at_death = p[1];
-        d.peak = p[1];
-        for (const auto& h : hist) d.peak = std::max(d.peak, double(h.second));
+        d.riding = riding;
+        d.peak = deathrules::PeakSinceRide(hist, d.at_death);
         g_death_height = d;
         g_local_death_at = now;
         g_local_death_in_fight = LivingBossHandle() != ~0u;
@@ -4916,9 +4944,10 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         const bool read = GameSafeSpot(s.player, g_local_safe.pos, g_local_safe.rot);
         g_local_safe.valid = deathrules::SafeSpotUsable(read, g_local_safe.pos, p);
         const double dx = double(g_local_safe.pos[0] - p[0]), dz = double(g_local_safe.pos[2] - p[2]);
-        Log("local death: HP 0 at (%.1f, %.1f, %.1f), dropped %.1f m in the 3 s before%s; the game's last safe ground "
+        Log("local death: HP 0 at (%.1f, %.1f, %.1f), dropped %.1f m in the 3 s before%s%s; the game's last safe ground "
             "spot (%.1f, %.1f, %.1f), %.1f m away (height %+.1f m)%s",
             double(p[0]), double(p[1]), double(p[2]), d.peak - d.at_death, d.known ? "" : " (no height history)",
+            d.riding ? " (on a moving object: a lift's car)" : "",
             double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]),
             std::sqrt(dx * dx + dz * dz), double(g_local_safe.pos[1] - p[1]),
             g_local_safe.valid ? "" : read ? " (not usable)" : " (none)");
@@ -4934,7 +4963,7 @@ bool LocalFallDeath(u64 chr, double y_now, u64 mask = 0) {
     const double y = std::isfinite(y_now) ? y_now : dh.at_death;
     DeathFields dead;
     ReadDeathFields(chr, &dead);
-    return deathrules::PlanGuestRevive(deathrules::FallDrop(dh.peak, dh.at_death, y), dh.known,
+    return deathrules::PlanGuestRevive(deathrules::FallDropRide(dh.peak, dh.at_death, y, dh.riding), dh.known,
                                        deathrules::FallDeathState(dead.f1e1 & ~mask, dead.m20_200)) !=
            deathrules::GuestRevive::InPlace;
 }
@@ -5173,7 +5202,7 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         if (ChrPos(s.player, p) && std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2])) {
             const double dx = p[0] - rs[0], dy = p[1] - rs[1], dz = p[2] - rs[2];
             dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-            fell = deathrules::FallDrop(g_death_height.peak, g_death_height.at_death, p[1]);
+            fell = deathrules::FallDropRide(g_death_height.peak, g_death_height.at_death, p[1], g_death_height.riding);
         }
         DeathFields dead;
         ReadDeathFields(s.player, &dead);
