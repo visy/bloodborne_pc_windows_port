@@ -219,6 +219,15 @@ struct Values {
     /// host and guest need it on. ini party_rendezvous; env BB_PARTY_RENDEZVOUS (the launcher's
     /// Party tab) overrides at start. Read when the party starts (System > Party members).
     std::atomic<bool> party_rendezvous{false};
+    /// F2 (0.7.1, network_robustness.md 4a): relay for a party member that cannot reach the host
+    /// (and use such a member when we cannot): party members only, capped. On by default. ini
+    /// party_member_relay; env BB_PARTY_MEMBER_RELAY overrides at start. Serving follows it live.
+    std::atomic<bool> party_member_relay{true};
+    /// F2 (0.7.1): IPv6 for the party link and the game's UDP when both PCs have a global IPv6
+    /// address (tried before any relay). OFF by default (user decision 0.7.1: the party code would
+    /// carry the PC's IPv6 address). ini party_ipv6; env BB_PARTY_IPV6 overrides at start. Read when
+    /// the party starts.
+    std::atomic<bool> party_ipv6{false};
     /// Party gameplay switches (the launcher's Party Rules & Sync, the game's party rules pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,

@@ -79,6 +79,7 @@ tab or *System > Mouse & keyboard* in game).
 | Items and weapons (d-pad) | D-pad | Arrow keys | Arrow keys, `1`-`4`, mouse wheel (quick items) |
 | Menu (Options) | `Start` | `F1`, `O` | `Esc`, `F1` |
 | Gestures / key items (touchpad) | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right, `Back` alone the left half) | `Tab` or `G` / `Backspace` | `Tab` or `G` / `Backspace` |
+| Party: ping / gather the party (host) | Hold the touchpad, press `R3` / `L3` (Xbox pads: hold `Back`) | `V` / `H` (or `Tab` + `C` / `Tab` + `Z`) | `V` / `H` (or `Tab` + `Q` / `Tab` + `Z`) |
 | Port settings | *System* in the game's menu | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in the launcher) | `Insert` | `Insert` |
 | Fullscreen | — | `Alt + Enter` | `Alt + Enter` |
@@ -244,8 +245,8 @@ before anyone is in the game):
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later.
-- **Gather the party.** The host's *System → Party → Gather the party* brings every guest to the
-  host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
+- **Gather the party.** The host's *System → Party → Gather the party* (or hold the touchpad and
+  press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
   cannot gather during its own boss fight or cutscene, and only once every 30 s.
@@ -338,7 +339,8 @@ before anyone is in the game):
   damage) per extra hunter; normal enemies get tougher too. Six values (boss / enemy health, damage,
   poise) on the *Enemy scaling* page.
 - **Names over party members**, in the game's own style, at any distance, with level, health,
-  deaths or ping (your choice; *Party name tags* turns them off). Party text steps aside while the
+  deaths or ping (your choice; *Party name tags* turns them off). A member standing behind your own
+  character has no tag until it steps out (walls do not hide tags). Party text steps aside while the
   game's own menus are open.
 - **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: `Tab` + `Q`,
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your
@@ -376,7 +378,7 @@ before anyone is in the game):
 | Who dies | What happens |
 |---|---|
 | A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a fall death or a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
-| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
+| The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. A death that takes the host somewhere else by the story (a Snatcher's kidnap to the Hypogean Gaol) takes the whole party there instead: one loading screen for everyone, the guests wake beside the host. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
 | Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (or beside a living hunter), no load, their echoes still in their bloodstain. the host's *System → Deaths & revives → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
@@ -401,7 +403,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
 | Progress (anyone can progress) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
-| Network & robustness | `██████████████████░░` | 93% | `██████████████████░░` | 92% |
+| Network & robustness | `███████████████████░` | 96% | `███████████████████░` | 93% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Feels like single player in a party | `████████████████████` | 100% | `███████████████████░` | 95% |
 
@@ -449,8 +451,15 @@ IP address, as with any torrent client.
 If the guest's game gets no UDP answer from the host ("UDP to the guest is blocked" /
 "UDP to the host is blocked"), nobody rings until it does: it keeps retrying and the summon
 then starts by itself.
-The *Party* page's *Network* line says which NAT you have and what to do about it. This fails behind symmetric / carrier-grade NAT (some mobile and ISP
-connections); there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
+If the host cannot be reached at all but another member can, a guest joins **through that member**:
+it copies the member's guest code and presses *Join through a member* on its *Party* page (with the
+DHT option on, members are found by themselves); this is on by default. **IPv6** is off by default:
+turned on on both PCs (launcher *Party* tab, *System > Party network*), the party tries it before any
+relay, and a host without an open port then has a longer code that **contains its IPv6 address** (a
+temporary privacy address where Windows has one, so the code changes when Windows rotates it).
+The *Party* page's *Network* line says which NAT you have, what to do about it and which path the
+link took (TCP, UDP, IPv6 or a member's relay). Two symmetric / carrier-grade NATs with no IPv6 and no
+reachable member still cannot meet; there, let another player host or use a VPN such as Tailscale. Details: [docs/party/network_robustness.md](docs/party/network_robustness.md).
 
 ### Reporting a co-op bug
 

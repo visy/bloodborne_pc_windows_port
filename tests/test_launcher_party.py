@@ -359,6 +359,34 @@ class RendezvousSetting(unittest.TestCase):
             self.assertIn(words, tip)
 
 
+class NetRouteSettings(unittest.TestCase):
+    """F2 (0.7.1): the member relay and IPv6 checkboxes: BB_PARTY_MEMBER_RELAY on by default,
+    BB_PARTY_IPV6 off by default (the game's default too), each as ticked, unset solo."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_off(self):
+        for mode in ("host", "join"):
+            base = {"party_mode": mode, "party_name": "A"}
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_MEMBER_RELAY"], "1")
+            self.assertEqual(self.L.party_env(base)["BB_PARTY_IPV6"], "0")  # IPv6 off unless ticked
+            for key, env in (("party_member_relay", "BB_PARTY_MEMBER_RELAY"), ("party_ipv6", "BB_PARTY_IPV6")):
+                self.assertEqual(self.L.party_env(dict(base, **{key: False}))[env], "0")
+                self.assertEqual(self.L.party_env(dict(base, **{key: True}))[env], "1")
+        for env in ("BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6"):
+            self.assertIsNone(self.L.party_env({})[env])  # no party: unset
+
+    def test_tooltips(self):
+        for words in ("party members", "guest code", "upload", "128 KB/s", "Default: on"):
+            self.assertIn(words, self.L.PARTY_MEMBER_RELAY_TIP)
+        for words in ("IPv6", "before any relay", "party code", "privacy address", "Default: off"):
+            self.assertIn(words, self.L.PARTY_IPV6_TIP)
+
+
 class LampTravelSetting(unittest.TestCase):
     """The launcher's Direct lamp travel checkbox: BB_LAMP_TRAVEL, on (unset) unless turned off; solo too."""
     @classmethod

@@ -246,6 +246,7 @@ struct MemberTexts {
     u32 member_name[MaxMembers], member_value[MaxMembers], member_help[MaxMembers];
     u32 restart_help;
     u32 event_value, event_help;
+    u32 net_value, net_help;  // Party network (F2, 0.7.1)
     u32 mode_none;
 } party;
 /// The HDR page's run-time help lines (whether HDR runs, and why not; the automatic peak).
@@ -348,6 +349,28 @@ void RefreshParty() {
                                     : std::string(L(r, "Last: ", "Последнее: ")) + b.last_event;
     });
     SetDynamic(party.event_help, en, ru);
+
+    // Party network: which path the link took (party_netroute: IPv6, a member relay) and the advice.
+    {
+        const std::string& n = b.network;
+        const bool relayed = n.find("'s relay") != std::string::npos && n.find("Connected over") != std::string::npos;
+        const bool v6 = n.find("via IPv6") != std::string::npos;
+        both([&](bool r) {
+            if (!on || n.empty()) return std::string("-");
+            if (host) return std::string(n.find("Through a member's relay") != std::string::npos ? L(r, "Host, relayed guest", "Хост, гость через ретр.")
+                                                                                          : L(r, "Host", "Хост"));
+            if (relayed) return std::string(L(r, "Member relay", "Через участника"));
+            if (v6) return std::string("IPv6");
+            if (n.find("Connected over UDP") != std::string::npos) return std::string("UDP");
+            if (n.find("Connected over TCP") != std::string::npos) return std::string("TCP");
+            return std::string(L(r, "Not connected", "Нет связи"));
+        });
+        SetDynamic(party.net_value, en, ru);
+        const std::string text = n.empty() ? std::string("No network information yet") : n;
+        const std::size_t cut = MaxHelpLength - 3;
+        const std::string help = text.size() > MaxHelpLength ? text.substr(0, cut) + "..." : text;
+        SetDynamic(party.net_help, help, help);
+    }
 
     // Members.
     member_rows = std::clamp(int(b.members.size()), 1, MaxMembers);
@@ -581,8 +604,8 @@ void DefineBuiltinPartyRows() {
     gather.name = [](const B&) { return T2("Gather the party", "Собрать группу"); };
     gather.value = [](const B&) { return T2("Gather", "Собрать"); };
     gather.help = [](const B&) {
-        return T2("Press: bring every guest to you (each is asked; not in boss fights; 30 s between gathers)",
-                  "Нажмите: перенести всех гостей к вам (каждого спросят; не в бою с боссом; раз в 30 с)");
+        return T2("Bring every guest to you; each is asked, not in boss fights, 30 s apart. Also touchpad + L3 / H",
+                  "Перенести всех гостей к вам; каждого спросят, не в бою с боссом, раз в 30 с. Ещё тачпад + L3 / H");
     };
     gather.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host; };
     gather.press = PartyRow::Press::Once;
@@ -1101,6 +1124,26 @@ void DefineAll() {
     party.event_help = AddDynamic(MaxHelpLength);
     AddRow(Info(), AddText("Last event", "Последнее"), party.event_help, {party.event_value}, Kind::Button,
            [] { return member_rows <= 3; });  // four members: the six rows are full
+
+    // ---- Party network (F2, 0.7.1, party_netroute.h): the link's path, the member relay, IPv6 ----
+    AddPage("Party network", "Сеть группы", "The link's path, relaying for members, IPv6 (bbport)",
+            "Путь связи, ретрансляция для участников, IPv6 (bbport)");
+    party.net_value = AddDynamic(MaxValueLength);
+    party.net_help = AddDynamic(MaxHelpLength);
+    AddRow(Info(), AddText("Network", "Сеть"), party.net_help, {party.net_value}, Kind::Button);
+    AddRow(Flag(&Values::party_member_relay), AddText("Relay for members", "Ретранслятор"),
+           AddText("Relays a party member that cannot reach the host (or you through one). Party members only",
+                   "Ретрансляция для участника, не достающего до хоста (или вас через него). Только группа"),
+           toggle, Kind::Toggle);
+    AddRow(Flag(&Values::party_ipv6), AddText("IPv6", "IPv6"),
+           AddText("IPv6: players reach you over it; the party code then holds your IPv6 address, changing when Windows rotates it",
+                   "IPv6: связь по нему; код группы тогда содержит ваш адрес IPv6 и меняется вместе с ним"),
+           toggle, Kind::Toggle);
+    AddRow(Button([] { party::status::RequestAddRelayCodeFromClipboard(); }), AddText("Join via a member", "Через участника"),
+           AddText("Guest: copy a member's guest code (BBG1-...) and press: its relay if the host is out of reach",
+                   "Гость: скопируйте гостевой код участника (BBG1-...) и нажмите: его ретранслятор, если хост недоступен"),
+           {AddText("Paste", "Вставить")}, Kind::Button,
+           [] { return party::status::Snapshot().role == party::status::Role::Guest; });
 
     // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
     // headstone or Hunter's Mark in a party (docs/party/split_travel.md).

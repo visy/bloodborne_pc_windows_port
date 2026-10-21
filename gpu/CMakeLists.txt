@@ -519,10 +519,12 @@ set_target_properties(party-link-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OF
 if (WIN32)
     target_link_libraries(party-link-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
-# NAT traversal (F2): the NAT model against simulated NATs, the netsim NAT kinds and the DHT
-# rendezvous (fake DHT nodes on loopback only). ninja -C out/gpu party-nat-test
+# NAT traversal (F2): the NAT model against simulated NATs, the netsim NAT kinds, the DHT
+# rendezvous (fake DHT nodes on loopback only) and the route table (member relay, IPv6; 0.7.1).
+# ninja -C out/gpu party-nat-test
 add_executable(party-nat-test EXCLUDE_FROM_ALL ../tests/test_party_nat.cpp ${PARTY_LINK_SOURCES}
-    shim/party/party_nat.cpp shim/party/party_rdv.cpp shim/net/net_stun.cpp shim/net/netsim.cpp
+    shim/party/party_nat.cpp shim/party/party_rdv.cpp shim/party/party_netpath.cpp shim/net/party_route.cpp
+    shim/net/party_udp.cpp shim/net/net_stun.cpp shim/net/netsim.cpp
     third_party/monocypher/monocypher.c)
 target_compile_options(party-nat-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-nat-test PRIVATE shim)
