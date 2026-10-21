@@ -74,7 +74,37 @@ bool NpcGiftTrigger(std::uint32_t id);
 /// clears the trigger as 9100 would. -1: not such a trigger.
 std::int32_t RepeatGiftLot(std::uint32_t trigger);
 
-constexpr std::size_t kMaxKicks = 4, kMaxFog = 2, kMaxStory = 2;
+constexpr std::size_t kMaxKicks = 4, kMaxFog = 2, kMaxStory = 2, kMaxLift = 4;
+
+/// D3 (lifts071): a lift (elevator) and its state flags, from the EMEVD of its up / down events.
+/// `pos` is where the car is (the up event sets it 1, the down event 0, or the other way round),
+/// `busy` is on while a ride runs (and after it until every player left the car), `host_state` the
+/// newer lifts' "host's state" copy of `pos` (event `...ホスト状態管理`, 0 = none), `car` the car's
+/// map object. Each game runs its own copy of a lift's events; the game's own network sync starts
+/// the copies of the other games that have the lift's map block loaded (live: within 0.05 s), but
+/// a game with that block streamed out (Cathedral Ward's lifts while that game is far away in
+/// Central Yharnam) never runs its copy: its world keeps the car at the old end, and the block's
+/// init event puts the car there again when the block streams back in.
+struct Lift {
+    std::uint32_t pos, busy, host_state;
+    std::int32_t car;
+};
+/// Every lift of the main game and the DLC (not the Chalice Dungeons' generated ones).
+const std::vector<Lift>& Lifts();
+/// The lift whose position flag is `pos`, or nullptr.
+const Lift* LiftByPosFlag(std::uint32_t pos);
+/// The host's answer to a guest's finished ride (lift_set / lift_clr): `same` the host's world has
+/// that end already (its own copy ran: the usual case), `busy` a ride runs in the host's world (its
+/// own copy decides), `loaded` the car is loaded in the host's game but its copy did not follow
+/// (left alone: setting the flag would not move the car), `apply` the lift's block is not loaded
+/// here: the flags are written and the block's init event puts the car at that end when it
+/// streams in.
+enum class LiftSync { apply, same, busy, loaded };
+LiftSync HostLiftSync(bool host_pos, bool host_busy, bool car_loaded, bool want);
+/// Guest: a lift position change of its own copy goes to the host once the ride is over (`busy`
+/// off) and the flag still reads the value it changed to; false while it runs.
+bool GuestLiftRideDone(bool pos_now, bool pos_changed_to, bool busy);
+
 struct Request {
     std::uint32_t map = 0;  ///< the guest's map when it sent this (logged; not trusted)
     std::vector<std::uint32_t> set, clr;
@@ -87,8 +117,12 @@ struct Request {
     /// D10: story events (StoryTrigger::event) whose trigger spot the guest reached: the host's chr
     /// runs the event (its scene plays for the whole party). Never written into anyone's save.
     std::vector<std::uint32_t> story;
+    /// D3 (lifts071): lift position flags (Lift::pos) the guest's own copy of a lift's events moved
+    /// to 1 / 0 (a finished ride); the host applies them when its own copy did not run (HostLiftSync).
+    std::vector<std::uint32_t> lift_set, lift_clr;
     bool operator==(const Request& o) const {
-        return map == o.map && set == o.set && clr == o.clr && kick == o.kick && fog == o.fog && story == o.story;
+        return map == o.map && set == o.set && clr == o.clr && kick == o.kick && fog == o.fog && story == o.story &&
+               lift_set == o.lift_set && lift_clr == o.lift_clr;
     }
 };
 std::string RequestToJson(const Request& r);
@@ -321,6 +355,17 @@ bool StandAtObject(std::int32_t entity, float dist, float angle_deg, std::string
 /// The point StandAtObject would use (DIST m from map object ENTITY at ANGLE degrees from its
 /// front), without moving anyone; false when the object is not loaded.
 bool ObjectPoint(std::int32_t entity, float dist, float angle_deg, float out[3]);
+/// Test aid (lifts071): a map object's animation state, as the EMEVD 2003[18] "wait for the end"
+/// condition reads it (0x13CC180): the per-block object entry (0x2E0 bytes) of `entity`'s handle,
+/// +0x208 the playing animation id, +0x1FE bit 3 "playing", +0x1FC flags, +0x230 the anim state.
+/// False when the object is not loaded.
+struct ObjAnimState {
+    std::uint64_t entry = 0;
+    std::uint32_t handle = 0, flags = 0;
+    std::int32_t anim = -1, state = -1;
+    bool playing = false;
+};
+bool ReadObjAnim(std::int32_t entity, ObjAnimState* out);
 /// Test fixture: the same for a character (NPC) entity.
 bool StandAtChr(std::int32_t entity, float dist, float angle_deg, std::string* what);
 /// BB_PARTY_WORLDACT_TEST: the fixture's objects and pickups once more, its "after=" s from now.

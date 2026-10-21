@@ -30,6 +30,11 @@ Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real
 Phase summonfail (~3 min, 3 players): guest 1's party port is held by the smoke (every join of it
   fails); guest 2 starts after guest 1's failed direct summon and must be served within 30 s and end
   up in the host's world (a failed join once locked the host's direct summon for minutes).
+Phase lf (~3 min, 3 players, groups `lifts` / `ladder`): guest 1 lowers Central Yharnam's lever
+  ladder (every game's ladder flag and animation) and rides Cathedral Ward's lift while the host is
+  130 m away with that map block unloaded; the ride must reach the host's world, the host's car must
+  stand where the guest left it once the block streams in again, and every game ends with the same
+  lift flags (D3, docs/party/world_actions.md 10.1).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -451,6 +456,48 @@ def phase_sk(only):
     )
 
 
+# Phase lf (lifts071, ~3 min, 3 players): D3, a guest's world actions on lifts and ladders. The host
+# walks 130 m away (Cathedral Ward's map block streams out of its game: its copy of the lift's events
+# cannot run); guest 1 rides Cathedral Ward's lift 2401102 up (its own copy; the game's own sync starts
+# the copy of every game that has the block loaded: guest 2 at the lamp) and steps out; the ride goes
+# up as a world action and the host's world takes it. Guest 1 then pulls the lever 2411316 that lowers
+# Central Yharnam's first ladder (fixture: 12410285 cleared on every save). The host comes back: the
+# block's init event must put the car where guest 1 left it (before the fix: at the old end, a lift
+# that showed the car on one game and an empty shaft on the other), and every game must end with the
+# same lift and ladder flags.
+LF_FAR = "-158.10:-41.72:16.93"    # 130 m from the Tomb of Oedon lamp: m24_00 streams out
+LF_BACK = "-36.8:-40.75:84.3"      # the lamp (m24_00 streams in again)
+LF_LIFT = "2401102"                # Cathedral Ward <-> lower Cathedral Ward lift car
+LF_FLAGS = "12400827/12400828/12410285"  # lift position / busy, the ladder lever's event (ladder down)
+LF_UNTIL = r"0:travel step (\d+)/\1: host_press"
+
+
+def phase_lf(only):
+    common = "god,log_pos,log_objanim=%s,log_objanim=2411204,log_flag=%s" % (LF_LIFT, LF_FLAGS)
+    host = ",".join([common,
+        "host_move=%s@10%%m24_01" % LF_FAR,                # far: the lift's block streams out here
+        "host_move=%s@60%%m24_01" % LF_BACK,               # back after the ladder and the ride
+        "host_press=0@12%m24_01!",                         # the block's init has run: the end
+    ])
+    g1 = ",".join([common,
+        "guest_obj=2411316:1.0:0@15%m24_01",               # the ladder's lever (Central Yharnam)
+        "guest_press=0x4000@4%m24_01!",                    # pull: the ladder comes down
+        "guest_move=%s@6%%m24_01" % LF_BACK,               # back at the lamp: Cathedral Ward streams in
+        "guest_obj=%s:0:0@8%%m24_01" % LF_LIFT,            # onto the car's root: drops into the car (at the
+                                                           # bottom), whose up event starts at once
+        "guest_obj=2401103:1.0:0@25%m24_01",               # out of the car at the bottom (its ride is over)
+        "guest_press=0@10!",                               # (in m24_00 there: no map condition)
+    ])
+    g2 = "god,log_objanim=%s,log_objanim=2411204,log_flag=%s" % (LF_LIFT, LF_FLAGS)
+    return dict(
+        name="lf", seconds=300,
+        env=["BB_PARTY_TEST_START_LAMP=2412953", "BB_PARTY_PROGRESS_TEST_CLEAR=12410285"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
+        crash=[],
+        until=[LF_UNTIL, r"1:travel step (\d+)/\1: guest_press"],
+    )
+
+
 # Phase ga (gather, ~4 min, 3 players; ERSC_PARITY I5): the host's System > Party > Gather the party
 # three times. After a party travel to the Tomb of Oedon (m24_01) guest 1 stands 130 m away in the
 # same map and guest 2 travels alone to the Hunter's Dream. Round 1: both YES (guest 1 an in-world
@@ -497,19 +544,20 @@ def phase_ga(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
-              "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga "}
+              "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)"}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -535,6 +583,9 @@ GROUP_UNTIL = {
     "summonfail": [r"0:cooperators 0 -> 1"],
     "streamkill": [SK_UNTIL],
     "gather": GA_UNTIL,
+    # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
+    "lifts": [LF_UNTIL],
+    "ladder": [r"1:travel step (\d+)/\1: guest_press"],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
@@ -1024,6 +1075,59 @@ def check_s3(v, L):
 
 
 
+def lf_flags(L, i, after=0.0, before=1e9):
+    """The last `test: flags` line of instance i in [after, before): {id: value}."""
+    rows = L.all(i, r"test: flags ", after, before)
+    if not rows:
+        return None
+    return {int(a): int(b) for a, b in re.findall(r" (\d+)=(-?\d)", rows[-1][1])}
+
+
+def check_lf(v, L):
+    need(v, L, "lf join: 3 players", 0, r"cooperators [01] -> 2")
+    far = need(v, L, "lf host far away", 0, r"test: host_move to \(-158\.10")
+    gone = L.find(0, r"test: object %s not loaded" % LF_LIFT, far or 0) if far else None
+    v.step("lf host: the lift's block streamed out there", gone, "+%.1f s" % gone[0] if gone else
+           "the lift stayed loaded on the host (the case is not tested)")
+    ladder_end = need(v, L, "lf ladder: guest 1 pulled the lever (its ObjAct kick)", 1,
+                      r"ObjAct kick \(local player\).*kick event 12410206")
+    ride = need(v, L, "lf guest's lift ride (its own copy of the lift's up event)", 1,
+                r"test: flags 12400827=0 12400828=1", far or 0)
+    # The ride's end goes up from the first guest whose copy finished it: guest 2's copy (at the lamp, the
+    # car far away) ends at once, guest 1's when it leaves the car
+    over = None
+    for i in (1, 2):
+        hit = L.find(i, r"guest: lift %s ride over \(flag 12400827 = 1.*(to the host|has that end already)" % LF_LIFT,
+                     ride or 0)
+        over = hit[0] if hit and (over is None or hit[0] < over) else over
+    v.step("lf guest's lift ride over: sent to the host", over is not None,
+           "+%.1f s" % over if over is not None else "no guest sent the ride's end")
+    if over is not None:
+        need(v, L, "lf host's world took the ride", 0,
+             r"lift %s 12400827=1\((applied: the lift's block is not loaded here|same here)\)" % LF_LIFT, over - 1)
+    back = need(v, L, "lf host back at the lamp", 0, r"test: host_move to \(-36\.80", over or 0)
+    if back is not None:
+        # The block's init (12400823): 2005[7] anim 0 = the car at the top (12400827 = 1), 30 = at the bottom
+        car = L.find(0, r"test: object %s anim (?!-1 )\d+ " % LF_LIFT, back)
+        v.step("lf host's car where the guest left it (init anim 0, at the top)", car and " anim 0 " in car[1],
+               ("+%.1f s inst0: %s" % (car[0], car[1][:120])) if car else "no car state after the return")
+    end = 1e9
+    last = {i: lf_flags(L, i, 0, end) for i in (0, 1, 2)}
+    for key, name in ((12400827, "position"), (12400828, "busy")):
+        vals = [last[i].get(key) if last[i] else None for i in (0, 1, 2)]
+        v.step("lf lift %s flag %d equal on all games at the end" % (name, key), len(set(vals)) == 1 and None not in vals,
+               "host %s, guest 1 %s, guest 2 %s" % tuple(vals))
+    pull = ladder_end
+    if pull is not None:
+        need(v, L, "lf ladder: the host's game got the kick", 0, r"ObjAct kick \(another player\).*kick event 12410206",
+             pull - 1, pull + 10)
+        for i in (0, 1, 2):
+            need(v, L, "lf ladder down on game %d (12410285 = 1)" % i, i, r"test: flags .*12410285=1", pull, pull + 15)
+        for i in (0, 1):
+            need(v, L, "lf ladder down on game %d (its anim 2)" % i, i, r"test: object 2411204 anim 2 ", pull, pull + 20)
+    check_common(v, L, "lf")
+
+
 def check_sk(v, L):
     need(v, L, "sk join: 3 players", 0, r"cooperators [01] -> 2")
     kill = need(v, L, "sk host kills the neighbour map's enemy %s" % SK_ENEMY, 0,
@@ -1106,7 +1210,7 @@ def check_ga(v, L):
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L)}
+          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L)}
 
 
 def main():
@@ -1115,7 +1219,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -1126,7 +1230,8 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf")
+                           if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
