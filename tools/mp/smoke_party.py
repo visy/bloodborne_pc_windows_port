@@ -1485,12 +1485,11 @@ def check_fl(v, L):
     up = need(v, L, "fl guest up at a lamp of the loaded map, no load", 1,
               r"guest: died from a fall .*up at (its own|the host's) last lamp", hp0)
     if up is not None:
-        hp = [int(m.group(1)) for _, l in L.all(1, r"test: guest_press 0x0; own HP (\d+)/", up + 2, up + 30)
-              for m in [re.search(r"own HP (\d+)/", l)]]
         ys = [float(re.search(r"area 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", l).group(2))
               for _, l in L.all(1, r"test: pos area 0x[0-9a-f]+ \(", up + 5, up + 30)]
-        v.step("fl guest standing at the lamp afterwards (alive, on the floor)", bool(hp) and min(hp) > 0 and bool(ys) and
-               min(ys) > -100, "HP %s, height %s" % (hp[:3], ["%.1f" % y for y in ys[:3]]))
+        again = L.find(1, r"local death: HP 0", up + 0.5, up + 30)
+        v.step("fl guest standing at the lamp afterwards (alive, on the floor)", bool(ys) and min(ys) > -100 and not again,
+               "height %s%s" % (["%.1f" % y for y in ys[:3]], "; HP 0 again: " + again[1][:80] if again else ""))
         none_of(v, L, "fl no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
         none_of(v, L, "fl guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
                 up + 20, (1,))
@@ -1515,6 +1514,8 @@ def check_fl(v, L):
                   for m in [re.search(r"own HP (\d+)/", l)]]
             v.step("fl host alive after it (no second death)", bool(hp) and min(hp) > 0, "HP %s" % hp[:3])
             none_of(v, L, "fl host: no second HP 0 after the revive", r"local death: HP 0", hup + 1, hup + 15, (0,))
+            none_of(v, L, "fl host keeps its party (no session leave)", r"session host \(3, sub \d\) -> leaving", h0,
+                    hup + 20, (0,))
             none_of(v, L, "fl host: no loading screen, never the Dream", r"Party B2: load started|map - -> m21_", h0,
                     hup + 20, (0,))
             xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"

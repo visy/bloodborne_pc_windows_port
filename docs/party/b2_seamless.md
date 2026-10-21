@@ -715,8 +715,8 @@ slots 0..2 and resets them to -1; counted while the handle resolves to a living 
     world; the party stain takes +0x00 (it took +0x18, the death spot, before);
   * a body far below its spot (out of the world): `ReviveLocal` moves it there first while dead and
     `PendingReviveTick` revives it once it has stood there `kFallSettle` s (`PlanFallReviveStep`);
-    then 2 s of invincibility, and on the host the game's own 0x13CBAD0 (on a guest it calls
-    BeginLeaveSession at +0x13CBD0F: not used there); `SafeReviveWatchTick` sends a safe-spot revive
+    then 2 s of invincibility (not the game's own 0x13CBAD0: it calls BeginLeaveSession at
+    +0x13CBD0F, live a guest left the host's world and a host closed its room); `SafeReviveWatchTick` sends a safe-spot revive
     that still drops 3 m within 5 s to the lamp. The same order holds for a lamp revive of a body
     out of the world (moved up to the lamp first).
   Kill plane: m24_01 kills a chr that falls out of the world at about y -1500 (about 30 s of fall from

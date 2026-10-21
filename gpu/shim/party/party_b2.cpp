@@ -5104,22 +5104,9 @@ void PendingReviveTick(const GameSnapshot& s, double now) {
     r.resuming = true;
     ReviveLocal(s, r.sp, r.host);
     r.resuming = false;
-    if (r.host) {
-        // A chr out of the world revived by ReviveLocal alone died again one frame later (live
-        // r6-r10, the host, also with invincibility). The game's own safe-spot warp-and-revive
-        // 0x13CBAD0(10000) last (warp onto PlayerIns +0x400's spot, HP via 0x18BCD40, Idle_wild,
-        // its vfunc +0xA8 reset, ChrCtrl death bits): the game's way back from a fall. Host only:
-        // on a guest it calls BeginLeaveSession (+0x13CBD0F, live r12: the summoned guest left the
-        // host's world 33 ms later, then woke in the Dream).
-        float g[4], gr[4];
-        const bool have = GameSafeSpot(s.player, g, gr);
-        reinterpret_cast<void(BB_COOP_SYSV*)(u32, u64)>(Guest(0x13cbad0))(10000u, 0);
-        float at2[3] = {};
-        ChrPos(s.player, at2);
-        Log("%s revive: the game's safe-spot revive 0x13CBAD0 too (its spot %s (%.1f, %.1f, %.1f)); now hp %d at (%.1f, "
-            "%.1f, %.1f)", r.host ? "host" : "guest", have ? "" : "unknown", double(g[0]), double(g[1]), double(g[2]),
-            ChrHp(s.player), double(at2[0]), double(at2[1]), double(at2[2]));
-    }
+    // Not the game's own safe-spot revive 0x13CBAD0 as well: it calls BeginLeaveSession at +0x13CBD0F
+    // (live r12 / r14: a guest left the host's world, a host closed its room and sent its guests home).
+    // The settle before the revive (PlanFallReviveStep) is what keeps the new life.
     u32 f = 0;
     if (SafeRead(s.player + 0x1e1, &f, 4) && !(f & (1u << 14))) {
         f |= 1u << 14;
