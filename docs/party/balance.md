@@ -154,7 +154,7 @@ stamina cost, rally and item discovery (see the table).
   "Rot 1/5: stamina costs +10 %" under the party HUD after the respawn (screenshots); the Party
   page row is unit-tested (game-menu-pages-test), not seen live.
 - Kept in `<user>/party_rot.txt` across restarts. Party mode only; host and guests alike; the
-  host's on/off is the party's. Setting: System > Party rules > "Rot on death" (and the overlay's Party tab) (on by default,
+  host's on/off is the party's. Setting: System > Deaths & revives > "Rot on death" (and the overlay's Party tab) (on by default,
   user decision 2026-10-11).
 - Echoes / bloodstain: unchanged here. The user's decision is single-player behaviour for everyone
   (echoes drop into a recoverable bloodstain); that is the hostdeath work. Rot only touches max HP,
@@ -165,7 +165,7 @@ stamina cost, rally and item discovery (see the table).
 
 ERSC `overhead_player_display`: normal / none / ping / level / death count. Ours: the party HUD's
 name tags (projected with the game camera above each companion in view, 1-80 m), now a setting of
-their own, independent of the HUD panel: System > Party rules > "Above companions": Nothing / Name
+their own, independent of the HUD panel: System > Party display > "Above companions": Nothing / Name
 / Name and level ("Hunter1  Lv 37") / Name and health (default, the HP bar as before) / Name and
 deaths ("Hunter0  deaths 1, rot 1"). Local only. Bloodborne itself draws a phantom plate
 (FrpgMenuDlgFloatingPCGauge: blue role line, name, thin HP bar), but hides it whenever anything is
