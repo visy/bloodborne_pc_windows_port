@@ -38,8 +38,9 @@ Phase lf (~3 min, 3 players, groups `lifts` / `ladder`): guest 1 lowers Central 
   stand where the guest left it once the block streams in again, and every game ends with the same
   lift flags (D3, docs/party/world_actions.md 10.1).
 Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from the Great Bridge (its
-  fall recovery off) to the kill plane; it must get up on its last safe floor in the host's world with
-  no loading screen and no session leave, stay standing, and its bloodstain must be on that spot.
+  fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
+  with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
+  safe floor.
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -561,14 +562,21 @@ def phase_ga(only):
 # Phase fl (fallsafe, ~3 min, 2 players, group `fall`): a guest's fall out of the world. At the Great
 # Bridge lamp guest 1 walks 3 m onto the bridge (the game's last safe ground spot), then is put just
 # under the bridge's floor: it falls into the void to the game's kill plane (about y -1500, ~30 s;
-# its fall recovery is off for this, BB_PARTY_FALL_RECOVERY=0). After its held death it must get up on
-# that safe floor in the host's world with no loading screen (never the Hunter's Dream), stay standing,
-# and its bloodstain must be on the same spot.
-FL_UNTIL = r"1:guest revive on its last safe floor: still standing"
+# its fall recovery is off for this, BB_PARTY_FALL_RECOVERY=0). After its held death it must get up at
+# a lamp of the loaded map (its own last lamp, or the host's) with no loading screen (never the
+# Hunter's Dream) and stay standing there; its bloodstain must be on its last safe floor (user decision:
+# the walk back stays the penalty, the stain stays reachable).
+FL_UNTIL = r"1:travel step (\d+)/\1: guest_press"
+FL_HOST_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
 
 def phase_fl(only):
-    host = "god,log_pos,host_warp=2412952@15,host_press=0@60%m24_01!,host_press=0@30%m24_01!"
+    # the host's own fall after the guest's (its god aid only for the guest's part: none here)
+    host = ",".join(["log_pos", "echoes=3000", "host_warp=2412952@15",
+                     "host_stick=-128.0:61.0:0.7:20@80%m24_01!",   # after the guest is up again
+                     "host_press=0@2%m24_01!",
+                     "host_move=-131.0:-27.9:58.0@1%m24_01",       # under the floor: out of the world
+                     "host_press=0@45%m24_01!", "host_press=0@5%m24_01!"])
     g1 = ",".join(["log_pos", "echoes=4000",
                    "guest_stick=-127.0:62.0:0.7:20@10%m24_01!",   # onto the bridge: the safe ground
                    "guest_press=0@2%m24_01!",
@@ -576,10 +584,9 @@ def phase_fl(only):
                    "guest_press=0@3%m24_01!", "guest_press=0@5%m24_01!"])
     return dict(
         name="fl", seconds=360, count=2, headless=0, pads=(0, 1),
-        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
-                      "1:BB_PARTY_FALL_RECOVERY=0"],
+        env=["BB_PARTY_FALL_RECOVERY=0"], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
         watch=["--watch", "guest: died from a fall=fallrevive@0.5,3", "--watch", "local death: HP 0=hp0@1,5"],
-        crash=[], until=[FL_UNTIL], until_hold=8,
+        crash=[], until=[FL_UNTIL, FL_HOST_UNTIL], until_hold=8,
     )
 
 
@@ -833,7 +840,7 @@ GROUP_UNTIL = {
     # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
     "lifts": [LF_UNTIL],
     "ladder": [r"1:travel step (\d+)/\1: guest_press"],
-    "fall": [FL_UNTIL],
+    "fall": [FL_UNTIL, FL_HOST_UNTIL],
     "mark": [MK_UNTIL],
     # the host awake in the cell (its last step) and both guests in m28_00
     "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
@@ -1484,23 +1491,51 @@ def check_fl(v, L):
     if hp0 is None:
         check_common(v, L, "fl")
         return
-    up = need(v, L, "fl guest up on its last safe floor, no load", 1,
-              r"guest: died from a fall .*up on its last safe floor", hp0)
+    up = need(v, L, "fl guest up at a lamp of the loaded map, no load", 1,
+              r"guest: died from a fall .*up at (its own|the host's) last lamp", hp0)
     if up is not None:
-        need(v, L, "fl guest standing 5 s later (no second death)", 1, r"guest revive on its last safe floor: still standing", up)
+        ys = [float(re.search(r"area 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", l).group(2))
+              for _, l in L.all(1, r"test: pos area 0x[0-9a-f]+ \(", up + 5, up + 30)]
+        again = L.find(1, r"local death: HP 0", up + 0.5, up + 30)
+        v.step("fl guest standing at the lamp afterwards (alive, on the floor)", bool(ys) and min(ys) > -100 and not again,
+               "height %s%s" % (["%.1f" % y for y in ys[:3]], "; HP 0 again: " + again[1][:80] if again else ""))
         none_of(v, L, "fl no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
         none_of(v, L, "fl guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
                 up + 20, (1,))
+        none_of(v, L, "fl never the Hunter's Dream", r"map - -> m21_", hp0, up + 30, (1,))
         xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
         st = L.find(1, r"guest: bloodstain recorded: .*stain object at " + xyz, hp0, up + 1)
-        sf = re.search(r"up on its last safe floor " + xyz, L.find(1, r"guest: died from a fall", hp0)[1])
+        sf = re.search(r"its bloodstain on its last safe floor " + xyz, L.find(1, r"guest: died from a fall", hp0)[1])
         ok, d = False, -1.0
         if st and sf:
             so = re.search(r"stain object at " + xyz, st[1])
             d = sum((float(a) - float(b)) ** 2 for a, b in zip(so.groups(), sf.groups())) ** 0.5
-            ok = d < 1.0
-        v.step("fl bloodstain on the same safe spot", ok,
+            ok = d < 1.0 and float(so.group(2)) > -100
+        v.step("fl bloodstain on the last safe floor", ok,
                ("%.1f m from it: %s" % (d, st[1][:120])) if st else "no stain record (echoes 0?)")
+    # The host's own fall out of the world (after the guest's)
+    h0 = need(v, L, "fl host fell out of the world (HP 0 in the void)", 0,
+              r"local death: HP 0 at \([-\d.]+, -(1\d{3}|[2-9]\d\d)\.", (up or hp0))
+    if h0 is not None:
+        hup = need(v, L, "fl host up at its lamp, no load", 0, r"host death: a fall: up at its lamp", h0)
+        if hup is not None:
+            hp = [int(m.group(1)) for _, l in L.all(0, r"test: host_press 0x0; own HP (\d+)/", hup + 2, hup + 60)
+                  for m in [re.search(r"own HP (\d+)/", l)]]
+            v.step("fl host alive after it (no second death)", bool(hp) and min(hp) > 0, "HP %s" % hp[:3])
+            none_of(v, L, "fl host: no second HP 0 after the revive", r"local death: HP 0", hup + 1, hup + 15, (0,))
+            none_of(v, L, "fl host keeps its party (no session leave)", r"session host \(3, sub \d\) -> leaving", h0,
+                    hup + 20, (0,))
+            none_of(v, L, "fl host: no loading screen, never the Dream", r"Party B2: load started|map - -> m21_", h0,
+                    hup + 20, (0,))
+            xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
+            sf = re.search(r"last safe ground spot " + xyz, L.find(0, r"local death: HP 0", h0 - 0.1)[1])
+            st = L.all(0, r"own bloodstain (recorded|replaced): .*stain object at " + xyz, h0, hup + 5)
+            ok, d = False, -1.0
+            if st and sf:
+                so = re.search(r"stain object at " + xyz, st[-1][1])
+                d = sum((float(a) - float(b)) ** 2 for a, b in zip(so.groups(), sf.groups())) ** 0.5
+                ok = d < 1.0
+            v.step("fl host bloodstain on the last safe floor", ok, ("%.1f m from it" % d) if st else "no stain record")
     check_common(v, L, "fl")
 
 
