@@ -3,7 +3,8 @@
 // texts are party_gather_rules.h (unit test tests/test_party_gather.cpp).
 //
 //   host   System > Party > Gather the party (party_status RequestGather -> the status bridge ->
-//          RequestFromMenu). The director's tick checks the host (HostRefusal: a boss fight, a
+//          RequestFromMenu), or the hotkey: the touchpad held + L3 (Back + L3 on pads without a
+//          touch surface; src/runtime_pad.c ping_combo), the keyboard's H (bbport_overlay.cpp). The director's tick checks the host (HostRefusal: a boss fight, a
 //          cutscene, dead, loading, a travel, nobody connected, the 30 s cooldown; the notice says
 //          why), then sends EVENT gather {"op":"ask"} to every guest and sums the answers up in a
 //          notice ("Gather: Ann coming; Bob said no; not now: Cid (in a menu)").
@@ -38,6 +39,11 @@ namespace coop::gather {
 bool Enabled();
 /// Any thread (the status bridge, the menu's Gather the party row): the host gathers on the next tick.
 void RequestFromMenu();
+/// The hotkey (any thread): true while this game hosts a running party and gathering is on.
+bool HotkeyAvailable();
+/// The hotkey pressed (`source` for the log): RequestGather as the menu row does; false when the
+/// hotkey is not this game's (a guest, no party, BB_PARTY_GATHER=0).
+bool RequestFromHotkey(const char* source);
 /// The link's callback thread: EVENT gather from `slot` (host: a guest's answer; guest: the host's ask).
 void OnEvent(int slot, const std::string& body);
 /// Main thread, once a frame (the director). `host`: this game hosts the party.

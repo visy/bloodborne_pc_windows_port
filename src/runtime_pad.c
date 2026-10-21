@@ -537,6 +537,19 @@ static int back_combo_step(int back, int left, int right, int pinged, uint64_t n
     if (side<0 && now<click_until) side=0;
     return side;
 }
+/* Back held + a stick click (R3: a ping, L3: gather the party) on pads without a touch surface.
+ * 1 on the sample the combo fires (the click pressed while Back is down and `enabled` says yes);
+ * that click is then kept from the game until it is released. */
+typedef struct { int prev, strip; } BackClickCombo;
+static int back_click_combo(BackClickCombo *c, int back_down, uint32_t *buttons, uint32_t bit,
+                            int (*enabled)(void)) {
+    const int down=(*buttons & bit)!=0;
+    const int fired=back_down && down && !c->prev && enabled();
+    if (fired) c->strip=1;
+    c->prev=down;
+    if (c->strip) { if (down) *buttons&=~bit; else c->strip=0; }
+    return fired;
+}
 /* The bound gamepad buttons' state; triggers as their analog value. */
 static int pad_value(SDL_Gamepad *g, int input) {
     int value=0;
@@ -839,18 +852,21 @@ static void sample_host(PadData *d) {
         back_combo_masked=0;
         if (back_combo) {
             /* I2 pings on pads without a touch surface: Back held + R3 is the ping (the touchpad
-             * click only comes on Back's release here, so ping_combo never sees it held). R3 then
-             * reaches the game only after it is released. */
-            static int back_r3_prev, back_r3_strip;
-            const int r3=(d->buttons & BTN_R3)!=0;
+             * click only comes on Back's release here, so ping_combo never sees it held); I5
+             * Back held + L3 gathers the party (host). The stick click then reaches the game only
+             * after it is released. */
+            static BackClickCombo back_r3, back_l3;
             int pinged=0;
-            if (back_down && r3 && !back_r3_prev && bbgpu_ping_combo_enabled()) {
-                pinged=back_r3_strip=1;
+            if (back_click_combo(&back_r3,back_down,&d->buttons,BTN_R3,bbgpu_ping_combo_enabled)) {
+                pinged=1;
                 bbgpu_ping_request();
                 puts("Runtime: ping (Back + R3)");
             }
-            back_r3_prev=r3;
-            if (back_r3_strip) { if (r3) d->buttons&=~BTN_R3; else back_r3_strip=0; }
+            if (back_click_combo(&back_l3,back_down,&d->buttons,BTN_L3,bbgpu_gather_combo_enabled)) {
+                pinged=1;
+                bbgpu_gather_request("Back + L3");
+                puts("Runtime: gather (Back + L3)");
+            }
             const int side=back_combo_step(back_down,
                 back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_LEFT),
                 back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_RIGHT),pinged,d->timestamp);
@@ -1072,36 +1088,49 @@ static void touch_ids(PadData *d) {
 /* I2 pings (gpu/shim/party/party_ping.h): in a party with pings on, holding the touchpad (Tab)
  * and pressing R3 (Q / C) places a ping. The touchpad press is held back from the game until it
  * is released - then the game gets a short click (the Gestures menu opens on release) - or R3
- * comes: a ping, and the game sees neither button until both are released. */
+ * comes: a ping, and the game sees neither button until both are released. I5 (party_gather.h):
+ * on the host, the touchpad held + L3 (Z / C) gathers the party the same way. */
 static void ping_combo(PadData *d) {
-    static int state, right, r3_prev; /* state 0 idle, 1 touchpad held back, 2 ping sent */
+    static int state, right, r3_prev, l3_prev; /* state 0 idle, 1 touchpad held back, 2 combo sent */
+    static uint32_t combo_button; /* the combo's stick click (BTN_R3 / BTN_L3), held back too */
     static uint64_t click_until;
     const uint64_t now=now_us();
-    const int tp=(d->buttons & BTN_TOUCHPAD)!=0, r3=(d->buttons & BTN_R3)!=0;
-    const int r3_rise=r3 && !r3_prev;
+    const int tp=(d->buttons & BTN_TOUCHPAD)!=0, r3=(d->buttons & BTN_R3)!=0, l3=(d->buttons & BTN_L3)!=0;
+    const int r3_rise=r3 && !r3_prev, l3_rise=l3 && !l3_prev;
     r3_prev=r3;
+    l3_prev=l3;
     switch (state) {
     case 0:
-        if (tp && bbgpu_ping_combo_enabled()) {
-            state=1; click_until=0;
-            right=d->touch_count>0 && d->touches[0].x>=960;
+        if (!tp || !(bbgpu_ping_combo_enabled() || bbgpu_gather_combo_enabled())) {
+            if (click_until) {
+                if (now<click_until) touch_click(d,right);
+                else click_until=0;
+            }
+            return;
+        }
+        state=1; click_until=0;
+        right=d->touch_count>0 && d->touches[0].x>=960;
+        /* the stick click pressed on the same sample (a director's tap) counts too */
+        /* fall through */
+    case 1:
+        if (r3_rise && bbgpu_ping_combo_enabled()) {
+            state=2; combo_button=BTN_R3;
+            bbgpu_ping_request(); puts("Runtime: ping (touchpad + R3)");
             break;
         }
-        if (click_until) {
-            if (now<click_until) touch_click(d,right);
-            else click_until=0;
+        if (l3_rise && bbgpu_gather_combo_enabled()) {
+            state=2; combo_button=BTN_L3;
+            bbgpu_gather_request("touchpad + L3"); puts("Runtime: gather (touchpad + L3)");
+            break;
         }
-        return;
-    case 1:
-        if (r3_rise) { state=2; bbgpu_ping_request(); puts("Runtime: ping (touchpad + R3)"); break; }
         if (!tp) { state=0; click_until=now+120000; touch_click(d,right); return; }
         break;
     default:
-        if (!tp && !r3) { state=0; return; }
+        if (!tp && !(d->buttons & combo_button)) { state=0; return; }
         break;
     }
     d->buttons&=~BTN_TOUCHPAD;
-    if (state==2) d->buttons&=~BTN_R3;
+    if (state==2) d->buttons&=~combo_button;
     d->touch_count=0;
     touch_down_us=0;
 }

@@ -432,6 +432,18 @@ void RequestFromMenu() {
     g_request = true;
 }
 
+bool HotkeyAvailable() {
+    if (!Enabled()) return false;
+    const party::status::Board b = party::status::Snapshot();
+    return b.enabled && b.role == party::status::Role::Host && b.state != party::status::State::Off;
+}
+
+bool RequestFromHotkey(const char* source) {
+    if (!HotkeyAvailable()) return false;
+    Log("Gather the party: %s pressed", source ? source : "hotkey");
+    return party::status::RequestGather();  // the menu row's path: the same refusals and notices
+}
+
 void OnEvent(int slot, const std::string& body) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_in.size() < 16) g_in.emplace_back(slot, body);
@@ -470,3 +482,11 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
 }
 
 } // namespace coop::gather
+
+extern "C" int bbgpu_gather_combo_enabled(void) {
+    return coop::gather::HotkeyAvailable() ? 1 : 0;
+}
+
+extern "C" void bbgpu_gather_request(const char* source) {
+    coop::gather::RequestFromHotkey(source);
+}

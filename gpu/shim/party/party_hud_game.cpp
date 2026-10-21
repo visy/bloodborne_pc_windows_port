@@ -573,6 +573,7 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
     in.local_map = me.map_id;
     in.me_have_pos = mine.have_pos;
     std::memcpy(in.me_pos, mine.pos, sizeof in.me_pos);
+    in.me_chr = s.player;
     in.me_yaw = mine.yaw;
     in.roster = st.roster.data();
     in.roster_n = roster_n;
