@@ -445,6 +445,7 @@ std::atomic<bool> g_title_continuing{false};  // the director's AutoContinue is 
 std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
 std::atomic<bool> g_title_home_now{false};
 std::atomic<bool> g_chalice_bail{false};  // the guest left a host's dungeon it loaded without the dungeon
+std::atomic<bool> g_chalice_chosen{false};  // this guest's own choice took it away (NoteChosenApart)
 
 bool SendHomeVeto(u64 site) {
     const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
@@ -3531,6 +3532,7 @@ bool HoldGuestDeath() {
     }
     g_death_held_at = Now();
     g_last_hold_at = g_death_held_at.load();
+    g_chalice_chosen = false;  // a death is never a choice: back to the dungeon by the summon
     GuestBloodstain();
     Send(0, "{\"op\":\"member_down\"}");  // the host counts its members down (C2: a wipe while it is down)
     if (phase != GuestPhase::Idle) {
@@ -8837,12 +8839,23 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
 /// e.g. the respawn at its own lamp in the Dream) while the host is in a Chalice Dungeon. No travel
 /// brings it back (a dungeon is entered only by the summon's quick join: the host's travels there
 /// are "not followed"), and its game's send-home is dropped while apart, so it stood there until the
-/// host restarted (a tester's report). After a few steady seconds it leaves the session like a
-/// send-home (its own world, one load); the bell's summon then brings it into the dungeon.
+/// host restarted (a tester's report). User decision (option b, deathrules::PlanChaliceApart): after
+/// a death or a forced trip it leaves the session after a few steady seconds like a send-home (its own
+/// world, one load) and the bell's summon brings it into the dungeon; a guest that chose to leave
+/// (NoteChosenApart) stays out with a one-time notice until Party > Rejoin (ChaliceRejoinPressed).
 /// bbport.ini party_chalice_rejoin (BB_PARTY_CHALICE_REJOIN=0: stays apart, as before).
+std::atomic<bool> g_chalice_apart{false};   // main thread's last read: apart from a host in a dungeon
+void ChaliceLeaveSession(const char* why) {
+    g_chalice_bail = !g_title_joined.load();
+    if (g_title_joined.load()) g_title_home_now = true;
+    Log("chalice: %s: leaving the session to its own world; the summon brings it into the host's dungeon", why);
+    using Fn = u8(BB_COOP_SYSV*)(u64);
+    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+}
+
 void ChaliceApartTick(const GameSnapshot& s, double now) {
     static double since = 0;
-    static bool left = false;
+    static bool left = false, noticed = false;
     int host_state = -1;
     u32 host_map = 0;
     coop::MemberRoster(0, &host_state, &host_map);
@@ -8851,27 +8864,74 @@ void ChaliceApartTick(const GameSnapshot& s, double now) {
         std::lock_guard<std::mutex> lk(S().mu);
         phase = S().gphase;
     }
-    const bool apart = Role() == RoleClient && s.session_role == RoleClient && s.world_up && !s.loading &&
-                       s.map_id != 0xffffffffu && s.map_id != 0 && ((s.map_id >> 24) & 0xff) != 29 &&
-                       dsummon::ChaliceMap(host_map) && phase == GuestPhase::Idle && g_death_held_at.load() <= 0 &&
-                       !g_dead_follow.load() && BbSettings::Get().party_chalice_rejoin.load();
+    const bool client = Role() == RoleClient && s.session_role == RoleClient;
+    const bool steady = s.world_up && !s.loading && s.map_id != 0xffffffffu && s.map_id != 0;
+    const bool host_dungeon = dsummon::ChaliceMap(host_map);
+    // The choice holds only while the host is in its dungeon and this guest is away from it; a guest
+    // that chose to go before the host entered is then a host travel it could not follow (forced).
+    // "Back in the dungeon" ends it only after it was away (the choice is made inside the dungeon).
+    static bool away_since_choice = false;
+    if (!g_chalice_chosen.load()) away_since_choice = false;
+    if (steady && client && ((s.map_id >> 24) & 0xff) != 29) away_since_choice = true;
+    if (steady && (!client || !host_dungeon || (((s.map_id >> 24) & 0xff) == 29 && away_since_choice)) &&
+        g_chalice_chosen.exchange(false)) {
+        Log("chalice: the guest's own choice to stay out is over (%s)",
+            !client ? "out of the session" : !host_dungeon ? "the host left its dungeon" : "back in the dungeon");
+    }
+    const bool apart = client && steady && ((s.map_id >> 24) & 0xff) != 29 && host_dungeon &&
+                       phase == GuestPhase::Idle && g_death_held_at.load() <= 0 && !g_dead_follow.load();
+    g_chalice_apart = apart;
     if (!apart) {
         since = 0;
+        noticed = false;
         if (s.loading || s.session_role != RoleClient) left = false;
         return;
     }
     if (since == 0) since = now;
-    if (left || now - since < 6.0) return;
+    const deathrules::ChaliceApart plan = deathrules::PlanChaliceApart(BbSettings::Get().party_chalice_rejoin.load(),
+                                                                       g_chalice_chosen.load(), now - since);
+    if (plan == deathrules::ChaliceApart::Stay) {
+        if (!noticed && g_chalice_chosen.load()) {
+            noticed = true;
+            Log("chalice: this guest chose to leave the host's Chalice Dungeon (%s, the host in %s): it stays out; "
+                "notice shown, Party > Rejoin brings it back", MapName(s.map_id).c_str(), MapName(host_map).c_str());
+            party::status::SetAlert(deathrules::ChaliceApartNotice());
+        }
+        return;
+    }
+    if (left || plan != deathrules::ChaliceApart::SendHome) return;
     left = true;
-    Log("chalice: this guest is apart in %s while the host is in its Chalice Dungeon (%s) for %.1f s: leaving the "
-        "session to its own world; the summon brings it into the dungeon",
-        MapName(s.map_id).c_str(), MapName(host_map).c_str(), now - since);
-    g_chalice_bail = !g_title_joined.load();
-    if (g_title_joined.load()) g_title_home_now = true;
-    using Fn = u8(BB_COOP_SYSV*)(u64);
-    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    char why[160];
+    std::snprintf(why, sizeof why, "this guest is apart in %s while the host is in its Chalice Dungeon (%s) for %.1f s",
+                  MapName(s.map_id).c_str(), MapName(host_map).c_str(), now - since);
+    ChaliceLeaveSession(why);
     party::status::SetLastEvent("The host is in a Chalice Dungeon: back to your world, the summon brings you in");
 }
+
+} // namespace
+
+void NoteChosenApart(const char* why) {
+    if (Role() != RoleClient) return;
+    g_chalice_chosen = true;
+    Log("chalice: the guest's own choice (%s): while the host is in a Chalice Dungeon it stays out until Party > "
+        "Rejoin", why);
+}
+
+bool ChaliceRejoinPressed() {
+    if (!g_on.load() || Role() != RoleClient) return false;
+    int host_state = -1;
+    u32 host_map = 0;
+    coop::MemberRoster(0, &host_state, &host_map);
+    if (!deathrules::ChaliceRejoinLeavesFirst(true, g_chalice_apart.load(), dsummon::ChaliceMap(host_map))) {
+        return false;
+    }
+    g_chalice_chosen = false;
+    ChaliceLeaveSession("Party > Rejoin while apart from the host's Chalice Dungeon");
+    party::status::SetLastEvent("Rejoining the host's Chalice Dungeon: the summon brings you in");
+    return true;
+}
+
+namespace {
 
 void DirectSummonEvent(int from_slot, const std::string& body) {
     switch (dsummon::KindOf(body)) {

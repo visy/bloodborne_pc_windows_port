@@ -719,12 +719,17 @@ def phase_kw(only):
 # still in the dungeon. (3) The host dies: up again at the lamp it lit (not the template spot 80 m
 # away). (4) The host uses that lamp: "Return to the Hunter's Dream", the party travels (both in
 # m21_00). (5) From the Dream, the altar's awaken warp to that lamp (host_lamp, what the altar's
-# EMEVD runs): the host enters alone, guest 1 is summoned back into the dungeon.
+# EMEVD runs): the host enters alone, guest 1 is summoned back into the dungeon (a forced trip: home
+# by itself, then the summon). (6) Guest 1 CHOOSES to leave: its lamp to the Dream answered "alone"
+# (user decision, option b): it stays out (the notice, no send-home) until (7) Party > Rejoin, which
+# takes it home first and the summon brings it into the dungeon again.
 CL_FIXTURE = Path(r"E:\games\bbport\test_saves\chalice_pthumeru_inside\savedata")
 CL_DEFAULT = Path(r"E:\games\bbport\test_saves\savedata")
 CL_LAMP_OBJ = "2901952"   # the layer 1 boss room's lamp object (its return point 2902952)
 CL_LAMP = "2902952"
 CL_UNTIL = r"0:travel step (\d+)/\1: "  # the host's last step (back in the dungeon, guest 1 summoned)
+CL_UNTIL_G = r"1:travel step (\d+)/\1: "  # guest 1's last step (back in the dungeon after its Rejoin)
+CL_DREAM = "2102954"  # the Dream's altar spot a dungeon lamp's "Return to the Hunter's Dream" warps to (slot 0)
 
 
 def _cl_saves(root: Path, src: Path):
@@ -764,8 +769,11 @@ def phase_cl(only):
                      "host_press=0@15%m29!",
                      ] + _cl_lamp_use() + [                        # (4) the lamp: to the Dream
                      "host_lamp=%s@15%%m21" % CL_LAMP,             # (5) the altar's warp back in
-                     "host_press=0@40%m29!"])                      # guest 1 summoned back in: the end
-    g1 = ",".join(["guest_die@25%m29"])
+                     "host_press=0@10%m29!"])                      # guest 1 summoned back in: the end
+    g1 = ",".join(["guest_die@25%m29",
+                   "guest_lamp=%s@15#2%%m29" % CL_DREAM,          # (6) back in (join 2): alone to the Dream
+                   "guest_rejoin:now@25%m21",                     # (7) stayed out 25 s: Party > Rejoin
+                   "guest_press=0@10%m29!"])                      # summoned into the dungeon: the end
     watch = []
     for rx, tag in ((r"lamp spot: Chalice Dungeon lamp", "lit"), (r"up again beside the nearest living member", "gup"),
                     (r"host revive #\d+: after", "hrev"), (r"Chalice Dungeon lamp: answered 0", "lamp"),
@@ -775,9 +783,10 @@ def phase_cl(only):
         name="cl", seconds=330, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
         env=["BB_PARTY_TRAVEL_CHOICE=party"],
         watch=watch,
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         crash=[],
-        until=[CL_UNTIL],
+        until=[CL_UNTIL, CL_UNTIL_G],
     )
 
 
@@ -830,7 +839,7 @@ GROUP_UNTIL = {
     "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
     "story_warp": [KW_UNTIL],
     # the host back in the dungeon from the Dream, ~40 s after (guest 1 summoned back in)
-    "chalamp": [CL_UNTIL],
+    "chalamp": [CL_UNTIL, CL_UNTIL_G],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
@@ -1651,7 +1660,20 @@ def check_cl(v, L):
         need(v, L, "cl guest 1 to the Dream with the party", 1, r"map .* -> m21_00", dream - 5)
         back = need(v, L, "cl host back in the dungeon at the lamp", 0, r"map .* -> m29_00", dream)
         if back:
-            need(v, L, "cl guest 1 summoned back into the dungeon", 1, r"map .* -> m29_00", back)
+            g_back = need(v, L, "cl guest 1 summoned back into the dungeon", 1, r"map .* -> m29_00", back)
+            if g_back:
+                need(v, L, "cl guest 1 forced out: sent home by itself", 1, r"chalice: this guest is apart in", back - 5,
+                     g_back)
+                chose = need(v, L, "cl guest 1 chose to leave (alone to the Dream)", 1, r"chalice: the guest's own choice",
+                             g_back)
+                if chose:
+                    need(v, L, "cl guest 1 stays out with the notice", 1, r"chose to leave the host's Chalice Dungeon", chose)
+                    press = need(v, L, "cl guest 1 Party > Rejoin pressed", 1, r"Party > Rejoin pressed now", chose)
+                    none_of(v, L, "cl guest 1 not sent home before its Rejoin", r"chalice: this guest is apart in", chose,
+                            press or 1e9, (1,))
+                    if press:
+                        need(v, L, "cl Rejoin: home first", 1, r"chalice: Party > Rejoin while apart", press - 1)
+                        need(v, L, "cl guest 1 back in the dungeon after Rejoin", 1, r"map .* -> m29_00", press)
     none_of(v, L, "cl no GPU device lost / guest fault",
             r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
     check_common(v, L, "cl")

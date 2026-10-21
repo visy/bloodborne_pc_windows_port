@@ -218,6 +218,13 @@ bool HostTravelHeldForJoin(std::string* who);
 bool LampTravelIntent(std::uint32_t id, TravelIntent* t);
 /// Host in a session with at least one member task (someone to travel with or without).
 bool HostHasMembers();
+/// Guest: its own choice takes it away from the host (alone at a lamp / headstone, its own Hunter's
+/// Mark: party_split). While the host is in a Chalice Dungeon it then stays out until Party > Rejoin
+/// (deathrules::PlanChaliceApart). A death clears it (a death is never a choice).
+void NoteChosenApart(const char* why);
+/// Guest: Party > Rejoin pressed. True: it was apart in the session from a host in a Chalice Dungeon
+/// and now leaves the session (its own world); the bell's summon quick-joins it in.
+bool ChaliceRejoinPressed();
 /// C6 (RE): the game's NexusRevolution transports seen created (0xCDB250 via 0xCDAC45) and, per
 /// transport, where its copy of the transport config lives (the word 0x4d0, then 3000, 5000, 6000,
 /// 25000 idle, 20000, 200). Newest first; entries can be stale (check before use).

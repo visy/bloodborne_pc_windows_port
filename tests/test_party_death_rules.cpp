@@ -354,6 +354,16 @@ int main() {
     // A Chalice Dungeon's lamps stand where the generated layout puts them, not at the table's spot.
     CHECK(LampTableSpotTrusted(2412952) && LampTableSpotTrusted(2102950) && LampTableSpotTrusted(3602952));
     CHECK(!LampTableSpotTrusted(2902950) && !LampTableSpotTrusted(2902952) && !LampTableSpotTrusted(2902959));
+    // Option b (2026-10-21): death / forced -> home and summoned; chosen -> stays; rule off -> stays.
+    CHECK(PlanChaliceApart(true, false, 2.0) == ChaliceApart::Wait);
+    CHECK(PlanChaliceApart(true, false, kChaliceApartWait) == ChaliceApart::SendHome);
+    CHECK(PlanChaliceApart(true, true, 600.0) == ChaliceApart::Stay);
+    CHECK(PlanChaliceApart(false, false, 600.0) == ChaliceApart::Stay);
+    // Rejoin into a dungeon: leave the session first only when still in it, apart, host in a dungeon.
+    CHECK(ChaliceRejoinLeavesFirst(true, true, true));
+    CHECK(!ChaliceRejoinLeavesFirst(false, true, true) && !ChaliceRejoinLeavesFirst(true, false, true) &&
+          !ChaliceRejoinLeavesFirst(true, true, false));
+    CHECK(std::string(ChaliceApartNotice()) == "The host is in a Chalice Dungeon: Party > Rejoin to go back");
     // The dungeon lamps' "Return to the Hunter's Dream" flags (m29 event 12907020) are lamp flags.
     CHECK(LampTriggerFlag(72900100) && LampTriggerFlag(72900108));
     CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag

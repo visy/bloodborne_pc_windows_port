@@ -506,6 +506,27 @@ inline bool TalkStateFlag(std::uint32_t id) {
 inline bool LampTableSpotTrusted(std::uint32_t lamp) {
     return lamp / 100000 != 29;
 }
+/// A guest still in the host's session but apart from it, in a map outside the Chalice Dungeon the host
+/// is in (user decision 2026-10-21, option b). Only the summon's quick join enters a dungeon, so:
+/// after a death or a forced trip (a death respawn, a scripted warp or kidnap, a host travel it could
+/// not follow) it goes home after `kChaliceApartWait` s and the summon brings it back (SendHome); a
+/// guest that CHOSE to leave (alone at a lamp or headstone, its own Hunter's Mark) stays out (Stay:
+/// a one-time notice, Party > Rejoin brings it back). `rule_on`: party_chalice_rejoin.
+enum class ChaliceApart { Wait, SendHome, Stay };
+constexpr double kChaliceApartWait = 6.0;
+inline ChaliceApart PlanChaliceApart(bool rule_on, bool chosen, double apart_s) {
+    if (!rule_on || chosen) return ChaliceApart::Stay;
+    return apart_s >= kChaliceApartWait ? ChaliceApart::SendHome : ChaliceApart::Wait;
+}
+/// Party > Rejoin pressed by a guest: true when it must first leave the session to its own world (it is
+/// still a session client, apart, while the host is in a Chalice Dungeon): the bell's summon then
+/// quick-joins it in. Outside the session the Rejoin rings as before.
+inline bool ChaliceRejoinLeavesFirst(bool in_session, bool apart, bool host_in_dungeon) {
+    return in_session && apart && host_in_dungeon;
+}
+inline const char* ChaliceApartNotice() {
+    return "The host is in a Chalice Dungeon: Party > Rejoin to go back";
+}
 constexpr double kLampOriginWindow = 10.0;  ///< s from a lamp's flag to its warp (the event waits ~3-4 s)
 enum class LampOrigin { Own, Other };
 /// A lamp warp on this game: this player's own use, or another member's (`local_age` / `remote_age`:

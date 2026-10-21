@@ -8,6 +8,7 @@
 #include "party_runtime.h"
 #include "party_director.h"
 #include "party_gather.h"
+#include "party_b2.h"
 #endif
 
 #include <chrono>
@@ -123,7 +124,12 @@ Actions DefaultActions() {
     Actions a;
     a.leave = [] { party::runtime_leave(); };
     a.leave_session = [] { return coop::LeaveGameSession(); };
-    a.rejoin = [] { return party::runtime_rejoin(); };
+    a.rejoin = [] {
+        // A guest apart from a host in a Chalice Dungeon (still in the session) goes home first; the
+        // bell then gets it summoned into the dungeon (quick join; deathrules::ChaliceRejoinLeavesFirst).
+        coop::b2::ChaliceRejoinPressed();
+        return party::runtime_rejoin();
+    };
     a.kick = [](const std::string& name) {
         PartyLink* link = party::runtime_link();
         return link && link->is_host() && link->kick_name(name, "kicked by the host");

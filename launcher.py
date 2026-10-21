@@ -3093,11 +3093,12 @@ class BloodborneLauncher(tk.Tk):
                     "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
                     "guest. Default: on (bbport.ini party_guest_refill; in the game: System > Deaths & revives).", command=save)
         self._check(sec, "Stay in the host's Chalice Dungeon", var["party_chalice_rejoin"],
-                    "A guest who dies in the host's Chalice Dungeon gets up at the host's lamp there instead of "
-                    "travelling to their own lamp outside (a dungeon can only be entered by the summon); a guest "
-                    "who is away from the host's dungeon goes back to their own world, so the summon brings "
-                    "them in again. Applies to you while you are a guest. Default: on (bbport.ini "
-                    "party_chalice_rejoin; in the game: System > Deaths & revives).", command=save)
+                    "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
+                    "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
+                    "could not follow) goes back to their own world and is summoned into the dungeon again "
+                    "automatically. A guest who chose to leave (\"alone\" at a lamp, their own Hunter's Mark) "
+                    "stays out until they press Party > Rejoin. Applies to you while you are a guest. Default: on "
+                    "(bbport.ini party_chalice_rejoin; in the game: System > Chalice Dungeons).", command=save)
         self._check(sec, "Guests can use Hunter's Mark", var["party_guest_mark"],
                     "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
                     "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
