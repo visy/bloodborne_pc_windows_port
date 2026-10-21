@@ -287,12 +287,11 @@ before anyone is in the game):
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
   open for everyone, in the host's world and in each guest's own save. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
-- **Key items are never lost.** Key items a guest earns in the host's world (Oedon Tomb Key,
-  badges, workshop tools, chalices, umbilical cords) are given when its own world loads, and
-  checked again each time and given again if missing; one you already hold is never handed out
-  twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
-  While summoned, the Key Items tab is empty after each load in the host's world: that is the
-  game's own view for a visiting hunter; your save keeps them and they are back in your own world.
+- **Key items are never lost.** A summoned guest sees its own key items in the host's world too
+  (the game alone shows a visiting hunter an empty Key Items tab). Key items a guest earns in the
+  host's world (Oedon Tomb Key, badges, workshop tools, chalices, umbilical cords) are given at once,
+  and checked again when its own world loads and given again if missing; one you already hold is
+  never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
   Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
 - **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
   NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
