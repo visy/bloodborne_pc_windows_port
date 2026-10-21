@@ -519,6 +519,26 @@ int HostDeadSkipFrom() {
     return from;
 }
 
+// A summoned guest's stale boss clear (deathrules::StaleBossClear): BlockClear2 0x13849A0 (state,
+// ctx, args; args +0x14 the boss entity) returns at once, as its own early exit (args +8) does: no
+// PREY SLAUGHTERED, no clear bonus, no Insight 4680, no next state. `g_load_end_at`: the end of this
+// game's last load (the b2 tick, beside ChaliceApartTick), < 0 none seen yet.
+void* g_block_clear_orig = nullptr;
+std::atomic<double> g_load_end_at{-1};
+BB_COOP_SYSV void BlockClear2Hook(u64 state, u64 ctx, u64 args) {
+    if (g_on.load() && Role() == RoleClient) {
+        const double at = g_load_end_at.load();
+        const double since = at < 0 ? -1 : Now() - at;
+        if (deathrules::StaleBossClear(true, since)) {
+            Log("boss clear of boss %u skipped on this guest: %.1f s after its arrival (the boss was dead in the host's "
+                "world already: no banner, no clear echoes, no Insight)", Field<u32>(args, 0x14), since);
+            return;
+        }
+    }
+    using Fn = void(BB_COOP_SYSV*)(u64, u64, u64);
+    reinterpret_cast<Fn>(g_block_clear_orig)(state, ctx, args);
+}
+
 BB_COOP_SYSV void HostDeadHook(u64 ctx, u64 state) {
     if (g_on.load() && Role() == RoleClient) {
         const int n = ++g_hostdead_runs;
@@ -9010,9 +9030,18 @@ std::atomic<bool> g_chalice_apart{false};   // main thread's last read: apart fr
 void ChaliceLeaveSession(const char* why) {
     g_chalice_bail = !g_title_joined.load();
     if (g_title_joined.load()) g_title_home_now = true;
-    Log("chalice: %s: leaving the session to its own world; the summon brings it into the host's dungeon", why);
-    using Fn = u8(BB_COOP_SYSV*)(u64);
-    reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    // The game's own leave with the load home (OnLeave_Limit: the pre-summon spot, BeginLeave, the
+    // return load): its own world in load mode 0, its own chalice slot bit again. A bare BeginLeave
+    // (before) left an apart guest in its host-world-mode alone load, still in load mode 1 with no
+    // slot bit: the next summon carried no slot record, the dungeon's flags read as none and the
+    // dead layer boss came up alive and paid its clear again (chalamp cl8).
+    const bool own = coop::LeaveGameSession();
+    Log("chalice: %s: leaving the session to its own world (%s); the summon brings it into the host's dungeon", why,
+        own ? "the game's own leave and load home" : "session leave only");
+    if (!own) {
+        using Fn = u8(BB_COOP_SYSV*)(u64);
+        reinterpret_cast<Fn>(Guest(kBeginLeave))(Slot(kSlotSession));
+    }
 }
 
 void ChaliceApartTick(const GameSnapshot& s, double now) {
@@ -9952,6 +9981,12 @@ void Init() {
                       &ChrPreStepHook, "remote chr stale map hit guard (0x18CB0E0)")) {
         Log("remote chr stale map hit guard: NOT installed (bytes differ)");
     }
+    // The stale boss clear on a summoned guest (BlockClear2's entry: push rbp; mov rbp, rsp; push r15).
+    if (!ReplacePrologue(0x13849a0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&BlockClear2Hook),
+                         &g_block_clear_orig, "B2 stale boss clear (BlockClear2 0x13849A0)")) {
+        g_block_clear_orig = nullptr;
+        Log("stale boss clear guard: NOT installed (bytes differ)");
+    }
     // K12: the guest's HostDead state (push rbp; mov rbp, rsp; push r15: 6 bytes, position-independent).
     if (!ReplacePrologue(kHostDeadState, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, reinterpret_cast<const void*>(&HostDeadHook),
                          &g_hostdead_orig, "B2 K12 guest HostDead state (0x1381870)")) {
@@ -10310,6 +10345,13 @@ void Tick(const GameSnapshot& s) {
     DirectSummonTick(s, now);
     ChaliceEmptyWorldTick(s, now);
     ChaliceApartTick(s, now);
+    {
+        // The end of this game's last load (BlockClear2Hook's arrival clock).
+        static bool was_up = false;
+        const bool up = s.world_up && !s.loading;
+        if (up && !was_up) g_load_end_at = now;
+        was_up = up;
+    }
     if (TitleJoinOn() || EnvOn("BB_PARTY_TITLE_JOIN_PROBE")) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);

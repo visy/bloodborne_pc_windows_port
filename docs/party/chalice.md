@@ -496,3 +496,14 @@ died was sent to the Hunter's Dream and could not get back in until the host res
   Dream (both in m21_00, party travel), `host_lamp=2902952` from the Dream (the altar's warp: host in alone,
   the guest apart -> home -> summoned back, both in m29 at the lamp). Not run live: a guest's own use of a
   dungeon lamp (its talk answers 0, `t290112 asks IsClientPlayer (Chalice Dungeon lamp: answered 0)`).
+* **A boss paid once (0.7.1, cl9)**: cl6 / cl8 showed every re-summon into the cleared dungeon paying the
+  layer boss again (`boss clear on this game (BlockClear2): boss 2900100, clear bonus 1995`, Insight 6 -> 7).
+  Cause (verified): `ChaliceLeaveSession` used a bare BeginLeave, so an apart guest stayed in its
+  host-world-mode alone load (load mode 1, no chalice slot bit: `slot -1`); the next summon's SetLoadMode(1)
+  found mode 1 already and carried no slot record, the area-29 flags read as none, the boss came up alive,
+  died at once and its defeat ran on the guest. Fix: the game's own leave with the load home
+  (`coop::LeaveGameSession`, OnLeave_Limit): cl9 shows `load mode 0` at home, `slot 0's record ... carried
+  over` at each re-summon, `kill seen: entity 2900100 ... (paid 0)`, no clear. Guard behind it:
+  BlockClear2 (0x13849A0) returns at once on a summoned guest within 15 s of its arrival
+  (`deathrules::StaleBossClear`; a guest never arrives into a running boss fight), log `boss clear of boss N
+  skipped on this guest`; it did not need to fire in cl9.

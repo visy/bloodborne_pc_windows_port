@@ -368,6 +368,11 @@ int main() {
     CHECK(!ChaliceRejoinLeavesFirst(false, true, true) && !ChaliceRejoinLeavesFirst(true, false, true) &&
           !ChaliceRejoinLeavesFirst(true, true, false));
     CHECK(std::string(ChaliceApartNotice()) == "The host is in a Chalice Dungeon: Party > Rejoin to go back");
+    // A re-summoned guest never gets a dead boss's clear again; a real kill (later) pays as before.
+    CHECK(StaleBossClear(true, 0.5) && StaleBossClear(true, 14.9));
+    CHECK(!StaleBossClear(true, 15.0) && !StaleBossClear(true, 300.0));
+    CHECK(!StaleBossClear(false, 0.5));        // the host's own clear
+    CHECK(!StaleBossClear(true, -1.0));         // no arrival seen yet: as before
     // The dungeon lamps' "Return to the Hunter's Dream" flags (m29 event 12907020) are lamp flags.
     CHECK(LampTriggerFlag(72900100) && LampTriggerFlag(72900108));
     CHECK(PlanLampOrigin(12, -1) == LampOrigin::Other);     // a stale own flag
