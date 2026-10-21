@@ -105,6 +105,8 @@ constexpr u64 kUidLeaveCall = 0x193c657;    // e8 44 41 59 00 -> 0x1ed07a0
 constexpr u64 kUidDropCall = 0x193c689;     // e8 82 26 c8 ff -> 0x15bed10
 constexpr u64 kMatchCheckCall = 0x13809b7;  // e8 e4 fd b4 00 -> 0x1ed07a0
 constexpr u64 kMatchErrorCall = 0x1380a65;  // e8 36 fd b4 00 -> 0x1ed07a0 (Lua OnMatchingError)
+constexpr u64 kOwnNumberRecvCall = 0x17831ae;  // e8 2d 62 00 00 -> 0x17893e0 (packet 7: the own player number)
+constexpr u64 kRecvFromHost = 0x17893e0;       // int (net man, packet type, buffer, size): read from the host
 constexpr u64 kJoinStartCall = 0x178524f;   // e8 2c 25 b9 ff -> 0x1317780
 constexpr u64 kFunnelLeaveJne = 0x13cdeae;  // 75 6c (cmp [GSM+0x1592],0 ; jne skip-leave)
 constexpr u64 kHostDeathReturnCall = 0x18c4d7d; // e8 2e 00 59 00 -> 0x1e54db0 (ChrIns_OnDeath, role 3)
@@ -901,8 +903,11 @@ BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
 BB_COOP_SYSV u64 MatchErrorHook(u64 session) {
     const double since = Now() - g_renumber_at.load();
     if (g_on.load() && Role() == RoleClient && since < 10.0) {
-        Log("K5b: OnMatchingError leave ignored: the host checked player number %d %.1f s after this guest "
-            "changed it from %d, before its chr there was rebuilt with it (cleared: that error only)",
+        // The packet 7 receive (OwnNumberRecvHook) numbers the guest before its chr exists, so this
+        // should not happen any more: loud when it does.
+        Log("K5b: WARNING (unexpected since the packet 7 fix): OnMatchingError leave ignored: the host checked "
+            "player number %d %.1f s after this guest changed it from %d, before its chr there was rebuilt with it "
+            "(cleared: that error only)",
             g_renumber_to.load(), since, g_renumber_from.load());
         return 0;
     }
@@ -3799,8 +3804,8 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         // its limbo, or in the grace with the fight on at its death): it gets up in the arena, no
         // load, once the defeat is saved (PR #6's wait, as the host's arena revive).
         const LimboKillWatch& kw = g_limbo_kill;
-        const bool in_fight = limbo_logged == at || (g_local_death_in_fight && kw.killed && g_local_death_at > 0 &&
-                                                     kw.gone_at >= g_local_death_at && at - g_local_death_at < 60.0);
+        const bool in_fight = limbo_logged == at || deathrules::KilledAfterHp0(g_local_death_in_fight, kw.killed,
+                                                                               g_local_death_at, kw.gone_at, at);
         const deathrules::GuestLimboEnd end =
             in_fight ? deathrules::PlanGuestLimboEnd(kw.killed, GuestArenaRuleOn(), kw.pending,
                                                      s.player && LivingMemberHere(s.player))
@@ -3926,6 +3931,7 @@ std::atomic<bool> g_host_down{false};    // the host's death was taken; not revi
 std::atomic<double> g_host_down_at{0};
 std::atomic<int> g_revivals{0};
 std::atomic<bool> g_host_limbo{false};   // the host's death came in a boss fight: it waits for the end
+std::atomic<bool> g_host_limbo_late{false};  // ...its boss killed in its death animation (KilledAfterHp0)
 std::mutex g_dead_mu;
 deathrules::DownLedger g_dead_members;    // host: party slots down until revived / re-arrived / gone (under g_dead_mu)
 std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
@@ -4305,6 +4311,20 @@ bool HostDeathIntercept() {
     v.down_reported = reported;
     v.down_seen = seen;
     v.boss_fight = BossFightActive(&boss);
+    {
+        // The boss killed while the host's death animation ran (its HP 0 in the fight, the death
+        // taken 8-13 s later with no living bar left: hostcheck run C): the limbo, then the arena
+        // revive, as the guest's held death (LimboKillTick, LocalDeathHeightTick).
+        const LimboKillWatch& kw = g_limbo_kill;
+        v.boss_killed_late = !v.boss_fight && deathrules::KilledAfterHp0(g_local_death_in_fight, kw.killed,
+                                                                         g_local_death_at, kw.gone_at, Now());
+        if (v.boss_killed_late) {
+            char b[96];
+            std::snprintf(b, sizeof b, "boss killed %.1f s after the host's HP 0", kw.killed_at - g_local_death_at);
+            boss = b;
+        }
+    }
+    v.arena_revive_on = HostLimboReviveOn();
     v.revive_opt_in = HostReviveOn();
     // The stage id (PlayerIns +0x3F8) and the map id share the area / block bytes.
     v.lamp_here = sp.valid && sp.lamp == lamp && (sp.map >> 16) == (stage >> 16);
@@ -4334,6 +4354,7 @@ bool HostDeathIntercept() {
         g_host_down = true;
         g_host_down_at = Now();
         g_host_limbo = true;
+        g_host_limbo_late = v.boss_killed_late;
         g_host_corpse = CorpseSpot{};
         g_host_corpse.valid = ChrTransform(Field<u64>(Slot(kSlotWorldChrMan), 0x60), g_host_corpse.pos, g_host_corpse.rot);
         Log("host death in a boss fight (%s): limbo until the boss is gone (killed: %s), a wipe or a rest; "
@@ -5067,9 +5088,12 @@ void HostDownTick(const GameSnapshot& s, double now) {
         if (dv.limbo && !dv.boss_active) {
             if (gone_at == 0) gone_at = now;
             const bool dying = BossBarDying();
-            if (!killed && (dying || (boss_h != ~0u && ChrHp(ChrOfHandle(boss_h)) == 0))) {
+            // A late kill (before the death was taken) was seen by LimboKillTick.
+            if (!killed && (dying || g_host_limbo_late || (boss_h != ~0u && ChrHp(ChrOfHandle(boss_h)) == 0))) {
                 killed = true;
-                Log("host death: the limbo's boss was killed (%s)", dying ? "its bar over a dead chr" : "its chr at HP 0");
+                Log("host death: the limbo's boss was killed (%s)", dying ? "its bar over a dead chr"
+                                                                    : g_host_limbo_late ? "before the death was taken"
+                                                                                        : "its chr at HP 0");
             }
             dv.boss_killed = killed;
             const double since = now - gone_at;
@@ -6466,6 +6490,34 @@ int OwnGuestNumber() {
     return slot >= 1 ? coop::fourp::PlayerNumberForSlot(slot) : 2;
 }
 
+/// Packet 7 (the host's game hands a joining guest its player number; 0x1783160 writes it to the
+/// own GameData +0x10 and the local chr +0x3B8 right after this read): the guest's party-slot
+/// number instead (OwnGuestNumber), before its chr and its record exist. The host's game hands out
+/// its next free number (2 for slot 2 while slot 1 is absent); taken as it was, PlayerNumberTick
+/// had to change it after the arrival load, and the summon's OnMatchingCheck then reached the host
+/// with the new number while its copy of the chr still had the old one: the host's OnMatchingError
+/// sent the guest home 0.2 s after arriving (K5b). BB_PARTY_PLAYER_NUMBERS=0: as the host sent it.
+BB_COOP_SYSV u64 OwnNumberRecvHook(u64 net, u64 type, u64 buf, u64 size) {
+    using Fn = u64(BB_COOP_SYSV*)(u64, u64, u64, u64);
+    const u64 r = reinterpret_cast<Fn>(Guest(kRecvFromHost))(net, type, buf, size);
+    static const bool on = !EnvOff("BB_PARTY_PLAYER_NUMBERS");
+    int got = -1;
+    if (!u32(r) || !buf || !SafeGet(buf, &got)) {
+        return r;
+    }
+    const int slot = g_local_slot.load();
+    const int want = OwnGuestNumber();
+    if (on && g_on.load() && slot >= 1 && got != want && coop::fourp::PlayerNumberValid(got) &&
+        coop::fourp::PlayerNumberValid(want)) {
+        SafeWrite(buf, &want, 4);
+        Log("player number: packet 7 from the host gives %d; this guest (party slot %d) takes %d before its chr "
+            "exists (session %d)", got, slot, want, Role());
+    } else {
+        Log("player number: packet 7 from the host gives %d (party slot %d; kept)", got, slot);
+    }
+    return r;
+}
+
 /// Host and guests in a session: the own player number kept (host 1, guest OwnGuestNumber()) once
 /// the world is up in the session (flow 4); a load or a late packet 7 that changed it is undone and
 /// the own record re-broadcast with a rebuild request (the mirror's path: the peers rebuild this
@@ -6500,8 +6552,9 @@ void PlayerNumberTick(const GameSnapshot& s, double now) {
             g_renumber_at = Now();  // K5b: the host's copy keeps the old number until its rebuild
         }
         NoteOwnAppearanceChanged();             // own record again (with the number), peers rebuild this chr
-        Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr",
-            was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load());
+        Log("player number: own %d -> %d (%s, party slot %d): record re-broadcast, the peers rebuild this chr%s",
+            was, want, host ? "host" : "guest", host ? 0 : g_local_slot.load(),
+            guest ? " (WARNING: a guest's number should be right from packet 7 on)" : "");
     }
     std::string clash;
     const u64 rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
@@ -9092,6 +9145,8 @@ void Init() {
                 "B2 K5 OnMatchingCheck leave");
     InstallCall(kMatchErrorCall, kBeginLeave, reinterpret_cast<const void*>(&MatchErrorHook),
                 "B2 K5b OnMatchingError leave");
+    InstallCall(kOwnNumberRecvCall, kRecvFromHost, reinterpret_cast<const void*>(&OwnNumberRecvHook),
+                "B2 packet 7 own player number");
     InstallCall(kJoinStartCall, kJoinStartLua, reinterpret_cast<const void*>(&JoinStartHook), "B2 K6 OnBeJoinStart");
     InstallCall(kHostDeathReturnCall, kRequestReturn, reinterpret_cast<const void*>(&HostDeathReturnHook),
                 "B2 K8 host death return-all");

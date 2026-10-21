@@ -186,6 +186,45 @@ int main() {
         h.down_reported = 2;
         CHECK(PlanDownTick(h) == DownTick::Wipe);
     }
+    {
+        // The boss killed between the host's HP 0 and its taken death (hostcheck run C: HP 0 at
+        // +169.5 s, the kill at +181.4 s, the death taken at +182.2 s): the limbo, then the arena.
+        CHECK(KilledAfterHp0(true, true, 169.5, 181.4, 182.2));
+        CHECK(!KilledAfterHp0(false, true, 169.5, 181.4, 182.2));  // no living boss bar at HP 0
+        CHECK(!KilledAfterHp0(true, false, 169.5, 181.4, 182.2));  // the bar went without a kill
+        CHECK(!KilledAfterHp0(true, true, 169.5, 160.0, 182.2));   // that fight ended before HP 0
+        CHECK(!KilledAfterHp0(true, true, 0.0, 181.4, 182.2));     // no HP 0 seen (a load since)
+        CHECK(!KilledAfterHp0(true, true, 100.0, 120.0, 161.0));   // 61 s: not this death's fight
+        HostDeathView v;
+        v.members = 1;
+        v.revive_opt_in = true;
+        v.lamp_here = true;
+        CHECK(PlanHostDeath(v) == HostDeathPlan::ReviveInPlace);   // before: the lamp revive
+        v.boss_killed_late = true;
+        CHECK(PlanHostDeath(v) == HostDeathPlan::BossLimbo);
+        CHECK(PlanTakesFunnel(PlanHostDeath(v)));
+        v.arena_revive_on = false;
+        CHECK(PlanHostDeath(v) == HostDeathPlan::ReviveInPlace);   // the switch off: as before
+        v.arena_revive_on = true;
+        v.down_reported = 1;
+        CHECK(PlanHostDeath(v) == HostDeathPlan::Wipe);            // the guest is down too: a wipe
+        // Then each frame: the wait for the defeat (PR #6), then up in the arena; nobody here alive:
+        // the lamp revive.
+        DownView h;
+        h.members = 1;
+        h.limbo = true;
+        h.boss_killed = true;
+        h.revive_opt_in = true;
+        h.lamp_here = true;
+        h.down_for = 2.0;
+        h.member_here = true;
+        h.boss_dying = DefeatPending(0.5, true);
+        CHECK(PlanDownTick(h) == DownTick::Wait);
+        h.boss_dying = DefeatPending(4.0, false);
+        CHECK(PlanDownTick(h) == DownTick::ArenaRevive);
+        h.member_here = false;
+        CHECK(PlanDownTick(h) == DownTick::Revive);
+    }
 
     // The split question closes on a load, a death or after 30 s (bug 12).
     CHECK(PlanAskClose(true, false, false, 5) == AskClose::Keep);

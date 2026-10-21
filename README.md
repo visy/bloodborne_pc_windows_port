@@ -369,12 +369,15 @@ before anyone is in the game):
 
 | Who dies | What happens |
 |---|---|
-| A guest | Gets up again at its own lamp after a short respawn loading screen; its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
+| A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a fall death or a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing |
 | The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike - gets up right there in the arena, where they fell (or beside a living hunter), no load, their echoes still in their bloodstain. the host's *System → Deaths & revives → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (or beside a living hunter), no load, their echoes still in their bloodstain. the host's *System → Deaths & revives → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp; the session stays |
 
 A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.
+An enemy killed by anyone in the party is dead on every game, also one of the next area seen across a
+border; walking away from it and coming back does not bring it back (single player does, for the next
+area's enemies).
 
 ### Seamless co-op progress
 
