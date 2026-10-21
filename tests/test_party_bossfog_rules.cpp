@@ -140,6 +140,19 @@ int main() {
         Overlay live = {{12414, {12414800}}};
         Guard(saved, &live);
         CHECK(Has(live, 12414800) && !Has(live, 12414801));
+        // Every load a guest takes into the host's world while the host fights (the guard's only
+        // callers: a guest's own "respawn" after a death outside the fight, its "rejoin" back from an
+        // alone trip; a Party > Rejoin / title join is held by A11 during a fight, a limbo / spectate
+        // and the arena revive take no load): the host re-sends the snapshot with the running fight
+        // (host-entered + fight flags). It stands as sent for every boss: the bar comes up, the boss
+        // fights on, and this guest is outside its fog (its own guest-entered flag is not the host's).
+        for (const wa::BossGate& g : wa::BossGates()) {
+            const std::uint32_t b = g.host_flag / 1000;
+            const Overlay before = {{b, {g.host_flag, g.guest_flag, g.host_flag + 2}}};
+            Overlay snap = {{b, {g.host_flag, g.host_flag + 2}}};
+            Guard(before, &snap);
+            CHECK(Has(snap, g.host_flag) && Has(snap, g.host_flag + 2) && !Has(snap, g.guest_flag));
+        }
     }
 
     // The guest's fog report: only a walk through the fog this stay (0 -> 1), once.
