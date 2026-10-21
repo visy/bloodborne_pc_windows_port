@@ -27,7 +27,7 @@ Instances (tools/mp/instances.py --real-net, root ROOT, default agents/NAME/real
                                                so the game's LAN fallback finds the host on the LAN
 
 Phase direct (~9 min, 3 players): guest 1 title-joins over the Internet; Party > Leave and Rejoin (an
-  in-world direct summon); guest 1 dies outside a fight (bloodstain, respawn at the host's lamp); a
+  in-world direct summon), after guest 1 died outside a fight (bloodstain, respawn at the host's lamp); a
   party lamp travel to the Tomb of Oedon; two host kills and one guest kill there (the kill record on
   every game); the host dies outside a fight (its revive at the lamp).
 Phase relay (~4 min, 3 players): the host with NO UPnP mapping on new ports (closed to the Internet:
@@ -80,10 +80,10 @@ def shots_watch(relay=False):
 
 def phase_direct(a, port0):
     host = ",".join([
-        # Conditions, not long fixed waits: "^2*2" = once guest 1's Leave / Rejoin brought the host's
-        # cooperators back to 2 (the second rise to 2); 20 s from then covers guest 1's death 5 s
-        # after its rejoin load and its respawn load (the host cannot see a guest's death).
-        "host_warp=%s@20^2*2" % TOMB,          # party lamp travel, after guest 1's Leave / Rejoin / death
+        # Conditions, not long fixed waits: "^2*2" = once guest 1's Rejoin brought the host's cooperators
+        # back to 2 (the second rise to 2). Guest 1 dies BEFORE its Leave, so nothing of guest 1's is
+        # left to wait for (its death does not change the host's count; deaths071 smoke log).
+        "host_warp=%s@3^2*2" % TOMB,           # party lamp travel, 3 s after guest 1's death / Leave / Rejoin
         "host_kill=2410247@3%m24_01",          # two kills of this map's enemies (s3's), steady world + 3 s
         "host_kill=2410202@3%m24_01",
         "host_press=0@10%m24_01!",             # guest 1's kill meanwhile (5 s after its load)
@@ -93,8 +93,9 @@ def phase_direct(a, port0):
     ])
     g1 = ",".join([
         "echoes=5000",                         # echoes to drop: the bloodstain
-        "guest_leave@5", "guest_rejoin@3",     # Party > Leave, Rejoin: back by a direct summon
         "guest_die@5",                         # a death outside a fight: respawn at the host's lamp
+        "guest_leave@3%m",                     # "%m" (any map): steady-world clock, 3 s after the respawn load
+        "guest_rejoin@3",                      # Party > Leave, Rejoin: back by a direct summon
         "guest_kill=2410261@5%m24_01",         # its own kill at the Tomb
     ])
     return dict(
