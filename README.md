@@ -288,9 +288,9 @@ before anyone is in the game):
   open for everyone, in the host's world and in each guest's own save. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
 - **Key items are never lost.** Key items a guest earns in the host's world (Oedon Tomb Key,
-  badges, workshop tools, chalices, umbilical cords) go into its inventory right away, and are
-  checked again each time its own world loads and given again if missing; one you already hold is
-  never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
+  badges, workshop tools, chalices, umbilical cords) are given when its own world loads, and
+  checked again each time and given again if missing; one you already hold is never handed out
+  twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
   While summoned, the Key Items tab is empty after each load in the host's world: that is the
   game's own view for a visiting hunter; your save keeps them and they are back in your own world.
   Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
