@@ -360,8 +360,12 @@ def _s3_stain():
 
 def _s3_enemy():
     """A nearby enemy on the same floor: R3 lock-on, R1 once (it fights back), HP lines, the kills, a vial
-    (killed within ~10 s: two of them took the host's 575 HP in 13 s)."""
-    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+    (killed within ~10 s: two of them took the host's 575 HP in 13 s). R3 twice (":lock": the second
+    only while not locked on): after the host_chr warp the camera can face away from the enemy, and
+    an R3 then only turns the camera behind the player, as on a pad (deaths071: the first R3 missed
+    after host_chr with and without a death before it; the second locked on)."""
+    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+            "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",
             "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 4 + [                  # R1: it fights back
         "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
         "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial
@@ -900,7 +904,8 @@ def check_s3_revive(v, L, tag, t, end, stain=True, enemy=True):
     """After a host revive at +t (until +end): census, stain, an enemy's hits, lock-on, vial."""
     for i in (1, 2):
         need(v, L, "s3 %s: guest %d census matches the host's" % (tag, i), i,
-             r"enemy census: digest \d+ matches the host's .*after the host's revive", t, t + 25)
+             r"enemy census: (?:digest \d+ matches the host's .*after the host's revive|.*the same as the host's again"
+             r"|loaded differently .*\(players apart\), no alive / dead difference)", t, t + 25)
     none_of(v, L, "s3 %s: no census difference" % tag, r"enemy census: DIFFERS|RESPAWN without a load", t, t + 25)
     if stain:
         st = L.find(0, r"own bloodstain taken: .*echoes (\d+) -> -1", t, end)

@@ -53,6 +53,10 @@ struct HostDeathView {
     int down_reported = 0;     ///< members that said they are down
     int down_seen = 0;         ///< members seen at HP 0 (early notices)
     bool boss_fight = false;
+    /// The boss was killed between the host's HP 0 and this taken death (KilledAfterHp0): the fight
+    /// is over, but the death still counts as one in it (hostcheck run C).
+    bool boss_killed_late = false;
+    bool arena_revive_on = true;  ///< BB_PARTY_HOST_LIMBO_REVIVE (the arena revive's switch)
     bool revive_opt_in = false;
     bool lamp_here = false;    ///< the host's last lamp has a spawn spot in the loaded map
     bool alone_opt = true;     ///< BB_PARTY_HOST_DEATH_ALONE (revive mode only)
@@ -65,7 +69,10 @@ inline HostDeathPlan PlanHostDeath(const HostDeathView& v) {
     if (Wiped(v.members, v.down_reported, v.down_seen)) {
         return HostDeathPlan::Wipe;
     }
-    if (v.boss_fight) {
+    // A boss killed while the host's death animation ran: the limbo too, so PlanDownTick waits for
+    // the defeat to be saved and gets the host up in the arena (not at the lamp: run C). With the
+    // arena revive off the death is planned as before (outside a fight).
+    if (v.boss_fight || (v.boss_killed_late && v.arena_revive_on)) {
         return HostDeathPlan::BossLimbo;
     }
     if (!v.revive_opt_in) {
@@ -163,6 +170,18 @@ inline bool ArenaReviveAtCorpse(bool corpse_known, bool fall_death, double horiz
 /// 20 s from the moment the boss was gone.
 inline bool DefeatPending(double since_gone_s, bool bar_dying) {
     return since_gone_s < 20.0 && (bar_dying || since_gone_s < 3.0);
+}
+
+// ---- The boss is killed between a player's HP 0 and its taken death ----
+// The game takes a death 8-13 s after HP 0 (the death animation; live arenaguest A1, hostcheck run
+// C: the host's HP 0 at +169.5 s, the boss killed at +181.4 s, the death taken at +182.2 s with no
+// living bar left, so the host got the lamp revive). Such a death still counts as one in the fight:
+// a living boss bar was up at HP 0, that boss was killed after it (its bar's last living frame no
+// earlier than HP 0) and the death is taken within kLateKillWindow s of HP 0. Both roles: the
+// guest's held death (PlanGuestLimboEnd) and the host's (HostDeathView::boss_killed_late).
+constexpr double kLateKillWindow = 60.0;
+inline bool KilledAfterHp0(bool hp0_in_fight, bool boss_killed, double hp0_at, double gone_at, double taken_at) {
+    return hp0_in_fight && boss_killed && hp0_at > 0 && gone_at >= hp0_at && taken_at - hp0_at < kLateKillWindow;
 }
 
 // ---- A guest's boss-fight limbo ends (its held death; user request 2026-10-21) ----
