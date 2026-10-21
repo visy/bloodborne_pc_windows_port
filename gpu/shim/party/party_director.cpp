@@ -175,6 +175,7 @@ struct TravelStep {
     double delay = 15.0;
     int min_join = 0;     // "#N": not before this player's Nth join
     int min_coop = 0;     // "^N" (host): not before the host's game has N cooperators; S counts from then
+    int coop_rise = 0;    // "^N*K": ... and only once the count has risen to N for the K-th time
     bool alive = false;   // "!" on a press step: waits as a step with the own chr (alive, world up)
 };
 
@@ -296,6 +297,8 @@ struct Test {
     int joins = 0;
     Clock::time_point joined_at{};
     Clock::time_point coop_since{};  // the next step's "^N" cooperator count reached (its clock)
+    int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
+    int coop_rises[8] = {};          // how often the count rose to >= N (index N), since the start
     Clock::time_point step_at{}; // the last step's run, for "back after" times
     bool ran = false;            // a step of this role ran
     TravelStep::Kind last_kind = TravelStep::HostWarp;
@@ -1697,6 +1700,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             Log("test: travel steps: out of the party (%s)", Describe(s).c_str());
         }
     }
+    // "^N*K": count every rise of the host's cooperators to >= N (a guest's Leave and Rejoin: 2 -> 1 -> 2).
+    if (s.cooperators >= 0) {
+        for (int n = 1; n < 8; ++n)
+            if (s.cooperators >= n && t.last_coop < n) ++t.coop_rises[n];
+        t.last_coop = s.cooperators;
+    }
     // The other role's steps are that instance's: skip them.
     auto mine = [&](const TravelStep& step) {
         return (step.kind == TravelStep::GuestDie || step.kind == TravelStep::GuestMove ||
@@ -1779,7 +1788,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     // "^N": a condition, not a fixed wait: the step waits until the host's game has N cooperators,
     // and its S counts from that moment (e.g. host_warp=ID@3^2: 3 s after the second guest is in).
     if (t.next_step < t.steps.size() && t.steps[t.next_step].min_coop) {
-        if (s.cooperators < t.steps[t.next_step].min_coop) {
+        const TravelStep& cs = t.steps[t.next_step];
+        if (s.cooperators < cs.min_coop || (cs.coop_rise && t.coop_rises[cs.min_coop < 8 ? cs.min_coop : 7] < cs.coop_rise)) {
             t.coop_since = {};
             return;
         }
@@ -3519,6 +3529,8 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (const std::size_t caret = item.find('^'); caret != std::string::npos) {
                     step.min_coop = std::atoi(item.c_str() + caret + 1);  // "^N": N cooperators in
+                    if (const std::size_t star = item.find('*', caret); star != std::string::npos)
+                        step.coop_rise = std::atoi(item.c_str() + star + 1);  // "^N*K": the K-th time
                 }
                 // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
                 if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {
@@ -3572,6 +3584,8 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if (const std::size_t caret = item.find('^'); caret != std::string::npos) {
                     step.min_coop = std::atoi(item.c_str() + caret + 1);  // "^N": N cooperators in
+                    if (const std::size_t star = item.find('*', caret); star != std::string::npos)
+                        step.coop_rise = std::atoi(item.c_str() + star + 1);  // "^N*K": the K-th time
                 }
                 // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
                 if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {

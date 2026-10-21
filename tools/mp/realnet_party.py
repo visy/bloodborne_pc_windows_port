@@ -80,19 +80,22 @@ def shots_watch(relay=False):
 
 def phase_direct(a, port0):
     host = ",".join([
-        "host_warp=%s@90" % TOMB,              # party lamp travel, after guest 1's Leave / Rejoin / death
-        "host_kill=2410247@10%m24_01",         # two kills of this map's enemies (s3's)
+        # Conditions, not long fixed waits: "^2*2" = once guest 1's Leave / Rejoin brought the host's
+        # cooperators back to 2 (the second rise to 2); 20 s from then covers guest 1's death 5 s
+        # after its rejoin load and its respawn load (the host cannot see a guest's death).
+        "host_warp=%s@20^2*2" % TOMB,          # party lamp travel, after guest 1's Leave / Rejoin / death
+        "host_kill=2410247@3%m24_01",          # two kills of this map's enemies (s3's), steady world + 3 s
         "host_kill=2410202@3%m24_01",
-        "host_press=0@25%m24_01!",             # guest 1's kill meanwhile
+        "host_press=0@10%m24_01!",             # guest 1's kill meanwhile (5 s after its load)
         "host_die@3%m24_01",                   # the host's death outside a fight: revive at the lamp
-        "host_press=0@15%m24_01!",             # up again
-        "host_press=0@15%m24_01!",             # the guests' screens of it, then the end
+        "host_press=0@5%m24_01!",              # up again ("!": once alive and the world is up)
+        "host_press=0@5%m24_01!",              # the guests' screens of it, then the end
     ])
     g1 = ",".join([
         "echoes=5000",                         # echoes to drop: the bloodstain
-        "guest_leave@15", "guest_rejoin@8",    # Party > Leave, Rejoin: back by a direct summon
-        "guest_die@15",                        # a death outside a fight: respawn at the host's lamp
-        "guest_kill=2410261@18%m24_01",        # its own kill at the Tomb
+        "guest_leave@5", "guest_rejoin@3",     # Party > Leave, Rejoin: back by a direct summon
+        "guest_die@5",                         # a death outside a fight: respawn at the host's lamp
+        "guest_kill=2410261@5%m24_01",         # its own kill at the Tomb
     ])
     return dict(
         name="direct", seconds=720, count=3, headless=1 if a.guest2_headless else 0,
@@ -109,9 +112,10 @@ def phase_direct(a, port0):
 
 def phase_relay(a, port0, pub):
     ports = (port0 + 5, port0 + 6, port0 + 7)  # new ports: no router mapping left from the direct phase
-    host = ",".join(["god", "host_warp=%s@40" % TOMB, "host_kill=2410247@10%m24_01",
-                     "host_press=0@25%m24_01!", "host_press=0@10%m24_01!"])
-    g1 = "god,guest_kill=2410261@15%m24_01"
+    # "^2": the travel 3 s after both guests are in (guest 1 through the relay), not a fixed wait
+    host = ",".join(["god", "host_warp=%s@3^2" % TOMB, "host_kill=2410247@3%m24_01",
+                     "host_press=0@10%m24_01!", "host_press=0@5%m24_01!"])
+    g1 = "god,guest_kill=2410261@3%m24_01"
     return dict(
         name="relay", seconds=420, count=3, headless=1 if a.guest2_headless else 0,
         env=COMMON_ENV, crash=[],
