@@ -255,6 +255,13 @@ struct Test {
     std::vector<std::int32_t> log_objs;
     std::map<std::int32_t, std::array<float, 3>> log_obj_pos;
     Clock::time_point log_obj_at{};
+    // log_flag=ID[/ID...]: those event flags' values on this game whenever one changes (a lift's
+    // state flags on every game of the party, lifts071), checked every tick.
+    std::vector<std::uint32_t> log_flags;
+    std::map<std::uint32_t, int> log_flag_val;
+    // log_objanim=ENTITY: that map object's animation state (worldact::ReadObjAnim) whenever it changes.
+    std::vector<std::int32_t> log_objanims;
+    std::map<std::int32_t, std::string> log_objanim_last;
     const char* ring = nullptr; // the event to raise once
     double delay = 10.0;
     bool start = false, grant_bells = false, drop_bells = false, drop_done = false;
@@ -2606,6 +2613,40 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             }
         }
     }
+    if (!t.log_flags.empty() && s.world_up && !s.loading) {
+        std::string line;
+        bool changed = false;
+        for (const std::uint32_t id : t.log_flags) {
+            bool v = false;
+            const int now_v = ReadEventFlag(id, &v) ? (v ? 1 : 0) : -1;
+            auto it = t.log_flag_val.find(id);
+            if (it == t.log_flag_val.end() || it->second != now_v) {
+                changed = true;
+                t.log_flag_val[id] = now_v;
+            }
+            char buf[32];
+            std::snprintf(buf, sizeof buf, " %u=%d", id, now_v);
+            line += buf;
+        }
+        if (changed) Log("test: flags%s", line.c_str());
+    }
+    if (!t.log_objanims.empty() && s.world_up && !s.loading) {
+        for (const std::int32_t e : t.log_objanims) {
+            worldact::ObjAnimState a;
+            char buf[160];
+            if (worldact::ReadObjAnim(e, &a)) {
+                std::snprintf(buf, sizeof buf, "anim %d playing %d state %d flags %#x (handle %#x)", a.anim,
+                              a.playing ? 1 : 0, a.state, a.flags, a.handle);
+            } else {
+                std::snprintf(buf, sizeof buf, "not loaded");
+            }
+            std::string& last = t.log_objanim_last[e];
+            if (last != buf) {
+                last = buf;
+                Log("test: object %d %s", e, buf);
+            }
+        }
+    }
     if (t.echoes >= 0 && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
         const bool ok = WritePlayerEchoes(t.echoes);
         Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
@@ -3244,6 +3285,17 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("log_obj=", 0) == 0) {
                 const int e = std::atoi(item.c_str() + 8);
                 if (e > 0) st.test.log_objs.push_back(e);
+            } else if (item.rfind("log_objanim=", 0) == 0) {
+                const int e = std::atoi(item.c_str() + 12);
+                if (e > 0) st.test.log_objanims.push_back(e);
+            } else if (item.rfind("log_flag=", 0) == 0) {
+                for (const char* q = item.c_str() + 9; *q;) {
+                    char* end = nullptr;
+                    const unsigned long id = std::strtoul(q, &end, 10);
+                    if (end == q) break;
+                    if (id) st.test.log_flags.push_back(static_cast<std::uint32_t>(id));
+                    q = *end == '/' ? end + 1 : end;
+                }
             } else if (item.rfind("echoes=", 0) == 0) {
                 st.test.echoes = std::atoi(item.c_str() + 7);
             } else if (item.rfind("armor=", 0) == 0) {

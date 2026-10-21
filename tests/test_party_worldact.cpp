@@ -375,6 +375,52 @@ int main() {
     }
     assert(!NpcGiftTrigger(9043));
     assert(pg::CategoryOf(72400489u) == pg::Category::npc_quest);  // what made it a world action before
+
+    // D3 (lifts071): lifts. Every position / busy / host-state flag is a C2 state id (the mirror
+    // carries the host's values), never a plain world action; a finished ride goes up as lift_set /
+    // lift_clr instead.
+    assert(Lifts().size() == 12);
+    for (const Lift& l : Lifts()) {
+        assert(LiftByPosFlag(l.pos) == &l && !LiftByPosFlag(l.busy) && l.car > 0);
+        assert(pg::ModeFor(pg::Policy::Defaults(), l.pos, pg::CategoryOf(l.pos)) == pg::SyncMode::State);
+        assert(!WorldActionAllowed(l.pos, false, (l.pos / 100000u % 100u) << 24));
+        if (l.host_state) {
+            assert(pg::ModeFor(pg::Policy::Defaults(), l.host_state, pg::CategoryOf(l.host_state)) == pg::SyncMode::State);
+        }
+    }
+    const Lift* cy = LiftByPosFlag(12410350);
+    assert(cy && cy->busy == 12415350 && cy->host_state == 12410351 && cy->car == 2411320);
+    const Lift* cw = LiftByPosFlag(12400827);  // Cathedral Ward <-> Old Yharnam: the l7 desync
+    assert(cw && cw->busy == 12400828 && cw->host_state == 0 && cw->car == 2401102);
+    assert(!LiftByPosFlag(12410351) && !LiftByPosFlag(0));
+    // The host: its own copy ran (same), a ride runs there (busy), the car is loaded but its copy did
+    // not follow (left alone: a flag alone would not move it), the block is not loaded (apply).
+    assert(HostLiftSync(true, false, false, true) == LiftSync::same);
+    assert(HostLiftSync(false, false, true, false) == LiftSync::same);
+    assert(HostLiftSync(false, true, false, true) == LiftSync::busy);
+    assert(HostLiftSync(false, true, true, true) == LiftSync::busy);
+    assert(HostLiftSync(false, false, true, true) == LiftSync::loaded);
+    assert(HostLiftSync(false, false, false, true) == LiftSync::apply);
+    assert(HostLiftSync(true, false, false, false) == LiftSync::apply);
+    // The guest: only once its ride is over, and only if the car stayed at that end.
+    assert(GuestLiftRideDone(true, true, false) && GuestLiftRideDone(false, false, false));
+    assert(!GuestLiftRideDone(true, true, true) && !GuestLiftRideDone(false, true, false));
+    Request lift;
+    lift.map = m2400;
+    lift.lift_set = {12400827};
+    lift.lift_clr = {12410350};
+    assert(RequestFromJson(RequestToJson(lift), &back, &err) && back == lift);  // a lift ride alone is a request
+    bad = lift;
+    bad.lift_set.push_back(12400828);  // the busy flag is not a lift position
+    assert(!RequestFromJson(RequestToJson(bad), &back, &err));
+    bad = lift;
+    bad.lift_set.push_back(12410350);  // set and cleared
+    assert(!RequestFromJson(RequestToJson(bad), &back, &err));
+    bad = lift;
+    bad.lift_set = {12200125, 12400150, 12400827, 12420154, 12700134};  // more than kMaxLift
+    assert(!RequestFromJson(RequestToJson(bad), &back, &err));
+    assert(!RequestFromJson(R"({"v":1,"map":0,"set":[],"clr":[],"lift_set":[12410351]})", &back, &err));
+    assert(!RequestFromJson(R"({"v":1,"map":0,"set":[],"clr":[],"lift_set":12410350})", &back, &err));
     std::printf("party-worldact-test: ok\n");
     return 0;
 }

@@ -307,11 +307,56 @@ run, no player moves in the D4 runs, wait lines with fixed text and hard timeout
 
 ## 10. Open items
 
-* Elevators: toggling state flags are shortcut_door; a guest and the host using one elevator at
-  the same time can fight over the state (not tested).
+* Elevators: see 10.1 (lifts071, live).
 * Instanced pickup into the own save: the fixed path (no baseline) not yet re-run live; enemy
   drops: a guest's real kill (damage, not a local ForceDead) and both players' rolls not yet seen.
 * Memory Altar / covenants / chalice ritual by a guest not run live.
+
+## 10.1 Lifts (lifts071, 2026-10-21, live)
+
+How a lift moves on every game (live, EMEVD trace of the lift's events + a per-frame log of its flags
+and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
+
+* Every game runs its own copy of a lift's events (Central Yharnam 12410321-12410325: init, up, down,
+  "host state"; the older lifts only up / down). A player stepping into the car or pulling a call
+  lever starts its own copy, and the game's own network sync starts the copy of every other game
+  within ~0.05 s (l5: a guest's ride, the host's ride, the host's lever, each on all three games).
+  The world mirror then writes the host's values into the guests (equal: nothing changes).
+* The car only animates where the object is active (the player near it, `ObjInsUpdate` flag 0x40 at
+  entry +0x1FC); a far game's copy finds its "wait for the animation's end" (2003[18], waiter vtable
+  0x532C3F0, check 0x13CC180: entry +0x208 = the anim id, +0x1FE bit 3 playing) true at once and ends
+  its ride in 0.1 s, with the same flags. The car takes the last requested animation when it becomes
+  active (l5: the host came near and its car showed the guest's end).
+* A guest's step into the car does NOT drop it: the guest falls down the shaft only in a test that
+  warps the guest straight into the car from far away (l1-l4: the car's object was not active yet,
+  so its own copy ended at once while the guest stood on nothing). Walking up (or standing next to it
+  for a few seconds) and then stepping in rides normally (l5: -44.3 -> -58.1 in 5 s on the guest,
+  the host's copy finished at once 131 m away, both games' flags equal at the end).
+* A guest calls the lift while the host stands in it after a ride: "Device is not currently
+  operable." on the guest, as in single player (the down event waits until everybody left the car);
+  the lift stays the same on both games (l5).
+* **The desync (fixed):** a game with the lift's map block streamed out (Cathedral Ward's
+  12400824 / 12400825 lift while the host is 130 m away in Central Yharnam) never runs its copy, and
+  lift flags were never world actions ("their own sync"). The guest's ride (l7: 12400827 0 -> 1 on
+  the guest) stayed out of the host's world; when the host walked back, the block's init event
+  12400823 put the car at the old end from the host's flags (l8: anim 30, the bottom, while the
+  guest's car was at the top). Each game then showed the car where the other had an empty shaft,
+  and a lever or the car region on one game did nothing on the other. Now a guest's finished ride
+  (its busy flag off, `GuestLiftRideDone`) goes up as `lift_set` / `lift_clr` (the lift's position
+  flag); the host writes it (and the host-state flag of the newer lifts) only while the lift's block
+  is not loaded in its game (`HostLiftSync`: `same` when its own copy ran, `busy` while a ride runs
+  there, `loaded` when the car is loaded but its copy did not follow: left alone, a flag alone would
+  not move the car). l9: `lift 2401102 12400827=1(applied: the lift's block is not loaded here)`,
+  then the host's init at the stream-in took anim 0 (the top), where the guest's car was. Lift table:
+  `worldact::Lifts()` (12 lifts, from the EMEVD of every up / down event).
+* Ladders: the shortcut ladder of Central Yharnam's start (2411204, lowered by lever 2411316, event
+  12410285): a guest's pull lowers it on every game (l10: the host's game gets the guest's ObjAct kick
+  natively, anim 1 -> 2 and 12410285 = 1 on all three games, screenshots). The raised ladders of the
+  ladder system (2009[0]) in the test saves are already down (dlast); no "kick" prompt was found.
+* Illusory walls: Bloodborne has none. No event of any map (main game, DLC, the Chalice templates)
+  is a hidden wall (EMEVD event names: only boss part breaks and one boss room window break).
+
+Smoke: `python tools/mp/smoke_party.py --only lifts,ladder` (phase lf).
 
 ## 11. Interface (for split travel and other callers)
 

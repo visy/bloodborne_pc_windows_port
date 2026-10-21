@@ -285,7 +285,8 @@ before anyone is in the game):
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save; a guest who is behind catches up, including the Blood Moon.
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
-  open for everyone, in the host's world and in each guest's own save. Guests open gates with their
+  open for everyone, in the host's world and in each guest's own save; a lift ridden or a ladder
+  lowered by anyone is in the same place for everyone, also for a player who was far away. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
 - **Key items are never lost.** A summoned guest sees its own key items in the host's world too
   (the game alone shows a visiting hunter an empty Key Items tab). Key items a guest earns in the
@@ -393,7 +394,7 @@ whole party respawns with the host, 4 players instead of 6, one shared drop roll
 | Session & joining | `████████████████████` | 100% | `███████████████████░` | 95% |
 | World & travel | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Death & respawn | `████████████████████` | 99% | `███████████████████░` | 94% |
-| Progress (anyone can progress) | `████████████████████` | 99% | `███████████████████░` | 95% |
+| Progress (anyone can progress) | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Services & UI | `████████████████████` | 100% | `███████████████████░` | 95% |
 | Network & robustness | `██████████████████░░` | 93% | `██████████████████░░` | 92% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `███████████████████░` | 95% |
