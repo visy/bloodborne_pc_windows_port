@@ -222,50 +222,56 @@ def phase_rules(only):
     )
 
 
-# Phase s3 (hostcheck, ~5 min, Gascoigne un-killed): the host's revives in place and what must work
-# after them. Kills first (host 2, guest 1 one), then a host death outside a fight (the lamp revive),
-# then a death in the Gascoigne fight that the guests' kill ends (the arena revive); after each: the
-# bloodstain walked onto and picked up, every guest's enemy census against the host's, an enemy's
-# hits, lock-on and a Blood Vial. Last, the host dies with its last lamp in another area (a lone
-# load) and the census is read once more.
+# Phase s3 (hostcheck, ~6 min, Gascoigne un-killed): the host's revives in place and what must work
+# after them. Kills first (host 2, guest 1 one, each game's own death path), then a host death outside
+# a fight (lamp revive 1), a death in the Gascoigne fight that the guests' kill ends (the arena
+# revive), a death 130 m away at an enemy group (lamp revive 2: the long way back). After each: every
+# guest's enemy census against the host's (kills still dead, no respawn on one game only); after the
+# first two: the bloodstain walked onto and picked up; after the last two: an enemy's hits, lock-on, a
+# Blood Vial. Last, the host dies with its last lamp in another area (a lone load).
 S3_TRIGGER = "-48.76:-40.92:72.44"   # Gascoigne's intro trigger (region 2412815), the arena floor
 S3_UNTIL = r"0:travel step (\d+)/\1: "  # the host chain's last step
 
 
-def _s3_after_revive():
-    """Host steps after a revive: its stain, 10 s more for the census, then a nearby enemy (same floor)."""
-    return [
-        "host_stick=stain:0.6:40@1%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@3%m24_01!",
-        "host_press=0@10%m24_01!",
-        "host_chr=0:0.6@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!",
-        "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!", "host_press=0@2%m24_01!",  # R3: lock-on
+def _s3_stain():
+    """Walk onto the own bloodstain, Cross; then 10 s more for the census."""
+    return ["host_stick=stain:0.6:40@1%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@3%m24_01!",
+            "host_press=0@10%m24_01!"]
+
+
+def _s3_enemy():
+    """A nearby enemy on the same floor: R1 once (it fights back), HP lines, R3 lock-on, the kills, a vial."""
+    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 5 + [
+        "host_press=0x4@1%m24_01!", "host_press=0@1%m24_01!", "host_press=0@2%m24_01!",   # R3: lock-on
         "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
-        "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!",                         # Triangle: a Blood Vial
-    ]
+        "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial
 
 
 def phase_s3(only):
     host = ",".join([
         "echoes=5000",
         "host_warp=2412953@20",                                    # the Tomb of Oedon lamp (party travel)
-        "host_kill=0@5%m24_01", "host_kill=0@2%m24_01",            # two kills before the death
-        "host_stick=-41.5:79.5:1:30@8%m24_01!",                    # 6 m off the lamp, walked
+        "host_kill=0:hp@5%m24_01", "host_kill=0:hp@2%m24_01",      # two kills before the deaths
+        "host_stick=-41.5:79.5:1:30@8%m24_01!",                    # off the lamp, walked
         "host_press=0@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!", "host_press=0@2%m24_01!",
-        "host_die@2%m24_01",                                       # outside a fight: the lamp revive
+        "host_die@2%m24_01",                                       # outside a fight: lamp revive 1
         "host_press=0@14%m24_01!",
-    ] + _s3_after_revive() + [
+    ] + _s3_stain() + [
         "host_move=%s@2%%m24_01" % S3_TRIGGER,                     # the fight
         "host_press=0@1%m24_01~", "host_press=0@2%m24_01",
         "host_die@1%m24_01",                                       # in the fight: the limbo
         "host_kill=2410810:hp@22%m24_01",                          # the guests' kill: the arena revive
         "host_press=0@8%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@2%m24_01!",  # OK on the key's box
-    ] + _s3_after_revive() + [
+    ] + _s3_stain() + _s3_enemy() + [
+        "host_die@2%m24_01",                                       # 130 m from the lamp: lamp revive 2
+        "host_press=0@14%m24_01!", "host_press=0@12%m24_01!",
+    ] + _s3_enemy() + [
         "host_lastlamp=2402950@1%m24_01", "host_die@2%m24_01",     # last lamp in the Cathedral Ward: a lone load
         "host_press=0@30%m24_00",                                  # its census, then the end
     ])
     g1 = "god,guest_kill=0@10%m24_01"
     return dict(
-        name="s3", seconds=480, pad=True,
+        name="s3", seconds=600, pad=True,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_ENEMY_CENSUS=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god"],
         crash=[],
@@ -567,16 +573,19 @@ def _hp(lines):
     return [(t, int(HP_RX.search(l).group(1))) for t, l in lines if HP_RX.search(l)]
 
 
-def check_s3_revive(v, L, tag, t, end):
-    """After a host revive at +t (until +end): stain, census, an enemy's hits, lock-on, vial."""
-    st = L.find(0, r"own bloodstain taken: .*echoes (\d+) -> -1", t, end)
-    m = re.search(r"echoes (\d+) -> -1.*own echoes (\d+)", st[1]) if st else None
-    v.step("s3 %s: bloodstain picked up, echoes back" % tag, bool(m) and 0 < int(m.group(1)) <= int(m.group(2)),
-           ("+%.1f s: %s" % (st[0], st[1][:160])) if st else "no 'own bloodstain taken' after +%.0f s" % t)
+def check_s3_revive(v, L, tag, t, end, stain=True, enemy=True):
+    """After a host revive at +t (until +end): census, stain, an enemy's hits, lock-on, vial."""
     for i in (1, 2):
         need(v, L, "s3 %s: guest %d census matches the host's" % (tag, i), i,
              r"enemy census: digest \d+ matches the host's .*after the host's revive", t, t + 25)
     none_of(v, L, "s3 %s: no census difference" % tag, r"enemy census: DIFFERS|RESPAWN without a load", t, t + 25)
+    if stain:
+        st = L.find(0, r"own bloodstain taken: .*echoes (\d+) -> -1", t, end)
+        m = re.search(r"echoes (\d+) -> -1.*own echoes (\d+)", st[1]) if st else None
+        v.step("s3 %s: bloodstain picked up, echoes back" % tag, bool(m) and 0 < int(m.group(1)) <= int(m.group(2)),
+               ("+%.1f s: %s" % (st[0], st[1][:160])) if st else "no 'own bloodstain taken' after +%.0f s" % t)
+    if not enemy:
+        return
     ch = L.find(0, r"test: host_chr \d+ \(.*standing at", t, end)
     kl = L.find(0, r"test: host_kill: entity", ch[0], end) if ch else None
     if not ch or not kl:
@@ -597,16 +606,21 @@ def check_s3_revive(v, L, tag, t, end):
 
 def check_s3(v, L):
     need(v, L, "s3 join: 3 players", 0, r"cooperators [01] -> 2")
+    lamp_rx = r"host revive #\d+: after: .* at lamp 2412953"
+    lamp = need(v, L, "s3 lamp revive 1 (no load)", 0, lamp_rx)
     ids = [re.search(r"entity (\d+)", l).group(1) for _, l in
-           L.all(0, r"test: host_kill: entity \d+ killed") + L.all(1, r"test: guest_kill: entity \d+ (killed|HP)")]
+           L.all(0, r"test: host_kill: entity \d+ (killed|HP)", 0, lamp or 1e9) +
+           L.all(1, r"test: guest_kill: entity \d+ (killed|HP)", 0, lamp or 1e9)]
     v.step("s3 kills before the deaths (host, guest)", len(ids) >= 3, "entities " + " ".join(ids))
-    lamp = need(v, L, "s3 lamp revive (no load)", 0, r"host revive #\d+: after: .* at lamp 2412953")
     arena = need(v, L, "s3 arena revive (no load)", 0, r"host death: up again in the arena", lamp or 0)
+    lamp2 = need(v, L, "s3 lamp revive 2, from 130 m (no load)", 0, lamp_rx, arena or 1e9)
     if lamp is not None:
-        check_s3_revive(v, L, "lamp revive", lamp, arena or 1e9)
+        check_s3_revive(v, L, "lamp revive 1", lamp, arena or 1e9, enemy=False)
     if arena is not None:
-        check_s3_revive(v, L, "arena revive", arena, 1e9)
-    lone = need(v, L, "s3 host death with its lamp in another area", 0, r"travel step \d+/\d+: host_lastlamp", arena or 0)
+        check_s3_revive(v, L, "arena revive", arena, lamp2 or 1e9)
+    if lamp2 is not None:
+        check_s3_revive(v, L, "lamp revive 2", lamp2, 1e9, stain=False)
+    lone = need(v, L, "s3 host death with its lamp in another area", 0, r"travel step \d+/\d+: host_lastlamp", lamp2 or 0)
     if lone is not None:
         cen = L.all(1, r"enemy census: ", lone, lone + 60)
         v.step("s3 lone load: guest 1 census afterwards", not any("DIFFERS" in l for _, l in cen),
