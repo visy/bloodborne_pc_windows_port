@@ -289,6 +289,7 @@ Set them in the environment before `run.bat` (or with `tools/mp/instances.py run
 | `BB_PARTY_ITEMGET_PROBE` | `1`: logs the item-get dialog's state on every change (list entries at `*0x553B1C0`, dialog-up word `*0x5562878+0x130`, the HUD model rows, the open-edge gate) and, while an entry waits, the gates of the confirm's action-button registration 0x1CD91F0 (`item confirm gates`) | off | `gpu/shim/party/party_items.cpp` |
 | `BB_PARTY_ITEMGET_WATCH` | `0`: no item-get dialog watchdog; default: a box left over a load, up while the player is dead for 3 s, or with its confirm check held for 20 s is cleared the way its confirm clears it (items stay in the inventory; log `item-get dialog cleared`) | on | `gpu/shim/party/party_items.cpp` |
 | `BB_SAVE_BACKUP` | `1`: save backups also outside a party session; `0`: none in a party session | on in a party session | `src/runtime_savepolicy.c` |
+| `BB_SAVE_SFO` | `0`: no shadPS4 `sce_sys/param.sfo` written inside the save folder next to our `param.bin` (docs/SAVES.md, saves from other builds) | on | `src/runtime_savedata.c` |
 | `BB_SAVE_TRACE` | `1`: logs every operation on save files (/savedataN) | off | `src/runtime_file.c` |
 
 Not a party switch despite the name: `BB_SAVE_LOG` (frame / readback statistics, launcher
