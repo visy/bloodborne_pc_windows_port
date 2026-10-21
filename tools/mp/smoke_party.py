@@ -27,6 +27,9 @@ Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real
   text cut); the host changes one option per page and sets it back (the menu's "row ... -> ..." line,
   bbport.ini's line, the party's rules line where the rule is the host's); the guest sees the host's
   friendly fire on its read-only row.
+Phase summonfail (~3 min, 3 players): guest 1's party port is held by the smoke (every join of it
+  fails); guest 2 starts after guest 1's failed direct summon and must be served within 30 s and end
+  up in the host's world (a failed join once locked the host's direct summon for minutes).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -316,17 +319,37 @@ def phase_rules(only):
     )
 
 
-PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc}
+# ---- Phase summonfail: a failed join must not lock the host (signstuck 2026-10-21) ----
+# Guest 1's party (P2P) port is held by this script, so every join of it fails (as a blocked port,
+# an Internet timeout or a crash mid-join would): its direct summon fails after 8 s and the host's
+# game then summons its sign again every ~30 s. Guest 2 starts only after that failure; the host
+# must serve its direct summon within 30 s of its first ask and it must end up in the host's world.
+# Before the fix every such ask was refused ("the host's game is summoning a sign") for minutes.
+SF_FAILED = r"direct summon: FAILED"
+
+
+def phase_summonfail(only):
+    return dict(
+        name="summonfail", seconds=360, count=3, headless=1,
+        env=[], ienv=["1:BB_PARTY_PORT={hold}"],
+        hold_ports=16,
+        start_when=["2/1:" + SF_FAILED],
+        crash=[],
+        until=GROUP_UNTIL["summonfail"],
+    )
+
+
+PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
-          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc"}
+          "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
-              "savecopy": r"^sc "}
+              "savecopy": r"^sc ", "summonfail": r"^summonfail"}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -346,6 +369,8 @@ GROUP_UNTIL = {
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
     "keyitems": [r"1:key goods held: .*load mode 0\)"],  # guest 1 back in its own world after the Leave
     "rules": [r"0:mark=rules_h_ffoff[\s\S]{200}", "1:test menu: done"],
+    # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
+    "summonfail": [r"0:cooperators 0 -> 1[\s\S]{40000}"],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
@@ -359,6 +384,28 @@ def narrow_phase(ph, only):
     return ph
 
 
+def hold_udp_ports(n):
+    """n consecutive free UDP ports on 127.0.0.1, bound exclusively (a test game told to use the first
+    finds them all "in use by another program": no party port). Closed by the caller."""
+    import random, socket
+    for _ in range(50):
+        start = random.randrange(30000, 40000)
+        socks = []
+        try:
+            for p in range(start, start + n):
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                socks.append(s)
+                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                s.bind(("127.0.0.1", p))
+            print("[smoke] holding UDP 127.0.0.1:%d-%d" % (start, start + n - 1), flush=True)
+            return socks
+        except OSError:
+            for s in socks:
+                s.close()
+    sys.exit("no %d free UDP ports to hold" % n)
+
+
 def run_phase(a, ph, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     root = Path(a.root)
@@ -366,6 +413,8 @@ def run_phase(a, ph, out: Path):
     (root / "noreap").write_text(str(ph["seconds"] + 120))
     for name, text in ph.get("files", {}).items():  # rules: the menu walks (BB_TEST_MENU_FILE)
         (root / name).write_text(text, encoding="ascii")
+    held = hold_udp_ports(ph["hold_ports"]) if ph.get("hold_ports") else []  # summonfail: a blocked party port
+    hold = str(held[0].getsockname()[1]) if held else ""
     for i in range(ph.get("count", 3)):
         ini = root / f"inst{i}" / "bbport.ini"
         if ph.get("ini_reset") and ini.exists():
@@ -388,7 +437,9 @@ def run_phase(a, ph, out: Path):
     for e in ph["env"]:
         cmd += ["--env", e.replace("{root}", str(root))]
     for e in ph["ienv"]:
-        cmd += ["--ienv", e]
+        cmd += ["--ienv", e.replace("{hold}", hold)]
+    for w in ph.get("start_when", []):
+        cmd += ["--start-when", w]
     for c in ph["crash"]:
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
@@ -407,6 +458,8 @@ def run_phase(a, ph, out: Path):
         r = subprocess.run(cmd, env=env, stdout=open(out / "harness.log", "w"), stderr=subprocess.STDOUT)
     finally:
         shooter.terminate()
+        for h in held:
+            h.close()
     print("[smoke] %s: harness exit %d after %.0f s" % (ph["name"], r.returncode, time.time() - t0), flush=True)
     for i in range(ph.get("count", 3)):
         p = root / f"inst{i}" / "run.log"
@@ -669,8 +722,26 @@ def check_rules(v, L):
     check_common(v, L, "rules")
 
 
+def check_summonfail(v, L):
+    f = need(v, L, "summonfail: guest 1's join fails (its party port is blocked)", 1, SF_FAILED)
+    if f is None:
+        return
+    ask = need(v, L, "summonfail: guest 2 asks for a direct summon", 2, r"direct summon: asked the host for its room", f)
+    if ask is not None:
+        served = need(v, L, "summonfail: the host serves guest 2's direct summon", 0,
+                      r"direct summon: slot 2 \(.*\) gets this host's room", ask)
+        if served is not None:
+            v.step("summonfail: served within 30 s of guest 2's first ask", served - ask < 30,
+                   "%.1f s (limit 30)" % (served - ask))
+        need(v, L, "summonfail: guest 2 in the host's world (cooperators 0 -> 1)", 0, r"cooperators 0 -> 1", ask)
+    stuck = L.all(0, r"refused \(the host's game is summoning a sign", f)
+    v.step("summonfail: sign-summon refusals after the failure (info)", True, "%d" % len(stuck))
+    check_common(v, L, "summonfail")
+
+
 RUN_ROOT = ["."]  # main: --root (the sc checks read the host's save folder)
-CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L), "sc": check_sc}
+CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
+          "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L)}
 
 
 def main():
@@ -679,7 +750,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
@@ -690,7 +761,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc") if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail") if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)

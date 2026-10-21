@@ -7909,6 +7909,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         v.carry = dsummon::CarriesAcrossMaps(s.map_id, gather_dsum);
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
+        v.ms_since_member_joined = bbnet::np::ms_since_member_joined();
         v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
         v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
         // F5 (live): a member's game left our room in a network outage; ~5 s after its leave reached
@@ -7942,12 +7943,19 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             Send(slot, dsummon::EncodeRefuse(wait));
             {
                 std::lock_guard<std::mutex> lk(DS().mu);
-                DS().refused_wait = wait != dsummon::Busy::None;
+                // Sign: the host's own sign summon goes on (its bell stays up); the guest asks again.
+                DS().refused_wait = wait != dsummon::Busy::None && wait != dsummon::Busy::Sign;
                 DS().refused_at = Now();
             }
             Log("direct summon: slot %d (%s) refused (%s; host %s, guest %s, wait %s)%s", slot, name.c_str(), why,
                 MapName(v.host_map).c_str(), MapName(v.guest_map).c_str(), dsummon::BusyWord(wait),
                 wait == dsummon::Busy::None ? ": the bell sign path goes on" : "");
+            if (wait == dsummon::Busy::Sign) {
+                Log("direct summon: the sign summon was asked %.1f s ago, %s: the guest asks again (its hold ends at "
+                    "%.0f s, or at %.0f s if nobody joins)", double(v.ms_since_sign_summon) / 1000.0,
+                    v.ms_since_member_joined < v.ms_since_sign_summon ? "a member joined since" : "nobody joined since",
+                    double(dsummon::kSignSummonHold) / 1000.0, double(dsummon::kSignSummonNoJoin) / 1000.0);
+            }
             continue;
         }
         if (Role() != RoleHost) {
@@ -8085,7 +8093,8 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     }
     if (a == dsummon::Action::Reask) {
         Send(0, dsummon::EncodeReq());
-        Log("direct summon: asked the host again (its game was ending the session we left)");
+        Log("direct summon: asked the host again (its game was ending a session, setting up its dungeon or summoning a "
+            "sign)");
     } else if (a == dsummon::Action::Deliver) {
         const bool ok = DeliverSummon(room, host_name);
         std::lock_guard<std::mutex> lk(DS().mu);

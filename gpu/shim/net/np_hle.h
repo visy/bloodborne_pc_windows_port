@@ -31,6 +31,8 @@ using HostClosedRoomHook = void (*)(const std::string& why);
 void set_host_closed_room_hook(HostClosedRoomHook hook);
 // ms since a member left (or was dropped from) the room we are in; a large value when none did.
 std::int64_t ms_since_member_left();
+// ms since a member joined the room we are in (a new member, not an address refresh); large when none did.
+std::int64_t ms_since_member_joined();
 
 // NpSignaling, told by NpMatching2 about room members:
 // a member whose address is now in the peer table: connections to it can announce;
