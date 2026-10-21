@@ -4367,7 +4367,7 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // 0.6.9, correct over seamless: every death takes the respawn load. A guest revived in place
         // could not be hit until its next load (enemy attacks passed through it; PR #6 report). The
         // cause: the death puts the chr's hit bodies on the dead collision layer; the revive's
-        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab2).
+        // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3).
         // BB_PARTY_GUEST_REVIVE_INPLACE=1: the in-place revive.
         static const bool inplace = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_INPLACE"));
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
