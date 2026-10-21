@@ -1959,12 +1959,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             list.erase(std::remove_if(list.begin(), list.end(),
                                       [&](const auto& e) {
                                           float at[3] = {};
-                                          return !balance::ChrPosition(e.chr, at) || std::fabs(at[1] - me[1]) > 3.0f;
+                                          // HP 200 or more: the weak ones (HP 120 near the Great Bridge)
+                                          // walked off and never struck (smoke s3c).
+                                          return !balance::ChrPosition(e.chr, at) || std::fabs(at[1] - me[1]) > 3.0f ||
+                                                 balance::EnemyHp(e.chr) < 200;
                                       }),
                        list.end());
             const int k = here ? PickEnemyKillTarget(list, 0, me, 500.0f) : -1;
             if (k < 0) {
-                Log("test: %s 0: no living enemy on this floor (height %.1f, +-3 m) within 500 m", TravelStepName(step.kind),
+                Log("test: %s 0: no living enemy (HP 200+) on this floor (height %.1f, +-3 m) within 500 m", TravelStepName(step.kind),
                     double(me[1]));
             }
             if (k >= 0) {
