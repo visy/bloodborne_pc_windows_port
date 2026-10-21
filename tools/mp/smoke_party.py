@@ -514,7 +514,7 @@ GROUP_UNTIL = {
     "death": ["1:guest: respawned at the host's lamp|guest: died alone: revived|revived at"],
     "travel": ["1:map - -> m24_01", "2:map - -> m24_01"],
     "boss": ["1:cutscene 24010010"],
-    "host_death": ["0:spectating: following"],
+    "host_death": ["0:spectating: following", "1:Party HUD: slot 0 spectating"],
     "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
@@ -530,6 +530,8 @@ GROUP_UNTIL = {
     "streamkill": [SK_UNTIL],
     "gather": GA_UNTIL,
 }
+# --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
+GROUP_HOLD = {"host_death": 10}  # the spectate on every screen (the guests' panels: "Spectating")
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
 
@@ -539,6 +541,9 @@ def narrow_phase(ph, only):
     if not mine or NEEDS_CRASH & set(mine):
         return ph
     ph = dict(ph, until=[u for g in mine for u in GROUP_UNTIL.get(g, [])] or ph["until"], crash=[])
+    hold = max([GROUP_HOLD.get(g, 0) for g in mine] + [ph.get("until_hold", 0)])
+    if hold:
+        ph["until_hold"] = hold
     return ph
 
 
@@ -735,7 +740,12 @@ def check_s1(v, L):
         need(v, L, "s1 guest-started intro on guest 1 (live mirror)", 1, r"(?i)live mirror|24010010", gm)
     hd = need(v, L, "s1 host death in the fight", 0, HOST_DIED, gm or 0)
     if hd is not None:
-        need(v, L, "s1 host limbo + spectate", 0, r"spectating: following", hd)
+        sp = need(v, L, "s1 host limbo + spectate", 0, r"spectating: following", hd)
+        if sp is not None:
+            # The guests' party panels: "Spectating" with the host's body spot, not the carried chr's
+            # "0.2 m" (its VITALS flag kVitalsSpectating).
+            need(v, L, "s1 host limbo: guest 1's panel shows the host spectating", 1,
+                 r"Party HUD: slot 0 spectating", sp - 2)
     need(v, L, "s1 wipe: the party respawns together", 0, WIPE_RX, hd or 0)
     check_common(v, L, "s1")
 
