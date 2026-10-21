@@ -71,6 +71,11 @@ CLERIC_CLEAR = "12411700,12411701,12411702,12411703,12414700,12414701,12414223,7
 # + the boss reward's ledger flag (lot 50000010, Sword Hunter Badge): given again at the kill, so the
 # summoned guest gets an item box (its OK row, pard3)
 CLERIC_CLEAR_REWARD = CLERIC_CLEAR + ",60009036"
+# A treasure lot of one Pebble (goods 1230, maxNum 20, maxRepositoryNum 99 at EquipParamGoods +0x48)
+# and its flag (cleared so the host's award rolls it).
+PEBBLE_LOT, PEBBLE_FLAG = "2100000", "52100000"
+STORAGE_GIVE = (r"lot 2100000 .*goods 1230 x1 \(held 20 -> 20, past the maximum: the game's give list, "
+                r"storage room (\d+) -> (\d+)")
 GASCOIGNE_TRIGGER = "-48.76:-40.92:72.44"  # region 2412815 (the intro's trigger box)
 CLERIC_TRIGGER_HOST = "-136.5:-26.6:52.8"   # region 2412805 (first fight)
 CLERIC_SPOT_GUEST = "-134.6:-26.6:54.7"
@@ -121,6 +126,8 @@ def phase_s2(only):
         "host_kill=2410800@12%m24_01",                            # the boss kill (its defeat path)
     ])
     g1 = ",".join([
+        "goods=1230:20",                    # Pebbles at their inventory maximum (20): the host's Pebble goes to storage
+        "watch_text=Unable to acquire",     # the game's "inventory or storage max" box: must not show
         "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
         "guest_press=0x4000@16%m24_01", "guest_press=0x4000@4%m24_01",  # Cross: OK on the reward's item box
         "guest_leave@10%m24_01",            # Leave right after the kill (no load between), then Rejoin
@@ -136,8 +143,11 @@ def phase_s2(only):
         until = ["0:cooperators [01] -> 2"]  # after the guest crash: back in the host's room
     return dict(
         name="s2", seconds=480,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD, "BB_PARTY_TEST_INVINCIBLE=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR_REWARD + "," + PEBBLE_FLAG, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              # the host's own award of a Pebble treasure lot (host-only, 20 s after the join): the
+              # summoned guest at its Pebble maximum gets it into its storage (items.md 10.4)
+              "0:BB_PARTY_ITEMS_HOST_TEST=" + PEBBLE_LOT,
               # crash-restarted games: no second run of the chain; the restarted host Leaves last
               "0:BB_PARTY_DIRECTOR_TEST_RESTART=host_leave@25", "1:BB_PARTY_DIRECTOR_TEST_RESTART=none",
               "2:BB_PARTY_DIRECTOR_TEST_RESTART=none"],
@@ -169,7 +179,8 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following"],
     "wipe": [WIPE_UNTIL],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
-    "itembox": ["1:item notice closed|lot 50000010 .*not given while summoned|owed key item: lot 50000010"],
+    "itembox": ["1:item notice closed|lot 50000010 .*not given while summoned|owed key item: lot 50000010|"
+                r"gave .*lot 50000010 .*while summoned", "1:" + STORAGE_GIVE],
     "rejoin_kill": ["1:guest_rejoin: Party > Rejoin pressed"],
 }
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
@@ -347,9 +358,22 @@ def check_s2(v, L, d: Path):
         # shows the box.
         ib = need(v, L, "s2 reward on the summoned guest (item box or owed key item)", 1,
                   r"item notice up on a summoned guest|lot 50000010 .*not given while summoned; waits for the own world|"
-                  r"owed key item: lot 50000010", 0)
+                  r"owed key item: lot 50000010|gave .*lot 50000010 .*while summoned", 0)
         if ib is not None and L.find(1, r"item notice up on a summoned guest", k):
             need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
+    # Goods past the inventory maximum land in the storage (items.md 10.4: the +0x48 storage limit
+    # and the give list), one in, no "Unable to acquire" box and nothing left on the ground.
+    sg = L.find(1, STORAGE_GIVE)
+    if sg is None:
+        need(v, L, "s2 item box: a Pebble past the maximum lands in the storage", 1, STORAGE_GIVE)
+    else:
+        m = re.search(STORAGE_GIVE, sg[1])
+        a, b = int(m.group(1)), int(m.group(2))
+        v.step("s2 item box: a Pebble past the maximum lands in the storage", b == a - 1,
+               "+%.1f s inst1: storage room %d -> %d" % (sg[0], a, b))
+    none_of(v, L, "s2 item box: no 'Unable to acquire' box on guest 1", r"text shows: \"Unable to acquire", 0, 1e9, (1,))
+    none_of(v, L, "s2 item box: no Pebble left on the ground (no give counted as Full)",
+            r"lot 2100000 .*(Full|skip .*while summoned)", 0, 1e9, (1,))
     lv = need(v, L, "s2 Leave after the boss kill", 1, r"guest_leave: Party > Leave pressed", k or 0)
     rj = need(v, L, "s2 Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", lv or 0) if lv else None
     if rj is not None:
