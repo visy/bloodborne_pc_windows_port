@@ -215,7 +215,7 @@ static void OwnBodyCover() {
     const auto alpha = [&](float x, float z) { return hud::OwnBodyTagAlpha(box(x, z, hud::kMemberBodyHalfWidth), me); };
     assert(Near(alpha(0, 8), 0.0f));     // straight behind us: hidden
     assert(Near(alpha(0.4f, 8), 0.0f));  // still all behind our coat
-    const float half_out = alpha(0.5f, 8);  // 61 % covered: fading
+    const float half_out = alpha(0.5f, 8);  // 57 % covered: fading
     assert(half_out > 0.5f && half_out < 0.8f);
     assert(Near(alpha(0.6f, 8), 1.0f));  // mostly beside us: shown
     assert(Near(alpha(3, 8), 1.0f));     // beside us: shown
@@ -223,7 +223,7 @@ static void OwnBodyCover() {
     assert(Near(alpha(0, 2), 1.0f));     // in front of us: shown
     assert(Near(alpha(0, 60), 0.0f));    // far behind us, small: hidden too
     assert(!box(0, -2, hud::kMemberBodyHalfWidth).valid && Near(alpha(0, -2), 1.0f));  // behind the camera
-    assert(Near(hud::OwnBodyTagAlpha(box(0, 8, 0.12f), hud::ScreenBox{}), 1.0f));      // our position unknown
+    assert(Near(hud::OwnBodyTagAlpha(box(0, 8, hud::kMemberBodyHalfWidth), hud::ScreenBox{}), 1.0f));      // our position unknown
     hud::ScreenBox a, b;
     a.valid = b.valid = true;
     a.x1 = a.y1 = 10;

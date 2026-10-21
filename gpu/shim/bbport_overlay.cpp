@@ -2668,40 +2668,45 @@ void PartyHud() {
         if ((u < 0.34f && v < 0.26f) || (u > 0.80f && v > 0.86f)) {
             continue;
         }
-        const float cover = party::hud::OwnBodyTagAlpha(
-            party::hud::BodyBox(cam.view.data(), cam.proj.data(), pos, display.x, display.y,
-                                party::hud::kMemberBodyHalfWidth),
-            me_box);
+        const party::hud::ScreenBox member_box = party::hud::BodyBox(
+            cam.view.data(), cam.proj.data(), pos, display.x, display.y, party::hud::kMemberBodyHalfWidth);
+        const float cover = party::hud::OwnBodyTagAlpha(member_box, me_box);
+        const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
         {
             static bool behind_logged[party::kMaxVitals];
-            const int slot = c.slot >= 0 && c.slot < party::kMaxVitals ? c.slot : 0;
             if (behind_logged[slot] != (cover <= 0.0f)) {
                 behind_logged[slot] = cover <= 0.0f;
-                std::printf("Party HUD: tag %s %s\n", c.name,
-                            cover <= 0.0f ? "hidden: behind this player's own character" : "out from behind this player");
+                std::printf("Party HUD: tag %s %s (its box x %.0f..%.0f depth %.1f, ours x %.0f..%.0f depth %.1f)\n",
+                            c.name,
+                            cover <= 0.0f ? "hidden: behind this player's own character" : "out from behind this player",
+                            member_box.x0, member_box.x1, member_box.depth, me_box.x0, me_box.x1, me_box.depth);
             }
         }
-        if (cover <= 0.0f) {
-            continue;
-        }
-        {   // Test aids: BB_PARTY_HUD_TAGLOG=1 logs the tag's distance / camera depth / anchor once a
-            // second (plate measurements), BB_PARTY_HUD_TAGLOG=frame every frame with the chr position
-            // used and the camera's age; BB_PARTY_HUD_TAG_HIDE=1 draws no tag (the game's plate alone).
+        {   // Test aids: BB_PARTY_HUD_TAGLOG=1 logs each tag's distance / camera depth / anchor once a
+            // second (plate measurements; the own-body cover with both boxes), BB_PARTY_HUD_TAGLOG=frame
+            // every frame with the chr position used and the camera's age; BB_PARTY_HUD_TAG_HIDE=1 draws
+            // no tag (the game's plate alone).
             static const char* const taglog_env = std::getenv("BB_PARTY_HUD_TAGLOG");
             static const bool taglog = taglog_env != nullptr, every_frame = taglog && taglog_env[0] == 'f';
-            static std::int64_t last_log = 0;
-            if (taglog && (every_frame || party::hud::NowMs() - last_log >= 1000)) {
-                last_log = party::hud::NowMs();
+            static std::int64_t last_log[party::kMaxVitals] = {};
+            if (taglog && (every_frame || party::hud::NowMs() - last_log[slot] >= 1000)) {
+                last_log[slot] = party::hud::NowMs();
                 std::printf("Party HUD: tagdiag %s d=%.2f depth=%.2f x=%.1f y=%.1f display=%.0fx%.0f t=%lld "
-                            "chr=(%.3f %.3f %.3f) %s board=(%.3f %.3f %.3f) cam_age=%lld\n",
+                            "chr=(%.3f %.3f %.3f) %s board=(%.3f %.3f %.3f) cam_age=%lld cover_alpha=%.2f "
+                            "box=(%.0f..%.0f, %.0f..%.0f) own=(%.0f..%.0f, %.0f..%.0f)\n",
                             c.name, d, sp.depth, sp.x, sp.y, display.x, display.y,
-                            static_cast<long long>(last_log), pos[0], pos[1], pos[2], live ? "live" : "board",
-                            c.pos[0], c.pos[1], c.pos[2], static_cast<long long>(BbCamera::NowMs() - cam.at_ms));
+                            static_cast<long long>(last_log[slot]), pos[0], pos[1], pos[2], live ? "live" : "board",
+                            c.pos[0], c.pos[1], c.pos[2], static_cast<long long>(BbCamera::NowMs() - cam.at_ms), cover,
+                            member_box.x0, member_box.x1, member_box.y0, member_box.y1, me_box.x0, me_box.x1,
+                            me_box.y0, me_box.y1);
             }
             static const bool hide = std::getenv("BB_PARTY_HUD_TAG_HIDE") != nullptr;
             if (hide) {
                 continue;
             }
+        }
+        if (cover <= 0.0f) {
+            continue;
         }
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f * cover;
         // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.

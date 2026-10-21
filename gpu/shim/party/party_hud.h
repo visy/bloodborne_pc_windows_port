@@ -226,7 +226,7 @@ float CoveredFraction(const ScreenBox& a, const ScreenBox& b);
 /// own (kOwnBodyHalfWidth: coat and arms) covers by more than kCoverFadeFrom, fades; by
 /// kCoverHidden its tag is gone. Only our own body counts: a member behind a wall keeps its tag.
 /// Returns the tag's alpha factor (1 shown .. 0 hidden); 1 when either box is not valid.
-constexpr float kOwnBodyHalfWidth = 0.2f, kMemberBodyHalfWidth = 0.12f;
+constexpr float kOwnBodyHalfWidth = 0.2f, kMemberBodyHalfWidth = 0.17f;
 constexpr float kOwnCoverDepthM = 0.5f, kCoverFadeFrom = 0.5f, kCoverHidden = 0.8f;
 float OwnBodyTagAlpha(const ScreenBox& member, const ScreenBox& me);
 /// A party member's colour by slot (0 host .. 3), RGB 0..1: the same everywhere a member is drawn
