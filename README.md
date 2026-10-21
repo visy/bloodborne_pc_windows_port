@@ -478,7 +478,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
-| vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); co-op bug reports |
+| vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); Chalice Dungeon entry with a party (PR #8); co-op bug reports |
 | zackcage6 | Testing and bug reports |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
