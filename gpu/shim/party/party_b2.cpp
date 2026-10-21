@@ -7797,6 +7797,7 @@ struct DirectSummon {
     double req_at = -1e9, served_at = -1e9, done_at = -1e9;
     bool done_ok = false, refused_wait = false;
     double refused_at = -1e9;  // host: the last refusal (HostBellHeld: an unanswered request holds the bell)
+    std::map<int, double> failed_at;  // host: slot -> its last failed delivery (UnreachableHold)
 };
 DirectSummon& DS() {
     static DirectSummon d;
@@ -7888,6 +7889,34 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         req.swap(DS().requests);
         names = DS().names;
     }
+    // Unreachable guests (UnreachableHold): their signs stay hidden while they are unheard, also
+    // when they do not ask (the hold is renewed here every 5 s; heard again: it ends).
+    static double unreach_tick = 0;
+    if (now - unreach_tick > 5.0) {
+        unreach_tick = now;
+        std::map<int, double> failed;
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            failed = DS().failed_at;
+        }
+        for (const auto& [fslot, fat] : failed) {
+            const std::string fname = names.count(fslot) ? names[fslot] : std::string();
+            if (fname.empty()) continue;
+            const std::int64_t hm = bbnet::party::FromApi::instance().udp_heard_ms(fname, false);
+            const double heard_at = hm >= 0 ? Now() - double(hm) / 1000.0 : 0;
+            if (dsummon::UnreachableHold(fat, heard_at, Now())) {
+                bbnet::party::FromApi::instance().hide_unreachable(fname, 35000);
+            } else {
+                bbnet::party::FromApi::instance().hide_unreachable(fname, 0);
+                {
+                    std::lock_guard<std::mutex> lk(DS().mu);
+                    DS().failed_at.erase(fslot);
+                }
+                Log("direct summon: slot %d (%s): %s since its failed join: summoned again", fslot, fname.c_str(),
+                    heard_at >= fat ? "its UDP was heard on the party port" : "the unreachable hold ran out");
+            }
+        }
+    }
     static double first = 0;
     static const bool gather_dsum = !EnvOff("BB_PARTY_GATHER_DSUM");  // A5: carry across maps (default on)
     std::vector<int> keep, defer;
@@ -7938,6 +7967,43 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
             }
         }
         deferred_at.erase(slot);
+        // An unreachable joiner in the room made the guest already in the session leave
+        // (OnMatchingError): a guest whose last join failed is served once its UDP is heard again.
+        double failed = 0;
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            if (DS().failed_at.count(slot)) failed = DS().failed_at[slot];
+        }
+        if (failed > 0 && !name.empty()) {
+            static std::map<int, double> probed_at;
+            const bool probe = now - probed_at[slot] > 15.0;
+            if (probe) probed_at[slot] = now;
+            const std::int64_t heard_ms = bbnet::party::FromApi::instance().udp_heard_ms(name, probe);
+            const double heard_at = heard_ms >= 0 ? Now() - double(heard_ms) / 1000.0 : 0;
+            if (!dsummon::UnreachableHold(failed, heard_at, Now())) {
+                {
+                    std::lock_guard<std::mutex> lk(DS().mu);
+                    DS().failed_at.erase(slot);
+                }
+                bbnet::party::FromApi::instance().hide_unreachable(name, 0);
+                Log("direct summon: slot %d (%s): %s since its failed join: served again", slot, name.c_str(),
+                    heard_at >= failed ? "its UDP was heard on the party port" : "the unreachable hold ran out");
+            } else {
+                bbnet::party::FromApi::instance().hide_unreachable(name, 35000);
+                Send(slot, dsummon::EncodeRefuse());
+                {
+                    std::lock_guard<std::mutex> lk(DS().mu);
+                    DS().refused_wait = false;
+                    DS().refused_at = Now();
+                }
+                Log("direct summon: slot %d (%s) refused (its last join failed and its UDP has not been heard on the "
+                    "party port since%s; its signs are held too: an unreachable joiner in the room makes the members "
+                    "in the session leave)", slot, name.c_str(), probe ? "; probing it now" : "");
+                party::status::SetLastEvent("UDP from " + name + " is blocked: its last join failed and nothing from "
+                                            "its game reaches this host's party port; no summon until it does");
+                continue;
+            }
+        }
         if (const char* why = dsummon::HostRefusal(v)) {
             const dsummon::Busy wait = dsummon::RefusalWait(v);
             Send(slot, dsummon::EncodeRefuse(wait));
@@ -8199,17 +8265,28 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
             std::lock_guard<std::mutex> lk(DS().mu);
             if (DS().names.count(from_slot)) name = DS().names[from_slot];
         }
+        // A failure: no summon of it (direct or sign) until its UDP is heard (UnreachableHold); a
+        // probe now: a reachable guest answers within a second and its signs are offered again.
+        std::int64_t heard_ms = -1;
+        if (!ok && !name.empty()) heard_ms = bbnet::party::FromApi::instance().udp_heard_ms(name, true);
+        const bool heard_now = heard_ms >= 0 && heard_ms < 1500;
         {
             std::lock_guard<std::mutex> lk(DS().mu);
             DS().done_at = Now();
             DS().done_ok = ok;
+            if (ok || heard_now) DS().failed_at.erase(from_slot);
+            else DS().failed_at[from_slot] = Now();
         }
         if (!name.empty()) {
             bbnet::party::FromApi::instance().hold_signs(name, ok ? 3000 : 1);
+            bbnet::party::FromApi::instance().hide_unreachable(name, ok || heard_now ? 0 : 35000);
             if (!ok) bbnet::party::FromApi::instance().renew_signs(name);
         }
         Log("direct summon: slot %d (%s) reports %s", from_slot, name.c_str(),
-            ok ? "it joined" : "a failure: its signs are offered again");
+            ok         ? "it joined"
+            : heard_now ? "a failure: its signs are offered again (its UDP was heard just now)"
+                        : "a failure: its UDP is not heard on the party port: no summon of it (signs held) until it is "
+                          "(probing it)");
         return;
     }
     default:

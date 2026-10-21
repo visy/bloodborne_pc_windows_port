@@ -5,6 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest that cannot be reached no longer knocks other guests out of the host's world**: when a guest's join failed because nothing from its game reached the host (a blocked port, a firewall), the host summoned it again and again, and each time it entered the host's session the guest already playing there was sent back to its own world. The host now checks that it can hear such a guest's game before it summons it again (by either summon path); until then the host's party status says its UDP is blocked.
 <<<<<<< HEAD
 - **Fixed: one failed join no longer blocks every later summon**: when a guest's join to the host failed (a timeout over the Internet, a blocked port, a crash while joining), the host's game kept trying to summon that guest's new sign every 30 s, and every other join to the host was turned away for minutes with "the host's game is summoning a sign". A sign summon that brings nobody in within 10 s no longer holds the others back, and a guest turned away for it asks again a moment later instead of waiting for its next bell.
 =======

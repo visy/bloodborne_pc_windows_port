@@ -223,6 +223,10 @@ const char* HostRefusal(const HostView& v) {
     return nullptr;
 }
 
+bool UnreachableHold(double failed_at, double heard_at, double now) {
+    return failed_at > 0 && heard_at < failed_at && now - failed_at < kUnreachableMax;
+}
+
 Busy RefusalWait(const HostView& v) {
     if (!v.world_up || v.loading || v.travel_pending) return Busy::None;  // the sign path follows the host
     if (!v.host_ready) return Busy::Prologue;
