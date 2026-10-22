@@ -1804,7 +1804,7 @@ def phase_nfa(only):
 # goes to the Dream.
 CLG_LAMP_OBJ2 = "2901953"   # the lift's bottom floor lamp object (return point 2902953)
 CLG_UNTIL = r"0:map .* -> m21_00"
-CLG_UNTIL_G = r"1:map .* -> m21_00"
+CLG_UNTIL_G = r"1:travel step (\d+)/: "  # guest 1's last step: 40 s in the Dream (r2: its earlier m21 ended the run)
 
 
 def phase_clg(only):
