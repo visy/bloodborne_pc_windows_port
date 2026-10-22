@@ -215,7 +215,7 @@ void RefreshConfirmHelps() {
 }
 
 constexpr float SharpnessStep = 0.2f; // Display's slider: 0 off, 1..10 -> 0.2 .. 2.0
-constexpr int LodValues[] = {-2, 0, 1};
+constexpr int LodValues[] = {0, 1};
 const float OpacityTable[11] = {0.10f, 0.20f, 0.30f, 0.40f, 0.50f, 0.60f, 0.70f, 0.75f, 0.80f, 0.90f, 1.00f};
 const float ScaleTable[11] = {0.50f, 0.60f, 0.70f, 0.80f, 0.90f, 1.00f, 1.20f, 1.40f, 1.60f, 1.80f, 2.00f};
 const float SensTable[11] = {0.25f, 0.40f, 0.50f, 0.60f, 0.80f, 1.00f, 1.25f, 1.50f, 2.00f, 3.00f, 5.00f};
@@ -723,17 +723,17 @@ void DefineAll() {
     AddRow(Setting(
                Kind::Steps,
                [](const Values& v) {
-                   int index = 1;
-                   for (int i = 0; i < 3; ++i) {
+                   int index = 0;
+                   for (int i = 0; i < 2; ++i) {
                        if (LodValues[i] == v.model_lod) index = i;
                    }
                    return index;
                },
-               [](int i) { BbSettings::Get().model_lod = LodValues[std::clamp(i, 0, 2)]; }, 3),
+               [](int i) { BbSettings::Get().model_lod = LodValues[std::clamp(i, 0, 1)]; }, 2),
            "Model detail", "Детализация",
-           "After a restart: 0-2 highest, 3-7 game default, 8-10 lower",
-           "После перезапуска: 0-2 максимальная, 3-7 как в игре, 8-10 ниже",
-           {AddText("Highest", "Максимальная"), AddText("Game default", "Как в игре"), AddText("Lower", "Ниже")},
+           "After a restart: 0-4 game default, 5-10 lower",
+           "После перезапуска: 0-4 как в игре, 5-10 ниже",
+           {AddText("Game default", "Как в игре"), AddText("Lower", "Ниже")},
            Kind::Steps);
     upscaler_field = Setting(
         Kind::List, [](const Values& v) { return v.upscaler.load(); },

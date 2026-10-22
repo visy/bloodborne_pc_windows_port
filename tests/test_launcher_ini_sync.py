@@ -84,12 +84,20 @@ class IniSync(unittest.TestCase):
             off_patch, on_patch = patches.EFFECTS[key]
             self.assertEqual(on_patch if on == "1" else off_patch, name)
         # Each ini value applies the patch the launcher names for it; the withheld "Lowest" patch
-        # (it drops map floors) is written as Lower and patches.py applies Lower for an old 2.
+        # (it drops map floors) is written as Lower and patches.py applies Lower for an old 2; the
+        # withheld "Highest" patch (far objects not drawn) is written as the game's own detail and
+        # patches.py applies nothing for an old -2.
         shown = {v: k for k, v in self.L.MODEL_LOD_PATCHES.items() if k not in self.L.WITHHELD_PATCHES}
         self.assertEqual(shown, {v: k for v, k in patches.MODEL_LOD.items() if v != "2"})
         self.assertEqual(self.L.MODEL_LOD_PATCHES["Model LOD 2 (Lowest)"], "1")
         self.assertEqual(patches.MODEL_LOD["2"], "Model LOD 1 (Lower)")
-        self.assertNotIn("Model LOD 2 (Lowest)", {p["name"] for p in self.L.load_xml_patches()})
+        self.assertEqual(self.L.MODEL_LOD_PATCHES["Model LOD -2 (Highest)"], "0")
+        self.assertNotIn("-2", patches.MODEL_LOD)
+        self.assertEqual(patches.effect_patches({"model_lod": "-2"}), [])
+        listed = {p["name"] for p in self.L.load_xml_patches()}
+        self.assertNotIn("Model LOD 2 (Lowest)", listed)
+        self.assertNotIn("Model LOD -2 (Highest)", listed)
+        self.assertEqual(self.L.effect_patches_ini({"Model LOD -2 (Highest)"})["model_lod"], "0")
 
     # ---- launch environment
     def test_no_game_setting_env(self):

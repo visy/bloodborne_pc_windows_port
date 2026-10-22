@@ -248,11 +248,11 @@ static void LiveValues() {
     const bool rot_was = s.party_rot;
     s.party_rot = !rot_was;
     s.party_overhead = (s.party_overhead + 1) % 5;
-    s.model_lod = s.model_lod == 1 ? -2 : 1;
+    s.model_lod = s.model_lod == 1 ? 0 : 1;
     Advance(16);
     assert(*P::Byte(rot.field) == P::u8(!rot_was));
     assert(*P::Value(above.field) == s.party_overhead);
-    assert(P::ChoiceFromPosition(*P::Byte(detail.field), 3) == (s.model_lod == 1 ? 2 : 0));
+    assert(P::ChoiceFromPosition(*P::Byte(detail.field), 2) == (s.model_lod == 1 ? 1 : 0));
     // The page's own change wins over an outside one made in the same frame.
     *P::Byte(rot.field) = P::u8(rot_was);
     Advance(16);

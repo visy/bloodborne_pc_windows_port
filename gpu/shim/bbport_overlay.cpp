@@ -1100,15 +1100,15 @@ void UpscalerTab() {
 void EffectsTab() {
     auto& s = BbSettings::Get();
     // No "Lowest (2)": the game then draws nothing for models without a third detail level
-    // (the Lecture Building's floor).
-    const char* lods[] = {T("Highest (-2)", "Максимальная (-2)"), T("Game default", "Как в игре"),
-                          T("Lower (1)", "Ниже (1)")};
-    static constexpr int lod_values[] = {-2, 0, 1};
-    int lod_index = 1;
-    for (int i = 0; i < 3; ++i) {
+    // (the Lecture Building's floor). No "Highest (-2)": the game then draws nothing for many
+    // objects past their nearest detail distance (Central Yharnam's corpses popped in and out).
+    const char* lods[] = {T("Game default", "Как в игре"), T("Lower (1)", "Ниже (1)")};
+    static constexpr int lod_values[] = {0, 1};
+    int lod_index = 0;
+    for (int i = 0; i < 2; ++i) {
         if (lod_values[i] == s.model_lod) lod_index = i;
     }
-    Choice("lod", T("Model detail", "Детализация моделей"), lod_index, 3, [&](int i) { return lods[i]; },
+    Choice("lod", T("Model detail", "Детализация моделей"), lod_index, 2, [&](int i) { return lods[i]; },
            [](int) { return true; },
            T("Level of detail of models (game patch). Applies after restarting the game.",
              "Детализация моделей (патч игры). Применяется после перезапуска игры."),

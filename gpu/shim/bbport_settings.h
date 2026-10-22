@@ -142,7 +142,7 @@ struct Values {
     std::atomic<bool> upscaler_scene_above_output{false};
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
-    std::atomic<int> model_lod{0}; ///< -2 highest .. 1 lower, 0 the game's (2 is read as 1)
+    std::atomic<int> model_lod{0}; ///< 0 the game's, 1 lower (2 is read as 1, -2 as 0)
     /// Motion blur resolution (0.6.2's "Volumetric effects"; the game's half-resolution motion blur
     /// buffers; volumetric_resolution.h; idea from a playtester): 0 game default, 1 = 2x the
     /// pixels, 2 = the scene's resolution (ini volumetric_res, BB_VOLUMETRIC_RES). Live.

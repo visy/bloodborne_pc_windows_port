@@ -284,7 +284,10 @@ def intel_tonemap_fix(env=os.environ, cpuinfo=None):
 # model_lod: -2 highest, 0 the game's, 1 lower. 2 ("Model LOD 2 (Lowest)") applies the Lower patch:
 # with the lowest level the game draws nothing for a model that has no third level of detail, and
 # some map floors have none (the Lecture Building's floor showed the background through it).
-MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 1 (Lower)'}
+# -2 ("Model LOD -2 (Highest)") applies nothing: its bias reaches one of the game's three model draw
+# paths only, and many objects past their nearest level of detail are then not drawn at all
+# (Central Yharnam's corpses popped in close and vanished further away).
+MODEL_LOD={'1':'Model LOD 1 (Lower)','2':'Model LOD 1 (Lower)'}
 
 
 DEBUG_MENU='Restore Debug Menu (READ NOTES)'
