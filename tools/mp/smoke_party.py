@@ -1793,6 +1793,52 @@ def phase_nfa(only):
     )
 
 
+# Phase clg (chalicelamp, ~6 min, 2 players): two guest reports in a Chalice Dungeon. The host Continues
+# in the Pthumeru dungeon's layer 1 boss room (chalice_pthumeru_inside), guest 1 is
+# summoned in (from chalice_hintertomb_ritual when present, as in cl). (1) The host lights the boss room's lamp 2901952 (its last lamp 2902952, whose template
+# spot in the party's table is 80 m off). (2) Guest 1 is warped 31 m above the floor and dies from the
+# fall: it must get up beside the host, never at the host's lamp's template spot (the report: "teleported
+# above the dungeon"). (3) Both ride the post-boss lift 2901004 down (31.5 -> 10.5): the guest's game
+# learns the car from the ride, no fall. (4) Guest 1 lights the bottom floor's lamp 2901953 and uses it:
+# "Return to the Hunter's Dream" (the report: nothing happened), then YES to the party travel: the party
+# goes to the Dream.
+CLG_LAMP_OBJ2 = "2901953"   # the lift's bottom floor lamp object (return point 2902953)
+CLG_UNTIL = r"0:map .* -> m21_00"
+CLG_UNTIL_G = r"1:map .* -> m21_00"
+
+
+def phase_clg(only):
+    host = ",".join(["log_pos", "god",
+                     "host_obj=%s:1.2:0@12%%m29" % CL_LAMP_OBJ,     # (1) light the boss room's lamp
+                     "host_press=0x4000@2%m29!",
+                     "host_move=-49.4:30.6:-91.0@4%m29!",          # beside the lamp: where the guest gets up
+                     "host_press=0@45%m29!",                       # (2) the guest's fall meanwhile
+                     "host_move=-65.0:31.6:-91.0@1%m29!?near=-64.6:31.6:-90.4:1.5",  # (3) onto the car
+                     "host_press=0@60%m29!"])                      # (4) the guest's lamp: the party travels
+    g1 = ",".join(["log_pos=0.5",
+                   "guest_move=-46.0:62.0:-92.0@25%m29!",         # (2) 31 m above the boss room's floor
+                   "guest_move=-64.6:31.6:-90.4@25%m29!",         # (3) onto the lift's car
+                   "guest_obj=%s:1.2:0@14%%m29!" % CLG_LAMP_OBJ2,  # (4) the bottom lamp: light it
+                   "guest_press=0x4000@2%m29!",
+                   "guest_obj=%s:1.2:0@9%%m29!" % CLG_LAMP_OBJ2,   # use it: prompt, the menu, YES, OK
+                   "guest_press=0x4000@4%m29!", "guest_press=0x4000@3%m29!",
+                   "guest_press=0x80@2%m29!", "guest_press=0x4000@1%m29!",
+                   "guest_press=0@40%m21!"])
+    watch = []
+    for rx, tag in ((r"died from a fall", "gfall"), (r"up again beside the nearest living member", "gup"),
+                    (r"Chalice Dungeon lift car", "car"), (r"lamp flag 729001", "dream"), (r"map .* -> m21_00", "m21")):
+        watch += ["--watch", "%s=%s@1,4" % (rx, tag)]
+    return dict(
+        name="clg", seconds=480, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
+        env=["BB_PARTY_TRAVEL_CHOICE=party"],
+        watch=watch,
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        crash=[],
+        until=[CLG_UNTIL, CLG_UNTIL_G],
+    )
+
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
           "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
@@ -3437,51 +3483,6 @@ def check_cl(v, L):
     none_of(v, L, "cl no GPU device lost / guest fault",
             r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
     check_common(v, L, "cl")
-
-
-# Phase clg (chalicelamp, ~6 min, 2 players): two guest reports in a Chalice Dungeon. The host Continues
-# in the Pthumeru dungeon's layer 1 boss room (chalice_pthumeru_inside), guest 1 is
-# summoned in (from chalice_hintertomb_ritual when present, as in cl). (1) The host lights the boss room's lamp 2901952 (its last lamp 2902952, whose template
-# spot in the party's table is 80 m off). (2) Guest 1 is warped 31 m above the floor and dies from the
-# fall: it must get up beside the host, never at the host's lamp's template spot (the report: "teleported
-# above the dungeon"). (3) Both ride the post-boss lift 2901004 down (31.5 -> 10.5): the guest's game
-# learns the car from the ride, no fall. (4) Guest 1 lights the bottom floor's lamp 2901953 and uses it:
-# "Return to the Hunter's Dream" (the report: nothing happened), then YES to the party travel: the party
-# goes to the Dream.
-CLG_LAMP_OBJ2 = "2901953"   # the lift's bottom floor lamp object (return point 2902953)
-CLG_UNTIL = r"0:map .* -> m21_00"
-CLG_UNTIL_G = r"1:map .* -> m21_00"
-
-
-def phase_clg(only):
-    host = ",".join(["log_pos", "god",
-                     "host_obj=%s:1.2:0@12%%m29" % CL_LAMP_OBJ,     # (1) light the boss room's lamp
-                     "host_press=0x4000@2%m29!",
-                     "host_move=-49.4:30.6:-91.0@4%m29!",          # beside the lamp: where the guest gets up
-                     "host_press=0@45%m29!",                       # (2) the guest's fall meanwhile
-                     "host_move=-65.0:31.6:-91.0@1%m29!?near=-64.6:31.6:-90.4:1.5",  # (3) onto the car
-                     "host_press=0@60%m29!"])                      # (4) the guest's lamp: the party travels
-    g1 = ",".join(["log_pos=0.5",
-                   "guest_move=-46.0:62.0:-92.0@25%m29!",         # (2) 31 m above the boss room's floor
-                   "guest_move=-64.6:31.6:-90.4@25%m29!",         # (3) onto the lift's car
-                   "guest_obj=%s:1.2:0@14%%m29!" % CLG_LAMP_OBJ2,  # (4) the bottom lamp: light it
-                   "guest_press=0x4000@2%m29!",
-                   "guest_obj=%s:1.2:0@9%%m29!" % CLG_LAMP_OBJ2,   # use it: prompt, the menu, YES, OK
-                   "guest_press=0x4000@4%m29!", "guest_press=0x4000@3%m29!",
-                   "guest_press=0x80@2%m29!", "guest_press=0x4000@1%m29!",
-                   "guest_press=0@40%m21!"])
-    watch = []
-    for rx, tag in ((r"died from a fall", "gfall"), (r"up again beside the nearest living member", "gup"),
-                    (r"Chalice Dungeon lift car", "car"), (r"lamp flag 729001", "dream"), (r"map .* -> m21_00", "m21")):
-        watch += ["--watch", "%s=%s@1,4" % (rx, tag)]
-    return dict(
-        name="clg", seconds=480, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
-        env=["BB_PARTY_TRAVEL_CHOICE=party"],
-        watch=watch,
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
-        crash=[],
-        until=[CLG_UNTIL, CLG_UNTIL_G],
-    )
 
 
 def check_clg(v, L):
