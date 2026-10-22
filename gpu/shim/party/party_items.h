@@ -171,6 +171,10 @@ bool MessengerGiftLot(std::int32_t lot);
 /// P2: the repeatable NPC gifts of common 9100 (Blood of Arianna 28000, Blood of Adella 32020,
 /// Iosefka's Blood Vial 23000, Blue Elixir 24060, Queenly Flesh 17010).
 bool RepeatGiftLotId(std::int32_t lot);
+/// 0.7.3: Valtr's gifts of m27 event 12700906 (43120 Impurity rune, flag 6676; 43130 League Staff,
+/// flag 6678; party_worldact OwnTalkGiftLot): per player (personal flags), never replayed, given by
+/// a guest to itself when its talk asked for them in the host's world.
+bool OwnTalkGiftLotId(std::int32_t lot);
 /// Keys of repeatable gifts: kRepeatKeyBase + n, far above every flag and ledger bit.
 constexpr std::int64_t kRepeatKeyBase = std::int64_t(1) << 40;
 /// The guest's own grant of repeatable gift `lot`, the `n`th this session (no flag, no ledger bit:
@@ -552,6 +556,10 @@ void ItemsTick();
 /// world: queued as its own grant (given while summoned like any grant). False: not such a lot or
 /// items off.
 bool OfferRepeatGift(std::int32_t lot);
+/// Guest (main thread): an own talk gift (OwnTalkGiftLotId) its talk asked for in the host's world:
+/// queued as its own grant (ItemSource::Own, the lot's personal flag: once per player). False: not
+/// such a lot, items off, or already queued.
+bool OfferOwnGift(std::int32_t lot);
 /// Test aid (main thread): the game's own item-lot award (AwardItemLot) for this player only: a
 /// guest's award in the host's world is not reported up as an NPC gift (D5), so the host does not
 /// receive it too (BB_PARTY_GUESTSVC_TEST `lot=N`).

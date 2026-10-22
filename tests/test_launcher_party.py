@@ -401,6 +401,28 @@ class PartyRules071Settings(unittest.TestCase):
         self.assertIn('section(3, 0, "Shared world (host)")', src)
 
 
+class CovenantRuleSetting(unittest.TestCase):
+    """0.7.3: Covenant outcomes per player, the host's rule (System > Shared world): bbport.ini
+    party_covenant_per_player, on by default, a Party Rules & Sync checkbox, no variable set."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_ini_and_checkbox(self):
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        self.assertEqual(switches["party_covenant_per_player"], ("BB_PARTY_COVENANT_PER_PLAYER", True))
+        env = self.L.party_env({"party_mode": "host", "party_name": "A"})
+        self.assertIsNone(env["BB_PARTY_COVENANT_PER_PLAYER"])  # bbport.ini decides
+        self.assertEqual(self.L.party_rules_ini({}, "")["party_covenant_per_player"], "1")
+        self.assertEqual(self.L.party_rules_ini({"party_covenant_per_player": False}, "")["party_covenant_per_player"], "0")
+        from pathlib import Path
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn('"Covenant outcomes per player", var["party_covenant_per_player"]', src)
+
+
 class DirectSummonSetting(unittest.TestCase):
     """The launcher's Direct summon checkbox: BB_PARTY_DIRECT_SUMMON, on unless turned off."""
     @classmethod
