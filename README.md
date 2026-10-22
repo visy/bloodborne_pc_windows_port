@@ -4,7 +4,7 @@ Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Wind
 Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
 [Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-**Version 0.7.1** · Playable · Party co-op in development
+**Version 0.7.2** · Playable · Party co-op in development
 
 > No game files are included: you need your own decrypted dump with update 1.09 (any retail
 > release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
@@ -275,8 +275,10 @@ before anyone is in the game):
 
 - **Anyone can go through a boss fog first**, a first fight included: the fight starts for
   everyone and the others follow through the fog. A guest's first fight plays the intro cutscene on
-  every screen. The DLC bosses work the same way; Ebrietas and Lady Maria still start with the host
-  (a guest at that fog is told so), and Rom starts with anyone's hit.
+  every screen. The DLC bosses work the same way. Ebrietas, Lady Maria and Laurence start only with
+  what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
+  until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
+  starts with anyone's hit.
 - **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
   where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
   the guest is taken to the host with one loading screen.

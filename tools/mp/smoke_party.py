@@ -48,11 +48,36 @@ Phase bf (~3 min, 3 players, group `fight_load`): while the host fights Father G
 Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from the Great Bridge (its
   fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
   with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
-  safe floor.
+  safe floor; after each revive (guest and host) the camera follows the chr and it is drawn where it
+  stands (fallcam).
+Phase fd (~3 min, 2 players, group `fall_deep`): guest 1, its own last lamp the Central Yharnam lamp
+  ~95 m away, is dropped ~32 m onto the Great Bridge: a real fall death (the game's fall-death camera
+  on, not the kill plane of fl). It must get up at that far lamp with no loading screen, the fall-death
+  camera released, the render camera on its chr and the chr drawn where it stands (fallcam: the
+  "perpetual spectate" report), and walk away from the lamp.
+Phase fdj (~4 min, 2 players, group `fall_deep`): the same at the report's own spot, the shaft beside
+  Djura's tower in Old Yharnam (guest 1 walks off the ledge; the host's lamp ~150 m away).
+Phase sm (~5 min, 2 players, group `scene_mirror`): the host's cutscene live on a guest beside it:
+  Father Gascoigne's intro with both games running its event at once (the guest's own copy held,
+  the host's played within 1 s, once), then the Tomb of Oedon door into Oedon Chapel (scene 24000020)
+  with the guest 3 m behind the host still in m24_01 (played within 1 s; no replay after its walk in).
+Phase ld (~4 min, 2 players, group `ladder`): host and guest each take Cathedral Ward's ladder 2401024
+  from its foot and die on it (only once the ladder state is set), are revived in place at the lamp;
+  the ladder state must be gone and a stick walk must reach four points around the lamp.
 Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
   lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
   travel list shows only the host's world's lamps (both saves read from copies after the run).
+
+Phase br (~6 min, 2 players, group `boss_rooms`, the DLC of the default save): the party at the
+  Nightmare Grand Cathedral lamp (inside Laurence's room) without his skull: the guest walks out
+  through his fog and back in, no fight starts; the skull given to the host there starts it
+  (scene, bar on both), Laurence killed; then Ludwig killed and host and guest each walk through
+  the wall at the back of his arena and back (party_bossfog_rules.h, 2026-10-22 reports).
+Phase da (~3 min, 2 players, group `dream_apart`): host and guest in the host's Hunter's Dream; the
+  host leaves alone by a headstone; the guest left behind must get its action buttons back (the
+  leave state's hold lifted) and use a headstone itself: its menu opens, it travels and arrives
+  (party_stay_rules.h, a player's report: the guest was stuck in the Dream).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -905,6 +930,104 @@ def phase_fl(only):
     )
 
 
+# Phase fd (fallcam, ~3 min, 2 players, group `fall_deep`): a guest's real fall death far from its lamp
+# (a player's report: an 18 m fall beside Djura's tower, up at the host's lamp 158 m away with no load,
+# then the camera stuck on the sky and the own chr never shown again). Guest 1's own last lamp is the
+# Central Yharnam lamp 2412953 (~95 m from the Great Bridge); it walks 3 m onto the bridge (its last
+# safe ground), then is put ~32 m above it and lands: the game's own fall death (its fall-death camera
+# latch WorldChrMan +0x68 on, which fl's kill plane never sets). After its held death it gets up at that
+# lamp in place: the latch released, the camera behind its chr (within 12 m), drawn where it stands,
+# and it walks off the lamp under the player's stick (the camera-relative controls work).
+FD_UNTIL = r"1:travel step (\d+)/\1: guest_stick"
+
+
+def phase_fd(only):
+    host = ",".join(["log_pos", "echoes=3000", "host_warp=2412952@15"])
+    g1 = ",".join(["log_pos=0.5", "echoes=4000",
+                   "guest_lastlamp=2412953@8%m24_01",             # its own last lamp: ~95 m from the bridge
+                   "guest_stick=-127.0:62.0:0.7:20@2%m24_01!",    # onto the bridge: the safe ground
+                   "guest_press=0@2%m24_01!",
+                   "guest_move=-127.0:5.0:62.0@1%m24_01",         # ~32 m above the bridge's floor
+                   "guest_press=0@3%m24_01!", "guest_press=0@5%m24_01!",   # up again at the lamp (alive)
+                   "guest_stick=-41.0:79.0:0.7:15@2%m24_01!"])    # then off the lamp: ~6 m, camera-relative
+    return dict(
+        name="fd", seconds=360, count=2, headless=0, pads=(0, 1),
+        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", "guest: died from a fall=fallrevive@0.5,3", "--watch", r"revive view \(guest=view@0.2,3"],
+        crash=[], until=[FD_UNTIL], until_hold=8,
+    )
+
+
+# Phase fdj (fallcam, ~4 min, 2 players, group `fall_deep`): the report's own spot. The host travels to
+# the Old Yharnam lamp 2302950 (126.4, -65.2, 36.0); guest 1 is put on the floor beside Djura's tower
+# where the player stood (3.7, -53.8, -63.2) and walks 4 m out in one direction after another (-x,
+# +x, +z, -z; back on the spot before each) until one leads over the edge into the shaft (the
+# player: HP 0 in the air at -72.2 after an 18 m drop, the body at -78.8, the game's fall-death state
+# 04..40 / 8800 and its fall-death camera on). It must get up at the host's lamp ~150 m away with no
+# load, the fall-death camera released and the camera on its chr.
+FDJ_UNTIL = r"1:travel step (\d+)/\1: guest_press"
+FDJ_TOP = "3.7:-53.3:-63.2"
+
+
+def phase_fdj(only):
+    host = ",".join(["log_pos", "echoes=3000", "host_warp=2302950@15"])
+    g1 = ["log_pos=0.5", "echoes=4000"]
+    first = True
+    for tx, tz in ((-0.3, -63.2), (7.7, -63.2), (3.7, -59.2), (3.7, -67.2)):
+        # back on the floor (alive: after a fall's revive at the lamp too), then 4 m out
+        g1 += ["guest_press=0@%d%%m23_00!" % (8 if first else 2), "guest_move=%s@1%%m23_00" % FDJ_TOP,
+               "guest_stick=%.1f:%.1f:0.5:8@2%%m23_00!" % (tx, tz), "guest_press=0@3%m23_00!"]
+        first = False
+    g1 += ["guest_press=0@5%m23_00!"]
+    return dict(
+        name="fdj", seconds=420, count=2, headless=0, pads=(0, 1),
+        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
+        watch=["--watch", "guest: died from a fall=fallrevive@0.5,3", "--watch", r"revive view \(guest=view@0.2,3",
+               "--watch", "local death: HP 0=hp0@0.5"],
+        crash=[], until=[FDJ_UNTIL], until_hold=8,
+    )
+
+
+# Phase ld (fallcam 3, ~4 min, 2 players, group `ladder`): a death on a ladder (a player's report: "dying
+# on a ladder makes it so you can only walk forward"). The party travels to the Cathedral Ward lamp
+# 2402950; the host stands at the foot of the ladder 2401024 (its "Ascend Ladder" prompt: dlast), takes
+# it with Cross and dies on it: the die step `host_die:ladder` fires only once the chr's ladder state is
+# set (it waits up to 15 s, else no death). Later guest 1 does the same. Each is revived in place at the
+# lamp (~75 m away, no load); its ladder state must be gone and a stick walk to four points 3 m around
+# the lamp (east, north, west, south) must move it toward each one, sideways and backwards too.
+LD_LAMP = (17.58, 102.65)
+LD_WALK = [(3.0, 0.0), (0.0, 3.0), (-3.0, 0.0), (0.0, -3.0)]   # east, north, west, south of the lamp
+LD_UNTIL = [r"0:travel step (\d+)/\1: host_stick", r"1:travel step (\d+)/\1: guest_stick"]
+
+
+def ld_walks(who):
+    return ["%s_stick=%.2f:%.2f:0.5:10@%d%%m24_00!" % (who, LD_LAMP[0] + dx, LD_LAMP[1] + dz, 3 if k == 0 else 1)
+            for k, (dx, dz) in enumerate(LD_WALK)]
+
+
+def ld_climb(who, first):
+    return ["%s_obj=2401024:1.0:180@%d%%m24_00" % (who, first),  # the ladder's foot ("Ascend Ladder")
+            "%s_press=0x4000@1%%m24_00!" % who,                     # Cross: onto the ladder
+            "%s_die:ladder@2%%m24_00" % who,                        # dies on it (only while on it)
+            "%s_press=0@3%%m24_00!" % who]                          # up again at the lamp
+
+
+def phase_ld(only):
+    common = "log_pos=0.5,watch_text=Ladder"
+    host = ",".join([common, "host_warp=2402950@15"] + ld_climb("host", 10) + ld_walks("host"))
+    g1 = ",".join([common, "guest_press=0@10%m24_00!", "guest_press=0@10%m24_00!", "guest_press=0@10%m24_00!",
+                   "guest_press=0@10%m24_00!"]                  # the host's turn first
+                  + ld_climb("guest", 2) + ld_walks("guest"))
+    return dict(
+        name="ld", seconds=420, count=2, headless=0, pads=(0, 1),
+        env=["BB_PARTY_B2_REVIVE_DIFF=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"die:ladder: on the ladder=onladder@0.1", "--watch", "local death: HP 0=hp0@0.5",
+               "--watch", r"revive view \(=view@0.2,3"],
+        crash=[], until=LD_UNTIL, until_hold=4,
+    )
+
+
 # Phase mk (boldmark, ~6 min, 3 players): a guest's Hunter's Mark and Bold Hunter's Mark (a player's
 # report: the Bold Mark crashed the host's game right after the guests were back). The party travels to
 # the Cathedral Ward lamp 2402950 (m24_00); guest 1 (rendered) has that lamp as its own last lamp and
@@ -1121,7 +1244,15 @@ def phase_cl(only):
 # there shows the host's world's lamps only (no 2302950). Then both saves on disk (copies).
 LP_OLD = ("2302950", ["12307810", "12307811", "72300200"])   # Old Yharnam: lit in the guest's save only
 LP_NEW = ("2412951", ["12417830", "12417831", "72410201"])   # Central Yharnam: lit by the guest in the run
-LP_UNTIL = [r"1:test: listonly: warp menu closed",
+# 0.7.2 Research Hall report: the host's last lamp is the Tomb of Oedon (LP_HOST_LAMP); it stands 8 m
+# from the unlit Central Yharnam lamp when the guest joins from its Dream (an A5 cross-map join: the
+# arrival must be a lamp lit in the host's world, never the unlit one nearest the host), and dies
+# once the guest lit that lamp: it must get up at its own last lamp, not the guest's.
+LP_HOST_LAMP = "2412953"
+# 1.2 m behind lamp 2412951's object (run 7's spot 8 m off dropped the host 10 m into a niche); the
+# host beside the lamp a guest lights must still keep its own last lamp
+LP_HOST_NEAR = "-196.8:-28.6:64.2"
+LP_UNTIL = [r"1:test: listonly: warp menu closed", r"0:host death taken: .*revive at lamp",
             r"0:save requested \(.*a lamp a guest lit in the host's world",
             r"1:written into the own save \(shared lamps; lamps.* %s[\s\S]*save requested \(.*shared lamps from "
             r"the host's world" % LP_NEW[0]]
@@ -1130,15 +1261,22 @@ LP_UNTIL = [r"1:test: listonly: warp menu closed",
 def phase_lp(only):
     read = ",".join(LP_OLD[1] + LP_NEW[1])
     return dict(
-        name="lp", seconds=300, count=2, headless=0,
+        name="lp", seconds=300, count=3, headless=1,
         env=["BB_PARTY_PROGRESS_TEST_READ=" + read, "BB_PARTY_GUESTS_BRING_LAMPS=0", "BB_PARTY_SHARE_LAMPS=1"],
-        ienv=["0:BB_PARTY_TEST_START_LAMP=2412952", "0:BB_PARTY_DIRECTOR_TEST=god",
+        ienv=["0:BB_PARTY_TEST_START_LAMP=" + LP_HOST_LAMP, "0:BB_PARTY_DIRECTOR_TEST_SOLO=1",
+              "0:BB_PARTY_TEST_INVINCIBLE=1",
+              "0:BB_PARTY_DIRECTOR_TEST=" + ",".join([
+                  "host_move=%s@3%%m24_01" % LP_HOST_NEAR,          # beside the unlit lamp, before the join
+                  "host_die@6%%m24_01?%s=1" % LP_NEW[1][2]]),       # once the guest lit it
               "0:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_OLD[1] + LP_NEW[1]),
               "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1]),
-              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0]],
+              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0],
+              # guest 2 (headless): Continue into its own world, then the A5 cross-map join
+              "2:BB_PARTY_TITLE_JOIN=0", "2:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1])],
         watch=["--watch", r"lamps: the own save's lamps the host's world lacks stay out=lpjoin@3",
                "--watch", r"lamp: slot \d+ lit a lamp in the host's world=lplit@1,5",
                "--watch", r"test: warp menu up \(listonly\)=lplist@1"],
+        start_when=[r"1/0:travel step \d+/\d+: host_move", r"2/0:travel step \d+/\d+: host_move"],
         crash=[], until=LP_UNTIL, until_hold=8,
     )
 
@@ -1206,6 +1344,9 @@ def phase_rt(only):
     host = ",".join([
         "god",
         "host_warp=2412953@20",                                     # the Tomb of Oedon lamp (party travel)
+        # 1's neighbours 2410249 / 2410250 off first (full smoke 0.7.2: they killed the frail guest instead
+        # of 2410247 / 2410202, then again at each stain the stain test warped it back onto: a death loop)
+        "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01",
         "host_press=0@8%m24_01!", "host_press=0@8%m24_01!",         # the guest leaves the lamp
         "host_kill=2410247@3%%m24_01?near=%s:2" % RT_SIGNAL,          # 1: its killer, once it is up again
         "host_kill=2410202@1%m24_01",
@@ -1231,7 +1372,9 @@ def phase_rt(only):
          "guest_die@10%m24_01",                                       # 4 (its stain 3 picked up first)
          "guest_press=0@8%m24_01!",
          "guest_move=%s@6%%m24_01" % RT_SIGNAL,                       # ready: the host's boss fight
-         "guest_die@14%m24_01?12411800=1"])                           # 6: after Gascoigne's defeat
+         "guest_die@14%m24_01?12411800=1",                            # 6: after Gascoigne's defeat
+         "guest_move=%s@3%%m24_01" % RT_LAMP])                        # up: the stain test put it on its stain
+                                                                      # (RT_SIGNAL); the host waits at the lamp
     return dict(
         name="rt", seconds=600, count=2, headless=0,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + "," + CLERIC_CLEAR, "BB_PARTY_ROT=1",
@@ -1243,14 +1386,153 @@ def phase_rt(only):
         crash=[], until=[RT_UNTIL], until_hold=4,
     )
 
+
+# Phase br (laurence, ~6 min, 2 players, group `boss_rooms`): boss rooms open until the real fight
+# start, and the co-op wall behind Ludwig (party_bossfog_rules.h FirstFights / ConfinementWalls;
+# player reports 2026-10-22). Default test save (owns the DLC; Laurence and Ludwig alive; their
+# fixture flags cleared). The party travels to the Nightmare Grand Cathedral lamp 3402953, which
+# stands in Laurence's altar region 3402855: without Laurence's Skull nothing starts. The guest walks
+# out through his fog 3401850 and back in (a real walk by the stick: a closed fog blocks it), then
+# stands inside (BR_SIGNAL, the scene's own warp spot 3402856); the host is given the skull there:
+# the first fight starts (scene 34000010, the bar on both), the host kills Laurence. The party
+# travels to Ludwig's lamp 3402952, the host walks into his first-fight region (scene 34000020) and
+# kills him; then host and guest each walk through the wall 3401801 at the back of his arena and
+# back (13400010: it stayed up after his death with a guest in the world).
+BR_LAURENCE_CLEAR = "13401850,13401851,13401853,13404850,13404851,13404852,13404858,13404859,13404860,13404861"
+BR_LUDWIG_CLEAR = "13401800,13401801,13404800,13404801,13404802,13404808,13404809,13404810,13404811,9471,13400010"
+BR_SIGNAL = "-434.55:1535.71:-264.25"   # region 3402856 (the scene's warp spot, inside the cathedral)
+BR_LUDWIG = "-407.93:1503.5:-721.36"     # region 3402805 origin + 0.5 m (Ludwig's first fight)
+BR_WALK = "1.0:150"                      # arrive within 1 m, up to 150 stick steps
+BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)",
+            r"0:travel step (\d+)/\1: host_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)"]
+
+
+def phase_br(only):
+    # The reward item box after each kill holds the stick (run 1: both screens showed Beast's Embrace
+    # + Guidance with an OK row through the walks): Cross twice closes it. R3 (0x4) after each
+    # `_obj` step turns the camera behind the player, so the walk's screenshots face the doorway.
+    # The steps at Ludwig's back wall carry no map condition: it stands on the m34 / m35 border, and
+    # the walk itself changes the map (run 1: the host's next step waited for m34_00 for good).
+    host = ",".join([
+        "god", "goods=4014:0",                                       # no Laurence's Skull yet
+        "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
+        "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,              # the guest walked out and in: the skull
+        "host_kill=3400850@8%m34_00~",                               # Laurence, 8 s after his scene
+        "host_press=0x4000@8%m34_00!", "host_press=0x4000@2%m34_00!",  # OK on the reward box
+        "host_warp=3402952@6%m34_00",                                # the party to Ludwig's lamp
+        "host_move=%s@8%%m34_00" % BR_LUDWIG,                         # his first fight (two parts, scene)
+        "host_kill=3400800@8%m34_00~",
+        "host_press=0x4000@8!", "host_press=0x4000@2!",              # OK on the reward box
+        "host_obj=3401801@6!",                                       # the wall behind Ludwig's arena
+        "host_press=0x4@1!", "host_press=0@1!",                      # R3: the camera behind the player
+        "host_stick=obj:3401801:4:180:%s@2!" % BR_WALK,              # through it
+        "host_stick=obj:3401801:4:0:%s@2!" % BR_WALK,                # and back
+    ])
+    g1 = ",".join([
+        "god",
+        "guest_obj=3401850@10%m34_00",                               # at Laurence's fog (inside, by the lamp)
+        "guest_press=0x4@1%m34_00!", "guest_press=0@1%m34_00!",       # R3
+        "guest_stick=obj:3401850:4:180:%s@2%%m34_00" % BR_WALK,       # through it
+        "guest_stick=obj:3401850:4:0:%s@2%%m34_00" % BR_WALK,         # and back
+        "guest_move=%s@2%%m34_00" % BR_SIGNAL,                        # inside: the host's skull now
+        "guest_press=0x4000@10%m34_00?13401850=1", "guest_press=0x4000@2%m34_00!",  # Laurence's reward box
+        "guest_press=0x4000@10?9471=1", "guest_press=0x4000@2!",      # Ludwig's
+        "guest_obj=3401801@4!",                                      # at the wall behind him
+        "guest_press=0x4@1!", "guest_press=0@1!",                    # R3
+        "guest_stick=obj:3401801:4:180:%s@2!" % BR_WALK,
+        "guest_stick=obj:3401801:4:0:%s@2!" % BR_WALK,
+    ])
+    return dict(
+        name="br", seconds=720, count=2, headless=0, pads=(0, 1),
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: (?:host|guest)_stick: object 340(?:1850|1801) found=brdoor@0.5,4"],
+        crash=[], until=BR_UNTIL, until_hold=6,
+    )
+
+
+# Phase sm (cwscene, ~5 min, 2 players, group `scene_mirror`): the host's cutscene plays live on a
+# guest standing beside it (player report 2026-10-22).
+#   1  Father Gascoigne's intro race: the guest stands where the player's guest stood (-51.7, 69.1),
+#      the host walks into the trigger region 2412815 4-5 m from it; both games run event 12411802
+#      at once: the guest's own copy of the intro is held and the host's copy plays there live
+#      (within 1 s of the host's), never a second time. The host then kills Gascoigne.
+#   2  The door from the Tomb of Oedon into Oedon Chapel (door 2401210, m24_00, event 12400750,
+#      scene 24000020 with the evening): the host opens it from the m24_01 side, the guest 3 m behind
+#      it, still in m24_01; the mirror plays there within 1 s (the scene's block m24_00 is loaded /
+#      the host is near), and the guest's walk into m24_00 afterwards plays no catch-up replay.
+SM_DOOR = (30.04, -9.2, 95.57)          # MSB part 2401210 (yaw -60): its back side is m24_01
+SM_GUEST_RACE = "-51.7:-40.8:69.1"      # the player's guest at the intro (cwscene.log 1868)
+SM_UNTIL = r"1:map m24_01_00_00 -> m24_00_00_00"
+
+
+def phase_sm(only):
+    door = "%.2f:%.2f:%.2f" % SM_DOOR
+    host = ",".join([
+        "god",
+        "host_warp=2412953@8^1",                                        # the party at the Tomb of Oedon
+        "host_move=%s@3%%m24_01?near=%s:1.5" % (GASCOIGNE_TRIGGER, SM_GUEST_RACE),  # 1: the intro, guest 4.6 m off
+        "host_kill=2410810@6%m24_01~",                                   # Gascoigne dead after it
+        "host_move=33.2:-10.0:93.7:pin=3@10%m24_01",                     # 2: up at the door (m24_01 side)
+        "host_obj=2401210:1.2:180@4%m24_01",
+        "host_press=0x4000@4%m24_01!",                                   # OK on Gascoigne's key notice (run 1)
+        "host_press=0x4000@3%m24_01!",                                   # "Open Door": scene 24000020
+    ])
+    g1 = ",".join([
+        "god",
+        "guest_move=%s@10%%m24_01?near=%s:4" % (SM_GUEST_RACE, RT_LAMP),  # the party at the lamp: beside the trigger
+        "guest_obj=2401210:4.2:180@1%%m24_01?near=%s:2" % door,           # 3 m behind the host at the door
+        "guest_move=27.4:-9.2:97.1@4%m24_01~",                           # after the scene: through the door (m24_00)
+    ])
+    return dict(
+        name="sm", seconds=480, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + ",12400750,9800,9801,9802",
+             "BB_PARTY_TEST_INVINCIBLE=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"remo playing=smremo@0.5,1.5,4", "--watch", r"cutscene 24000020=smdoor@0.5,1.5,4",
+               "--watch", r"map m24_01_00_00 -> m24_00_00_00=smwalk@2,8"],
+        crash=[], until=[SM_UNTIL], until_hold=15,
+    )
+
+
+# Phase da (dreamstone, ~3 min, 2 players, group `dream_apart`; a player's report: when the host
+# left the Hunter's Dream alone the guest could not use any headstone and was stuck there). The host
+# starts in its Dream (start lamp 2102950), the guest is summoned in; the host uses headstone t210000
+# and travels alone (1st Floor Sickroom). The guest's game runs its leave state (the load-wait /
+# action-button hold), split travel drops its send-home, and the hold must be lifted; 10 s after the
+# host is in another area the guest uses headstone t210000 itself, travels alone and arrives (the
+# same lamp as the host's: a re-join into the host's area).
+# (after the host's alone travel: the guest's start-of-run re-join into the Dream is a "travels alone (lamp)")
+# Also ends on a failure: the fixture's FAILED (no prompt / no menu), a travel refused or closed.
+DA_UNTIL = [r"1:the host travels alone[\s\S]*(guest: travels alone \(headstone\)[\s\S]*(arrived in the host world|map - -> m2[2-9])"
+            r"|test: levelup: FAILED|travel alone \(headstone\) refused|travelling alone is not possible|nothing runs"
+            r"|the question is closed|no party request possible)"]
+
+
+def phase_da(only):
+    return dict(
+        name="da", seconds=240, count=2, headless=0,
+        env=["BB_PARTY_GUEST_LAMPS=1"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=god",
+              "0:BB_PARTY_GUESTSVC_TEST=hostheadstone;hsdelay=12;keys=cross,cross,left,cross,cross",
+              "0:BB_PARTY_TRAVEL_CHOICE=alone", "1:BB_PARTY_DIRECTOR_TEST=god",
+              "1:BB_PARTY_GUESTSVC_TEST=guestheadstone;needprompt;hsapart;hsdelay=10;keys=cross,cross,cross,cross",
+              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        watch=["--watch", r"test: levelup: before Cross=daprompt@0.2,1",
+               "--watch", r"test: levelup: no talk list: the menu was requested=dahs@0.5,2",
+               "--watch", r"the host travels alone=dahost@1,8"],
+        crash=[], until=DA_UNTIL, until_hold=10,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
-          "rot": "rt"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
+          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1258,8 +1540,8 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
-              "rot": r"^rt "}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
+              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1292,7 +1574,6 @@ GROUP_UNTIL = {
     "gather": GA_UNTIL,
     # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
     "lifts": [LF_UNTIL],
-    "ladder": [r"1:travel step (\d+)/\1: guest_press"],
     "fall": [FL_UNTIL, FL_HOST_UNTIL],
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
@@ -1308,6 +1589,9 @@ GROUP_UNTIL = {
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
     "fight_load": BF_UNTIL,
     "rot": [RT_UNTIL],
+    "boss_rooms": BR_UNTIL,
+    "scene_mirror": [SM_UNTIL],
+    "dream_apart": DA_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -1316,7 +1600,7 @@ NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the cras
 
 def narrow_phase(ph, only):
     """--only: end the phase on the chosen groups' lines; drop the s2 crash plan nobody asked for."""
-    mine = [g for g in only if GROUPS[g] == ph["name"]]
+    mine = [g for g in only if ph["name"] in GROUPS[g].split(",")]
     if not mine or NEEDS_CRASH & set(mine):
         return ph
     ph = dict(ph, until=[u for g in mine for u in GROUP_UNTIL.get(g, [])] or ph["until"], crash=[])
@@ -2083,6 +2367,7 @@ def check_fl(v, L):
             ok = d < 1.0 and float(so.group(2)) > -100
         v.step("fl bloodstain on the last safe floor", ok,
                ("%.1f m from it: %s" % (d, st[1][:120])) if st else "no stain record (echoes 0?)")
+        check_revive_view(v, L, "fl guest", 1, "guest revive", up)
     # The host's own fall out of the world (after the guest's)
     h0 = need(v, L, "fl host fell out of the world (HP 0 in the void)", 0,
               r"local death: HP 0 at \([-\d.]+, -(1\d{3}|[2-9]\d\d)\.", (up or hp0))
@@ -2106,7 +2391,146 @@ def check_fl(v, L):
                 d = sum((float(a) - float(b)) ** 2 for a, b in zip(so.groups(), sf.groups())) ** 0.5
                 ok = d < 1.0
             v.step("fl host bloodstain on the last safe floor", ok, ("%.1f m from it" % d) if st else "no stain record")
+            check_revive_view(v, L, "fl host", 0, "host revive", hup)
     check_common(v, L, "fl")
+
+
+REVIVE_VIEW = re.compile(r"revive view \((?P<what>[^,]+), (?P<t>[\d.]+) s after\): camera \([^)]*\) (?P<cam>[-\w.]+) m "
+                         r"from the chr \((?P<chr>[^)]*)\).*?; (?:drawn|ChrCtrl \+0xC0) \([^)]*\) (?P<drawn>[-\w.]+) m off(?: \(logged only\))?; "
+                         r"fall-death camera (?P<latch>\d+), (?:ladder state -?\d+, )?hp (?P<hp>-?\d+): (?P<verdict>.*)$")
+
+
+def check_revive_view(v, L, tag, i, what, after):
+    """fallcam: the revive's 3 s view line (ReviveViewTick): the render camera within 12 m of the chr
+    and the game's fall-death camera off."""
+    hit = L.find(i, r"revive view \(%s, [2-9]\.\d s after\)" % re.escape(what), after, after + 40)
+    m = REVIVE_VIEW.search(hit[1]) if hit else None
+    if not m:
+        v.step(tag + " camera on its chr after the revive", False, "no 3 s 'revive view (%s' line on inst%d" % (what, i))
+        return
+    cam, drawn, latch = float(m.group("cam")), float(m.group("drawn")), int(m.group("latch"))
+    v.step(tag + " camera on its chr after the revive (within 12 m, the fall-death camera off)",
+           latch == 0 and cam == cam and cam <= 12.0, "camera %.1f m from the chr, fall-death camera %d: %s" %
+           (cam, latch, m.group("verdict")[:80]))
+    # fallcam 2: level as after a load, not the fall camera's steep look down (fdj r3: -0.78 .. -0.98)
+    look = re.search(r"looking \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", hit[1])
+    ly = float(look.group(2)) if look else float("nan")
+    v.step(tag + " camera level after the revive (view down at most 0.4)", ly == ly and ly >= -0.4,
+           look.group(0) if look else "no look direction")
+    # Logged only (fl run 1: ChrCtrl +0xC0 is a rotation row, not the drawn position); the screenshots
+    # show whether the chr is drawn at its spot.
+    v.step(tag + " ChrCtrl +0xC0 logged (not judged)", True,
+           "%.2f m off the physics position (chr %s)" % (drawn, m.group("chr")))
+
+
+def check_fall_deep(v, L, tag, hp0_rx, walk):
+    """fd / fdj: a guest's real fall death, up at a far lamp of the loaded map with no load. The
+    fall-death camera rows are real checks only when the game had its fall-death camera on at the
+    revive (the safe-spot fields line: WorldChrMan +0x68 1); a fall the game took as plain landing
+    damage (fd run r2) never sets it: then they are info rows."""
+    xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
+    need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
+    hp0 = need(v, L, tag + " guest died from a fall (not the kill plane)", 1, hp0_rx)
+    if hp0 is None:
+        check_common(v, L, tag)
+        return
+    up = need(v, L, tag + " guest up at a lamp of the loaded map, no load", 1,
+              r"guest: died from a fall .*up at (its own|the host's) last lamp", hp0)
+    if up is not None:
+        line = L.find(1, r"guest: died from a fall", hp0)[1]
+        at = re.search(r"HP 0 at " + xyz, line)
+        lamp = re.search(r"last lamp \d+ " + xyz, line)
+        d = sum((float(a) - float(b)) ** 2 for a, b in zip(at.groups(), lamp.groups())) ** 0.5 if at and lamp else -1.0
+        v.step(tag + " the lamp is far from the fall (at least 40 m)", d >= 40.0, "%.1f m: %s" % (d, line[:140]))
+        fields = L.find(1, r"guest revive: the game's safe-spot revive fields: WorldChrMan \+0x68 (\d)", up, up + 5)
+        on = bool(fields) and re.search(r"\+0x68 (\d)", fields[1]).group(1) == "1"
+        rel = L.find(1, r"guest revive: the game's fall-death camera released \(WorldChrMan \+0x68 1 -> 0\)", up, up + 5)
+        if on:
+            v.step(tag + " the game's fall-death camera was on at the revive (the report's case)", True, fields[1][:150])
+            v.step(tag + " fall-death camera released by the revive", bool(rel),
+                   ("+%.1f s: %s" % (rel[0], rel[1][:120])) if rel else "no release line after the +0x68 1 revive")
+        else:
+            v.step(tag + " the game's fall-death camera at the revive (info: not on, the case not reproduced)", True,
+                   fields[1][:150] if fields else "no safe-spot fields line")
+            v.step(tag + " fall-death camera release (info: nothing to release)", True,
+                   "released" if rel else "no release line (the camera was not on)")
+        check_revive_view(v, L, tag + " guest", 1, "guest revive", up)
+        # until the chain's next move (fdj puts it back on the ledge for the next direction)
+        nxt = L.find(1, r"travel step \d+/\d+: guest_move", up)
+        again = L.find(1, r"local death: HP 0", up + 0.5, min(up + 8, nxt[0]) if nxt else up + 8)
+        v.step(tag + " guest alive after it (no second death within 8 s)", not again, again[1][:100] if again else "none")
+        none_of(v, L, tag + " no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
+        none_of(v, L, tag + " guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
+                up + 20, (1,))
+        none_of(v, L, tag + " never the Hunter's Dream", r"map - -> m21_", hp0, up + 30, (1,))
+        if walk:
+            # the walk off the lamp: the player's stick moves it (camera-relative controls)
+            st = L.find(1, r"travel step \d+/\d+: guest_stick", up)
+            ps = [tuple(float(x) for x in POS_RX.search(l).groups()) for _, l in L.all(1, POS_RX.pattern, st[0], st[0] + 20)] if st else []
+            moved = max((sum((a - b) ** 2 for a, b in zip(q, ps[0])) ** 0.5 for q in ps), default=0.0) if ps else 0.0
+            v.step(tag + " guest walks off the lamp after the revive (at least 2 m)", moved >= 2.0,
+                   "%.1f m in %d samples" % (moved, len(ps)) if st else "no guest_stick step after the revive")
+    check_common(v, L, tag)
+
+
+def check_fd(v, L):
+    check_fall_deep(v, L, "fd", r"local death: HP 0 at \([-\d.]+, -[1-4]\d\.\d, [-\d.]+\), dropped (1[5-9]|[2-9]\d)\.",
+                    True)
+
+
+def check_fdj(v, L):
+    # the report's shaft beside Djura's tower (m23_00): HP 0 in the shaft after a drop of 10 m or more
+    check_fall_deep(v, L, "fdj", r"local death: HP 0 at \([-\d.]+, -[5-9]\d\.\d, -6\d\.\d\), dropped ([1-9]\d)\.",
+                    False)
+
+
+def check_ld(v, L):
+    """fallcam 3: a death on a ladder, revived in place: the ladder state released, then the stick
+    walks to four points around the lamp each move the chr toward its point (deathrules WalkedToward)."""
+    need(v, L, "ld join: 2 players", 0, r"cooperators 0 -> 1")
+    for i, who in ((0, "host"), (1, "guest")):
+        on = L.find(i, r"%s_die:ladder: on the ladder \(ladder state (\d+)\)" % who)
+        v.step("ld %s on the ladder before the die step (its ladder state set)" % who, bool(on),
+               on[1][:120] if on else (L.find(i, r"%s_die:ladder: NOT on a ladder" % who) or (0, "no ladder line"))[1][:120])
+        d = L.find(i, r"travel step \d+/\d+: %s_die" % who)
+        if not on or not d:
+            v.step("ld %s died on the ladder (the die step)" % who, False, "not on the ladder: no death taken")
+            continue
+        hp0 = L.find(i, r"local death: HP 0 .*ladder state (-?\d+)", d[0] - 1)
+        st = int(re.search(r"ladder state (-?\d+)", hp0[1]).group(1)) if hp0 else None
+        v.step("ld %s died on the ladder (ladder state at HP 0)" % who, st is not None and st >= 0,
+               ("state %s: %s" % (st, hp0[1][:110])) if hp0 else "no HP 0 line")
+        up = L.find(i, r"%s revive #\d+: after" % who, d[0])
+        v.step("ld %s revived in place (no load)" % who, bool(up), up[1][:120] if up else "no revive")
+        if not up:
+            continue
+        none_of(v, L, "ld %s: no loading screen" % who, r"Party B2: load started", d[0], up[0] + 20, (i,))
+        rel = L.find(i, r"%s revive: the chr's ladder state released" % who, d[0], up[0] + 1)
+        if st is not None and st >= 0:
+            v.step("ld %s ladder state released by the revive" % who, bool(rel), rel[1][:140] if rel else "no release line")
+        view = L.find(i, r"revive view \(%s revive, [2-9]\.\d s after\).*ladder state (-?\d+)" % who, up[0], up[0] + 15)
+        vs = int(re.search(r"ladder state (-?\d+)", view[1]).group(1)) if view else None
+        v.step("ld %s no ladder state 3 s after the revive" % who, vs == -1, ("state %s" % vs) if view else "no view line")
+        walks = L.all(i, r"test: %s_stick: walk to \(([-\d.]+), ([-\d.]+)\).*pos \(([-\d.]+), [-\d.]+, ([-\d.]+)\)" % who,
+                      up[0])
+        names = ["east", "north", "west", "south"]
+        for k, (t, line) in enumerate(walks[:4]):
+            m = re.search(r"walk to \(([-\d.]+), ([-\d.]+)\).*pos \(([-\d.]+), [-\d.]+, ([-\d.]+)\)", line)
+            tx, tz, sx, sz = (float(g) for g in m.groups())
+            nxt = walks[k + 1][0] if k + 1 < len(walks) else t + 8
+            ps = [POS_RX.search(l) for _, l in L.all(i, POS_RX.pattern, t, nxt)]
+            if not ps:
+                v.step("ld %s walks %s after the revive" % (who, names[k]), False, "no position samples")
+                continue
+            ex, ez = float(ps[-1].group(1)), float(ps[-1].group(3))
+            dx, dz, wx, wz = ex - sx, ez - sz, tx - sx, tz - sz
+            ln = (wx * wx + wz * wz) ** 0.5
+            along = (dx * wx + dz * wz) / ln if ln > 0 else 0.0
+            v.step("ld %s walks %s after the revive (at least 1.5 m toward it)" % (who, names[k]), along >= 1.5,
+                   "%.1f m toward (%.1f, %.1f) from (%.1f, %.1f); moved (%.1f, %.1f)" % (along, tx, tz, sx, sz, dx, dz))
+        if len(walks) < 4:
+            v.step("ld %s all four walks ran" % who, False, "%d walk(s)" % len(walks))
+    check_common(v, L, "ld")
 
 
 WALL = re.compile(r"\[(\d\d):(\d\d):(\d\d(?:\.\d+)?)\] ")
@@ -2726,6 +3150,16 @@ def check_lp(v, L, d: Path):
          r"lamps: the own save's lamps the host's world lacks stay out of it .*lamps.* %s" % LP_OLD[0], j or 0)
     none_of(v, L, "lp host takes none of the guest's own lamps",
             r"own save has lamps this world lacked|lamps: \d+ flag\(s\) of lamps lit in the own save", insts=(0, 1))
+    # The arrival: a lamp lit in the host's world (its last lamp), never the unlit one beside it.
+    arr = L.find(2, r"arrival lamp in m24_01_00_00: (\d+)")
+    v.step("lp guest's arrival: a lamp lit in the host's world", bool(arr) and ("arrival lamp in m24_01_00_00: %s " % LP_HOST_LAMP) in arr[1] + " ",
+           arr[1][:200] if arr else "no A5 arrival line (joined without a cross-map load?)")
+    press = L.find(1, r"test: Cross at the lamp #1")
+    # lamprule run 7: the title-joined guest fell through the map (placed before the floor loaded).
+    none_of(v, L, "lp no guest falls out of the world after its join", r"local death: HP 0 at", 0,
+            press[0] if press else 1e9, insts=(1, 2))
+    none_of(v, L, "lp nothing lit for the guest before its own lamp use",
+            r"lamp: slot \d+ lit a lamp in the host's world", 0, press[0] if press else 1e9, insts=(0,))
     lit = need(v, L, "lp guest lights a lamp in the host's world", 1,
                r"lamp: the guest lit a lamp of the host's world \(overlay:.*%s" % LP_NEW[1][2])
     need(v, L, "lp host lights it in its world", 0, r"lamp: slot \d+ lit a lamp in the host's world: set.*%s" % LP_NEW[1][2],
@@ -2762,6 +3196,10 @@ def check_lp(v, L, d: Path):
     v.step("lp host's save: the lamp the guest lit", host is not None and all(host[f] for f in LP_NEW[1]), fmt(host))
     v.step("lp guest's save: its own old lamp kept", guest is not None and all(guest[f] for f in LP_OLD[1]), fmt(guest))
     v.step("lp guest's save: the lamp it lit", guest is not None and all(guest[f] for f in LP_NEW[1]), fmt(guest))
+    # The host dies after the guest lit the lamp: up at its own last lamp, never the guest's.
+    rev = L.find(0, r"host death taken: .*revive at lamp (\d+)")
+    v.step("lp host gets up at its own last lamp", bool(rev) and ("revive at lamp %s " % LP_HOST_LAMP) in rev[1],
+           rev[1][:200] if rev else "no host death line")
     check_common(v, L, "lp")
 
 
@@ -2857,13 +3295,145 @@ def check_rt(v, L):
     check_common(v, L, "rt")
 
 
+
+def _br_walks(L, i, kind, after, before=1e9):
+    """The (start, result) of each `kind` (guest_stick / host_stick) walk started in [after, before)."""
+    out = []
+    for t, _line in L.all(i, r"travel step \d+/\d+: " + kind, after, before):
+        out.append((t, L.find(i, r"test: approach: (arrived|BLOCKED|GAVE UP)", t)))
+    return out
+
+
+def _br_walk_rows(v, L, i, who, kind, whats, after, before=1e9):
+    ws = _br_walks(L, i, kind, after, before)
+    for k, what in enumerate(whats):
+        w = ws[k] if k < len(ws) else None
+        ok = bool(w and w[1] and "arrived" in w[1][1])
+        v.step("br %s walks %s" % (who, what), ok,
+               ("+%.1f s: %s" % (w[1][0], w[1][1][:120])) if w and w[1] else "walk %d not run / no result" % (k + 1))
+
+
+def check_br(v, L):
+    """Phase br: Laurence's room open until the skull starts his fight; the wall behind Ludwig gone."""
+    need(v, L, "br join: 2 players", 0, r"cooperators 0 -> 1")
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, "br %s: the boss-room rule (Laurence's room open on a client)" % who, i,
+             r"EMEVD rule \(built in, boss rooms\): skip 13404850:1003:5@2 \(on a client\)")
+        need(v, L, "br %s: the wall rule behind Ludwig" % who, i, r"skip 13400010:2005:3@7")
+        need(v, L, "br %s: Ludwig's wall goes at his death" % who, i,
+             r"EMEVD rule \(built in, boss rooms\): skip 13400010:0:0@11")
+    arr = need(v, L, "br guest in the Nightmare (m34_00)", 1, r"map .*-> m34_00")
+    if arr is None:
+        return check_common(v, L, "br")
+    skull = L.find(0, r"travel step \d+/\d+: host_use", arr)
+    t_skull = skull[0] if skull else 1e9
+    _br_walk_rows(v, L, 1, "guest", "guest_stick", ("out through Laurence's fog (no fight yet)",
+                                                     "back in through it (no fight yet)"), arr, t_skull)
+    none_of(v, L, "br no fight before the skull (no fog report, no host visit, no bar)",
+            r"went through boss fog \(event 13404851|boss fog: slot \d+ went in|first fight \(guest event 13404851|"
+            r"Boss fight started|boss health bar shown", arr, t_skull, insts=(0, 1))
+    if skull is None:
+        v.step("br the host is given Laurence's Skull", False, "host_use not run")
+        return check_common(v, L, "br")
+    sc = need(v, L, "br the skull at the altar starts the fight (scene 34000010)", 0, r"cutscene 34000010", t_skull)
+    if sc is not None:
+        for i, who in ((0, "host"), (1, "guest")):
+            need(v, L, "br Laurence's bar on the %s" % who, i, r"boss health bar shown", sc)
+    kill = need(v, L, "br Laurence killed", 0, r"boss defeat, event 13401850", t_skull)
+    lud = L.find(0, r"travel step \d+/\d+: host_move", kill or t_skull)
+    if lud is None:
+        v.step("br the host walks into Ludwig's fight", False, "host_move not run")
+        return check_common(v, L, "br")
+    need(v, L, "br Ludwig's fight (bar)", 0, r"boss health bar shown: .*event 13404802", lud[0])
+    dead = need(v, L, "br Ludwig killed (9471)", 0, r"boss defeat, event 13401800", lud[0])
+    if dead is not None:
+        for i, who, kind in ((0, "host", "host_stick"), (1, "guest", "guest_stick")):
+            _br_walk_rows(v, L, i, who, kind, ("through the wall behind Ludwig", "back through it"), dead)
+    check_common(v, L, "br")
+
+def _remo_starts(L, i, after=0.0, before=1e9):
+    return [t for t, _ in L.all(i, r"Party story: remo playing", after, before)]
+
+
+def check_sm(v, L):
+    """Phase sm: the host's intro / door scene live on the guest beside it, once."""
+    need(v, L, "sm join: 2 players", 0, r"cooperators 0 -> 1")
+    # 1: Gascoigne's intro race
+    hm = need(v, L, "sm host walks into Gascoigne's intro region (guest 4-5 m off)", 0, r"travel step \d+/\d+: host_move", 0)
+    t_kill = L.find(0, r"travel step \d+/\d+: host_kill", hm or 0)
+    end1 = t_kill[0] if t_kill else 1e9
+    if hm is not None:
+        h = _remo_starts(L, 0, hm, end1)
+        g = _remo_starts(L, 1, hm - 1, end1)
+        v.step("sm intro: host plays 24010010", h, ("+%.1f s" % h[0]) if h else "no remo on the host")
+        need(v, L, "sm intro: the guest plays the host's copy (live mirror)", 1, r"live mirror: remo 2401(0|1)010", hm - 1, end1)
+        held = L.find(1, r"own 2002\[\d\] \(boss intro 24010010", hm - 1, end1)
+        v.step("sm intro: guest's own copy held for the host's (when its event ran too)", True,
+               ("held +%.1f s" % held[0]) if held else "its own event did not run (no race this time)")
+        ok = bool(h and g and abs(g[0] - h[0]) <= 1.0)
+        v.step("sm intro: guest's scene within 1 s of the host's", ok,
+               "host +%.1f guest +%.1f" % (h[0], g[0]) if h and g else "host %s guest %s" % (h, g))
+        v.step("sm intro: one play on the guest", len(g) == 1, "%d remo start(s) on the guest" % len(g))
+        none_of(v, L, "sm intro: no own copy after a wait", r"held own boss intro|this player triggered and watched it itself",
+                hm, end1, insts=(1,))
+    # 2: the Cathedral Ward door
+    presses = L.all(0, r"travel step \d+/\d+: host_press", end1 if end1 < 1e9 else 0)
+    pr = presses[-1] if presses else None  # the last one opens the door (the first closes the key notice)
+    v.step("sm door: host opens the door (m24_01 side)", pr, ("+%.1f s" % pr[0]) if pr else "no press")
+    if pr:
+        hs = need(v, L, "sm door: host plays 24000020", 0, r"host #\d+ cutscene 24000020", pr[0] - 1)
+        h = _remo_starts(L, 0, pr[0] - 1)
+        g = _remo_starts(L, 1, pr[0] - 1)
+        need(v, L, "sm door: guest takes it as the live mirror", 1, r"cutscene 24000020 .*taken \(phantom: live mirror\)", pr[0] - 1)
+        need(v, L, "sm door: the mirror plays in m24_01 (block loaded / host near)", 1,
+             r"live mirror of remo 24000020 plays here though this guest is in m24_01", pr[0] - 1)
+        none_of(v, L, "sm door: never dropped for its map", r"live mirror of remo 24000020 dropped", pr[0] - 1, insts=(1,))
+        ok = bool(h and g and abs(g[0] - h[0]) <= 1.0)
+        v.step("sm door: guest's scene within 1 s of the host's", ok,
+               "host +%.1f guest +%.1f" % (h[0], g[0]) if h and g else "host %s guest %s" % (h, g))
+        walk = need(v, L, "sm door: guest walks into m24_00 after it", 1, r"map m24_01_00_00 -> m24_00_00_00", pr[0])
+        if walk is not None:
+            none_of(v, L, "sm door: no catch-up replay of the scene", r"replay: remo 2400(0|1)020", pr[0], insts=(1,))
+            late = _remo_starts(L, 1, walk - 0.5)
+            v.step("sm door: no second play after the walk", not late, "none" if not late else "+%.1f s" % late[0])
+    check_common(v, L, "sm")
+
+
+def check_da(v, L):
+    need(v, L, "da join: 2 players", 0, r"cooperators 0 -> 1")
+    left = need(v, L, "da host leaves the Dream alone", 1, r"guest: the host travels alone \(.*\); staying here")
+    if left is None:
+        check_common(v, L, "da")
+        return
+    need(v, L, "da guest's send-home dropped (split)", 1, r"\(OnLeave_Limit\) dropped: split travel", left)
+    lift = need(v, L, "da guest's action-button hold lifted", 1, r"the leave state's action-button hold lifted", left)
+    hs = need(v, L, "da guest uses a headstone (fixture started)", 1, r"test: guest headstone: starting", left)
+    pr = L.find(1, r"test: levelup: before Cross", hs or left)
+    v.step("da (info) headstone prompt: see the daprompt screenshots", True,
+           pr[1][:150] if pr else "no 'before Cross' line")
+    need(v, L, "da guest's Cross opens the headstone's travel list", 1,
+         r"test: levelup: no talk list: the menu was requested", hs or left)
+    flag = need(v, L, "da guest's headstone choice (its lamp flag)", 1,
+                r"lamp flag \d+ set by this game|lamp \d+ \(guest\): (held for the choice|BB_PARTY_TRAVEL_CHOICE)",
+                hs or left)
+    fb = L.find(1, r"no warp followed", flag or left)
+    v.step("da (info) the host's destination: warp run by the used-up-event fallback", True,
+           fb[1][:150] if fb else "no fallback line (the event warped itself)")
+    go = need(v, L, "da guest travels from the Dream", 1, r"guest: travels alone \(headstone\)", flag or left)
+    if go is not None:
+        need(v, L, "da guest arrives (not stuck in the Dream)", 1, r"arrived in the host world|map - -> m2[2-9]", go)
+    if lift is not None and hs is not None:
+        v.step("da hold lifted before the guest's headstone use", lift <= hs, "lift +%.1f s, use +%.1f s" % (lift, hs))
+    check_common(v, L, "da")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
-          "fl": lambda v, L, d: check_fl(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp,
+          "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L),
           "rt": lambda v, L, d: check_rt(v, L)}
 
 
@@ -2873,7 +3443,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf,lp")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,fdj,cl,bf,lp,br")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2888,9 +3458,9 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "rh", "rs")
-                           if p in {GROUPS[g] for g in only})
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
+                                     "lp", "rt", "br", "sm", "da", "rh", "rs")
+                           if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
