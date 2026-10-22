@@ -781,6 +781,15 @@ def party_saves_module():
     return party_saves
 
 
+def save_editor_module():
+    """scripts\\save_editor.py: export a save for a save editor and import it back."""
+    scripts_dir = str(APP_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import save_editor
+    return save_editor
+
+
 def party_session_module():
     """scripts\\party_session.py: party session snapshots (Undo last party session, the check after)."""
     scripts_dir = str(APP_DIR / "scripts")
@@ -2856,6 +2865,22 @@ class BloodborneLauncher(tk.Tk):
                           "user\\save_backups\\party_sessions at every party start. You see what will be "
                           "replaced before anything changes, and your current saves are copied there "
                           "first, so the undo can be undone the same way.")
+        editor_row = ttk.Frame(sec, style="Card.TFrame")
+        editor_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        export_btn = ttk.Button(editor_row, text="Export for save editor...", style="Secondary.TButton",
+                                command=self.export_for_save_editor)
+        export_btn.pack(side="left")
+        import_btn = ttk.Button(editor_row, text="Import from save editor...", style="Secondary.TButton",
+                                command=self.import_from_save_editor)
+        import_btn.pack(side="left", padx=(6, 0))
+        Tooltip(export_btn, "Copies a character (single-player or party save, any slot) to a folder you pick, "
+                            "in a form save editors can open. A save last made as a guest in another world "
+                            "is fixed up in the copy only; your save is not changed. Edit that copy, then "
+                            "use Import from save editor.")
+        Tooltip(import_btn, "Puts an edited export back into the save slot it came from. Your current "
+                            "saves are backed up to user\\save_backups first, and what the export fixed "
+                            "up for the editor is put back as the game wrote it, so party progress stays.")
         # The party guide and (developer checkout) the local test in one row (the party's settings:
         # the Party Rules and My Party tabs)
         tools_row = ttk.Frame(sec, style="Card.TFrame")
@@ -3382,6 +3407,92 @@ class BloodborneLauncher(tk.Tk):
         self.update_label.bind("<Button-1>", lambda _e: webbrowser.open(notice.url))
         self.update_label.pack(anchor="w", pady=(0, 6), after=self._update_anchor)
         self.log(f"[UPDATE] {notice.text}: {notice.url}")
+
+    def export_for_save_editor(self):
+        """Pick a character save, then a folder: save_editor.export_save writes an editor-readable copy."""
+        try:
+            se = save_editor_module()
+        except ImportError as ex:
+            messagebox.showerror("Export for save editor", f"scripts\\save_editor.py is missing:\n{ex}")
+            return
+        user = party_user_dir()
+        rows = se.list_saves(user)
+        if not rows:
+            messagebox.showinfo("Export for save editor", f"There is no character save in:\n{user}")
+            return
+        win = tk.Toplevel(self)
+        win.title("Export for save editor")
+        win.transient(self)
+        ttk.Label(win, text="Which character?").pack(anchor="w", padx=10, pady=(10, 4))
+        box = tk.Listbox(win, width=90, height=min(12, len(rows)), exportselection=False)
+        for r in rows:
+            box.insert("end", se.describe(r))
+        box.selection_set(0)
+        box.pack(fill="both", expand=True, padx=10)
+        chosen = {}
+
+        def ok():
+            sel = box.curselection()
+            if sel:
+                chosen["row"] = rows[sel[0]]
+            win.destroy()
+        btns = ttk.Frame(win)
+        btns.pack(anchor="e", padx=10, pady=10)
+        ttk.Button(btns, text="Export...", command=ok).pack(side="left")
+        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=(6, 0))
+        win.grab_set()
+        self.wait_window(win)
+        row = chosen.get("row")
+        if not row:
+            return
+        dest = filedialog.askdirectory(title="Folder for the save editor's copy (an empty folder is best)")
+        if not dest:
+            return
+        try:
+            out = se.export_save(user, row["kind"], row["slot"], dest)
+        except (OSError, ValueError) as ex:
+            messagebox.showerror("Export for save editor", f"The export failed:\n{ex}")
+            return
+        fixed = (" The copy was fixed up for the editor (it was last saved as a guest in another world)."
+                 if row.get("guest_written") else "")
+        messagebox.showinfo("Export for save editor",
+                            f"Exported {se.describe(row)} to\n{out}\n\nOpen that file in the save editor, save "
+                            f"it there, then use Import from save editor.{fixed} Keep {se.MANIFEST} next to it.")
+
+    def import_from_save_editor(self):
+        """An edited export back into its slot (save_editor.import_save), after a confirmation."""
+        if self.proc is not None:
+            messagebox.showwarning("Game running", "Close the game before importing a save.")
+            return
+        try:
+            se = save_editor_module()
+        except ImportError as ex:
+            messagebox.showerror("Import from save editor", f"scripts\\save_editor.py is missing:\n{ex}")
+            return
+        src = filedialog.askopenfilename(title="The edited save (exported by the launcher)",
+                                         filetypes=[("Character save", "userdata000*"), ("All files", "*")])
+        if not src:
+            return
+        user = party_user_dir()
+        try:
+            plan = se.check_import(user, src)
+        except (OSError, ValueError) as ex:
+            messagebox.showerror("Import from save editor", f"This file cannot be imported:\n{ex}")
+            return
+        kind = "party save" if plan["kind"] == "party" else "single-player save"
+        notes = "".join(f"\n- {n}" for n in plan["notes"])
+        if not messagebox.askyesno(
+                "Import from save editor",
+                f"Replace slot {plan['slot'] + 1} of your {kind} ({plan['target']}) with the edited file?"
+                f"{notes}\n\nYour current saves are copied to user\\save_backups first."):
+            return
+        try:
+            done = se.import_save(user, src, force=True)
+        except (OSError, ValueError) as ex:
+            messagebox.showerror("Import from save editor", f"The import failed (your save is unchanged):\n{ex}")
+            return
+        messagebox.showinfo("Import from save editor",
+                            f"Imported into slot {plan['slot'] + 1} of your {kind}.\nThe save before it: {done['backup']}")
 
     def undo_last_party_session(self):
         """Restore the newest party session snapshot (scripts/party_session.py) after a confirmation."""
