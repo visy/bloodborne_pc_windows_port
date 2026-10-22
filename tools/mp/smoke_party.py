@@ -92,6 +92,12 @@ Phase cv (~3 min, 2 players, groups `covenant` / `valtr_rune`): covenant outcome
   after the session while the shared progress (a boss kill) still reaches it. Valtr's Impurity rune:
   the guest's League talk trigger gives the guest the rune in its own inventory and save, never the
   host. Both saves are read from copies after the run.
+Phase ie (~3 min, 2 players, group `items_every`): early items for every player (0.7.3). In the
+  host's Hunter's Dream: the guest (without the Old Hunter Bell, goods 4312 and its flag 6670) gets
+  the bell from the host's award (its item box); the host's own starting weapon picks cleared, a
+  Dream reload brings its messengers up next to the guest (who has picked): the guest's copy of
+  their event must not end the host's (the 0x31 state packet dropped), they stay up until the host
+  itself takes a weapon through the menu (Cross presses).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -1790,6 +1796,44 @@ def phase_cv(only):
     )
 
 
+# Phase ie (itemsevery, 0.7.3, ~3 min, 2 players, group `items_every`; a player's report: starting
+# weapons, Iosefka's vial and the Old Hunter Bell reached one player only; docs/party/items.md 10.8).
+#   Bell: the guest's bell (goods 4312) is taken away 3 s into its first world and its flag 6670
+#   cleared after that (guest_flag, the personal block: its own pool), so the join's full list skips
+#   it; the host's test award of lot 10050 (BB_PARTY_ITEMS_HOST_TEST, 20 s after the join; the host's
+#   own bell taken away too, its fit check) reaches the guest: the bell's item box.
+#   Messengers: the host's own picks cleared (12101020 + its stock flags 72101000-72101002) at its
+#   first world; two lamp warps reload the Dream, so event 12101020 runs again with them cleared; the
+#   host stands 1.5 m from messenger 2100215 (they rise, 12105050). The guest still has its picks: its
+#   copy of the event ends, and before 0.7.3 that ended the host's copy too (0x31). The host then takes
+#   a weapon (Cross presses on the menu; one of 72101000-72101002 set, then 12101020).
+IE_UNTIL = [r"0:test: travel step (\d+)/\1: [\s\S]{3000}", r"1:lot 10050 "]
+
+
+def phase_ie(only):
+    host = ",".join(["god", "goods=4312:0", "log_flag=12101020/12105050/72101000/72101001/72101002",
+                     "watch_text=Saw Cleaver/Hunter Axe",
+                     "host_warp=2412951@35^1", "host_warp=2102961@10",
+                     "host_chr=2100215:1.5@6%m21_00"]
+                    + ["host_press=0x4000@2.5%m21_00"] * 6 + ["host_press=0x2000@2.5%m21_00"] * 2)
+    g1 = ",".join(["god", "goods=4312:0", "log_flag=6670/12101020", "guest_flag=6670:0@12"])
+    return dict(
+        name="ie", seconds=300, count=2, headless=0,
+        env=["BB_PARTY_START=immediate"],
+        ienv=["0:BB_PARTY_PROGRESS_TEST_CLEAR=12101020,72101000,72101001,72101002",
+              "0:BB_PARTY_ITEMS_HOST_TEST=10050",
+              "0:BB_PARTY_DIRECTOR_TEST=" + host,
+              "1:BB_PARTY_PROGRESS_TEST_READ=6670,12101020,12101021",
+              "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"gave #\d+ lot 10050=iebell@1,3",
+               "--watch", r"flags 12101020=0 12105050=1=ierise@1,3,6",
+               "--watch", r"host_press 0x4000=iepress@1.2",
+               "--watch", r"text shows=ietext@0.3",
+               "--watch", r"flags 12101020=1=iedone@0.5,3"],
+        crash=[], until=IE_UNTIL, until_hold=8,
+    )
+
+
 # Phase nfa (npcfights Alfred, ~5 min, 2 players, groups `npc_fights` / `npc_alfred`; D11 live proof):
 # Alfred in the Queen's Chamber (m25), friendly at the start (his state 1348 in both saves), the
 # guest standing next to him when he turns hostile (an in-map transition, 12500053), then the guest's
@@ -1945,14 +1989,14 @@ def phase_clg(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh"}
+          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1963,7 +2007,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2021,6 +2065,7 @@ GROUP_UNTIL = {
     "npc_alfred": [NFA_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
+    "items_every": IE_UNTIL,
     "travel_vote": TV_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
@@ -4151,13 +4196,35 @@ def check_cv(v, L, d: Path):
     check_common(v, L, "cv")
 
 
+def check_ie(v, L):
+    """Phase ie: early items for every player (0.7.3)."""
+    j = need(v, L, "ie join: the guest is in", 0, r"cooperators 0 -> 1")
+    need(v, L, "ie bell: the host's award of lot 10050 goes to the party", 0,
+         r"host award #\d+ lot 10050 \(flag 6670, award\) queued for the party", j or 0)
+    need(v, L, "ie bell: the guest gets the Old Hunter Bell (item box)", 1,
+         r"gave #\d+ lot 10050 .*goods 4312 x1 \(held 0 -> 1", j or 0)
+    rise = need(v, L, "ie messengers: the host's own messengers rise (its picks cleared)", 0,
+                r"test: flags 12101020=0 12105050=1", j or 0)
+    need(v, L, "ie messengers: another game's end of event 12101020 not applied", 0,
+         r"Messengers: event 1210102[01]'s state from another player not applied", j or 0)
+    done = L.find(0, r"test: flags 12101020=1", rise or 0) if rise is not None else None
+    picked = L.find(0, r"test: flags .*7210100[012]=1", rise or 0) if rise is not None else None
+    v.step("ie messengers: the host's stay up until its own pick",
+           rise is not None and (done is None or (picked is not None and picked[0] <= done[0])),
+           ("done %s; own pick %s" % (done[1][:120] if done else "never", picked[1][:120] if picked else "none")))
+    v.step("ie messengers: the host takes a weapon through the menu (12101020 after its own pick)",
+           picked is not None and done is not None and picked[0] <= done[0],
+           picked[1][:150] if picked else "no 72101000-72101002 set on the host")
+    check_common(v, L, "ie")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -4184,7 +4251,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "clg", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa", "eh")
+                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "rh", "rs", "tv", "nf", "nfa", "eh")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
