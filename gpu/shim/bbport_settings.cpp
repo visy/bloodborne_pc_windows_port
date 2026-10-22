@@ -47,6 +47,10 @@ const PartySwitch PartySwitches[] = {
     {"party_gather", "BB_PARTY_GATHER", &Values::party_gather, false},
     {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
     {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
+    // 0.7.2: the rot cleanses (party_balance reads them live; host's rules).
+    {"party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", &Values::party_rot_cleanse_boss, false},
+    {"party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", &Values::party_rot_cleanse_killer, false},
+    {"party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", &Values::party_rot_cleanse_echoes, false},
 };
 const int PartySwitchCount = int(std::size(PartySwitches));
 
@@ -381,6 +385,8 @@ void Load() {
         v.party_friendly_fire = ff[0] == '1';
     if (const char* sl = std::getenv("BB_PARTY_SHARE_LAMPS"); sl && (sl[0] == '0' || sl[0] == '1'))
         v.party_share_lamps = sl[0] == '1';
+    // C4 rot (tests, scripted hosts): BB_PARTY_ROT=0/1 wins over the ini.
+    if (const char* ro = std::getenv("BB_PARTY_ROT"); ro && (ro[0] == '0' || ro[0] == '1')) v.party_rot = ro[0] == '1';
     // The party gameplay switches: BB_PARTY_*=0/1 (tools/mp, scripts) wins over the ini; an unset
     // variable gets the ini's value, for the party modules that read their switch at start.
     // BB_PARTY_SWITCH_ENV lists the variables put there: a restart from the menu (runtime_restart

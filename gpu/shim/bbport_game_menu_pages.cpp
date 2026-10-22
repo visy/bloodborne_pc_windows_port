@@ -1187,16 +1187,8 @@ void DefineAll() {
     namespace ps = party::status;
 
     // ---- Deaths & revives (party_b2, party_balance, party_phantom) ----
-    AddPage("Deaths & revives", "Смерти и подъём", "Rot on death, getting up without a loading screen, respawns (bbport)",
-            "Гниль при смерти, подъём без экрана загрузки, возрождение (bbport)");
-    host_rule(&Values::party_rot, "Rot on death", "Гниль при смерти",
-              AddText("Each death: max HP -10 % (up to 5), a lamp rest cleanses it. Party rule",
-                      "Каждая смерть: -10 % здоровья (до 5 раз), отдых у фонаря снимает. Правило группы"),
-              [] { return ps::HostRuleOn(ps::HostRule::Rot); },
-              {"The host's rule: each death max HP -10 % (up to 5), a lamp rest cleanses it",
-               "Правило хоста: каждая смерть -10 % здоровья (до 5 раз), отдых у фонаря снимает"},
-              {"The host turned rot off: deaths cost no max HP",
-               "Хост выключил гниль: смерти не отнимают здоровье"});
+    AddPage("Deaths & revives", "Смерти и подъём", "Getting up without a loading screen, respawns (bbport)",
+            "Подъём без экрана загрузки, возрождение (bbport)");
     own(&Values::party_guest_revive_inplace, "Guest gets up, no load", "Гость встаёт сразу",
         "While you are a guest: you get up at the host's lamp without a loading screen. Off: the respawn load",
         "Пока вы гость: вы встаёте у фонаря хоста без экрана загрузки. Выкл.: загрузка возрождения");
@@ -1222,6 +1214,43 @@ void DefineAll() {
     own(&Values::party_guest_refill, "Refill vials, bullets", "Пополнять склянки, пули",
         "While you are a guest: vials and bullets refill when the host rests, dies or travels. Next start",
         "Пока вы гость: склянки и пули пополняются, когда хост отдыхает, гибнет или уходит. Со след. запуска");
+
+    // ---- Rot (party_balance, party_rot_rules.h; 0.7.2: its own page, the six rows of Deaths &
+    // revives were full): the death debuff and what else cleanses it, the host's rules. ----
+    AddPage("Rot", "Гниль", "Rot on death and what cleanses it: a boss, your killer, your Blood Echoes (bbport)",
+            "Гниль при смерти и что её снимает: босс, ваш убийца, ваши отголоски крови (bbport)");
+    host_rule(&Values::party_rot, "Rot on death", "Гниль при смерти",
+              AddText("Each death stacks a penalty (up to 5), a lamp rest cleanses it. Off by default. Party rule",
+                      "Каждая смерть - штраф (до 5 раз), отдых у фонаря снимает. По умолч. выкл. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::Rot); },
+              {"The host's rule: each death stacks a penalty (up to 5), a lamp rest cleanses it",
+               "Правило хоста: каждая смерть - штраф (до 5 раз), отдых у фонаря снимает"},
+              {"The host has rot off: deaths cost nothing more",
+               "У хоста гниль выключена: смерти ничего не отнимают"});
+    host_rule(&Values::party_rot_cleanse_boss, "Rot: boss kill cleanses", "Гниль: босс снимает",
+              AddText("A boss's death cleanses all rot of everyone in the host's world. Needs Rot. Party rule",
+                      "Смерть босса снимает всю гниль у всех в мире хоста. Нужна гниль. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::RotCleanseBoss); },
+              {"The host's rule: a boss's death cleanses all rot of everyone in its world",
+               "Правило хоста: смерть босса снимает всю гниль у всех в его мире"},
+              {"The host's rule: off, a boss's death leaves the rot",
+               "Правило хоста: выкл., смерть босса гниль не снимает"});
+    host_rule(&Values::party_rot_cleanse_killer, "Rot: kill your killer", "Гниль: убить убийцу",
+              AddText("The enemy that killed you dies: that death's rot goes. Needs Rot. Party rule",
+                      "Враг, убивший вас, погиб: гниль той смерти уходит. Нужна гниль. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::RotCleanseKiller); },
+              {"The host's rule: the enemy that killed you dies, that death's rot goes",
+               "Правило хоста: враг, убивший вас, погиб - гниль той смерти уходит"},
+              {"The host's rule: off, your killer's death leaves the rot",
+               "Правило хоста: выкл., смерть убийцы гниль не снимает"});
+    host_rule(&Values::party_rot_cleanse_echoes, "Rot: echoes back", "Гниль: вернуть отголоски",
+              AddText("Picking up your Blood Echoes removes the rot of the death that dropped them. Needs Rot",
+                      "Подобранные отголоски крови снимают гниль той смерти. Нужна гниль. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::RotCleanseEchoes); },
+              {"The host's rule: your Blood Echoes picked up remove that death's rot",
+               "Правило хоста: подобранные отголоски снимают гниль той смерти"},
+              {"The host's rule: off, picking up your Blood Echoes leaves the rot",
+               "Правило хоста: выкл., подобранные отголоски гниль не снимают"});
 
     // ---- World & PvP (party_pvp, party_balance, party_guestsvc, seamless_rules, party_phantom) ----
     AddPage("World & PvP", "Мир и PvP", "Friendly fire, shared lamps, lamps and Hunter's Mark for guests, open world (bbport)",

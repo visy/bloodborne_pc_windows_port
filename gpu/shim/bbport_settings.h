@@ -174,9 +174,10 @@ struct Values {
     /// party, host-led (ini party_guest_lamps; env BB_PARTY_GUEST_LAMPS overrides). On restart.
     std::atomic<bool> party_guest_lamps{true};
     /// Party rules (party_balance.h; the host's values are the party's, sent to every guest. Live).
-    /// C4: the death debuff "rot": each death stacks max HP -10 % (5 stacks), a lamp rest cleanses
-    /// it (ini party_rot; on by default, user decision 2026-10-11).
-    std::atomic<bool> party_rot{true};
+    /// C4: the death debuff "rot": each death stacks one of five penalties (5 stacks), a lamp rest
+    /// cleanses it (ini party_rot; env BB_PARTY_ROT=0/1 overrides at start). Off by default (user
+    /// decision 2026-10-22; on 0.6.0 - 0.7.1): only an unset key is off, a saved value stays.
+    std::atomic<bool> party_rot{false};
     /// D7: enemy scaling per extra hunter (coop::balance::Rules): HP / poise in % of Bloodborne's
     /// boss step (100 = vanilla), damage + % (ini party_boss_hp ... party_enemy_poise).
     std::atomic<int> party_boss_hp{150}, party_boss_damage{10}, party_boss_poise{100};
@@ -236,6 +237,10 @@ struct Values {
     /// The host's own (its death; shown read-only to guests through party_balance's rules):
     std::atomic<bool> party_host_revive{true};       ///< the host gets up at its lamp without a load
     std::atomic<bool> party_host_limbo_revive{true}; ///< the host gets up in the arena after a boss kill
+    /// 0.7.2, what else cleanses rot (party_rot_rules.h; only while rot is on; read live):
+    std::atomic<bool> party_rot_cleanse_boss{true};   ///< a boss's death: all of it, for the whole party
+    std::atomic<bool> party_rot_cleanse_killer{true}; ///< your killer's death: that death's stack
+    std::atomic<bool> party_rot_cleanse_echoes{true}; ///< your bloodstain picked up: its death's stack
     /// Each player's own (applies while it is a guest, or to its own world):
     std::atomic<bool> party_guest_revive_inplace{true}; ///< a guest gets up at the lamp without a load
     std::atomic<bool> party_guest_respawn{true};  ///< a dead guest comes back at the host's lamp

@@ -23,7 +23,7 @@ Phase s2 (~8 min, the Cleric Beast un-killed: the b2_seamless 6.7 fixture flags)
   kill (A3 / K10b), a guest crash and its title rejoin (C6), the host's crash and recovery (the
   guests wait, then are summoned back), the host's Leave (every guest home).
 Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real System menu walked
-  by the game's own pad path): host and guest open each party rules page (Deaths & revives, World &
+  by the game's own pad path): host and guest open each party rules page (Deaths & revives, Rot, World &
   PvP, Shared world, Story & dialogue, Party rewards, Enemy scaling, Party display; a screenshot of each); every
   page's rows and values from its trace line ("Game menu: page N rows (k): NAME=VALUE | ...", no
   text cut); the host changes one option per page and sets it back (the menu's "row ... -> ..." line,
@@ -306,9 +306,13 @@ def phase_sc(only):
 # after or None)). The labels are the shown rows of a host (a guest's read-only lines have the same
 # names). Toggles: Left = Off, Right = On; sliders: Right = one step up.
 RULES_PAGES = [
-    ("Deaths & revives", ["Rot on death", "Guest gets up, no load", "Host gets up, no load", "Up after boss kill",
+    ("Deaths & revives", ["Guest gets up, no load", "Host gets up, no load", "Up after boss kill",
                           "Respawn at host's lamp", "Refill vials, bullets"],
-     ("Rot on death", "", "left", "Off", "right", "party_rot=0", "party_rot=1", '"rot":false')),
+     ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
+      "party_guest_revive_inplace=1", None)),
+    # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
+    ("Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
+     ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
     ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests use lamps", "Guests use Hunter's Mark", "Open world"],
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
@@ -331,9 +335,10 @@ RULES_PAGES = [
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
-RULES_INI_RESET = ["party_rot", "party_friendly_fire", "party_npc_talk", "party_full_rewards", "party_boss_hp",
+RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fire", "party_npc_talk", "party_full_rewards", "party_boss_hp",
                    "party_pings", "party_host_revive", "party_share_lamps", "party_kill_record", "party_gather",
-                   "party_npc_mirror", "party_key_view", "party_key_items_summoned"]
+                   "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
+                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes"]
 
 
 def rules_walk_to_first():
@@ -1030,13 +1035,81 @@ def phase_bf(only):
     )
 
 
+
+# Phase rt (rotrules, 0.7.2, ~7 min, 2 players, group `rot`): rot on (BB_PARTY_ROT=1) and what else
+# cleanses it (party_rot_rules.h). Guest 1 is frail (BB_PARTY_ROT_TEST_FRAIL: any hit leaves 1 HP, so
+# the next enemy hit kills it: a death with a killer, the game's own death path), starts with 0 Blood
+# Echoes (no stain at its first death) and picks its stains up by itself (BB_PARTY_STAIN_TEST).
+#   1  killed by enemy 2410247 (Central Yharnam, m24_01), up at the host's lamp, at RT_SIGNAL; the
+#      host kills 2410247 (the kill record relays it): -1 "your killer is dead"
+#   2  a scripted death (no killer) with echoes, its bloodstain picked up: -1 "Blood Echoes retrieved"
+#   3  the host turns the killer and echoes rules off (host_rule, live); killed by 2410261, which it
+#      then kills itself, its stain picked up: no change
+#   4  a scripted death, its stain picked up: no change (2 stacks now)
+#   5  the host kills Father Gascoigne: 0 "Rot cleansed: boss defeated"
+#   6  the host turns the boss rule off; a scripted death; the party travels to the Cleric Beast, the
+#      host kills it: no change (1 stack)
+# The host waits for the guest by its position (`?near=`), the guest for the boss by its defeat flag.
+RT_LAMP = "-36.8:-40.75:84.3"          # the Tomb of Oedon lamp's revive spot (2412953)
+RT_SIGNAL = "-41.5:-40.5:79.5"         # 6 m off it (the host's walk in s3): the guest is ready
+RT_ENEMIES = "-157.7:-41.7:16.5:14"    # m24_01's enemy group 130 m away (2410261 stands there)
+RT_UNTIL = r"1:rot: a boss died .*nothing off \(rot on; cleanse boss off"
+
+
+def _rt_killed_by(entity):
+    """Guest 1 at an enemy, R1 to draw it, ~20 s for its two hits (frail), then up at the lamp."""
+    return (["guest_chr=%s@3%%m24_01" % entity] + ["guest_press=0x800@1.5%m24_01!"] * 3 +
+            ["guest_press=0@8%m24_01", "guest_press=0@8%m24_01"])
+
+
+def phase_rt(only):
+    host = ",".join([
+        "god",
+        "host_warp=2412953@20",                                     # the Tomb of Oedon lamp (party travel)
+        "host_press=0@8%m24_01!", "host_press=0@8%m24_01!",         # the guest leaves the lamp
+        "host_kill=2410247@3%%m24_01?near=%s:2" % RT_SIGNAL,          # 1: its killer, once it is up again
+        "host_rule=party_rot_cleanse_killer:0@1%%m24_01?near=%s" % RT_ENEMIES,  # 3: at its next enemy
+        "host_rule=party_rot_cleanse_echoes:0@1%m24_01",
+        "host_move=%s@2%%m24_01?near=%s:2" % (S3_TRIGGER, RT_SIGNAL),  # 5: Gascoigne's fight
+        "host_kill=2410810@6%m24_01~",                                # after its intro
+        "host_rule=party_rot_cleanse_boss:0@2%m24_01",               # 6
+        "host_warp=2412952@2%%m24_01?near=%s:2" % RT_LAMP,             # the guest up from its death
+        "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,              # the Cleric Beast's fight
+        "host_kill=2410800@10%m24_01",
+        "host_press=0@8%m24_01",
+    ])
+    g1 = ",".join(
+        ["echoes=0"] + _rt_killed_by(2410247) +                       # 1
+        ["guest_move=%s@3%%m24_01" % RT_SIGNAL,                       # up again: the host kills 2410247
+         "guest_press=0@8%m24_01!",
+         "guest_kill=2410202@1%m24_01",                               # echoes for the stain (its own kill)
+         "guest_die@6%m24_01",                                        # 2: no killer, a stain
+         "guest_press=0@8%m24_01!", "guest_press=0@8%m24_01!"] +      # its stain picked up
+        _rt_killed_by(2410261) +                                      # 3 (rules off by then)
+        ["guest_kill=2410261@4%m24_01",                               # it kills its killer itself
+         "guest_die@10%m24_01",                                       # 4 (its stain 3 picked up first)
+         "guest_press=0@8%m24_01!",
+         "guest_move=%s@6%%m24_01" % RT_SIGNAL,                       # ready: the host's boss fight
+         "guest_die@6%m24_01?12411800=1"])                            # 6: after Gascoigne's defeat
+    return dict(
+        name="rt", seconds=600, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + "," + CLERIC_CLEAR, "BB_PARTY_ROT=1",
+             "BB_PARTY_ROT_CLEANSE_BOSS=1", "BB_PARTY_ROT_CLEANSE_KILLER=1", "BB_PARTY_ROT_CLEANSE_ECHOES=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              "1:BB_PARTY_ROT_TEST_FRAIL=1", "1:BB_PARTY_STAIN_TEST=2", "1:BB_PARTY_ROT_KIND=0,1,3,0,1,3"],
+        watch=["--watch", "notice: Rot=rotnotice@0.5,2", "--watch", "rot: .*notice: Rot=rotclean@0.5,2",
+               "--watch", "rot: .*nothing off=rotkept@0.5"],
+        crash=[], until=[RT_UNTIL], until_hold=4,
+    )
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rt": phase_rt}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch",
+          "rot": "rt"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1044,7 +1117,8 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch "}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ",
+              "rot": r"^rt "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1089,6 +1163,7 @@ GROUP_UNTIL = {
     # the host back in the dungeon from the Dream, ~40 s after (guest 1 summoned back in)
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
     "fight_load": BF_UNTIL,
+    "rot": [RT_UNTIL],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -2415,13 +2490,67 @@ def check_bf(v, L):
     check_common(v, L, "bf")
 
 
+def check_rt(v, L):
+    """Phase rt: rot cleansed by the killer's death, the bloodstain, a boss; each rule off: no change."""
+    need(v, L, "rt join: 2 players", 0, r"cooperators 0 -> 1")
+
+    d1 = need(v, L, "rt 1 guest killed by enemy 2410247 (its killer known)", 1,
+              r"death 1: killed by an enemy \(chr [0-9a-f]+, entity 2410247")
+    k1 = None
+    if d1 is not None:
+        need(v, L, "rt 1 a stack (health)", 1, r"death 1; rot on, 1 stack\(s\) \(this one: health\)", d1 - 1)
+        k1 = need(v, L, "rt 1 the host kills it", 0, r"travel step \d+/\d+: host_kill entity 2410247", d1)
+        c1 = need(v, L, "rt 1 killer dead: -1 (notice)", 1,
+                  r"rot: an enemy died \(entity 2410247, .*\): 1 stack\(s\) off, 0 left; notice: Rot -1: your killer is dead",
+                  d1)
+        if c1 is not None and k1 is not None:
+            v.step("rt 1 the cleanse came from the host's kill", c1 >= k1 - 1 and c1 - k1 < 15,
+                   "+%.1f s after the host's kill" % (c1 - k1))
+    d2 = need(v, L, "rt 2 a scripted death (no killer), a stain", 1,
+              r"death 2: killed by nobody", k1 or 0)
+    if d2 is not None:
+        need(v, L, "rt 2 stack +1", 1, r"death 2; rot on, 1 stack\(s\)", d2 - 1)
+        need(v, L, "rt 2 bloodstain picked up", 1, r"party stain: recovered \d+ Blood Echoes|own bloodstain taken and its Blood Echoes back", d2)
+        need(v, L, "rt 2 echoes back: -1 (notice)", 1,
+             r"rot: the bloodstain was picked up .*: 1 stack\(s\) off, 0 left; notice: Rot -1: Blood Echoes retrieved", d2)
+    off = need(v, L, "rt 3 the host turns the killer and echoes rules off", 0,
+               r"test: host_rule: party_rot_cleanse_echoes 1 -> 0")
+    if off is not None:
+        need(v, L, "rt 3 the guest gets the host's rules (cleanses off)", 1,
+             r'the host\'s rules: .*"rot_cleanse_killer":false.*"rot_cleanse_echoes":false|'
+             r'the host\'s rules: .*"rot_cleanse_echoes":false', off - 1)
+    d3 = need(v, L, "rt 3 guest killed by enemy 2410261", 1, r"death 3: killed by an enemy \(chr [0-9a-f]+, entity 2410261",
+              d2 or 0)
+    if d3 is not None:
+        k3 = need(v, L, "rt 3 its killer dead, rule off: no change", 1,
+                  r"rot: an enemy died \(entity 2410261, .*\): nothing off \(rot on; cleanse boss on, killer off", d3)
+        none_of(v, L, "rt 3 no stack off while the rules are off", r"rot: .*stack\(s\) off", d3,
+                L.find(1, r"rot: a boss died", d3)[0] if L.find(1, r"rot: a boss died", d3) else 1e9, (1,))
+        need(v, L, "rt 3 stain picked up, rule off: no change", 1,
+             r"rot: the bloodstain was picked up .*nothing off \(rot on; cleanse boss on, killer off, echoes off", d3)
+    d4 = need(v, L, "rt 4 a death: 2 stacks", 1, r"death 4; rot on, 2 stack\(s\)", d3 or 0)
+    b = need(v, L, "rt 5 boss killed: all rot cleansed (notice)", 1,
+             r"rot: a boss died .*: [2-5] stack\(s\) off, 0 left; notice: Rot cleansed: boss defeated", d4 or 0)
+    if b is not None:
+        need(v, L, "rt 5 the host killed Gascoigne", 0, r"travel step \d+/\d+: host_kill entity 2410810", (d4 or 0))
+        d6 = need(v, L, "rt 6 a death after the boss: 1 stack", 1, r"death \d+; rot on, 1 stack\(s\)", b)
+        if d6 is not None:
+            need(v, L, "rt 6 the host turns the boss rule off", 0, r"test: host_rule: party_rot_cleanse_boss 1 -> 0", b - 30)
+            need(v, L, "rt 6 Cleric Beast killed, boss rule off: no change", 1,
+                 r"rot: a boss died .*nothing off \(rot on; cleanse boss off.*; 1 stack\(s\)\)", d6)
+    # The party HUD's rot line follows (System > Party / HUD read party::status::SetRot)
+    none_of(v, L, "rt no rot file errors", r"rot: .*(could not|cannot) (write|read)", 0, 1e9, (0, 1))
+    check_common(v, L, "rt")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L)}
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L),
+          "rt": lambda v, L, d: check_rt(v, L)}
 
 
 def main():
@@ -2445,7 +2574,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch", "rt")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

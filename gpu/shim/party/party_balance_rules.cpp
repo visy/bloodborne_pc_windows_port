@@ -24,7 +24,8 @@ bool Rules::operator==(const Rules& o) const {
            enemy_hp == o.enemy_hp && enemy_damage == o.enemy_damage && enemy_poise == o.enemy_poise &&
            friendly_fire == o.friendly_fire && share_lamps == o.share_lamps && host_revive == o.host_revive &&
            host_limbo_revive == o.host_limbo_revive && kill_record == o.kill_record && npc_mirror == o.npc_mirror &&
-           gather == o.gather;
+           gather == o.gather && rot_cleanse_boss == o.rot_cleanse_boss && rot_cleanse_killer == o.rot_cleanse_killer &&
+           rot_cleanse_echoes == o.rot_cleanse_echoes;
 }
 
 bool Doping::operator==(const Doping& o) const {
@@ -70,6 +71,9 @@ Rules Clamped(const Rules& r) {
 std::string ToJson(const Rules& r) {
     json::Value v = json::Value::make_object();
     v.set("rot", r.rot);
+    v.set("rot_cleanse_boss", r.rot_cleanse_boss);
+    v.set("rot_cleanse_killer", r.rot_cleanse_killer);
+    v.set("rot_cleanse_echoes", r.rot_cleanse_echoes);
     v.set("boss_hp", r.boss_hp);
     v.set("boss_damage", r.boss_damage);
     v.set("boss_poise", r.boss_poise);
@@ -94,7 +98,12 @@ bool FromJson(const std::string& text, Rules* out, std::string* error) {
         return false;
     }
     Rules r;
+    // 0.7.2's cleanse rules: a host from before them has none (its rot had none either): off.
+    r.rot_cleanse_boss = r.rot_cleanse_killer = r.rot_cleanse_echoes = false;
     if (const json::Value* m = v.find("rot"); m && m->type == json::Value::Type::Bool) r.rot = m->boolean;
+    for (auto [key, to] : {std::pair<const char*, bool*>{"rot_cleanse_boss", &r.rot_cleanse_boss},
+                           {"rot_cleanse_killer", &r.rot_cleanse_killer}, {"rot_cleanse_echoes", &r.rot_cleanse_echoes}})
+        if (const json::Value* m = v.find(key); m && m->type == json::Value::Type::Bool) *to = m->boolean;
     if (const json::Value* m = v.find("friendly_fire"); m && m->type == json::Value::Type::Bool)
         r.friendly_fire = m->boolean;
     if (const json::Value* m = v.find("share_lamps"); m && m->type == json::Value::Type::Bool)
@@ -251,6 +260,9 @@ RotFile ParseRotFile(const std::string& text) {
             k = std::clamp(n, 0, left);
             left -= k;
         }
+        int stain = -1;
+        if (l >> word && word == "stain" && l >> stain && stain >= 0 && stain < kRotFileKinds && r.kind[stain] > 0)
+            r.stain = stain;
         f.Set(r);  // a later line for the same slot wins
     }
     return f;
@@ -262,6 +274,7 @@ std::string FormatRotFile(const RotFile& f) {
         if (r.Stacks() <= 0) continue;
         out += "slot " + std::to_string(r.slot) + " kinds";
         for (int k : r.kind) out += " " + std::to_string(k);
+        if (r.stain >= 0 && r.stain < kRotFileKinds && r.kind[r.stain] > 0) out += " stain " + std::to_string(r.stain);
         out += "\n";
     }
     return out;

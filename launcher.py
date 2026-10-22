@@ -154,6 +154,12 @@ PARTY_INI_SWITCHES = [
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
+    # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
+    # stays) and what else cleanses it (the host's rules; System > Deaths & revives)
+    ("party_rot", "BB_PARTY_ROT", False),
+    ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
+    ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
+    ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -3029,8 +3035,8 @@ class BloodborneLauncher(tk.Tk):
         """Party rules & sync: the PARTY_SWITCHES, start mode, guest Insight and save backups."""
         dlg = tk.Toplevel(self)
         dlg.title("Party Rules & Sync")
-        dlg.geometry("720x700")
-        dlg.minsize(640, 640)
+        dlg.geometry("720x800")
+        dlg.minsize(640, 700)
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg="#1a1a1a")
@@ -3186,6 +3192,35 @@ class BloodborneLauncher(tk.Tk):
                     "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
                     "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
 
+        # 0.7.2: rot, the host's rules (System > Rot)
+        sec = section(4, 0, "Rot on death (host)")
+        rot_cbs = []
+
+        def update_rot():
+            for cb in rot_cbs:
+                cb.state(["!disabled"] if var["party_rot"].get() else ["disabled"])
+            save()
+        self._check(sec, "Rot on death", var["party_rot"],
+                    "Each death stacks one penalty, picked at random, up to 5: max HP -10 %, max stamina -10 %, "
+                    "stamina costs +10 %, rally -15 % or item discovery -10. Resting at a lamp (even just "
+                    "opening its travel menu) or levelling up cleanses it. The host's setting counts for the "
+                    "whole party. Default: off (bbport.ini party_rot; in the game: System > Rot).",
+                    command=update_rot)
+        rot_cbs.append(self._check(sec, "    A boss kill cleanses it", var["party_rot_cleanse_boss"],
+                                   "When a boss dies, every party member in the host's world loses all their rot, "
+                                   "alive or dead in that fight. Needs Rot on death. Default: on (bbport.ini "
+                                   "party_rot_cleanse_boss; in the game: System > Rot).", command=save))
+        rot_cbs.append(self._check(sec, "    Killing your killer cleanses it", var["party_rot_cleanse_killer"],
+                                   "When the enemy that killed you dies (anyone in the party may kill it), you lose "
+                                   "the rot of that death. A fall or a trap has no killer; a rest brings the killer "
+                                   "back. Needs Rot on death. Default: on (bbport.ini party_rot_cleanse_killer; in "
+                                   "the game: System > Rot).", command=save))
+        rot_cbs.append(self._check(sec, "    Retrieving your Blood Echoes cleanses it", var["party_rot_cleanse_echoes"],
+                                   "Picking up your bloodstain removes the rot of the death that dropped it (not a "
+                                   "second time if your killer already died). Needs Rot on death. Default: on "
+                                   "(bbport.ini party_rot_cleanse_echoes; in the game: System > Rot).",
+                                   command=save))
+
         sec = section(3, 1, "Key items (guest)")
         keys_now_cb = None
 
@@ -3206,6 +3241,7 @@ class BloodborneLauncher(tk.Tk):
 
         update_dependents()
         update_keys()
+        update_rot()
 
         def on_defaults():
             for key, _, default in PARTY_SWITCHES + PARTY_INI_SWITCHES:
@@ -3216,6 +3252,7 @@ class BloodborneLauncher(tk.Tk):
             self.party_backup_keep_var.set("10")
             update_dependents()
             update_keys()
+            update_rot()
             self.save_party_rules()
 
         bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)

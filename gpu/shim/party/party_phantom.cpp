@@ -27,6 +27,7 @@
 #ifndef BB_PARTY_PHANTOM_NO_GAME
 #include "coop_hooks.h"
 #include "game_state.h"
+#include "party_balance.h"
 #include "party_director.h"
 #include "party_link.h"
 #include "party_guestvals_rules.h"
@@ -700,6 +701,8 @@ BB_COOP_SYSV void BossBonusHook(u64 a0, u64 entity) {
     }
     g_native_clear_at = Now();
     g_native_clear_bonus = int(v);
+    // 0.7.2 rot: a boss's death cleanses it (and is a killer's death; party_rot_rules.h).
+    balance::NoteBossDefeated(u32(entity), "the boss defeat on this game");
     Log("boss clear on this game (BlockClear2): boss %u, clear bonus %d Blood Echoes", u32(entity), int(v));
     if (PartyDirector::Get().Role() == PartyRole::Host && v > 0.0f) {
         PhantomEvent e;
@@ -1293,6 +1296,8 @@ void PhantomOnEvent(const std::string& body) {
             break;
         }
         if (e.boss) {
+            // 0.7.2 rot: every member in the host's world, alive or dead in the fight.
+            balance::NoteBossDefeated(0, "the host's boss kill");
             // Finding 4: did the boss defeat run on this game too? (BossFallbackTick)
             g_boss_wait.active = true;
             g_boss_wait.at = now;
@@ -1325,6 +1330,8 @@ void PhantomOnEvent(const std::string& body) {
         g_host_bonus = e.bonus;
         g_host_bonus_at = now;
         Log("host boss clear bonus: %d Blood Echoes (boss %u)", e.bonus, e.source_event);
+        // 0.7.2 rot: the boss entity too (it may be this guest's killer); only in the host's world.
+        if (now - g_last_client.load() <= kParticipation) balance::NoteBossDefeated(e.source_event, "the host's boss clear");
         break;
     }
     case PhantomEventKind::Unknown:

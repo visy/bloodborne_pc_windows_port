@@ -1889,8 +1889,31 @@ void PartyTab() {
     ImGui::Spacing();
     Note(T("Party rules (the host's count for everyone)", "Правила группы (действуют правила хоста)"), Dim());
     Toggle("party_rot", T("Rot on death", "Гниль при смерти"), s.party_rot,
-           T("Each death lowers max HP by 10 % (up to 5 times); resting at a lamp cleanses it.",
-             "Каждая смерть снижает здоровье на 10 % (до 5 раз); отдых у фонаря снимает."),
+           T("Each death stacks one penalty (max HP or stamina -10 %, stamina costs +10 %, rally -15 % or "
+             "item discovery -10; up to 5); resting at a lamp or levelling up cleanses it. Default: off.",
+             "Каждая смерть добавляет штраф (здоровье или выносливость -10 %, траты выносливости +10 %, "
+             "отыгрыш -15 % или находки -10; до 5 раз); отдых у фонаря или новый уровень снимает. По умолчанию: выкл."),
+           on);
+    // 0.7.2: what else cleanses rot (only while rot is on; the host's rules).
+    Toggle("party_rot_cleanse_boss", T("  Rot: a boss kill cleanses it", "  Гниль: смерть босса снимает"),
+           s.party_rot_cleanse_boss,
+           T("A boss's death cleanses all the rot of every party member in the host's world, alive or dead. "
+             "Default: on.",
+             "Смерть босса снимает всю гниль у всех участников в мире хоста, живых и мёртвых. По умолчанию: вкл."),
+           on);
+    Toggle("party_rot_cleanse_killer", T("  Rot: kill your killer", "  Гниль: убить своего убийцу"),
+           s.party_rot_cleanse_killer,
+           T("When the enemy that killed you dies (anyone in the party may kill it), you lose the rot of that "
+             "death. Not after a fall or a trap; a rest respawns the killer. Default: on.",
+             "Когда враг, убивший вас, погибает (от руки любого участника), гниль той смерти уходит. Не после "
+             "падения или ловушки; отдых возрождает убийцу. По умолчанию: вкл."),
+           on);
+    Toggle("party_rot_cleanse_echoes", T("  Rot: retrieve your Blood Echoes", "  Гниль: вернуть отголоски крови"),
+           s.party_rot_cleanse_echoes,
+           T("Picking up your bloodstain removes the rot of the death that dropped it (not twice if your killer "
+             "already died). Default: on.",
+             "Подобранное пятно крови снимает гниль смерти, оставившей его (не дважды, если убийца уже погиб). "
+             "По умолчанию: вкл."),
            on);
     // I1 friendly fire / PvP (party_pvp.h): the host's switch; a guest sees the host's rule.
     if (b.role == ps::Role::Guest) {
