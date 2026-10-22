@@ -33,6 +33,9 @@ FORMAT = 1
 OUTPUTS = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bin', 'libc-link.json',
            'boot-linked.bin', 'link.json')
 SCRIPTS = ('boot_image.py', 'prepare.py', 'game_check.py', 'link_libc.py', 'link_modules.py')
+# Data the scripts read into the image (link_modules.py: the red-zone store sites): a build that
+# changes only these must not reuse an image linked with the old ones.
+DATA = (HERE.parent / 'patches' / 'redzone.json',)
 STAMP = 'boot_image.json'
 
 
@@ -75,6 +78,7 @@ def key(game: Path):
         'modules': _folder(game / 'sce_module'),
         'shaders': _folder(game / 'dvdroot_ps4' / 'shader'),
         'scripts': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()[:16] for n in SCRIPTS},
+        'data': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.is_file() else None for p in DATA},
         'skip_check': os.environ.get('BB_SKIP_GAME_CHECK') == '1',
     }
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:24]

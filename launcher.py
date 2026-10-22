@@ -654,6 +654,8 @@ def settings_env(s: dict) -> dict:
     env["BB_PARTY_SPECTATE_LOG"] = "1" if on("feat_spectate_log", False) else "0"
     # Party host-death lock log for frozen-guest reports: the HostDead locks every 0.25 s on a guest
     env["BB_HOSTDEAD_LOG"] = "1" if on("feat_hostdead_log", False) else "0"
+    # Boot freeze dump: thread states when the game's start stands still for 20 s
+    env["BB_BOOT_WATCHDOG"] = "20" if on("feat_boot_watchdog", False) else "0"
     # Mute the game while its window is in the background
     env["BB_MUTE_UNFOCUSED"] = "1" if on("feat_mute_unfocused") else "0"
     # Mouse & keyboard mode (bbport.ini mk_enabled), the performance HUD (show_hud), async shaders
@@ -1824,6 +1826,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
         self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
         self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
+        self.feat_boot_watchdog = tk.BooleanVar(value=self.settings.get("feat_boot_watchdog", False))
         _lvl = str(self.settings.get("party_log_level", "") or "")
         self.party_log_level_var = tk.StringVar(
             value=next((label for label, v in PARTY_LOG_LEVELS if v == _lvl), PARTY_LOG_LEVELS[0][0]))
@@ -1875,6 +1878,9 @@ class BloodborneLauncher(tk.Tk):
         self.party_friendly_fire = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_friendly_fire", False))
         # Shared lamps (statsaudit finding 5): a host rule (bbport.ini party_share_lamps, on by default).
         self.party_share_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_share_lamps", True))
+        # 0.7.2: a joining guest's own lamps in the host's world, a host rule (party_guests_bring_lamps, off).
+        self.party_guests_bring_lamps = tk.BooleanVar(
+            value=ini_flag(bbport_ini_path(), "party_guests_bring_lamps", False))
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -2269,6 +2275,11 @@ class BloodborneLauncher(tk.Tk):
                     "On a guest, from the host's death until the next load: four lines a second with the "
                     "game's host-death locks, the left stick and how far your character moved. For reports of "
                     "a guest that cannot move or open menus after the host died. Default: off (BB_HOSTDEAD_LOG).")
+        self._check(sec, "Boot freeze dump (stuck before the title)", self.feat_boot_watchdog,
+                    "Until the first world load: when the game's start stands still for 20 s (no frames, "
+                    "or the title's party Continue stops), writes every game thread's state and stack to "
+                    "out\boot_hang_<time>.log and the log. For reports of a game that stays on a gray or "
+                    "black screen at start. Default: off (BB_BOOT_WATCHDOG).")
 
         sec = self._section(tab, 1, "Watchdog")
         self._check(sec, "Watchdog", self.feat_watchdog,
@@ -2539,11 +2550,18 @@ class BloodborneLauncher(tk.Tk):
                             "(bbport.ini party_friendly_fire).",
                             command=self.save_party_friendly_fire)
         lamps_cb = self._check(sec, "Shared lamps (host)", self.party_share_lamps,
-                               "Host only: a lamp any party member lights is lit for everyone, in each member's "
-                               "own save too (a guest's lamps light up in your world when it joins; yours reach "
-                               "its save). Your setting is the party's rule. Also in the game: System > World & "
-                               "PvP (Shared lamps). Default: on (bbport.ini party_share_lamps).",
+                               "Host only: a lamp any party member lights in your world is lit for everyone, in "
+                               "each member's own save too, and your lamps reach the guests' saves. Your setting "
+                               "is the party's rule. Also in the game: System > World & PvP (Shared lamps). "
+                               "Default: on (bbport.ini party_share_lamps).",
                                command=self.save_party_share_lamps)
+        bring_cb = self._check(sec, "Guests bring their lamps (host)", self.party_guests_bring_lamps,
+                               "Host only: a joining guest's lamps from its own world light up in yours too "
+                               "(needs Shared lamps). Off: your world keeps its own lamps; any lamp a party "
+                               "member lights in it is saved for everyone. Your setting is the party's rule. "
+                               "Also in the game: System > World & PvP. Default: off (bbport.ini "
+                               "party_guests_bring_lamps).",
+                               command=self.save_party_guests_bring_lamps)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
@@ -2682,7 +2700,7 @@ class BloodborneLauncher(tk.Tk):
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, relay_cb, ipv6_cb, stun_lbl,
                                  self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [ff_cb, lamps_cb, public_lbl, self.party_public_entry,
+        self.party_widgets_host = [ff_cb, lamps_cb, bring_cb, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -2768,7 +2786,8 @@ class BloodborneLauncher(tk.Tk):
                                   ("party_through_walls", self.party_through_walls, False),
                                   ("party_stain_marker", self.party_stain_marker, False),
                                   ("party_friendly_fire", self.party_friendly_fire, False),
-                                  ("party_share_lamps", self.party_share_lamps, True)):
+                                  ("party_share_lamps", self.party_share_lamps, True),
+                                  ("party_guests_bring_lamps", self.party_guests_bring_lamps, False)):
             var.set(ini_flag_value(ini, key, default))
         for key, _, default in PARTY_INI_SWITCHES:
             self.party_switch_vars[key].set(ini_flag_value(ini, key, default))
@@ -2857,6 +2876,15 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_share_lamps": "1" if self.party_share_lamps.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Shared lamps setting to bbport.ini: {ex}")
+
+    def save_party_guests_bring_lamps(self):
+        """The Guests bring their lamps checkbox (host): bbport.ini party_guests_bring_lamps (in game:
+        System > World & PvP)."""
+        try:
+            update_ini(bbport_ini_path(),
+                       {"party_guests_bring_lamps": "1" if self.party_guests_bring_lamps.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Guests bring their lamps setting to bbport.ini: {ex}")
 
     def save_party_pings(self):
         """The Pings checkbox: bbport.ini party_pings (in game: System > Party display)."""
@@ -3903,6 +3931,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_arrival_log": self.feat_arrival_log.get(),
             "feat_spectate_log": self.feat_spectate_log.get(),
             "feat_hostdead_log": self.feat_hostdead_log.get(),
+            "feat_boot_watchdog": self.feat_boot_watchdog.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),

@@ -244,6 +244,16 @@ add_custom_target(bbport_build_id
     COMMENT "bbport build id" VERBATIM)
 target_sources(bbgpu PRIVATE ${BBPORT_BUILD_ID_C})
 add_dependencies(bbgpu bbport_build_id)
+# The shader translator's identity for the shader cache (vk_cache_header.h): a hash of
+# shadps4/shader_recompiler, regenerated on every build, rewritten only when it changes.
+set(BBPORT_TRANSLATOR_ID_C "${CMAKE_CURRENT_BINARY_DIR}/generated/shader_translator_id.c")
+add_custom_target(shader_translator_id
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/shadps4/shader_recompiler
+            -DOUT=${BBPORT_TRANSLATOR_ID_C} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/shader_translator_id.cmake
+    BYPRODUCTS ${BBPORT_TRANSLATOR_ID_C}
+    COMMENT "shader translator id" VERBATIM)
+target_sources(bbgpu PRIVATE ${BBPORT_TRANSLATOR_ID_C})
+add_dependencies(bbgpu shader_translator_id)
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
@@ -639,6 +649,16 @@ add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp
 target_compile_options(fast-loading-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(fast-loading-test PRIVATE shim)
 set_target_properties(fast-loading-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Shader cache header (vk_cache_header.h): versions, translator id, GPU profile. ninja -C out/gpu shader-cache-header-test
+add_executable(shader-cache-header-test EXCLUDE_FROM_ALL ../tests/test_shader_cache_header.cpp)
+target_compile_options(shader-cache-header-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(shader-cache-header-test PRIVATE shadps4)
+set_target_properties(shader-cache-header-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Boot watchdog (shim/bbport_boot_watch.h, BB_BOOT_WATCHDOG): the rules. ninja -C out/gpu boot-watch-test
+add_executable(boot-watch-test EXCLUDE_FROM_ALL ../tests/test_boot_watch.cpp)
+target_compile_options(boot-watch-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(boot-watch-test PRIVATE shim)
+set_target_properties(boot-watch-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Frame rate by hooks (shim/bbport_frame_rate_logic.h): the pure rules. ninja -C out/gpu frame-rate-test
 add_executable(frame-rate-test EXCLUDE_FROM_ALL ../tests/test_frame_rate.cpp)
 target_compile_options(frame-rate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

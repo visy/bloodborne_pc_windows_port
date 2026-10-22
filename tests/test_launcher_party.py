@@ -344,6 +344,30 @@ class ShareLampsSetting(unittest.TestCase):
         self.assertIn("self.party_widgets_host = [ff_cb, lamps_cb", src)
 
 
+class GuestsBringLampsSetting(unittest.TestCase):
+    """0.7.2: the host's Guests bring their lamps checkbox: bbport.ini party_guests_bring_lamps, off by default."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_off_and_round_trip(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertFalse(self.L.ini_flag(ini, "party_guests_bring_lamps", False))
+            self.L.update_ini(ini, {"party_guests_bring_lamps": "1"})
+            self.assertTrue(self.L.ini_flag(ini, "party_guests_bring_lamps", False))
+            self.L.update_ini(ini, {"party_guests_bring_lamps": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_guests_bring_lamps", False))
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn("self.party_widgets_host = [ff_cb, lamps_cb, bring_cb", src)
+        self.assertIn('("party_guests_bring_lamps", self.party_guests_bring_lamps, False)', src)
+
+
 class PartyRules071Settings(unittest.TestCase):
     """0.7.1: the switches that had only an env variable got rows (System > Shared world / Party
     rewards) and Party Rules & Sync checkboxes: bbport.ini keys, on by default, no variable set."""

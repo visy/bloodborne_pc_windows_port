@@ -236,9 +236,11 @@ before anyone is in the game):
 - **Apart and back together.** Players in different maps see only those in their own map; meeting
   again shows them at once, without a loading screen. If the host dies while you are in another
   area you play on where you are; if you die there you get up at your own lamp.
-- **Everyone can use lamps** (vanilla disables them in co-op), and **lamps are shared**: a lamp
-  anyone lights is lit for everyone, in everyone's own save too. A lamp past a boss the host has not
-  beaten yet waits until the host beats it. The host can turn this off (*Shared lamps*).
+- **Everyone can use lamps** (vanilla disables them in co-op), and **lamps are shared**: the host's
+  world keeps its own lamps, and a lamp anyone lights there is lit for everyone, in everyone's own
+  save too; the host's lamps also reach each guest's save. A guest's lamps from its own world stay
+  there unless the host turns on *Guests bring their lamps* (then a lamp past a boss the host has
+  not beaten yet waits until the host beats it). The host can turn sharing off (*Shared lamps*).
 - **Travel from any lamp to any lamp.** A lamp offers the headstones' list (the Hunter's Dream and
   every lit lamp) and takes you straight there with one loading screen (launcher: "Direct lamp
   travel", on by default).

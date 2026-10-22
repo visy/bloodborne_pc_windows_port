@@ -478,8 +478,8 @@ static void RulesPages() {
     using V = std::vector<std::u16string>;
     const V deaths = {u"Rot on death", u"Guest gets up, no load", u"Host gets up, no load", u"Up after boss kill",
                       u"Respawn at host's lamp", u"Refill vials, bullets"};
-    const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests use lamps", u"Guests use Hunter's Mark",
-                     u"Open world"};
+    const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests bring their lamps", u"Guests use lamps",
+                     u"Guests use Hunter's Mark", u"Open world"};
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
     const V chalice = {u"Stay in Chalice Dungeons"};
@@ -499,6 +499,7 @@ static void RulesPages() {
         BbSettings::Get().party_host_revive = true;  // EverySettingSaved changed every row once
         BbSettings::Get().party_gather = true;
         BbSettings::Get().party_kill_record = true;
+        BbSettings::Get().party_guests_bring_lamps = false;
         P::Load();
         Advance(300);
         assert(names(u"Deaths & revives") == deaths);
@@ -521,6 +522,10 @@ static void RulesPages() {
         const std::string shared_line = P::ShownSummary(PageNamed(u"Shared world"));
         assert(shared_line.find("Host can gather=" + std::string(guest ? "Off" : "On")) != std::string::npos);
         assert(shared_line.find("Enemies stay dead=On") != std::string::npos);
+        // 0.7.2: Guests bring their lamps, the host's rule, off by default (a guest: the host's value).
+        const std::string world_line = P::ShownSummary(PageNamed(u"World & PvP"));
+        assert(world_line.find("Guests bring their lamps=Off") != std::string::npos);
+        assert(kinds(u"World & PvP")[2] == (guest ? P::Kind::Button : P::Kind::Toggle));
         // The trace's page line (smoke_party "rules" asserts it): every row, its value, nothing cut.
         for (const P::Page& page : P::All()) assert(P::ShownSummary(page).find("(CUT)") == std::string::npos);
         const std::string deaths_line = P::ShownSummary(PageNamed(u"Deaths & revives"));
