@@ -5,7 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
-- **Fixed: the camera follows you again after a deadly fall in a party**: when you died from a fall in a party (for example off a ledge in Old Yharnam) and got up again at a lamp without a loading screen, the camera could stay behind at the fall: it pointed at the sky and you never saw your own hunter again, even after the host died. Getting up after a fall now turns the game's falling-death camera off and puts the camera back behind you, as after the normal death loading screen. The same goes for the host, and for the rescue that puts a falling hunter back on safe ground.
+- **Fixed: the camera follows you again after a deadly fall in a party**: when you died from a fall in a party (for example off a ledge in Old Yharnam) and got up again at a lamp without a loading screen, the camera could stay behind at the fall: it pointed at the sky and you never saw your own hunter again, even after the host died. Getting up after a fall now turns the game's falling-death camera off and puts the camera back behind you, as after the normal death loading screen. The same goes for the host, and for the rescue that puts a falling hunter back on safe ground. The camera also comes back level behind you instead of looking straight down.
+- **Fixed: walking normally after dying on a ladder in a party**: dying while climbing a ladder and getting up again at a lamp without a loading screen left your hunter thinking it was still on the ladder, so you could only walk forward. Getting up now always takes you off the ladder.
 
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
