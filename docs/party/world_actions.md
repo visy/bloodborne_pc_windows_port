@@ -427,6 +427,19 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   shared) and ridden (el ride D: the host down in it, 39 samples in the cage, the same flag / end on
   both games); Cainhurst's rides with one rider and the other player on a landing 1 m in front of a
   call lever (3.2-3.4 m from the axis: off the platform, its height steady, no ride bit) pass too.
+* **The Research Hall lifts (liftfix, a player's report, fixed):** "riding an elevator I went through the
+  ground and died" (lift 3501105, HP 0 at y 1546.1). Live (runs 11-17, the host alone and in a party, 30 and
+  60 FPS, EMEVD traces of 13501112 / 13501113): the ride events of the Research Hall's 1F <-> 3F and 3F <->
+  5F lifts clear their busy flag in the frame their "every player out of the arrival box" check passes; the
+  other direction's start ("the player in that box") still reads the rider inside in that frame, so the car
+  left again at once, with the rider on its wide platform's edge or about to step back in, who then fell into
+  the 12 m pit under the car (y 1546, the report's spot). Every other lift clears busy after its end
+  animation (the Research Hall's altar lift waits 1 s). `liftrules::BusyDefer`: the clear (index 26) is
+  rewritten to keep busy on, and the event's end (index 30) clears it, after the end animation. Run 18
+  (smoke `research_solo` / `research_lift`, 60 FPS): alone down, out, the car stays, back in, up; in the
+  party down alone, up alone, down and up together: 4 ride starts only, every rider on the car all the way,
+  no fall, no death, the ride frames checked. The fall-death accounting no longer counts a chr falling faster
+  than any lift without its ride bit as riding (the report's 12 m fall was logged as 0.6 m).
 * The lf smoke's guest ride (lifts071) never was one: the guest was put on the car object's root, which
   stays at the TOP while the car is at the bottom; it fell the 48 m shaft through the switch region, the
   up event ran with nobody in the car and the guest died at the shaft's foot (god mode does not stop a
