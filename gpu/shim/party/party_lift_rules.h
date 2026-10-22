@@ -14,6 +14,7 @@
 // bring the host's flip to a guest while the guest's copy has not read the flag yet.
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -133,6 +134,64 @@ inline bool LocalEndToAllPlayers(std::int32_t event_id, std::int32_t bank, std::
     std::memcpy(args + 4, &region, 4);
     std::memset(args + 8, 0, 4);
     return true;
+}
+
+/// liftfix (a player's report: "I was riding an elevator and went through the ground and died", the
+/// Research Hall lift 3501105 at 60 FPS: the host on the car at the top, HP 0 37 m lower, 11 m under
+/// the shaft's bottom floor, with the game's fall state set and its ride bit cleared): a rider that
+/// drops through its moving car. The game keeps a rider on its car by the chr's ride bit (PlayerIns
+/// +0x1E5 bit 0x02, deathrules::RidingObject); in the report the bit cleared while the car still played
+/// its ride and the chr stood where it had stood on the car, then fell faster than the car (the car's
+/// step past the chr's ground probe on a long frame: the log shows render stalls there). The rider is
+/// put back on the car: where it last rode, at the car's height now (that sample's height carried on
+/// at the car's speed) plus a little, so it lands on the car's floor again.
+struct RiderTrack {
+    bool riding = false;
+    double t = 0;
+    float x = 0, y = 0, z = 0, vy = 0;  // the last sample on the car, the car's vertical speed (m/s)
+};
+constexpr float kRiderSlip = 1.0f;      // m below the car's height before it counts as a drop through it
+constexpr float kRiderSideways = 1.0f;  // m sideways from the last ride sample: stepped off (no put-back)
+constexpr double kRiderWindow = 2.0;    // s after the last ride sample: no longer this ride
+enum class RiderStep { idle, riding, through, off };
+/// One sample of the local chr while `car_playing` (a lift car within reach plays a ride animation).
+/// `put` gets the spot to put it back at for `through`.
+inline RiderStep RiderTick(RiderTrack& r, bool car_playing, bool ride_bit, double t, float x, float y, float z,
+                           float put[3]) {
+    if (!car_playing) {
+        r = RiderTrack{};
+        return RiderStep::idle;
+    }
+    if (ride_bit) {
+        const double dt = t - r.t;
+        if (r.riding && dt > 0.0 && dt < 0.5) {
+            const float v = float((y - r.y) / dt);
+            if (std::fabs(v) < 16.0f) {  // a lift's speed (deathrules::kLiftMaxRate)
+                r.vy = v;
+            }
+        } else if (!r.riding) {
+            r.vy = 0;
+        }
+        r.riding = true;
+        r.t = t, r.x = x, r.y = y, r.z = z;
+        return RiderStep::riding;
+    }
+    if (!r.riding) {
+        return RiderStep::idle;
+    }
+    const double dt = t - r.t;
+    const float side = std::hypot(x - r.x, z - r.z);
+    if (dt > kRiderWindow || side > kRiderSideways) {
+        r = RiderTrack{};
+        return RiderStep::off;
+    }
+    const float car = r.y + r.vy * float(dt);
+    if (y >= car - kRiderSlip) {
+        return RiderStep::riding;  // the bit flickers (a roll, a jump in the car): still on it
+    }
+    put[0] = r.x, put[1] = car + 0.3f, put[2] = r.z;
+    r.t = t, r.y = car;  // the next sample measures from here
+    return RiderStep::through;
 }
 
 /// The lift whose position flag is `pos`, or nullptr.

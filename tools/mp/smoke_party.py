@@ -786,6 +786,57 @@ def phase_ch(only):
     )
 
 
+# Phase rh (liftfix, ~3 min, 2 players, group `research_lift`, at 60 FPS): the Research Hall lift 3501105
+# (DLC m35, 25 m, y 1583 -> 1558; down 13501113: car 1, 2, end 3 once every player is out; up 13501112:
+# 5, 6, end 7; 13501116 = 1: the car at the top). A player's report at 60 FPS: the host rode it down from
+# the top alone (the guest 40 m away at the lamp) and went through the car and the shaft's floor (HP 0
+# 11 m under it). Fixture: the lift's first start done (13501118), the car at the top. (A) the host down
+# alone, the guest at the lamp; (B) host and guest up together; (C) both down together. Riders step out
+# on the arrival. After each ride both games show the same flags and car end; every rider on the car all
+# the way (ride bit), no drop faster than a lift, no jump, nobody dies; the rider guard's put-backs are
+# counted (liftrules::RiderTick: "dropped through the moving car").
+RH_CAR, RH_POS, RH_BUSY = "3501105", "13501116", "13504110"
+RH_TOP_IN = "-344.56:1582.6:-792.84"       # region 3502106 (the down ride's trigger)
+RH_BOT_IN = "-344.56:1558.1:-792.84"       # region 3502107 (the up ride's trigger)
+RH_TOP_BESIDE = "-345.9:1583.3:-793.0"     # on the car beside the trigger (the report's rider spots)
+RH_BOT_BESIDE = "-345.9:1558.2:-793.0"
+RH_TOP_OUT = "-357.2:1583.1:-794.1:0:native:pin=2"   # the top landing (the report's host stood there)
+RH_TOP_OUT2 = "-357.6:1583.1:-790.2:0:native:pin=2"
+RH_BOT_OUT = "-332.8:1557.8:-822.2:0:native:pin=2"   # the bottom floor toward the lamp
+RH_LAMP = "-318.7:1553.0:-824.2:0:native:pin=2"      # lamp 3502950
+RH_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
+
+
+def phase_rh(only):
+    common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s/13501117" % (RH_CAR, RH_POS, RH_BUSY)
+    arrived = lambda anim: "?obj=%s:%s" % (RH_CAR, anim)
+    xyz = lambda spot: ":".join(spot.split(":")[:3])
+    host = [common,
+            "host_move=%s@4%%m35^1" % RH_TOP_OUT,                                  # at the top landing
+            "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) alone down
+            "host_move=%s@0.3%%m35%s" % (RH_BOT_OUT, arrived(2)),                   # out at the arrival
+            "host_move=%s@1%%m35?near=%s:1.0" % (RH_BOT_IN, xyz(RH_BOT_BESIDE)),   # (B) with the guest, up
+            "host_move=%s@0.3%%m35%s" % (RH_TOP_OUT, arrived(6)),
+            "host_move=%s@1%%m35?near=%s:1.0" % (RH_TOP_IN, xyz(RH_TOP_BESIDE)),   # (C) with the guest, down
+            "host_move=%s@0.3%%m35%s" % (RH_BOT_OUT, arrived(2)),
+            "host_press=0@4%%m35!?%s=0" % RH_BUSY]
+    g1 = [common,
+          "guest_move=%s@6%%m35" % RH_LAMP,                                         # at the lamp, 40 m away
+          "guest_move=%s@3%%m35?%s=0" % (RH_BOT_BESIDE, RH_POS),                   # (B) on the car beside
+          "guest_move=%s@0.3%%m35%s" % (RH_TOP_OUT2, arrived(6)),                  # out at the arrival
+          "guest_move=%s@3%%m35?%s=1" % (RH_TOP_BESIDE, RH_POS),                   # (C) on the car beside
+          "guest_move=%s@0.3%%m35%s" % (RH_LAMP, arrived(2)),
+          "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
+    return dict(
+        name="rh", seconds=300, count=2, headless=0, fps=60,
+        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+             "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
+        watch=["--watch", r"object %s stopped at anim [26] now=arrive@0.3,2" % RH_CAR] + RIDE_BURST(RH_CAR, "[15]", "[37]"),
+        crash=[], until=RH_UNTIL,
+    )
+
+
 # Phase fl (fallsafe, ~3 min, 2 players, group `fall`): a guest's fall out of the world. At the Great
 # Bridge lamp guest 1 walks 3 m onto the bridge (the game's last safe ground spot), then is put just
 # under the bridge's floor: it falls into the void to the game's kill plane (about y -1500, ~30 s;
@@ -1156,12 +1207,12 @@ def phase_rt(only):
     )
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "lp": phase_lp, "rt": phase_rt}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "lamps": "lp",
           "rot": "rt"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
@@ -1170,7 +1221,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "lamps": r"^lp ",
               "rot": r"^rt "}
 
 
@@ -1209,6 +1260,7 @@ GROUP_UNTIL = {
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
     "cainhurst_lift": CH_UNTIL,
+    "research_lift": RH_UNTIL,
     "lamps": LP_UNTIL,
     "mark": [MK_UNTIL],
     # the host awake in the cell (its last step) and both guests in m28_00
@@ -1287,6 +1339,7 @@ def run_phase(a, ph, out: Path):
     if ph.get("prep"):
         ph["prep"](root)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(ph.get("count", 3)),
+           *(["--fps", str(ph["fps"])] if ph.get("fps") else []),
            "--headless", str(ph.get("headless", 1)), "--party"] + (["--fresh-saves"] if ph.get("fresh", True) else []) + [
            "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
@@ -2355,6 +2408,81 @@ def check_ch(v, L):
     check_common(v, L, "ch")
 
 
+def rh_rides(L, i):
+    """The Research Hall lift on instance i: [{start, up, end, t, t_arr, t_end}] (down 1, 2, end 3; up 5, 6, end 7)."""
+    rides = []
+    for t, line in L.all(i, r"test: object %s anim -?\d+ playing" % RH_CAR):
+        m = re.search(r"anim (-?\d+) playing (\d)", line)
+        anim, playing, w = int(m.group(1)), m.group(2) == "1", wall(line)
+        if anim in (1, 5) and playing and (not rides or rides[-1]["end"] is not None):
+            rides.append(dict(start=w, t=t, up=anim == 5, end=None, t_end=None, t_arr=None))
+        elif anim in (2, 6) and not playing and rides and rides[-1]["end"] is None:
+            rides[-1]["t_arr"] = rides[-1]["t_arr"] or t
+        elif anim in (3, 7) and not playing and rides and rides[-1]["end"] is None:
+            rides[-1].update(end=w, t_end=t)
+    return rides
+
+
+def check_rh(v, L):
+    need(v, L, "rh join: 2 players", 0, r"cooperators 0 -> 1")
+    names = ["A host alone down", "B host and guest up", "C host and guest down"]
+    riders = [(0,), (0, 1), (0, 1)]
+    rides = [rh_rides(L, i) for i in (0, 1)]
+    v.step("rh rides: 3 on each game", len(rides[0]) == 3 and len(rides[1]) == 3,
+           "host %d, guest %d" % (len(rides[0]), len(rides[1])))
+    for k, name in enumerate(names):
+        rh_ = rides[0][k] if k < len(rides[0]) else None
+        rg = rides[1][k] if k < len(rides[1]) else None
+        if not rh_ or not rg or rh_["end"] is None or rg["end"] is None:
+            v.step("rh %s: ran and ended on both games" % name, False, "host %s, guest %s" % (rh_, rg))
+            continue
+        up = k == 1
+        v.step("rh %s: one ride on both games" % name, rh_["up"] == up and rg["up"] == up and
+               abs(rh_["start"] - rg["start"]) < 1.0, "start host %.2f / guest %.2f" % (rh_["start"] % 3600, rg["start"] % 3600))
+        w = max(rh_["end"], rg["end"]) + 0.5
+        vals = []
+        for i in (0, 1):
+            fl = an = None
+            for _t, line in L.all(i, r"test: flags %s=" % RH_POS):
+                if wall(line) is not None and wall(line) <= w:
+                    fl = tuple(int(x) for x in re.findall(r"=(-?\d)", line)[:2])
+            for _t, line in L.all(i, r"test: object %s anim -?\d+ playing" % RH_CAR):
+                if wall(line) is not None and wall(line) <= w:
+                    an = int(re.search(r"anim (-?\d+)", line).group(1))
+            vals.append((fl, an))
+        want = ((1 if up else 0, 0), 7 if up else 3)
+        v.step("rh %s: same flags and car end on both games" % name, vals[0] == vals[1] == want,
+               "host %s / guest %s (want %s)" % (vals[0], vals[1], want))
+        for i in riders[k]:
+            r = rides[i][k]
+            arr = r["t_arr"]
+            pos = L.all(i, POS_RX.pattern, arr - 1.0, arr + 0.05) if arr else []
+            y = float(POS_RX.search(pos[-1][1]).group(2)) if pos else None
+            far = y is not None and (y > 1582.0 if up else 1557.0 < y < 1560.0)
+            n = off = 0
+            for _t, line in L.all(i, POS_RX.pattern, r["t"] + 0.6, (arr or r["t"]) - 0.3):
+                m = POS_RX.search(line)
+                f = re.search(r" f ([0-9a-f]{10})", line)
+                if f and ((float(m.group(1)) + 345.0) ** 2 + (float(m.group(3)) + 792.5) ** 2) ** 0.5 < 2.5:
+                    n += 1
+                    off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+            who = "host" if i == 0 else "guest"
+            v.step("rh %s: the %s rode in the car to the %s" % (name, who, "top" if up else "bottom"),
+                   far and n >= 5 and off == 0,
+                   "y %s at the arrival, %d samples on the car, %d off it" % ("%.1f" % y if y is not None else "-", n, off))
+    jump_steps(v, "rh", L, rides, (-345.0, -792.5), names)
+    for i, who in ((0, "host"), (1, "guest")):
+        f = falls(L, i, rate=16.0)
+        v.step("rh %s: no fall (vertical speed under 16 m/s)" % who, not f,
+               ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
+        g = L.all(i, r"lift ride: the local chr dropped through the moving car")
+        v.step("rh %s: rider guard put-backs (a drop through the car, logged)" % who, True,
+               ("%d: " % len(g)) + "; ".join(l[:140] for _t, l in g[:3]) if g else "none needed")
+    none_of(v, L, "rh nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
+    none_of(v, L, "rh no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
+    check_common(v, L, "rh")
+
+
 def check_mk_host(v, L, guests_from):
     """The host's Marks (MK_HOST_CASES): the question and its answer, then per the travel rules: in
     its own map no load for anyone (YES: both guests follow in-world; NO: they stay); from another
@@ -2693,7 +2821,7 @@ def check_rt(v, L):
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
+          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp,
@@ -2722,7 +2850,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt")
+                                     "lp", "rt", "rh")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

@@ -3,6 +3,7 @@
 // cmake --build out/gpu --target party-lift-rules-test && out/party-lift-rules-test
 #include "party/party_lift_rules.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <set>
@@ -154,6 +155,42 @@ int main() {
         std::memcpy(&region, again + 4, 4);
         CHECK(region == 2602242);
         CHECK(LocalEndRideEvent(12500077) && !LocalEndRideEvent(12410323) && !LocalEndRideEvent(0));
+    }
+
+    // The rider guard: the report's ride (Research Hall lift 3501105, ~2.5 m/s down from 1583.2) and a
+    // drop through the car.
+    {
+        RiderTrack r;
+        float put[3] = {};
+        CHECK(RiderTick(r, false, true, 0.0, -344.6f, 1583.2f, -793.0f, put) == RiderStep::idle);
+        double t = 0;
+        float y = 1583.2f;
+        for (int k = 0; k < 30; ++k, t += 1.0 / 30, y -= 2.5f / 30) {
+            CHECK(RiderTick(r, true, true, t, -344.6f, y, -793.0f, put) == RiderStep::riding);
+        }
+        t -= 1.0 / 30, y += 2.5f / 30;  // the last sample
+        CHECK(std::fabs(r.vy + 2.5f) < 0.1f);
+        // the bit flickers for a frame in the car (a roll): no put-back
+        CHECK(RiderTick(r, true, false, t + 0.05, -344.7f, y - 0.15f, -793.0f, put) == RiderStep::riding);
+        // through the floor: the bit off, straight down at 9 m/s for 0.3 s
+        CHECK(RiderTick(r, true, false, t + 0.3, -344.6f, y - 2.8f, -792.9f, put) == RiderStep::through);
+        CHECK(std::fabs(put[0] + 344.6f) < 0.01f && std::fabs(put[2] + 793.0f) < 0.01f);
+        CHECK(put[1] > y - 1.0f && put[1] < y);  // the car's height then, 0.75 m lower, + 0.3
+        // back on the car: riding again
+        CHECK(RiderTick(r, true, true, t + 0.4, -344.6f, put[1] - 0.2f, -793.0f, put) == RiderStep::riding);
+        // walked off an open platform (sideways), or long gone: no put-back
+        RiderTrack w = r;
+        CHECK(RiderTick(w, true, false, t + 0.6, -342.0f, put[1] - 3.0f, -793.0f, put) == RiderStep::off && !w.riding);
+        RiderTrack g = r;
+        CHECK(RiderTick(g, true, false, t + 3.0, -344.6f, put[1] - 9.0f, -793.0f, put) == RiderStep::off);
+        // a jump in the car: up, no put-back; the ride's end: idle and reset
+        RiderTrack j = r;
+        CHECK(RiderTick(j, true, false, t + 0.5, -344.6f, put[1] + 0.8f, -793.0f, put) == RiderStep::riding);
+        CHECK(RiderTick(j, false, false, t + 0.6, -344.6f, put[1], -793.0f, put) == RiderStep::idle && !j.riding);
+        // never on the car (stood beside it): never a put-back
+        RiderTrack n;
+        CHECK(RiderTick(n, true, false, 0.0, -350.0f, 1583.0f, -793.0f, put) == RiderStep::idle);
+        CHECK(RiderTick(n, true, false, 0.5, -350.0f, 1570.0f, -793.0f, put) == RiderStep::idle);
     }
 
     if (g_fail) {
