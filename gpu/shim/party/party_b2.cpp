@@ -2121,6 +2121,47 @@ bool LocalChrWarpImpl(u64 player, const float* p16, const float* r16, const char
     return true;
 }
 
+/// fallcam: the game's fall-death camera latch, WorldChrMan +0x68 (deathrules::PlanReviveCamera):
+/// while set, the ChrCam update 0x14368B0 stays in its fall-die mode 4 (the camera stops where the
+/// fall was). Only a load or the game's safe-spot revive 0x13CBAD0 clears it in vanilla.
+bool FallCameraLatched() {
+    return Field<u8>(Slot(kSlotWorldChrMan), 0x68) != 0;
+}
+/// Clears the latch when set (main thread); true: it was set.
+bool ReleaseFallCamera(const char* why) {
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    const u8 was = Field<u8>(wcm, 0x68);
+    if (!wcm || !was) {
+        return false;
+    }
+    const u8 zero = 0;
+    SafeWrite(wcm + 0x68, &zero, 1);
+    Log("%s: the game's fall-death camera released (WorldChrMan +0x68 %u -> %u): the follow camera again", why,
+        unsigned(was), unsigned(Field<u8>(wcm, 0x68)));
+    return true;
+}
+/// The camera behind the local player at its spot: the Lua CamReset 0x132F5A0(ctx, 10000 = the local
+/// player, 1): the chr transform re-applied from its physics position (0x18C16A0, 0x18BCF30) and the
+/// camera reset request [[+0x3B0] +0x58] +0x28 +0xC = 1. Main thread.
+void CameraBehindPlayer() {
+    using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
+    reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+}
+/// fallcam: what the player sees after an in-world revive / warp, judged 0.5 s and 3 s after it
+/// (ReviveViewTick, deathrules::JudgeReviveView): the render camera against the chr, the chr's drawn
+/// position (ChrCtrl's world matrix, [chr +0x58] +0xC0) against its physics position, the latch.
+struct ReviveViewWatch {
+    double at = 0;
+    int step = 0;
+    char what[64] = {};
+};
+ReviveViewWatch g_revive_view;
+void WatchReviveView(const char* what) {
+    g_revive_view.at = Now();
+    g_revive_view.step = 0;
+    std::snprintf(g_revive_view.what, sizeof g_revive_view.what, "%s", what);
+}
+
 /// The local player to a spot of the loaded block (LocalChrWarp: the game's own in-world warp, or
 /// the chr warp vfunc +0x5F8): same map, no load. Main thread.
 bool WarpLocal(const float pos[3], float yaw, const char* why) {
@@ -2135,11 +2176,16 @@ bool WarpLocal(const float pos[3], float yaw, const char* why) {
     if (!LocalChrWarpImpl(player, p16, r16, why)) {
         return false;
     }
+    // fallcam: a fall caught by the recovery net (or any warp after the game's fall-death camera
+    // took over) would keep that camera at the old spot: released first.
+    const bool latched = ReleaseFallCamera(why);
     // The camera stayed where it was and swung through the walls after a long in-world warp
     // (live vis6: the host looked out of the geometry 3 s after a 68 m move): the Lua CamReset
     // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player.
-    using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
-    reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
+    CameraBehindPlayer();
+    if (latched) {
+        WatchReviveView(why);
+    }
     Log("in-world warp (%s): (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f) in %s, no load", why, before[0], before[1], before[2],
         pos[0], pos[1], pos[2], MapName(LocalMap()).c_str());
     return true;
@@ -5007,12 +5053,21 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         const u64 wcm = Slot(kSlotWorldChrMan);
         const u64 m58 = Field<u64>(Field<u64>(Field<u64>(p, 0x3b0), 0x58), 0x28);
         const u8 w68 = Field<u8>(wcm, 0x68), c0 = Field<u8>(m58, 0xc), one = 1, zero = 0;
-        // Written only for a body brought back from far below (PendingReviveTick); read for every revive.
+        // +0x0C written only for a body brought back from far below (PendingReviveTick); read for every revive.
         const bool fell = g_pending_revive.resuming;
         if (fell && m58) SafeWrite(m58 + 0xc, &one, 1);
         if (fell && wcm && w68) SafeWrite(wcm + 0x68, &zero, 1);
         Log("%s revive: the game's safe-spot revive fields: WorldChrMan +0x68 %u, [[+0x3B0] +0x58] +0x28 +0xC %u%s",
             host ? "host" : "guest", unsigned(w68), unsigned(c0), fell ? " (set as 0x13CBAD0 does: 0, 1)" : "");
+    }
+    // fallcam: WorldChrMan +0x68 is the game's fall-death camera latch; left set (any revive after
+    // a fall the game itself took as a fall death, not only a body moved up from far below), the
+    // camera stayed at the fall for good (the report: up at the host's lamp 158 m away, the view on
+    // the sky, the own chr never seen again). Released for every revive; the camera reset behind the
+    // chr once it stands on its spot (after the warp below).
+    const deathrules::ReviveCamera cam = deathrules::PlanReviveCamera(FallCameraLatched(), RecipeHas("warp") && sp.valid);
+    if (cam.release_latch) {
+        ReleaseFallCamera(host ? "host revive" : "guest revive");
     }
     if (RecipeHas("gsm")) {
         const u64 gsm = Slot(kSlotGsm);
@@ -5077,6 +5132,23 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         }
         LocalChrWarpImpl(p, pos, rot, sp.what ? sp.what : host ? "host revive at the lamp" : "guest revive at the lamp");
     }
+    if (cam.cam_reset) {
+        // As WarpLocal: the camera behind the chr at its new spot (the follow camera otherwise
+        // starts from where it was, at the death or the fall). CamReset re-applies the physics
+        // position, so only once the chr is there (the game's warp 0x154B110 moves it at once; the
+        // bare chr warp, BB_PARTY_WARP_REFRESH=0, a frame late).
+        float at[3] = {0, 0, 0};
+        const bool moved = RecipeHas("warp") && sp.valid;
+        const bool there = !moved || (ChrPos(p, at) && std::fabs(at[0] - sp.pos[0]) < 3.0f &&
+                                      std::fabs(at[1] - sp.pos[1]) < 3.0f && std::fabs(at[2] - sp.pos[2]) < 3.0f);
+        if (there) {
+            CameraBehindPlayer();
+        } else {
+            Log("%s revive: not on its spot yet (%.1f, %.1f, %.1f): no camera reset", host ? "host" : "guest",
+                double(at[0]), double(at[1]), double(at[2]));
+        }
+    }
+    WatchReviveView(host ? "host revive" : "guest revive");
     if (sp.safe_floor) {
         g_safe_revive = SafeReviveWatch{Now(), sp.pos[1], host};
     }
@@ -5341,6 +5413,55 @@ void PendingReviveTick(const GameSnapshot& s, double now) {
         SafeWrite(s.player + 0x1e1, &f, 4);
         r.inv_set = true;
         r.inv_until = now + 2.0;
+    }
+}
+
+/// fallcam (any role, main thread): a line 3 s after each in-world revive (and a warp that released
+/// the fall-death camera; also at 0.5 s when that one is not right): what the player sees (WatchReviveView). The latch found set again with the
+/// chr alive is released once more (the game's fall state re-armed it).
+void ReviveViewTick(const GameSnapshot& s, double now) {
+    ReviveViewWatch& w = g_revive_view;
+    if (w.at <= 0 || !s.world_up || s.loading || !s.player) {
+        return;
+    }
+    static const double marks[2] = {0.5, 3.0};
+    if (now - w.at < marks[w.step]) {
+        return;
+    }
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    float me[3] = {0, 0, 0}, drawn[4] = {0, 0, 0, 0};
+    const bool have = ChrPos(s.player, me);
+    const u64 ctrl = Field<u64>(s.player, 0x58);
+    const bool drawn_ok = ctrl && SafeRead(ctrl + 0xc0, drawn, 16) && std::isfinite(drawn[0]) &&
+                          std::isfinite(drawn[1]) && std::isfinite(drawn[2]);
+    const BbCamera::State cam = BbCamera::Latest(1000);
+    std::array<float, 3> c = {0, 0, 0};
+    double cam_dist = nan, drawn_off = nan;
+    if (cam.valid && have) {
+        c = BbCamera::Position(cam);
+        const double dx = c[0] - me[0], dy = c[1] - me[1], dz = c[2] - me[2];
+        cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    if (drawn_ok && have) {
+        const double dx = drawn[0] - me[0], dy = drawn[1] - me[1], dz = drawn[2] - me[2];
+        drawn_off = std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    const bool latch = FallCameraLatched();
+    const deathrules::ReviveView v = deathrules::JudgeReviveView(cam_dist, drawn_off, latch);
+    // Part of the revive's own lines: the 3 s line always, the 0.5 s one only when it is not right.
+    if (w.step == 1 || v != deathrules::ReviveView::Ok) {
+        Log("revive view (%s, %.1f s after): camera (%.1f, %.1f, %.1f) %.1f m from the chr (%.1f, %.1f, %.1f), looking "
+            "(%.2f, %.2f, %.2f); drawn (%.1f, %.1f, %.1f) %.2f m off; fall-death camera %u, hp %d: %s",
+            w.what, now - w.at, double(c[0]), double(c[1]), double(c[2]), cam_dist, double(me[0]), double(me[1]),
+            double(me[2]), double(cam.view[8]), double(cam.view[9]), double(cam.view[10]), double(drawn[0]),
+            double(drawn[1]), double(drawn[2]), drawn_off, unsigned(latch), ChrHp(s.player),
+            deathrules::ReviveViewName(v));
+    }
+    if (latch && ChrHp(s.player) > 0 && ReleaseFallCamera("revive view: the latch was set again")) {
+        CameraBehindPlayer();
+    }
+    if (++w.step >= 2) {
+        w.at = 0;
     }
 }
 
@@ -10570,6 +10691,7 @@ void Tick(const GameSnapshot& s) {
     FallStainTick(s, now);
     PendingReviveTick(s, now);
     SafeReviveWatchTick(s, now);
+    ReviveViewTick(s, now);
     OwnStainWatchTick(s);
     NgGuardTick(s);
     GuestStainTick(s);

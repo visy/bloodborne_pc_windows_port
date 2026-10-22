@@ -626,6 +626,30 @@ int main() {
     }
     // Issue #4 item 7: a guest's respawn at a lamp of the loaded map.
     // Fall state only (user decision): the distance no longer decides.
+    // fallcam: the fall-death camera latch is released by every revive / in-world warp that finds it
+    // set; the camera is reset behind the chr whenever it was moved or the latch was on.
+    {
+        const ReviveCamera djura = PlanReviveCamera(true, true);  // the report: latch 1, the lamp 158 m away
+        CHECK(djura.release_latch && djura.cam_reset);
+        const ReviveCamera lies = PlanReviveCamera(true, false);  // up where it lies after a fall (latch on)
+        CHECK(lies.release_latch && lies.cam_reset);
+        const ReviveCamera lamp = PlanReviveCamera(false, true);  // a normal death at its lamp (s1 / s3)
+        CHECK(!lamp.release_latch && lamp.cam_reset);
+        const ReviveCamera none = PlanReviveCamera(false, false); // an arena revive in place, no fall
+        CHECK(!none.release_latch && !none.cam_reset);
+    }
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    CHECK(JudgeReviveView(4.5, 0.1, false) == ReviveView::Ok);           // the follow camera behind it
+    CHECK(JudgeReviveView(1.0, nan, false) == ReviveView::Ok);           // a wall pushed it near; no matrix
+    CHECK(JudgeReviveView(4.5, 0.1, true) == ReviveView::FallCamera);    // the latch left on
+    CHECK(JudgeReviveView(158.0, 0.1, false) == ReviveView::CameraAway); // the report: the camera at the fall
+    CHECK(JudgeReviveView(kReviveCamNear + 0.1, 0.0, false) == ReviveView::CameraAway);
+    CHECK(JudgeReviveView(kReviveCamNear, 0.0, false) == ReviveView::Ok);
+    CHECK(JudgeReviveView(5.0, 158.0, false) == ReviveView::DrawnAway);  // drawn at the old spot
+    CHECK(JudgeReviveView(nan, 0.0, false) == ReviveView::NoCamera);     // headless without frames
+    CHECK(JudgeReviveView(nan, 0.0, true) == ReviveView::FallCamera);    // the latch is judged without frames
+    CHECK(std::string(ReviveViewName(ReviveView::Ok)) == "ok");
+    CHECK(std::string(ReviveViewName(ReviveView::FallCamera)).rfind("BAD", 0) == 0);
     CHECK(PlanGuestRevive(0.0, true, false) == GuestRevive::InPlace);        // a normal death
     CHECK(PlanGuestRevive(2.0, true, false) == GuestRevive::InPlace);        // a stumble is no fall
     CHECK(PlanGuestRevive(6.0, true, false) == GuestRevive::LoadFall);       // a fall

@@ -48,7 +48,13 @@ Phase bf (~3 min, 3 players, group `fight_load`): while the host fights Father G
 Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from the Great Bridge (its
   fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
   with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
-  safe floor.
+  safe floor; after each revive (guest and host) the camera follows the chr and it is drawn where it
+  stands (fallcam).
+Phase fd (~3 min, 2 players, group `fall_deep`): guest 1, its own last lamp the Central Yharnam lamp
+  ~95 m away, is dropped ~32 m onto the Great Bridge: a real fall death (the game's fall-death camera
+  on, not the kill plane of fl). It must get up at that far lamp with no loading screen, the fall-death
+  camera released, the render camera on its chr and the chr drawn where it stands (fallcam: the
+  "perpetual spectate" report), and walk away from the lamp.
 Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
   lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
@@ -817,6 +823,34 @@ def phase_fl(only):
     )
 
 
+# Phase fd (fallcam, ~3 min, 2 players, group `fall_deep`): a guest's real fall death far from its lamp
+# (a player's report: an 18 m fall beside Djura's tower, up at the host's lamp 158 m away with no load,
+# then the camera stuck on the sky and the own chr never shown again). Guest 1's own last lamp is the
+# Central Yharnam lamp 2412953 (~95 m from the Great Bridge); it walks 3 m onto the bridge (its last
+# safe ground), then is put ~32 m above it and lands: the game's own fall death (its fall-death camera
+# latch WorldChrMan +0x68 on, which fl's kill plane never sets). After its held death it gets up at that
+# lamp in place: the latch released, the camera behind its chr (within 12 m), drawn where it stands,
+# and it walks off the lamp under the player's stick (the camera-relative controls work).
+FD_UNTIL = r"1:travel step (\d+)/\1: guest_stick"
+
+
+def phase_fd(only):
+    host = ",".join(["log_pos", "echoes=3000", "host_warp=2412952@15"])
+    g1 = ",".join(["log_pos=0.5", "echoes=4000",
+                   "guest_lastlamp=2412953@8%m24_01",             # its own last lamp: ~95 m from the bridge
+                   "guest_stick=-127.0:62.0:0.7:20@2%m24_01!",    # onto the bridge: the safe ground
+                   "guest_press=0@2%m24_01!",
+                   "guest_move=-127.0:5.0:62.0@1%m24_01",         # ~32 m above the bridge's floor
+                   "guest_press=0@3%m24_01!", "guest_press=0@5%m24_01!",   # up again at the lamp (alive)
+                   "guest_stick=-41.0:79.0:0.7:15@2%m24_01!"])    # then off the lamp: ~6 m, camera-relative
+    return dict(
+        name="fd", seconds=360, count=2, headless=0, pads=(0, 1),
+        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", "guest: died from a fall=fallrevive@0.5,3", "--watch", r"revive view \(guest=view@0.2,3"],
+        crash=[], until=[FD_UNTIL], until_hold=8,
+    )
+
+
 # Phase mk (boldmark, ~6 min, 3 players): a guest's Hunter's Mark and Bold Hunter's Mark (a player's
 # report: the Bold Mark crashed the host's game right after the guests were back). The party travels to
 # the Cathedral Ward lamp 2402950 (m24_00); guest 1 (rendered) has that lamp as its own last lamp and
@@ -1156,12 +1190,12 @@ def phase_rt(only):
     )
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
           "rot": "rt"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
@@ -1170,7 +1204,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
               "rot": r"^rt "}
 
 
@@ -1206,6 +1240,7 @@ GROUP_UNTIL = {
     "lifts": [LF_UNTIL],
     "ladder": [r"1:travel step (\d+)/\1: guest_press"],
     "fall": [FL_UNTIL, FL_HOST_UNTIL],
+    "fall_deep": [FD_UNTIL],
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
     "cainhurst_lift": CH_UNTIL,
@@ -1992,6 +2027,7 @@ def check_fl(v, L):
             ok = d < 1.0 and float(so.group(2)) > -100
         v.step("fl bloodstain on the last safe floor", ok,
                ("%.1f m from it: %s" % (d, st[1][:120])) if st else "no stain record (echoes 0?)")
+        check_revive_view(v, L, "fl guest", 1, "guest revive", up)
     # The host's own fall out of the world (after the guest's)
     h0 = need(v, L, "fl host fell out of the world (HP 0 in the void)", 0,
               r"local death: HP 0 at \([-\d.]+, -(1\d{3}|[2-9]\d\d)\.", (up or hp0))
@@ -2015,7 +2051,68 @@ def check_fl(v, L):
                 d = sum((float(a) - float(b)) ** 2 for a, b in zip(so.groups(), sf.groups())) ** 0.5
                 ok = d < 1.0
             v.step("fl host bloodstain on the last safe floor", ok, ("%.1f m from it" % d) if st else "no stain record")
+            check_revive_view(v, L, "fl host", 0, "host revive", hup)
     check_common(v, L, "fl")
+
+
+REVIVE_VIEW = re.compile(r"revive view \((?P<what>[^,]+), (?P<t>[\d.]+) s after\): camera \([^)]*\) (?P<cam>[-\w.]+) m "
+                         r"from the chr \((?P<chr>[^)]*)\).*?; drawn \([^)]*\) (?P<drawn>[-\w.]+) m off; "
+                         r"fall-death camera (?P<latch>\d+), hp (?P<hp>-?\d+): (?P<verdict>.*)$")
+
+
+def check_revive_view(v, L, tag, i, what, after):
+    """fallcam: the revive's 3 s view line (ReviveViewTick): the render camera within 12 m of the chr,
+    the game's fall-death camera off, the chr drawn where it stands (within 1 m)."""
+    hit = L.find(i, r"revive view \(%s, [2-9]\.\d s after\)" % re.escape(what), after, after + 40)
+    m = REVIVE_VIEW.search(hit[1]) if hit else None
+    if not m:
+        v.step(tag + " camera on its chr after the revive", False, "no 3 s 'revive view (%s' line on inst%d" % (what, i))
+        v.step(tag + " drawn where it stands after the revive", False, "no view line")
+        return
+    cam, drawn, latch = float(m.group("cam")), float(m.group("drawn")), int(m.group("latch"))
+    v.step(tag + " camera on its chr after the revive (within 12 m, the fall-death camera off)",
+           latch == 0 and cam == cam and cam <= 12.0, "camera %.1f m from the chr, fall-death camera %d: %s" %
+           (cam, latch, m.group("verdict")[:80]))
+    v.step(tag + " drawn where it stands after the revive (drawn = physics position)", drawn == drawn and drawn <= 1.0,
+           "drawn %.2f m off the physics position (chr %s)" % (drawn, m.group("chr")))
+
+
+def check_fd(v, L):
+    xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
+    need(v, L, "fd join: 2 players", 0, r"cooperators 0 -> 1")
+    hp0 = need(v, L, "fd guest died from the landing (a real fall, not the kill plane)", 1,
+               r"local death: HP 0 at \([-\d.]+, -[1-4]\d\.\d, [-\d.]+\), dropped (1[5-9]|[2-9]\d)\.")
+    if hp0 is None:
+        check_common(v, L, "fd")
+        return
+    up = need(v, L, "fd guest up at a lamp of the loaded map, no load", 1,
+              r"guest: died from a fall .*up at (its own|the host's) last lamp", hp0)
+    if up is not None:
+        line = L.find(1, r"guest: died from a fall", hp0)[1]
+        at = re.search(r"HP 0 at " + xyz, line)
+        lamp = re.search(r"last lamp \d+ " + xyz, line)
+        d = sum((float(a) - float(b)) ** 2 for a, b in zip(at.groups(), lamp.groups())) ** 0.5 if at and lamp else -1.0
+        v.step("fd the lamp is far from the fall (at least 40 m)", d >= 40.0, "%.1f m: %s" % (d, line[:140]))
+        fields = L.find(1, r"guest revive: the game's safe-spot revive fields: WorldChrMan \+0x68 (\d)", up, up + 5)
+        on = bool(fields) and re.search(r"\+0x68 (\d)", fields[1]).group(1) == "1"
+        v.step("fd the game's fall-death camera was on at the revive (the report's case)", on,
+               fields[1][:150] if fields else "no safe-spot fields line")
+        need(v, L, "fd fall-death camera released by the revive", 1,
+             r"guest revive: the game's fall-death camera released \(WorldChrMan \+0x68 1 -> 0\)", up, up + 5)
+        check_revive_view(v, L, "fd guest", 1, "guest revive", up)
+        again = L.find(1, r"local death: HP 0", up + 0.5, up + 30)
+        v.step("fd guest alive after it (no second death)", not again, again[1][:100] if again else "none")
+        none_of(v, L, "fd no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
+        none_of(v, L, "fd guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
+                up + 20, (1,))
+        none_of(v, L, "fd never the Hunter's Dream", r"map - -> m21_", hp0, up + 30, (1,))
+        # the walk off the lamp: the player's stick moves it (camera-relative controls)
+        st = L.find(1, r"travel step \d+/\d+: guest_stick", up)
+        ps = [tuple(float(x) for x in POS_RX.search(l).groups()) for _, l in L.all(1, POS_RX.pattern, st[0], st[0] + 20)] if st else []
+        moved = max((sum((a - b) ** 2 for a, b in zip(q, ps[0])) ** 0.5 for q in ps), default=0.0) if ps else 0.0
+        v.step("fd guest walks off the lamp after the revive (at least 2 m)", moved >= 2.0,
+               "%.1f m in %d samples" % (moved, len(ps)) if st else "no guest_stick step after the revive")
+    check_common(v, L, "fd")
 
 
 WALL = re.compile(r"\[(\d\d):(\d\d):(\d\d(?:\.\d+)?)\] ")
@@ -2695,7 +2792,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
-          "fl": lambda v, L, d: check_fl(v, L),
+          "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp,
           "rt": lambda v, L, d: check_rt(v, L)}
 
@@ -2706,7 +2803,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf,lp")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,cl,bf,lp")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2721,7 +2818,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "cl", "el", "lt", "bf", "ch",
                                      "lp", "rt")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():

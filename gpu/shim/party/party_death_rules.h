@@ -470,6 +470,66 @@ inline double FallDrop(double peak_before, double y_at_death, double y_now) {
     return peak_before - std::min(y_at_death, y_now);
 }
 
+// ---- The camera after an in-world revive (fallcam) ----
+// A guest's fall death beside Djura's tower (an 18 m drop, the game's fall-death state on the chr),
+// revived at the host's lamp 158 m away with no load: up with full HP, but the camera stayed on the
+// sky and the own chr was never seen again ("perpetual spectate"; the host's death did not end it).
+// WorldChrMan +0x68 is the game's fall-death camera latch: the ChrCam update 0x14368B0 goes to its
+// mode 4 (the fall-die camera: it stops where the fall was and only turns after the body) while that
+// byte is set, and leaves mode 4 (back to the follow camera, reset behind the chr) only once it is 0.
+// Vanilla never revives after a fall death: the death load builds a new world with it 0, and the
+// game's own safe-spot warp-and-revive 0x13CBAD0 writes 0 for the local player. Our revive cleared
+// it only for a body moved up from far below; the lamp revive of an ordinary fall left it at 1
+// (the report: "WorldChrMan +0x68 1"). A fall out of the world (the kill plane, smoke fl) never sets it.
+// Every in-world revive or warp of the local player releases the latch and resets the camera behind
+// the chr (the Lua CamReset 0x132F5A0: chr transform re-applied, [[+0x3B0] +0x58] +0x28 +0xC = 1).
+struct ReviveCamera {
+    bool release_latch = false;  // WorldChrMan +0x68 -> 0
+    bool cam_reset = false;      // the camera behind the chr at its new spot
+};
+/// `latch_set`: WorldChrMan +0x68 is set; `warped`: the chr was put on a new spot (a lamp, a safe
+/// floor, the arena revive) rather than revived where it lies.
+inline ReviveCamera PlanReviveCamera(bool latch_set, bool warped) {
+    ReviveCamera c;
+    c.release_latch = latch_set;
+    c.cam_reset = latch_set || warped;
+    return c;
+}
+// The check after a revive (logged; smoke fl / fd): the render camera follows the chr (within
+// kReviveCamNear m of its physics position: the follow camera sits 3-6 m behind, a wall pushes it
+// nearer), the latch is off, and the chr is drawn where it stands (ChrCtrl's world matrix within
+// kReviveDrawnOff m of the physics position; the fall-die camera looked from 150 m away).
+constexpr double kReviveCamNear = 12.0;
+constexpr double kReviveDrawnOff = 1.0;
+enum class ReviveView { Ok, FallCamera, CameraAway, DrawnAway, NoCamera };
+/// `cam_dist`: render camera to the chr's physics position (NaN: no camera frame); `drawn_off`:
+/// drawn position to physics position (NaN: unknown, not judged); `latch`: WorldChrMan +0x68.
+inline ReviveView JudgeReviveView(double cam_dist, double drawn_off, bool latch) {
+    if (latch) {
+        return ReviveView::FallCamera;
+    }
+    if (!std::isfinite(cam_dist)) {
+        return ReviveView::NoCamera;
+    }
+    if (cam_dist > kReviveCamNear) {
+        return ReviveView::CameraAway;
+    }
+    if (std::isfinite(drawn_off) && drawn_off > kReviveDrawnOff) {
+        return ReviveView::DrawnAway;
+    }
+    return ReviveView::Ok;
+}
+inline const char* ReviveViewName(ReviveView v) {
+    switch (v) {
+    case ReviveView::Ok: return "ok";
+    case ReviveView::FallCamera: return "BAD: the fall-death camera is still on";
+    case ReviveView::CameraAway: return "BAD: the camera is away from the chr";
+    case ReviveView::DrawnAway: return "BAD: the chr is drawn away from where it stands";
+    case ReviveView::NoCamera: return "no camera frame (not judged)";
+    }
+    return "?";
+}
+
 // ---- Lifts and moving platforms (liftfall) ----
 // A player's report (Nightmare of Mensis): the long lift 2601240 drops 60 m at ~4 m/s, and the fall
 // recovery nets (6 s of dropping more than 1.5 m/s) warped the host back to its lamp mid-ride and
