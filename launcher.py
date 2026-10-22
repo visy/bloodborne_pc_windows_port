@@ -154,6 +154,8 @@ PARTY_INI_SWITCHES = [
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
     # 0.7.3: covenant outcomes per player (the host's rule; System > Shared world)
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
+    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Shared world)
+    ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -162,6 +164,8 @@ PARTY_INI_SWITCHES = [
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
+    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Shared world)
+    ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -3292,6 +3296,17 @@ class BloodborneLauncher(tk.Tk):
                     "save, and nothing of yours reaches the host's. Lamps, bosses, doors and other quests "
                     "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
                     "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
+                    "System > Shared world).", command=save)
+        self._check(sec, "Party votes on travel", var["party_travel_vote"],
+                    "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
+                    "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
+                    "and everyone is told who said no or did not answer. The host's setting; guests see it. "
+                    "Default: off (bbport.ini party_travel_vote; in the game: System > Shared world).", command=save)
+        self._check(sec, "NPC hunters fight the whole party", var["party_npc_fights"],
+                    "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
+                    "DLC hunters) turns on the guests too (Brador should show for guests too; not tried yet): "
+                    "everyone sees and fights the same hunter, and its death counts for all. The host's "
+                    "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
                     "System > Shared world).", command=save)
 
         # 0.7.2: rot, the host's rules (System > Rot)
