@@ -331,7 +331,7 @@ before anyone is in the game):
   Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
   messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
-  Hunter Bell go to every player, whoever got them first.
+  Hunter Bell go to every player, whoever got them in the host's world.
 - **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
   NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
   in each player's own save, also when it was learned in someone else's world.
