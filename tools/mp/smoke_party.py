@@ -61,6 +61,12 @@ Phase sm (~5 min, 2 players, group `scene_mirror`): the host's cutscene live on 
   Father Gascoigne's intro with both games running its event at once (the guest's own copy held,
   the host's played within 1 s, once), then the Tomb of Oedon door into Oedon Chapel (scene 24000020)
   with the guest 3 m behind the host still in m24_01 (played within 1 s; no replay after its walk in).
+Phase gl (~4 min, 2 players, group `gather_ground`): Gather the party onto ground only (a player's
+  report: the host gathered half way up a ladder, the guest was put in the open shaft beside it). At
+  the foot of Cathedral Ward's ladder 2401024 the host gathers; the guest (75 m away at the lamp) is
+  put 8 m too high (test aid "yesdrop": no ground there), must fall no further than the landing watch
+  lets it, go back where it stood and come by the travel (one load), then stand beside the host. On
+  the ladder the host's gather is refused (no question on the guest).
 Phase ld (~4 min, 2 players, group `ladder`): host and guest each take Cathedral Ward's ladder 2401024
   from its foot and die on it (only once the ladder state is set), are revived in place at the lamp;
   the ladder state must be gone and a stick walk must reach four points around the lamp.
@@ -360,7 +366,7 @@ RULES_PAGES = [
       '"friendly_fire":true')),
     # 0.7.1: the host's world rules (switches that had only an env variable before)
     ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
-                      "Party votes on travel"],
+                      "Party votes on travel", "NPC hunters fight all"],
      ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
       '"kill_record":false')),
     ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
@@ -660,6 +666,43 @@ def phase_ga(only):
               "1:BB_PARTY_GATHER_TEST=yes,menu,yes", "2:BB_PARTY_GATHER_TEST=yes,no,yes"],
         crash=[],
         until=GA_UNTIL,
+    )
+
+
+# Phase gl (gatherfix, ~4 min, 2 players, group `gather_ground`): a gather puts guests on ground only.
+# A player's report (Old Yharnam, the ladder beside Djura's tower): the host held still half way up a
+# ladder and gathered; the guest was put 0.5 m beside it in the open shaft and dropped 3 m (from
+# higher up a fall death). The party travels to the Cathedral Ward lamp 2402950; the host stands at the
+# foot of the ladder 2401024 (~75 m from the lamp, where the guest stays) and gathers: the guest's YES
+# is "yesdrop" (BB_PARTY_GATHER_TEST: the spot 8 m too high, a spot with no ground). The landing watch
+# must catch the fall (FELL, 4 m below the spot), put it back where it stood (no load) and send it by
+# the travel (one loading screen), then beside the host once arrived, standing. Then the host takes the
+# ladder (Cross) and gathers on it: refused (on a ladder), no question on the guest.
+GL_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
+
+
+def phase_gl(only):
+    host = ",".join([
+        "god", "log_pos=0.5",
+        "host_warp=2402950@15",                     # the party to the Cathedral Ward lamp
+        "host_obj=2401024:1.0:180@10%m24_00",       # the ladder's foot, ~75 m from the lamp
+        "host_gather@3%m24_00",                     # round 1: on ground (the guest: yesdrop)
+        "host_press=0x4000@45%m24_00!",             # Cross: onto the ladder (after the guest's travel)
+        "host_gather@3%m24_00",                     # refused: on a ladder
+        "host_press=0@12%m24_00!",
+    ])
+    g1 = ",".join(["god", "log_pos=0.5", "guest_press=0@120%m24_00!"])  # stays at the lamp
+    watch = ["--grey"]
+    for rx, tag in ((r"round \d+: Gather the party: \d+ guest", "gather"), (r"gather: put beside", "beside"),
+                    (r"guest: FELL", "fell"), (r"guest: arrived in the host's map", "arrived"),
+                    (r"guest: stands beside the host", "stands"), (r"Gather the party refused: on a ladder", "ladder")):
+        watch += ["--watch", "%s=%s@0.5,3" % (rx, tag)]
+    return dict(
+        name="gl", seconds=300, count=2, headless=0,
+        env=[], watch=watch,
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              "1:BB_PARTY_GATHER_TEST=yesdrop"],
+        crash=[], until=GL_UNTIL,
     )
 
 
@@ -1840,12 +1883,12 @@ def phase_clg(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
           "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
@@ -1854,7 +1897,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
-              "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
+              "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ", "gather_ground": r"^gl ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
@@ -1889,6 +1932,7 @@ GROUP_UNTIL = {
     "summonfail": [r"0:cooperators 0 -> 1"],
     "streamkill": [SK_UNTIL],
     "gather": GA_UNTIL,
+    "gather_ground": GL_UNTIL,
     # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
     "lifts": [LF_UNTIL],
     "fall": [FL_UNTIL, FL_HOST_UNTIL],
@@ -2406,6 +2450,14 @@ def check_rules(v, L):
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
            and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
            sw[1][:250] if sw else "no Shared world rows line on the guest")
+    # guestrules (0.7.3): the enemy scaling is the host's: read-only lines with the host's values on
+    # the guest ("150 %", the host's default), no slider position (a host's row shows "5")
+    es = L.find(1, r"Game menu: page \d+ rows \(\d+\): Boss health=")
+    v.step("rules guest: sees the host's Enemy scaling (read-only values)",
+           bool(es) and "Boss health=150 %" in es[1] and "Boss damage=+10 %" in es[1],
+           es[1][:250] if es else "no Enemy scaling rows line on the guest")
+    none_of(v, L, "rules guest: never writes the host's scaling to its bbport.ini",
+            r"Settings: bbport.ini party_(boss|enemy)_", insts=(1,))
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
     for i, who in ((0, "host"), (1, "guest")):
         need(v, L, "rules %s: 0.7.1 bbport.ini migrated (rot off once)" % who, i,
@@ -2667,6 +2719,34 @@ def check_ga(v, L):
     v.step("ga rounds at least 30 s apart", r2 and r2[0] - r1 >= 30.0, "%.1f s" % (r2[0] - r1) if r2 else "no round 2")
     need(v, L, "ga round 3 over", 0, r"round 3 over", r1)
     check_common(v, L, "ga")
+
+def check_gl(v, L):
+    need(v, L, "gl join: 2 players", 0, r"cooperators 0 -> 1")
+    r1 = need(v, L, "gl round 1: the host gathers at the ladder's foot", 0, r"round 1: Gather the party: 1 guest")
+    if r1 is None:
+        check_common(v, L, "gl")
+        return
+    yes = need(v, L, "gl guest: YES -> in-world warp", 1, r"guest: YES: route inworld", r1)
+    if yes is not None:
+        put = need(v, L, "gl guest: put beside the host (test: 8 m too high)", 1, r"gather: put beside the host .*test: lifted",
+                   yes)
+        fell = need(v, L, "gl guest: the landing watch sees the fall", 1, r"guest: FELL ([4-9]|1\d)\.\d m", yes, yes + 6)
+        if fell is not None:
+            need(v, L, "gl guest: back where it stood (in-world, no load)", 1,
+                 r"in-world warp \(gather: no ground beside the host, back\)", fell, fell + 1)
+            need(v, L, "gl guest: then the travel (one loading screen)", 1, r"guest: travels alone \(gather\)", fell, fell + 3)
+            arr = need(v, L, "gl guest: arrived in the host's map", 1, r"guest: arrived in the host's map", fell, fell + 60)
+            if arr is not None:
+                need(v, L, "gl guest: stands beside the host after the travel", 1,
+                     r"guest: stands beside the host [\d.]+ s after the warp \([0-3]\.\d m below", arr, arr + 8)
+        none_of(v, L, "gl guest: no death", r"local death: HP 0", r1, 1e9, (1,))
+    lad = need(v, L, "gl host on the ladder: gather refused", 0, r"Gather the party refused: on a ladder or in the air .*ladder state [0-9]",
+               r1 + 30)
+    if lad is not None:
+        none_of(v, L, "gl no question on the guest for the refused gather", r"guest: round 2: the host gathers", lad, lad + 10,
+                (1,))
+    check_common(v, L, "gl")
+
 
 def check_fl(v, L):
     need(v, L, "fl join: 2 players", 0, r"cooperators 0 -> 1")
@@ -4011,7 +4091,7 @@ def check_cv(v, L, d: Path):
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
+          "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
@@ -4024,7 +4104,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,cv,tv")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,cv,tv")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
