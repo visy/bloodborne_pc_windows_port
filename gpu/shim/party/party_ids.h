@@ -51,6 +51,12 @@ inline bool WarpPointKnown(std::uint32_t packed_map, std::uint32_t point) {
 /// z and the yaw (radians) of the MSB region its revive event names. False: no spot (a Chalice
 /// Dungeon point, whose layout is generated, or no revive event).
 inline bool ReturnSpot(std::uint32_t id, float out[4]) {
+    // chalicelamp: the table holds the m29 template MSB's spots for 2902950.., but a dungeon's layout is
+    // generated and its lamps stand elsewhere (a guest's report: the template's spot of 2902954 was
+    // 180 m from that lamp, in the air above the dungeon). No spot for them, as documented above.
+    if (id / 100000 == 29) {
+        return false;
+    }
     const auto* b = std::begin(kPartyReturnSpotIds);
     const auto* e = std::end(kPartyReturnSpotIds);
     const auto* it = std::lower_bound(b, e, id);

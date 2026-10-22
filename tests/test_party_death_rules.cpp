@@ -256,6 +256,15 @@ int main() {
         CHECK(PlanFallRespawn(true, true, false, false, false, false) == FallRespawn::Respawn);
         CHECK(PlanFallRespawn(true, false, true, true, true, false) == FallRespawn::Respawn);    // in-place revive off
         CHECK(PlanFallRespawn(false, true, true, true, true, false) == FallRespawn::Respawn);   // no fall: as before
+        // chalicelamp: a guest's fall in the host's Chalice Dungeon (a living member there): beside it,
+        // never a lamp's table spot nor a safe floor that was a lift car's stop; the host as before.
+        CHECK(PlanFallRespawn(true, true, false, false, true, false, true) == FallRespawn::BesideMember);
+        CHECK(PlanFallRespawn(true, true, true, true, true, false, true) == FallRespawn::BesideMember);
+        CHECK(PlanFallRespawn(true, true, false, false, false, false, true) == FallRespawn::BesideMember);
+        CHECK(PlanFallRespawn(true, true, false, false, true, true, true) == FallRespawn::SafeFloor);  // host role
+        CHECK(PlanFallRespawn(true, false, false, false, true, false, true) == FallRespawn::Respawn);  // in-place off
+        CHECK(PlanFallRespawn(false, true, false, false, true, false, true) == FallRespawn::Respawn);  // no fall
+        CHECK(PlanFallRespawn(true, true, false, false, true, false, false) == FallRespawn::SafeFloor); // nobody alive
         {
             // The sequence of a death out of the world: HP 0 (the game's death plays), the death taken
             // (held), the body moved up, a settle, the revive in place - and no load.

@@ -509,6 +509,24 @@ died was sent to the Hunter's Dream and could not get back in until the host res
   Dream (both in m21_00, party travel), `host_lamp=2902952` from the Dream (the altar's warp: host in alone,
   the guest apart -> home -> summoned back, both in m29 at the lamp). Not run live: a guest's own use of a
   dungeon lamp (its talk answers 0, `t290112 asks IsClientPlayer (Chalice Dungeon lamp: answered 0)`).
+* **chalicelamp (0.7.3, two guest reports, derivative-build logs)**:
+  - **A guest's own dungeon lamp use** (cause confirmed from the data): the lamp menu's "Return to the Hunter's
+    Dream" set 72900104 three times on the guest and nothing followed. m29's 12907020 starts with `1003[6]` (end
+    the event on a client, state 1), the same guard as the world lamps' 7200; `ChaliceLampSkipRules`
+    (`12907020:1003:6@0`, with the guest lamps and the dungeon lamps on) skips it as `LampSkipRules` does for
+    7200, so the guest's 2003[49] runs and goes through `GuestLampIntercept` (split question / lamp request).
+  - **The fall revive "above the dungeon"** (confirmed from the log): `GuestFallSafeRevive` ran before the
+    dungeon rule and took the host's last lamp 2902954 from party_ids' table: the m29 template's spot (52.8,
+    -1.0, 21.9), 180 m from that lamp's object (2901954 at (-132.7, 17.4, -15.5)) and in the air; the guest
+    fell 54 m and died again, twice. `ids::ReturnSpot` now has no spot for area 29 (as documented), the fall
+    rule gets `FallRespawn::BesideMember` in a dungeon (party_chalice_rejoin, a living member here, not a
+    boss fight), and the guest-lamp distance tests use the lamp object 2901950 + n (`LampSpotNow`).
+  - **Dungeon lifts** (cause inferred: the guest's chr ended 5 m under the car at the 21 m lift's bottom with
+    the game's fall-death state; no ride sample in its height history): the lift table has no m29 lift. The
+    game side learns the cars from the rides' `2003[18]` in m29's lift events (`liftrules::ChaliceLiftCar`,
+    `kChaliceLiftEvents`), cleared at every load; the on-a-moving-car test takes a learned car within 4 m
+    and 3 m of height, and `liftrules::CarRiderTick` (the chr's height against the car object's, no ride
+    bit needed) puts a rider that drops through a moving car back on it.
 * **A boss paid once (0.7.1, cl9)**: cl6 / cl8 showed every re-summon into the cleared dungeon paying the
   layer boss again (`boss clear on this game (BlockClear2): boss 2900100, clear bonus 1995`, Insight 6 -> 7).
   Cause (verified): `ChaliceLeaveSession` used a bare BeginLeave, so an apart guest stayed in its

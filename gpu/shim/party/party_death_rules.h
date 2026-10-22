@@ -269,17 +269,27 @@ inline FallReviveStep PlanFallReviveStep(bool death_taken, bool body_far_below, 
 /// respawn load after a death out of the world lands in the Hunter's Dream, as single player does):
 /// with neither lamp in the loaded map, its last safe floor. `inplace_on` off (a guest's System >
 /// Deaths & revives) or no fall: the respawn as before.
-enum class FallRespawn { OwnLamp, HostLamp, SafeFloor, Respawn };
+/// chalicelamp (a guest's report, "I died on the elevator, got teleported above the dungeon"): in a
+/// Chalice Dungeon the lamps' spots are not in the party's table (LampTableSpotTrusted: the layout is
+/// generated; the template's spot for lamp 2902954 was 180 m off, in the air) and the last safe floor
+/// may be a lift car that has since moved on (the report's first death: the car's top stop). There a
+/// guest's fall gets up beside the nearest living member (`dungeon_member`: in a dungeon outside a
+/// boss fight, party_chalice_rejoin on, a living member here), a spot a living chr stands on.
+enum class FallRespawn { OwnLamp, HostLamp, SafeFloor, Respawn, BesideMember };
 inline const char* FallRespawnName(FallRespawn f) {
-    return f == FallRespawn::OwnLamp    ? "its own last lamp"
-           : f == FallRespawn::HostLamp ? "the host's last lamp"
-           : f == FallRespawn::SafeFloor ? "its last safe floor (no lamp in the loaded map)"
-                                         : "the respawn as before";
+    return f == FallRespawn::OwnLamp        ? "its own last lamp"
+           : f == FallRespawn::HostLamp     ? "the host's last lamp"
+           : f == FallRespawn::SafeFloor    ? "its last safe floor (no lamp in the loaded map)"
+           : f == FallRespawn::BesideMember ? "beside the nearest living member (Chalice Dungeon)"
+                                            : "the respawn as before";
 }
 inline FallRespawn PlanFallRespawn(bool fall_death, bool inplace_on, bool own_lamp_here, bool host_lamp_here, bool safe_ok,
-                                   bool host_role) {
+                                   bool host_role, bool dungeon_member = false) {
     if (!fall_death || !inplace_on) {
         return FallRespawn::Respawn;
+    }
+    if (dungeon_member && !host_role) {
+        return FallRespawn::BesideMember;
     }
     if (own_lamp_here) {
         return FallRespawn::OwnLamp;
