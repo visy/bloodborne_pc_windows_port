@@ -1681,6 +1681,10 @@ def run_phase(a, ph, out: Path):
            "--label", "smoke %s" % ph["name"]] + ph.get("args", [])
     if getattr(a, "real_net", False):
         cmd += ["--real-net"]  # the real network instead of loopback (instances.py --real-net)
+    # Speed (user decision 2026-10-22): every cutscene is watched 5 s, then skipped by the game's own
+    # skip / end path (its end actions still run); a phase that needs whole scenes sets full_scenes.
+    if not ph.get("full_scenes") and not any(e.startswith("BB_TEST_REMO_SKIP_AFTER=") for e in ph["env"]):
+        cmd += ["--env", "BB_TEST_REMO_SKIP_AFTER=5"]
     for e in ph["env"]:
         cmd += ["--env", e.replace("{root}", str(root))]
     for e in ph["ienv"]:

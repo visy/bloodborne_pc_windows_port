@@ -9632,7 +9632,10 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
     case dsummon::Kind::Busy: {  // guest: A11, the host's boss fight / cutscene started or ended
         if (Role() == RoleHost) return;
         const dsummon::Busy b = dsummon::WaitOf(body);
-        g_host_busy.store(static_cast<int>(b));
+        const dsummon::Busy was = static_cast<dsummon::Busy>(g_host_busy.exchange(static_cast<int>(b)));
+        if (was == dsummon::Busy::Cutscene && b != dsummon::Busy::Cutscene) {
+            StoryHostSceneEnded();  // the host's scene ended or was skipped: our live mirror of it too
+        }
         party::bridge::OnHostBusy(dsummon::BusyText(b, false), b == dsummon::Busy::Cutscene, StoryMirrorPlaying());
         Log("A11: the host's hold: %s%s", dsummon::BusyWord(b), b == dsummon::Busy::None ? " (its bell rings again)" : "");
         return;
