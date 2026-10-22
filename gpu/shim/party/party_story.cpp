@@ -467,6 +467,55 @@ const char* HostStoryUpGuard::Refuse(std::uint32_t remo_id, bool boss_fight, dou
     return nullptr;
 }
 
+bool OwnSceneHold::Hold(const Item& it) {
+    if (Holding(it.remo)) {
+        return true;  // the same scene again: the first hold stands
+    }
+    if (items_.size() >= kMax) {
+        return false;
+    }
+    items_.push_back(it);
+    return true;
+}
+
+std::optional<OwnSceneHold::Item> OwnSceneHold::HostCopy(std::uint32_t remo) {
+    const std::uint32_t base = BaseRemo(remo);
+    std::optional<Item> first;
+    for (auto it = items_.begin(); it != items_.end();) {
+        if (BaseRemo(it->remo) == base) {
+            if (!first) first = *it;
+            it = items_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return first;
+}
+
+std::optional<OwnSceneHold::Item> OwnSceneHold::Due(double now, double wait) {
+    for (auto it = items_.begin(); it != items_.end(); ++it) {
+        if (now - it->at >= wait) {
+            const Item i = *it;
+            items_.erase(it);
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+std::size_t OwnSceneHold::Prune(double now, double max_age) {
+    const std::size_t before = items_.size();
+    items_.erase(std::remove_if(items_.begin(), items_.end(),
+                                [&](const Item& i) { return now - i.at > max_age; }),
+                 items_.end());
+    return before - items_.size();
+}
+
+bool OwnSceneHold::Holding(std::uint32_t remo) const {
+    const std::uint32_t base = BaseRemo(remo);
+    return std::any_of(items_.begin(), items_.end(), [base](const Item& i) { return BaseRemo(i.remo) == base; });
+}
+
 bool GuestStory::TakeDirty() {
     const bool d = dirty_;
     dirty_ = false;
@@ -1667,6 +1716,9 @@ void InstallStoryHooks() {
 constexpr double kMirrorDedupeSeconds = 600.0;
 std::mutex g_mirrored_mu;
 std::map<std::uint32_t, double> g_mirrored;
+// Guest: its own plays of boss intros held for the host's copy (StoryHoldClientOwnScene).
+std::mutex g_hold_mu;
+OwnSceneHold g_hold;
 
 namespace {
 std::mutex g_notice_mu;
@@ -1793,10 +1845,11 @@ void RequestGuestStory(const StoryIntent& s) {
             }
         }
     }
-    bool taken;
+    bool taken, mirror;
     {
         std::lock_guard<std::mutex> lk(g_guest_mu);
         taken = g_guest.Offer(s, phantom, Now());
+        mirror = taken && g_guest.MirrorPending();
     }
     if (taken && phantom && s.kind == StoryKind::Cutscene && s.event_id) {
         std::lock_guard<std::mutex> lk(g_mirrored_mu);
@@ -1804,6 +1857,121 @@ void RequestGuestStory(const StoryIntent& s) {
     }
     Log("guest %s %s%s", DescribeStory(s).c_str(), taken ? "taken" : "ignored (not newer than the last)",
         taken && phantom ? " (phantom: live mirror)" : "");
+    if (mirror && s.kind == StoryKind::Cutscene) {
+        std::optional<OwnSceneHold::Item> held;
+        {
+            std::lock_guard<std::mutex> lk(g_hold_mu);
+            held = g_hold.HostCopy(s.id);
+        }
+        if (held) {
+            Log("guest: the host's copy of cutscene %u came %.2f s after this game's own play of it (held): the "
+                "host's scene plays here live; the own copy never plays",
+                s.id, Now() - held->at);
+        }
+    }
+}
+
+bool StoryHoldClientOwnScene(std::uint32_t event_id, int id, std::uint64_t event, std::uint64_t instr) {
+    if (!g_story_on.load() || Role() != PartyRole::Guest || OwnWorld() || !event || !instr) {
+        return false;
+    }
+    bool mirror_on;
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        mirror_on = g_guest.mirror_enabled;
+    }
+    const bool intro = worldact::FirstFightSpotFor(event_id) != nullptr;
+    if (!intro || !mirror_on || (id != 1 && id != 3)) {
+        return false;
+    }
+    u32 size = 0;
+    const u64 args = EmevdInstructionArgs(event, instr, &size);
+    u32 remo = 0, mode = 0, map = 0;
+    if (!args || size < 8 || !SafeGet(args, &remo) || !SafeGet(args + 4, &mode)) {
+        return false;
+    }
+    SafeGet(event + 0x68, &map);
+    if (!HoldOwnSceneForHost(true, mirror_on, 2002, id, intro, StoryRemoKnown(remo))) {
+        return false;
+    }
+    OwnSceneHold::Item it;
+    it.event_id = event_id;
+    it.remo = remo;
+    it.mode = mode;
+    it.instr = static_cast<u32>(id);
+    it.map = map;
+    it.at = Now();
+    {
+        std::lock_guard<std::mutex> lk(g_hold_mu);
+        if (!g_hold.Hold(it)) {
+            return false;  // full: the game plays it as before
+        }
+    }
+    // D10 as RemoHandlerEntry sends it (the host's guard drops it when its own event played it).
+    StoryIntent up;
+    up.kind = StoryKind::Cutscene;
+    up.instr = static_cast<u32>(id);
+    up.id = remo;
+    up.mode = mode;
+    up.event_id = event_id;
+    up.map = map;
+    up.seq = NextSeq();
+    {
+        std::lock_guard<std::mutex> lk(g_up_mu);
+        if (g_up.size() < 8) {
+            g_up.push_back(up);
+        }
+    }
+    Log("guest: event %u's own 2002[%d] (boss intro %u, mode %u) held: the host plays this intro; its copy plays "
+        "here as the live mirror (this game's own copy only if it does not come in %.0f s)",
+        event_id, id, remo, mode, kOwnIntroHold);
+    return true;
+}
+
+/// Guest, main thread: a held own play whose host copy did not come plays now (as the game's
+/// 2002 would have: the remo with the event's mode); it is this player's own copy then.
+static void GuestHeldSceneTick(const GameSnapshot& g, const StoryState& st, double now) {
+    std::optional<OwnSceneHold::Item> due;
+    std::size_t pruned = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_hold_mu);
+        if (!g_hold.Size()) {
+            return;
+        }
+        if (g.session_role != RoleClient) {
+            pruned = g_hold.Prune(now, 0);  // left the host's world: the scene is not this world's now
+        } else {
+            pruned = g_hold.Prune(now);
+            bool busy;
+            {
+                std::lock_guard<std::mutex> lk2(g_guest_mu);
+                busy = g_guest.Running() || g_guest.MirrorPending();
+            }
+            if (g.world_up && !g.loading && !st.transition_requested && !st.remo_playing && !busy) {
+                due = g_hold.Due(now);
+            }
+        }
+    }
+    if (pruned) {
+        Log("guest: %zu held own boss intro play(s) dropped (left the host's world or never steady)", pruned);
+    }
+    if (!due) {
+        return;
+    }
+    StoryAction a;
+    a.kind = StoryAction::PlayRemo;
+    a.id = RemoForSex(due->remo, SexVariant());
+    a.mode = due->mode;
+    a.why = "held own boss intro (the host's copy did not come)";
+    Log("guest: the host's copy of cutscene %u (event %u) did not come in %.1f s: this player's own copy plays",
+        due->remo, due->event_id, now - due->at);
+    Run(a);
+    {
+        std::lock_guard<std::mutex> lk(g_up_mu);
+        g_self_played.emplace_back(due->remo, now);  // a late host copy of it is dropped
+    }
+    std::lock_guard<std::mutex> lk(g_mirrored_mu);
+    g_mirrored[due->event_id] = now;  // the event's 2002 again (a rerun) is a duplicate too
 }
 
 bool StoryMirroredEvent(std::uint32_t event_id) {
@@ -1885,6 +2053,9 @@ void StoryTick() {
         g_tick.remo_was_playing = st.remo_playing;
     }
     HostPlayGuestStory(g, st);  // D10: a guest's cutscene, for everyone
+    if (role == PartyRole::Guest) {
+        GuestHeldSceneTick(g, st, now);  // a held own boss intro whose host copy did not come
+    }
     if (g_tick.test_up && !g_tick.test_done && g.world_up && !g.loading && g.session_role == RoleClient &&
         !st.remo_playing) {
         if (!g_tick.test_coop_since) {

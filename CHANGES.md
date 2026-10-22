@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: a guest beside the host sees the host's boss intro at once, and only once**: when the host started a boss's intro cutscene (Father Gascoigne's at the Tomb of Oedon gate, for example) with a guest standing right next to it, the guest's game could start its own copy of the scene at the same moment and drop the host's. That own copy then took up to about 20 seconds to show: the guest saw the host standing frozen at the gate with "Waiting: the host is watching a cutscene", walked on, and got the scene later on its own. Now the guest's game waits for the host's scene and plays it together with the host. Only if the host's scene does not reach the guest within a few seconds does the guest's own copy play, and either way the scene plays once.
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: corpses and other objects no longer pop in and out as you move**: with *Model detail* set to *Highest*, the game drew many objects only while you stood within about 10-15 m of them; further away they vanished instead of switching to their simpler model, so the corpses in Central Yharnam's streets kept appearing and disappearing as you walked back and forth. *Highest* is no longer offered, in the game's *Display* menu, the overlay and the launcher; a setting saved as *Highest* now uses the game's own detail, which draws these objects at every distance. Render resolution and the upscaler never changed this. Far buildings still switch between detail levels as on the PS4.

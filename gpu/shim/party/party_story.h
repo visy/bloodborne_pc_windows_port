@@ -346,6 +346,53 @@ inline bool HoldGuestIntroForHostEvent(bool first_fight_intro, double held_for) 
     return first_fight_intro && held_for < kGuestIntroWait;
 }
 
+/// D10 race (player report 2026-10-22, Gascoigne's intro 24010010 from event 12411802): a guest
+/// next to the host gets its own copy of a boss's first-fight intro event at the moment the host's
+/// event plays the intro; the game's own sync reaches the guest before the host's EVENT "story"
+/// does. That own 2002[3] went first, so the host's copy was dropped ("this player triggered and
+/// watched it itself"), and the guest's own play did not show for ~18 s: the guest saw the host
+/// frozen at the gate, walked on, and got its own scene later. The host always plays such an
+/// intro itself (its own event, P5's guest-first start, or the guest's forwarded copy after
+/// kGuestIntroWait), so the guest's own play of it is held instead (the instruction is skipped,
+/// as StoryDedupeSkip does) and the host's copy plays here as the live mirror. Only when the
+/// host's copy does not come in kOwnIntroHold s does the guest's own copy play.
+constexpr double kOwnIntroHold = 12.0;   ///< > kGuestIntroWait + a round trip
+constexpr double kOwnIntroMaxAge = 60.0; ///< a held play this old is dropped (never played)
+/// A client's own plain play (2002[1] / [3], no warp or time of day) of a known remo from a boss
+/// first-fight intro event, the live mirror on: held for the host's copy.
+inline bool HoldOwnSceneForHost(bool client, bool mirror_on, int bank, int id, bool first_fight_intro,
+                                bool remo_known) {
+    return client && mirror_on && bank == 2002 && (id == 1 || id == 3) && first_fight_intro && remo_known;
+}
+
+/// The guest's held own plays (HoldOwnSceneForHost). Not thread-safe (callers lock).
+class OwnSceneHold {
+public:
+    struct Item {
+        std::uint32_t event_id = 0;
+        std::uint32_t remo = 0;
+        std::uint32_t mode = 0;
+        std::uint32_t instr = 0;
+        std::uint32_t map = 0;
+        double at = 0;
+    };
+    static constexpr std::size_t kMax = 8;
+    /// Holds `it` (one per scene: a second play of the same scene keeps the first). False: not held.
+    bool Hold(const Item& it);
+    /// The host's copy of `remo` (either sex) was taken as the live mirror: its held play is
+    /// dropped (never played here) and returned; nullopt when none was held.
+    std::optional<Item> HostCopy(std::uint32_t remo);
+    /// The oldest held play `wait` s old or older, removed (this game plays its own copy now).
+    std::optional<Item> Due(double now, double wait = kOwnIntroHold);
+    /// Drops plays held longer than `max_age` s (this game never got steady to play them).
+    std::size_t Prune(double now, double max_age = kOwnIntroMaxAge);
+    bool Holding(std::uint32_t remo) const;
+    std::size_t Size() const { return items_.size(); }
+
+private:
+    std::vector<Item> items_;
+};
+
 // ---- Story notices (D10, pard3) ----
 /// A game dialog (EMEVD 2007[1]) that tells the story and that only the host's event shows (its
 /// client copy ends on 1003[6]): Yahar'gul's "Ritual secret broken. Seek the nightmare newborn."
@@ -383,6 +430,11 @@ void RequestGuestStory(const StoryIntent& s);
 /// Guest: the live mirror played the cutscene of EMEVD event `event_id` in the last 10 minutes
 /// (the client's own copy of that event's 2002 is then a duplicate).
 bool StoryMirroredEvent(std::uint32_t event_id);
+/// Guest, the EMEVD dispatch (party_b2 ClientIntroSkip): this game's own 2002[`id`] of event
+/// `event_id` (SprjEmkEventIns `event`, instruction record `instr`) is a boss intro the host plays
+/// (HoldOwnSceneForHost): true = skip it here; the host's copy plays as the live mirror (or this
+/// game's own copy after kOwnIntroHold s). The scene still goes up to the host (D10).
+bool StoryHoldClientOwnScene(std::uint32_t event_id, int id, std::uint64_t event, std::uint64_t instr);
 /// Main thread, once a frame (the coop tick): host polls, guest mirror / replay.
 void StoryTick();
 /// D10 (cutscenes play for the whole party): a story cutscene a GUEST's own events play in the
