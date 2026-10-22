@@ -242,6 +242,14 @@ std::vector<EmevdSkipRule> LampSkipRules() {
     return out;
 }
 
+std::vector<EmevdSkipRule> ChaliceLampSkipRules() {
+    std::vector<EmevdSkipRule> out;
+    // m29 event 12907020 (one instance per dungeon lamp): 1003[6] end if client, the menu's flag
+    // 72900100 + n, the kneel, 2003[49] to the Dream's altar spot (live-checked data: chalicelamp).
+    ParseEmevdSkipRules("12907020:1003:6@0", &out);
+    return out;
+}
+
 std::vector<EmevdSkipRule> DollPlacementRules() {
     std::vector<EmevdSkipRule> out;
     ParseEmevdSkipRules("12100110:2003:22@25,12100110:2003:17@26", &out);
@@ -1530,6 +1538,11 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
         for (const EmevdSkipRule& r : LampSkipRules()) {
             out.push_back(r);
         }
+        if (ChaliceLampsOn()) {
+            for (const EmevdSkipRule& r : ChaliceLampSkipRules()) {
+                out.push_back(r);
+            }
+        }
     }
     return out;
 }
@@ -1705,6 +1718,21 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
 /// 0.7.2: only a real lamp use counts (lampshare::CountsAsGuestLit): the guest at that lamp, no load
 /// within the last 20 s. A lamp its game shows lit right after a load (a lamp warp's arrival lights
 /// its lamp) or far from the guest is never sent for this map.
+// chalicelamp: where lamp `rp` stands in the loaded map, for the "stands at the lamp" distance
+// tests: the party's spot table, or in a Chalice Dungeon (its layout generated, no table spot) the
+// lamp object 2901950 + n itself (lamp 2902950 + n; chalice.md section 8).
+bool LampSpotNow(std::uint32_t rp, float sp[4]) {
+    if (rp / 100000 == 29) {
+        float at[3];
+        if (!worldact::ObjectPoint(static_cast<std::int32_t>(rp - 1000u), 0.0f, 0.0f, at)) {
+            return false;
+        }
+        sp[0] = at[0], sp[1] = at[1], sp[2] = at[2], sp[3] = 0.0f;
+        return true;
+    }
+    return ids::ReturnSpot(rp, sp);
+}
+
 std::uint32_t LampOfLitFlag(std::uint32_t id) {
     if (id / 10000000 == 7) {
         return (id - 70000000u) / 10000u * 10000u + 2950u + (id % 10000u - 200u);
@@ -1740,7 +1768,7 @@ void GuestLampLitTick(const GameSnapshot& s) {
             const std::uint32_t rp = LampOfLitFlag(id);
             float sp[4];
             float dist = -1.0f;
-            if (have_pos && rp && ids::ReturnSpot(rp, sp)) {
+            if (have_pos && rp && LampSpotNow(rp, sp)) {
                 dist = std::sqrt((me[0] - sp[0]) * (me[0] - sp[0]) + (me[1] - sp[1]) * (me[1] - sp[1]) +
                                  (me[2] - sp[2]) * (me[2] - sp[2]));
             }
@@ -2577,7 +2605,7 @@ void LastLampGuardTick(const GameSnapshot& s) {
     }
     float me[3], sp[4];
     float dist = -1.0f;
-    if (balance::ChrPosition(s.player, me) && ids::ReturnSpot(now_rp, sp)) {
+    if (balance::ChrPosition(s.player, me) && LampSpotNow(now_rp, sp)) {
         dist = std::sqrt((me[0] - sp[0]) * (me[0] - sp[0]) + (me[1] - sp[1]) * (me[1] - sp[1]) +
                          (me[2] - sp[2]) * (me[2] - sp[2]));
     }

@@ -12,8 +12,8 @@
 //          <lamp>."), when no menu or other dialog is up; its answer goes back to the host. The
 //          member who started the travel only gets the waiting notice.
 //
-// The host's rule: System > Shared world "Party votes on travel", bbport.ini party_travel_vote
-// (off by default), the launcher's Party Rules & Sync; BB_PARTY_TRAVEL_VOTE=0/1 wins at start.
+// The host's rule: System > Party rules: World "Party votes on travel", bbport.ini party_travel_vote
+// (off by default), the launcher's Party Rules tab; BB_PARTY_TRAVEL_VOTE=0/1 wins at start.
 // A guest follows the host's rule (party_balance Rules), shown read-only on its page.
 // Test aids: BB_PARTY_VOTE_TEST=yes,no,none,... answers this game's vote questions in order
 // (YES = Cross; NO = Right, then Cross; none = left open); BB_PARTY_VOTE_TIMEOUT=S (the host's

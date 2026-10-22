@@ -143,6 +143,13 @@ private:
 
 /// The built-in EMEVD rules of the lamp part: 7200:1003:6@0 (world lamp -> Dream: the client end).
 std::vector<EmevdSkipRule> LampSkipRules();
+/// chalicelamp (a guest's report: "guests in chalice dungeons can't use lamps"): a dungeon lamp's
+/// "Return to the Hunter's Dream" sets 72900100 + n on the guest too, but m29's event 12907020 starts
+/// with 1003[6] "end the event on a client" (state 1), exactly as the world lamps' 7200, so the guest's
+/// warp never came (the report: the flag set three times at lamp 2902954, nothing else). 12907020:1003:6@0
+/// skips that end, so its 2003[49] warp runs and becomes the guest's lamp travel (split question / the
+/// party's travel), as a world lamp's does. Applied with the guest lamps and the dungeon lamps on.
+std::vector<EmevdSkipRule> ChaliceLampSkipRules();
 
 /// The Doll stands where the host's Doll stands (client-only rules): m21_00 event 12100110
 /// (人形のヒロイン_立ち位置制御, every Dream load, no client guard) clears and re-rolls the stand-spot
