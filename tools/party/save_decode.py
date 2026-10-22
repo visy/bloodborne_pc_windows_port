@@ -27,6 +27,13 @@ docs/party/event_flags.md):
   count + 64 entries (the summoned key section, which the game empties and shows at every summoned
   load). An empty entry is {0, 0xffffffff, 0, 0}. A key item in both key sections (or twice in one)
   is a duplicate stack: --check-dup exits 1 then.
+  World state (the writer 0x156AA50): header +0x3C offset / +0x40 size of the own world's state, the blocks
+  "CHR " (WorldChrMan), "OBJ ", "DECL" (WorldDecalMan; its "LCED" bytes are what save editors look for), each
+  {u32 size, data}; +0x44 the position block, +0x48 its end counted from +0x3C, +0x4C / +0x50 the next block.
+  A save written in another player's world takes the blocks from the game's summon snapshot, which a party
+  join never fills: three empty blocks (12 zero bytes), no "LCED", and save editors that look for it read
+  the wrong bytes (docs/party/save_safety.md 5; the launcher's Export for save editor, scripts/save_editor.py,
+  makes an editor-readable copy). --check-world exits 1 for such a save.
 """
 import argparse, re, struct, sys
 from pathlib import Path
@@ -172,6 +179,33 @@ class Save:
             seen[i] = seen.get(i, 0) + 1
         return sorted(i for i, n in seen.items() if n > 1)
 
+    WORLD_MAGIC = (b" RHC", b" JBO", b"LCED")
+
+    def world(self):
+        """The world-state section: {"offset", "size", "blocks": [size of CHR, OBJ, DECL]}, or None when the
+        header's entries do not line up (not this save version's layout)."""
+        if self.version != 0x41 or len(self.d) < 0x54:
+            return None
+        a, an, b, bspan, c, cn = struct.unpack_from("<6I", self.d, 0x3c)
+        if a < 0x54 or an < 12 or a + an != b or bspan < an or b + bspan - an != c or c + cn > len(self.d):
+            return None
+        at, blocks = a, []
+        for magic in self.WORLD_MAGIC:
+            if at + 4 > a + an:
+                return None
+            n = struct.unpack_from("<I", self.d, at)[0]
+            at += 4
+            if at + n > a + an or (n and self.d[at:at + 4] != magic):
+                return None
+            blocks.append(n)
+            at += n
+        return {"offset": a, "size": an, "blocks": blocks} if at == a + an else None
+
+    def world_empty(self):
+        """True: the save has none of the own world's state (three empty blocks); None: layout unknown."""
+        w = self.world()
+        return None if w is None else not any(w["blocks"])
+
     def character(self):
         m = re.search(rb"(?:[A-Za-z\xc0-\xff]\x00){4,16}\x00\x00", self.d[:0x40000])
         if not m:
@@ -200,6 +234,8 @@ def main():
     ap.add_argument("--flags", default="")
     ap.add_argument("--dump", action="store_true")
     ap.add_argument("--check-dup", action="store_true", help="exit 1 when a key item has two stacks")
+    ap.add_argument("--check-world", action="store_true",
+                    help="exit 1 when the save has no world state (written in another player's world)")
     ap.add_argument("--inc", default=str(Path(__file__).resolve().parents[2] / "gpu/shim/party/party_flags.inc"))
     ap.add_argument("--host-log", action="append", default=[])
     a = ap.parse_args()
@@ -207,6 +243,14 @@ def main():
     print(f"version {s.version:#x}, map {s.map_id >> 24}_{(s.map_id >> 16) & 0xff:02d}, play time "
           f"{s.play_ms / 3.6e6:.2f} h, flag store at {s.pool:#x}, revive-wait {s.revive_wait()}")
     print("character:", s.character())
+    w = s.world()
+    if w is None:
+        print("world state: layout unknown")
+    elif not any(w["blocks"]):
+        print("world state: EMPTY (written in another player's world; save editors need the launcher's Export for "
+              "save editor)")
+    else:
+        print("world state: " + ", ".join(f"{m.decode()[::-1].strip()} {n} bytes" for m, n in zip(s.WORLD_MAGIC, w["blocks"])))
     keys = [(i, n) for _, i, n in s.goods() if 4000 <= i < 5000]
     print("key items:", ", ".join(f"{i} {KEY_ITEMS.get(i, '')} x{n}".replace("  ", " ") for i, n in keys) or "none")
     ks = s.key_sections()
@@ -237,6 +281,8 @@ def main():
                 print(f"differs: {fid} host {v} save {int(bool(s.flag(fid)))} ({cat}; {name}:{ln})")
         print(f"{len(last)} host flags compared, {diff} differ")
     if a.check_dup and (dup is None or dup):
+        sys.exit(1)
+    if a.check_world and s.world_empty() is not False:
         sys.exit(1)
 
 
