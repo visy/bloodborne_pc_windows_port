@@ -12,9 +12,9 @@
 // `the host travels alone ...; staying here (no load)`), the host's chr is removed, the session
 // and the party link stay up. Its game sees the host's member / room go away and runs the Lua
 // state OnRoomDisappeared (0x138A590) or OnIrregularLeaveSession_1 (0x13840E0). Both set flag 4047
-// (0x13325A0(0xFCF, 1): the log's `4047(never_sync)`), SprjEventState = 2, the Lua event context's
+// (0x132E5A0(0xFCF, 1): the log's `4047(never_sync)`), SprjEventState = 2, the Lua event context's
 // +0x8D "load wait" byte (0x138A714 `mov byte [r12+0x8d], 1`, 0x138412C `mov byte [rbx+0x8d], 1`)
-// and start Lua timer 4046 (0x132F1C0(0xFCE)), whose end is OnLeave_Limit (0x138A4A0): the
+// and start Lua timer 4046 (0x132B1C0(0xFCE)), whose end is OnLeave_Limit (0x138A4A0): the
 // send-home load at 0x138A51C. Split travel drops that send-home (the host is apart and connected,
 // `send-home at +0x138a51c (OnLeave_Limit) dropped: split travel`), so nothing ends the load wait:
 // only the Lua context's constructor clears +0x8D, and a load is what rebuilds it. The Lua event
