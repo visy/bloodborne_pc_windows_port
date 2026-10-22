@@ -1573,7 +1573,16 @@ void RunTravelScript(State& st, const GameSnapshot& s, Clock::time_point now) {
 /// id chr +0x3B8, HP +0xF8; PickEnemyKillTarget), so it is loaded and alive here. The kill: Lua
 /// ForceDead by entity id (`by_id`: a boss's own defeat path), then, if HP is still above 0, the
 /// death path 0x18BF9A0 on the chr itself, then HP 0 (the game's own death follows).
-void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bool hp_only = false) {
+/// The HP a ':hp' step writes: 0 (a lethal hit), or with ':hpNN' NN % of the chr's max HP (D11
+/// proof: an NPC hunter's HP below its event's ratio, e.g. Alfred's 90 % in 12500053, as a fight
+/// leaves it; the chr lives on).
+int TestHpValue(std::uint64_t data, int pct) {
+    int max = 0;
+    if (pct <= 0 || !data || !SafeGet(data + 0xfc, &max) || max <= 0) return 0;
+    return std::max(1, int(std::int64_t(max) * std::min(pct, 99) / 100));
+}
+
+void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bool hp_only = false, int hp_pct = 0) {
     const auto list = balance::LoadedEnemies();
     float me[3] = {};
     const std::uint64_t player = LocalPlayer();
@@ -1591,11 +1600,14 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
                 std::int32_t(want), 0, 0);
         std::uint64_t ins = 0, d = 0;
         const int hp0 = chr ? balance::EnemyHp(chr) : -1;
-        const int zero = 0;
-        if (chr && SafeGet(chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
-        Log("test: %s: %s entity %u (chr %#llx, not in the census list): HP %d -> %d (HP 0 only: the game's own death "
-            "follows)",
-            what, EnemyIsBossEntity(want) ? "boss" : "NPC", want, static_cast<unsigned long long>(chr), hp0, chr ? balance::EnemyHp(chr) : -1);
+        if (chr && SafeGet(chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) {
+            const int v = TestHpValue(d, hp_pct);
+            SafeWrite(d + 0xf8, &v, 4);
+        }
+        Log("test: %s: %s entity %u (chr %#llx, not in the census list): HP %d -> %d (%s)", what,
+            EnemyIsBossEntity(want) ? "boss" : "NPC", want, static_cast<unsigned long long>(chr), hp0,
+            chr ? balance::EnemyHp(chr) : -1,
+            hp_pct > 0 ? "HP set only: the chr lives on" : "HP 0 only: the game's own death follows");
         return;
     }
     if (k < 0 && want && by_id && EnemyIsBossEntity(want)) {
@@ -1635,11 +1647,13 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     const char* how = "none";
     if (hp_only) {
         // ':hp': only HP 0, the state a lethal hit leaves: the chr's own update runs its death.
-        const int zero = 0;
         std::uint64_t ins = 0, d = 0;
-        if (SafeGet(t.chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
-        Log("test: %s: entity %u HP %d -> %d (HP 0 only: the game's own death follows)", what, t.entity, hp0,
-            balance::EnemyHp(t.chr));
+        if (SafeGet(t.chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) {
+            const int v = TestHpValue(d, hp_pct);
+            SafeWrite(d + 0xf8, &v, 4);
+        }
+        Log("test: %s: entity %u HP %d -> %d (%s)", what, t.entity, hp0, balance::EnemyHp(t.chr),
+            hp_pct > 0 ? "HP set only: the chr lives on" : "HP 0 only: the game's own death follows");
         return;
     }
     if (by_id && t.entity) {
@@ -2616,12 +2630,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // guest_kill=ENTITY@S%MAP (0: the nearest living enemy within 500 m): a kill on the guest's
         // own copy (split travel: an enemy killed while the players are apart).
         // guest_kill=ENTITY:hp on a boss: its HP 0 on the guest's game (a lone guest's boss kill).
-        KillLoadedEnemyForTest("guest_kill", step.id, false, step.args == "hp");
+        KillLoadedEnemyForTest("guest_kill", step.id, false, step.args.rfind("hp", 0) == 0,
+                               std::atoi(step.args.c_str() + (step.args.rfind("hp", 0) == 0 ? 2 : 0)));
     } else if (step.kind == TravelStep::HostKill) {
         // A boss (or any enemy) killed as the game's own death path: ForceDead on its entity id; the
         // boss-defeat EMEVD (4[00] death state -> 2003[12]) and the Lua boss clear follow.
         // host_kill=0: the nearest living regular enemy within 500 m (echoes for everyone).
-        KillLoadedEnemyForTest("host_kill", step.id, true, step.args == "hp");
+        KillLoadedEnemyForTest("host_kill", step.id, true, step.args.rfind("hp", 0) == 0,
+                               std::atoi(step.args.c_str() + (step.args.rfind("hp", 0) == 0 ? 2 : 0)));
     } else {
         DieForTest();
     }
@@ -3869,6 +3885,9 @@ void PartyDirector::ConfigureFromEnv() {
                 }
                 if ((step.kind == TravelStep::HostKill || step.kind == TravelStep::GuestKill) && item.find(":hp") != std::string::npos) {
                     step.args = "hp";  // host_kill=ID:hp@S: HP 0 only (the game's own death path)
+                    // host_kill=ID:hpNN@S: HP set to NN % of its max (a fight's damage; the chr lives)
+                    const int pct = std::atoi(item.c_str() + item.find(":hp") + 3);
+                    if (pct > 0) step.args += std::to_string(pct);
                 }
                 if (step.kind == TravelStep::HostLamp) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
