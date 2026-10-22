@@ -293,7 +293,7 @@ class PingsSettings(unittest.TestCase):
             self.assertFalse(self.L.ini_flag(ini, "party_pings"))
             self.assertTrue(self.L.ini_flag(ini, "party_through_walls", False))
         src = (Path(self.L.__file__).read_text(encoding="utf-8"))
-        self.assertIn("System > Party display", src)
+        self.assertIn("System > My party: Display", src)
 
 
 class FriendlyFireSetting(unittest.TestCase):
@@ -316,9 +316,9 @@ class FriendlyFireSetting(unittest.TestCase):
             self.L.update_ini(ini, {"party_friendly_fire": "0"})
             self.assertFalse(self.L.ini_flag(ini, "party_friendly_fire", False))
         src = Path(self.L.__file__).read_text(encoding="utf-8")
-        self.assertIn("System > World & PvP", src)
-        # host only: the checkbox is in the host widgets
-        self.assertIn("self.party_widgets_host = [ff_cb", src)
+        self.assertIn("System > Party rules: PvP & lamps", src)
+        # the host's rule: a row of the Party Rules tab
+        self.assertIn('("check", "party_friendly_fire", "Friendly fire / PvP",', src)
 
 
 class ShareLampsSetting(unittest.TestCase):
@@ -341,7 +341,7 @@ class ShareLampsSetting(unittest.TestCase):
             self.L.update_ini(ini, {"party_share_lamps": "1"})
             self.assertTrue(self.L.ini_flag(ini, "party_share_lamps", True))
         src = Path(self.L.__file__).read_text(encoding="utf-8")
-        self.assertIn("self.party_widgets_host = [ff_cb, lamps_cb", src)
+        self.assertIn('("check", "party_share_lamps", "Shared lamps",', src)
 
 
 class GuestsBringLampsSetting(unittest.TestCase):
@@ -364,8 +364,8 @@ class GuestsBringLampsSetting(unittest.TestCase):
             self.L.update_ini(ini, {"party_guests_bring_lamps": "0"})
             self.assertFalse(self.L.ini_flag(ini, "party_guests_bring_lamps", False))
         src = Path(self.L.__file__).read_text(encoding="utf-8")
-        self.assertIn("self.party_widgets_host = [ff_cb, lamps_cb, bring_cb", src)
-        self.assertIn('("party_guests_bring_lamps", self.party_guests_bring_lamps, False)', src)
+        self.assertIn('("check", "party_guests_bring_lamps", "Guests bring their lamps",', src)
+        self.assertIn('("party_guests_bring_lamps", False)', src)  # PARTY_INI_FLAGS
 
 
 class TravelVoteSetting(unittest.TestCase):
@@ -388,12 +388,12 @@ class TravelVoteSetting(unittest.TestCase):
         self.assertEqual(self.L.party_rules_ini({"party_travel_vote": True}, "")["party_travel_vote"], "1")
         from pathlib import Path
         src = Path(self.L.__file__).read_text(encoding="utf-8")
-        self.assertIn('var["party_travel_vote"]', src)
+        self.assertIn('("check", "party_travel_vote", "Party votes on travel",', src)
 
 
 class PartyRules071Settings(unittest.TestCase):
     """0.7.1: the switches that had only an env variable got rows (System > Shared world / Party
-    rewards) and Party Rules & Sync checkboxes: bbport.ini keys, on by default, no variable set."""
+    rewards) and launcher checkboxes (Party Rules / My Party tabs): bbport.ini keys, on by default, no variable set."""
     KEYS = {"party_kill_record": "BB_PARTY_KILL_RECORD", "party_gather": "BB_PARTY_GATHER",
             "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_npc_fights": "BB_PARTY_NPC_FIGHTS",
             "party_key_view": "BB_PARTY_KEY_VIEW",
@@ -421,13 +421,13 @@ class PartyRules071Settings(unittest.TestCase):
         from pathlib import Path
         src = Path(self.L.__file__).read_text(encoding="utf-8")
         for key in self.KEYS:
-            self.assertIn('var["%s"]' % key, src)
-        self.assertIn('section(3, 0, "Shared world (host)")', src)
+            self.assertIn('("check", "%s", ' % key, src)
+        self.assertIn('(0, 1, "World", [', src)
 
 
 class CovenantRuleSetting(unittest.TestCase):
     """0.7.3: Covenant outcomes per player, the host's rule (System > Shared world): bbport.ini
-    party_covenant_per_player, on by default, a Party Rules & Sync checkbox, no variable set."""
+    party_covenant_per_player, on by default, a Party Rules tab checkbox, no variable set."""
     @classmethod
     def setUpClass(cls):
         try:
@@ -444,7 +444,7 @@ class CovenantRuleSetting(unittest.TestCase):
         self.assertEqual(self.L.party_rules_ini({"party_covenant_per_player": False}, "")["party_covenant_per_player"], "0")
         from pathlib import Path
         src = Path(self.L.__file__).read_text(encoding="utf-8")
-        self.assertIn('"Covenant outcomes per player", var["party_covenant_per_player"]', src)
+        self.assertIn('("check", "party_covenant_per_player", "Covenant outcomes per player",', src)
 
 
 class DirectSummonSetting(unittest.TestCase):
