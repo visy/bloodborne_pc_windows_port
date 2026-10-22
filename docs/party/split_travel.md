@@ -454,3 +454,17 @@ Note (splittravel): in the vis2-vis4 runs the host's copy did get position updat
   as "another member's lamp"), and the instance stays used up until the guest's next load. Fix:
   `HeadstoneWarpTick` in split `Tick` (`stayrules::HeadstoneFlagLamp`, `HeadstoneWarpFallback`): a
   guest's own headstone flag with no warp for 8 s runs the warp itself (the travel question follows).
+
+## 2026-10-22 (lampvote, 0.7.3): travel voting
+
+With the host's rule *Party votes on travel* (bbport.ini `party_travel_vote`, off by default;
+party_vote.h, rules party_vote_rules.h) the party move after a YES is voted on first. Host: Carry's
+party path (its own lamp, headstone, Hunter's Mark; not a story warp's question) calls
+`vote::HostBegin` with the move as the continuation. Guest: its YES is still the request
+(GuestLampRequestNow); the host's request handler (party_guestsvc) calls `vote::HostBegin` with the
+guest as the starter, so the host and the other guests vote. The host's tick sends EVENT
+`travel_vote` {"op":"ask"} to every member; each voter (the starter excepted) gets the game's YES /
+NO dialog (split::AskYesNo, the run-time text "NAME wants the party to travel to LAMP."); one NO or
+20 s without an answer ends it ({"op":"end"} with the notice for every screen), all YES runs the
+move. Travel alone, the guest's own trips inside the host's map and story warps are never voted on.
+Smoke group `travel_vote` (phase tv).

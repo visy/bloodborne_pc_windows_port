@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Added: the party can vote on travel**: a new host setting, *Party votes on travel* (*System → Shared world*, the launcher's *Party Rules & Sync*, `bbport.ini` `party_travel_vote`), off by default. With it on, a party trip from a lamp, a headstone or the Hunter's Mark only happens when everyone agrees: after *Yes* to "Travel with the party?" every other player gets the game's *Yes* / *No* question saying who wants to go where. One *No*, or no answer within 20 seconds, cancels the trip for everyone, and the notice names who said no or didn't answer. When a guest starts a party trip, the host and the other guests vote. Travelling alone is never voted on. Guests see the host's choice on their *Shared world* page.
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: the Research Hall lifts no longer leave without you**: on the two lifts inside the Research Hall (Old Hunters DLC), the car could leave again the moment you stepped off it, with you still at its edge or about to step back in, and you fell into the pit under it and died. The car now waits until its ride is fully over, as every other lift does.
