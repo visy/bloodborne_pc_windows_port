@@ -290,9 +290,11 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_balance.h"
 #include "party_guestvals_rules.h"
 #include "lamp_travel_rules.h"
+#include "party_ids.h"
 #include "bbport_game_menu.h"
 #include "bbport_settings.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -1502,6 +1504,9 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
 }
 
 std::mutex g_lit_mu;
+// Host: the lamp (return point) a guest's lamp_lit event lit here last, and when (the guard).
+std::atomic<std::uint32_t> g_guest_lit_rp{0};
+std::atomic<double> g_guest_lit_at{-1};
 std::deque<std::pair<int, std::vector<std::uint32_t>>> g_lit_in;  // host: from guests
 std::vector<std::uint32_t> g_lit_out;                             // guest: to send
 
@@ -1666,10 +1671,24 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
 /// flags in the host-world overlay only (the game writes the visible tree; the own pool keeps
 /// its own lamps). The lamp flags its overlay has and the host's mirror image lacks go to the host
 /// as EVENT lamp_lit; the host sets them in its world and the mirror brings them back.
+/// 0.7.2: only a real lamp use counts (lampshare::CountsAsGuestLit): the guest at that lamp, no load
+/// within the last 20 s. A lamp its game shows lit right after a load (a lamp warp's arrival lights
+/// its lamp) or far from the guest is never sent for this map.
+std::uint32_t LampOfLitFlag(std::uint32_t id) {
+    if (id / 10000000 == 7) {
+        return (id - 70000000u) / 10000u * 10000u + 2950u + (id % 10000u - 200u);
+    }
+    const std::uint32_t k = id % 10000u;
+    return k >= 7810u ? (id - 10000000u) / 10000u * 10000u + 2950u + (k - 7810u) / 20u : 0u;
+}
+
 void GuestLampLitTick(const GameSnapshot& s) {
-    static double last = 0;
+    static double last = 0, unsteady_at = 0;
     static std::uint32_t map = 0;
     static std::vector<std::uint32_t> sent;
+    if (!s.world_up || s.loading) {
+        unsteady_at = Now();
+    }
     if (s.session_role != kSessionRoleClient || !s.world_up || s.loading || progress::FlagLoadMode() != 1 ||
         Now() - last < 1.0) {
         return;
@@ -1680,10 +1699,27 @@ void GuestLampLitTick(const GameSnapshot& s) {
         sent.clear();
     }
     std::vector<std::uint32_t> ids;
+    float me[3];
+    const bool have_pos = s.player && balance::ChrPosition(s.player, me);
+    const double since_load = Now() - unsteady_at;
     auto consider = [&](std::uint32_t id) {
         bool mine = false, host = false;
         if (LampLitFlagAllowed(id) && progress::ReadFlag(id, &mine) && mine && progress::HostWorldFlag(id, &host) &&
             !host && std::find(sent.begin(), sent.end(), id) == sent.end() && ids.size() < kMaxLampLitIds) {
+            const std::uint32_t rp = LampOfLitFlag(id);
+            float sp[4];
+            float dist = -1.0f;
+            if (have_pos && rp && ids::ReturnSpot(rp, sp)) {
+                dist = std::sqrt((me[0] - sp[0]) * (me[0] - sp[0]) + (me[1] - sp[1]) * (me[1] - sp[1]) +
+                                 (me[2] - sp[2]) * (me[2] - sp[2]));
+            }
+            if (!lampshare::CountsAsGuestLit(since_load, dist)) {
+                sent.push_back(id);  // never for this map: not a lamp this guest lit
+                Log("lamp: flag %u (lamp %u) shows lit here but not in the host's world: not sent (%.0f s after a "
+                    "load, %.1f m from the lamp: not this guest's lamp use)",
+                    id, rp, since_load, double(dist));
+                return;
+            }
             ids.push_back(id);
         }
     };
@@ -2273,6 +2309,10 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
                 list += " " + std::to_string(id) + (before ? "(was set)" : ok ? "" : "(NOT written)");
                 wrote_own = wrote_own || (own && ok && !before);
                 wrote_lit = wrote_lit || (!own && ok && !before);
+                if (!own && ok && LampOfLitFlag(id)) {
+                    g_guest_lit_rp = LampOfLitFlag(id);
+                    g_guest_lit_at = Now();
+                }
             }
             if (own) {
                 Log("lamps: slot %d's own save has lamps this world lacked (shared lamps): set%s", slot, list.c_str());
@@ -2409,7 +2449,118 @@ double HeadstoneTestDelay() {
     return k == std::string::npos ? 20.0 : std::strtod(g.test.c_str() + k + 8, nullptr);
 }
 
+/// 0.7.2 last-lamp guard (lampshare::RestoreLastLamp; BB_PARTY_LAMP_RECORD_GUARD=0 off): any role,
+/// in a steady world. Watches this map's lamps' lit flags (the lamp-lit 7AAB02xx and the headstone
+/// flag base+10) and this game's last-lamp / respawn records (GSM +0x1528 / +0x1538 / +0x153C). A
+/// record move to a lamp lit by someone else just now is put back after 2.5 s unless a load came
+/// (a travel) or this player stands at that lamp (its own lighting or rest, an in-world travel).
+void LastLampGuardTick(const GameSnapshot& s) {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_LAMP_RECORD_GUARD");
+        return !(v && v[0] == '0');
+    }();
+    struct Rec {
+        std::uint64_t lamp = 0, respawn = 0;
+        std::uint32_t mode = 0;
+    };
+    static Rec base, was;
+    static bool have = false, pending = false;
+    static double pending_at = 0, pending_lit_ago = -1;
+    static std::uint32_t map = 0;
+    static double next = 0;
+    static std::vector<std::pair<std::uint32_t, bool>> lit;  // return point, lit
+    static std::vector<std::pair<std::uint32_t, double>> rose;  // return point, when its flag rose
+    if (!on) {
+        return;
+    }
+    if (!s.world_up || s.loading || !s.player || s.map_id != map) {
+        if (pending) {
+            Log("lamp record guard: a load: the last lamp %u stands (a travel)", std::uint32_t(base.lamp));
+        }
+        have = pending = false;  // a load: the records are the travel's; baseline again after it
+        lit.clear();
+        rose.clear();
+        map = s.world_up && !s.loading ? s.map_id : 0;
+        return;
+    }
+    const double now = Now();
+    if (now < next) {
+        return;
+    }
+    next = now + 0.2;
+    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+        const std::uint32_t rp = lamptravel::ReturnPoint(l);
+        if (lamptravel::MapOf(rp) != (s.map_id & 0xffff0000u)) {
+            continue;
+        }
+        bool a = false, b = false;
+        progress::ReadFlag(lamptravel::LitFlag(l), &a);
+        progress::ReadFlag(70000000u + std::uint32_t(l.aab) * 10000u + 200u + l.n, &b);
+        const bool v = a || b;
+        auto it = std::find_if(lit.begin(), lit.end(), [&](const auto& e) { return e.first == rp; });
+        if (it == lit.end()) {
+            lit.emplace_back(rp, v);
+        } else {
+            if (v && !it->second) {
+                rose.erase(std::remove_if(rose.begin(), rose.end(), [&](const auto& e) { return e.first == rp; }),
+                           rose.end());
+                rose.emplace_back(rp, now);
+            }
+            it->second = v;
+        }
+    }
+    std::uint64_t gsm = 0;
+    Rec cur;
+    if (!SafeGet(Guest(0x5556678), &gsm) || !gsm || !SafeGet(gsm + 0x1528, &cur.lamp) ||
+        !SafeGet(gsm + 0x1538, &cur.mode) || !SafeGet(gsm + 0x153c, &cur.respawn)) {
+        return;
+    }
+    if (!have) {
+        base = cur;
+        have = true;
+        return;
+    }
+    const std::uint32_t now_rp = std::uint32_t(cur.lamp);
+    if (cur.lamp != base.lamp && !pending) {
+        pending = true;
+        pending_at = now;
+        was = base;
+        auto r = std::find_if(rose.begin(), rose.end(), [&](const auto& e) { return e.first == now_rp; });
+        pending_lit_ago = r == rose.end() ? -1.0 : now - r->second;
+    }
+    if (!pending) {
+        base = cur;
+        return;
+    }
+    float me[3], sp[4];
+    float dist = -1.0f;
+    if (balance::ChrPosition(s.player, me) && ids::ReturnSpot(now_rp, sp)) {
+        dist = std::sqrt((me[0] - sp[0]) * (me[0] - sp[0]) + (me[1] - sp[1]) * (me[1] - sp[1]) +
+                         (me[2] - sp[2]) * (me[2] - sp[2]));
+    }
+    const bool by_guest = g_guest_lit_rp.load() == now_rp && Now() - g_guest_lit_at.load() <= lampshare::kLitWindowS + 3.0;
+    const bool restore = lampshare::RestoreLastLamp(std::uint32_t(was.lamp), now_rp, pending_lit_ago, dist, false, by_guest);
+    if (!restore) {
+        pending = false;
+        base = cur;
+        return;
+    }
+    if (now - pending_at < 2.5) {
+        return;  // a travel's load may still start
+    }
+    pending = false;
+    SafeWrite(gsm + 0x1528, &was.lamp, 8);
+    SafeWrite(gsm + 0x1538, &was.mode, 4);
+    SafeWrite(gsm + 0x153c, &was.respawn, 8);
+    base = was;
+    Log("lamp record guard: the last lamp moved to %u, a lamp lit %.1f s before by someone else (this player "
+        "%.0f m from it): put back to %u (respawn %#llx, mode %u)",
+        now_rp, pending_lit_ago, double(dist), std::uint32_t(was.lamp), static_cast<unsigned long long>(was.respawn),
+        was.mode);
+}
+
 void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
+    LastLampGuardTick(s);
     LampTick(s, link);
     WatchTalkTick(s);
     // Live test "hostheadstone[;keys=...]": the HOST uses a Dream headstone (t210000) with a guest

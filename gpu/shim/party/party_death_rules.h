@@ -569,6 +569,30 @@ constexpr double kFallRecoveryMinDrop = 40.0;
 inline bool FallRecoveryDue(double falling_for, double dropped_m, double peak_rate) {
     return falling_for >= kFallRecoverySeconds && dropped_m >= kFallRecoveryMinDrop && peak_rate >= kLiftMaxRate;
 }
+/// Where the host-world fall recovery puts a guest back (lamprule run 7: a title-joined guest placed
+/// beside the host before the floor's collision had loaded fell from y -38 to -1500 and died; it had
+/// never stood still, so there was no spot to go back to). The game's last safe ground spot near
+/// where it last stood, else where it last stood, else beside the host (its known position, same
+/// map), else nothing (the game's own fall death).
+enum class FallBack { GameSafe, Stable, Host, None };
+inline FallBack FallBackTarget(bool game_safe_usable, bool have_stable, bool have_host) {
+    if (have_stable) return game_safe_usable ? FallBack::GameSafe : FallBack::Stable;
+    if (game_safe_usable) return FallBack::GameSafe;
+    return have_host ? FallBack::Host : FallBack::None;
+}
+
+/// A title-joined guest's move beside the host after its load (the forced placement already put it
+/// at the host's spot): none when it already stands within kBesideSkipM of the target; otherwise
+/// only once the map is known and it stands on loaded ground (the game's safe spot set near it),
+/// at most kBesideWaitS after the load (then none: the game's own placement stands).
+constexpr float kBesideSkipM = 3.0f;
+constexpr double kBesideWaitS = 10.0;
+enum class BesideMove { Skip, Wait, Warp };
+inline BesideMove PlanBesideMove(float dist_m, bool map_known, bool grounded, double since_load_s) {
+    if (dist_m >= 0.0f && dist_m <= kBesideSkipM) return BesideMove::Skip;
+    if (map_known && grounded) return BesideMove::Warp;
+    return since_load_s >= kBesideWaitS ? BesideMove::Skip : BesideMove::Wait;
+}
 /// The drop test's top (PlanGuestRevive): the highest point since the chr last stood on a moving
 /// object. A ride down (12 m in the 3 s window at a lift's rate) is no fall; a fall off the car or
 /// onto it counts from where it left the car. `hist`: {t, y, riding} samples in time order.
