@@ -213,6 +213,71 @@ void runtime_memory_dump_recent_ops(void *file_handle) {
     }
 }
 
+/* Allocation-failure accounting (from Mrsuss60/bloodborne_pc_windows_port 4035ab4e, issues
+ * #148/#151/#155 there): a guest NULL dereference shortly after a failed allocation looks
+ * exactly like a guest bug unless the failure was recorded. Every failure is counted, the first
+ * 16 are printed, the totals go into runtime_report() and every crash dump. */
+typedef enum {
+    MEM_FAIL_POOL = 1, MEM_FAIL_ALLOCATE, MEM_FAIL_DIRECT_MAP, MEM_FAIL_FLEXIBLE_MAP,
+    MEM_FAIL_RESERVE, MEM_FAIL_LOW_MAP, MEM_FAIL_BATCH, MEM_FAIL_KINDS
+} MemFailKind;
+static const char *const mem_fail_names[MEM_FAIL_KINDS] = {
+    "?", "pool", "allocate", "direct-map", "flexible-map", "reserve", "low-map", "batch"
+};
+static _Atomic size_t mem_fail_counts[MEM_FAIL_KINDS];
+static _Atomic uint64_t mem_fail_last_size, mem_fail_last_arg0, mem_fail_last_arg1;
+static _Atomic int32_t mem_fail_last_result;
+static _Atomic int mem_fail_last_kind;
+static _Atomic uint32_t mem_fail_logged;
+
+static void memory_failure(MemFailKind kind, const char *op, uint64_t size,
+                           uint64_t arg0, uint64_t arg1, int32_t result) {
+#ifdef _WIN32
+    const unsigned long host_error = (unsigned long)GetLastError();
+#else
+    const unsigned long host_error = (unsigned long)errno;
+#endif
+    __atomic_add_fetch(&mem_fail_counts[kind], 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&mem_fail_last_size, size, __ATOMIC_RELAXED);
+    __atomic_store_n(&mem_fail_last_arg0, arg0, __ATOMIC_RELAXED);
+    __atomic_store_n(&mem_fail_last_arg1, arg1, __ATOMIC_RELAXED);
+    __atomic_store_n(&mem_fail_last_result, result, __ATOMIC_RELAXED);
+    __atomic_store_n(&mem_fail_last_kind, (int)kind, __ATOMIC_RELAXED);
+    const uint32_t n = __atomic_add_fetch(&mem_fail_logged, 1, __ATOMIC_RELAXED);
+    if (n > 16) return;
+    fprintf(stderr,
+            "Runtime: memory failure [%s] size=%" PRIu64 " (0x%" PRIx64 "), arg0=0x%" PRIx64
+            ", arg1=0x%" PRIx64 ", result=0x%08x, host error %lu%s\n",
+            op, size, size, arg0, arg1, (unsigned)result, host_error,
+            n == 16 ? " (further failures are only counted)" : "");
+    fflush(stderr);
+}
+static size_t mem_fail_count(MemFailKind kind) {
+    return __atomic_load_n(&mem_fail_counts[kind], __ATOMIC_RELAXED);
+}
+size_t runtime_memory_failures(void) {
+    size_t total = 0;
+    for (int k = 1; k < MEM_FAIL_KINDS; ++k) total += mem_fail_count((MemFailKind)k);
+    return total;
+}
+static void memory_failures_print(FILE *f) {
+    fprintf(f, "Memory failures: pool=%zu allocate=%zu direct-map=%zu flexible-map=%zu reserve=%zu low-map=%zu batch=%zu\n",
+            mem_fail_count(MEM_FAIL_POOL), mem_fail_count(MEM_FAIL_ALLOCATE),
+            mem_fail_count(MEM_FAIL_DIRECT_MAP), mem_fail_count(MEM_FAIL_FLEXIBLE_MAP),
+            mem_fail_count(MEM_FAIL_RESERVE), mem_fail_count(MEM_FAIL_LOW_MAP),
+            mem_fail_count(MEM_FAIL_BATCH));
+    const int kind = __atomic_load_n(&mem_fail_last_kind, __ATOMIC_RELAXED);
+    if (kind > 0 && kind < MEM_FAIL_KINDS) {
+        const uint64_t size = __atomic_load_n(&mem_fail_last_size, __ATOMIC_RELAXED);
+        fprintf(f, "Last memory failure: %s size=%" PRIu64 " (0x%" PRIx64 "), arg0=0x%" PRIx64
+                   ", arg1=0x%" PRIx64 ", result=0x%08x\n",
+                mem_fail_names[kind], size, size,
+                __atomic_load_n(&mem_fail_last_arg0, __ATOMIC_RELAXED),
+                __atomic_load_n(&mem_fail_last_arg1, __ATOMIC_RELAXED),
+                (unsigned)__atomic_load_n(&mem_fail_last_result, __ATOMIC_RELAXED));
+    }
+}
+
 /* GPU hooks (bbgpu): notified outside the lock, in order, after each operation. */
 typedef void (*GpuRange)(uintptr_t address, uint64_t size);
 static GpuRange hook_map, hook_unmap, hook_invalidate;
@@ -241,16 +306,23 @@ static int pool(void) {
     if (pool_fd>=0) return 0;
 #ifdef _WIN32
     void *view = NULL;
-    if (space() || win_mem_section(POOL_SIZE+FLEX_SPAN,&view)) return -1;
+    if (space()) { memory_failure(MEM_FAIL_POOL,"reserve address space",POOL_SIZE+FLEX_SPAN,LOW_MIN,USER_MAX,-1); return -1; }
+    if (win_mem_section(POOL_SIZE+FLEX_SPAN,&view)) {
+        memory_failure(MEM_FAIL_POOL,"create direct-memory section",POOL_SIZE+FLEX_SPAN,POOL_SIZE,FLEX_SPAN,-1);
+        return -1;
+    }
     backing_base = (unsigned char *)view; pool_fd = 0;
     const char *selftest = getenv("BB_SELFTEST_MEM");
     if (selftest && selftest[0] == '1') win_mem_run_selftest();
     return 0;
 #else
     pool_fd=memfd_create("bb-guest-memory", MFD_CLOEXEC);
-    if (pool_fd<0 || ftruncate(pool_fd,(off_t)(POOL_SIZE+FLEX_SPAN))) return -1;
+    if (pool_fd<0 || ftruncate(pool_fd,(off_t)(POOL_SIZE+FLEX_SPAN))) {
+        memory_failure(MEM_FAIL_POOL,"create direct-memory memfd",POOL_SIZE+FLEX_SPAN,(uint64_t)pool_fd,0,-1);
+        return -1;
+    }
     void *view=mmap(NULL,POOL_SIZE+FLEX_SPAN,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_NORESERVE,pool_fd,0);
-    if (view==MAP_FAILED) return -1;
+    if (view==MAP_FAILED) { memory_failure(MEM_FAIL_POOL,"map direct-memory backing",POOL_SIZE+FLEX_SPAN,0,0,-1); return -1; }
     backing_base=view;
     chunk_fds=malloc((POOL_SIZE/CHUNK+1)*sizeof(int));
     if (!chunk_fds) return -1;
@@ -544,14 +616,27 @@ static ABI int32_t direct_allocate(int64_t low, int64_t high, uint64_t size,
     if (!out || low < 0 || high < 0 || !size || size % PAGE || !valid_alignment(alignment) || type < 0 || type > 10)
         return INVALID;
     uint64_t end = (uint64_t)high < GAME_POOL_SIZE ? (uint64_t)high : GAME_POOL_SIZE;
-    if ((uint64_t)low >= end || size > end - (uint64_t)low) return NO_SPACE;
+    if ((uint64_t)low >= end || size > end - (uint64_t)low) {
+        memory_failure(MEM_FAIL_ALLOCATE,"direct allocate (range)",size,(uint64_t)low,(uint64_t)high,NO_SPACE);
+        return NO_SPACE;
+    }
     write_lock();
-    if (pool()) { write_unlock(); return NO_MEMORY; }
+    if (pool()) {
+        write_unlock();
+        memory_failure(MEM_FAIL_ALLOCATE,"direct allocate (pool)",size,alignment,(uint64_t)type,NO_MEMORY);
+        return NO_MEMORY;
+    }
     uint64_t start = align_up((uint64_t)low, alignment);
     int slot = -1;
     for (int i=0; i<LIMIT; ++i) if (!blocks[i].used) { slot=i; break; }
     for (;;) {
-        if (slot<0 || start > end || size > end-start) { write_unlock(); return NO_SPACE; }
+        if (slot<0 || start > end || size > end-start) {
+            write_unlock();
+            /* slot<0: the fixed block table is full, not the physical memory. */
+            memory_failure(MEM_FAIL_ALLOCATE,slot<0 ? "direct allocate (block table full)" : "direct allocate (no space)",
+                           size,alignment,(uint64_t)(int64_t)slot,NO_SPACE);
+            return NO_SPACE;
+        }
         int overlap = 0;
         for (int i=0; i<LIMIT; ++i) {
             Block b = blocks[i];
@@ -613,7 +698,8 @@ static ABI int32_t direct_map(void **out, uint64_t size, int prot, int flags, in
     write_unlock();
     flush_hooks();
     if (!result) printf("Runtime: mapped direct memory %p, size=%" PRIu64 ", prot=0x%x\n", *out, size, prot);
-    else printf("Runtime: mapping direct memory %#" PRIx64 ", size=%" PRIu64 " failed (error %#x)\n", (uint64_t)physical, size, (unsigned)result);
+    else memory_failure(MEM_FAIL_DIRECT_MAP,"map direct memory",size,(uint64_t)physical,
+                        ((uint64_t)(unsigned)flags << 32) | (unsigned)prot,result);
     return result;
 }
 static ABI int32_t direct_map_named(void **out, uint64_t size, int prot, int flags, int64_t physical,
@@ -701,8 +787,8 @@ static ABI int32_t map_flexible(void **inout, uint64_t size, int prot, int flags
     write_unlock();
     flush_hooks();
     if (!result) printf("Runtime: mapped flexible memory %p, size=%" PRIu64 ", prot=0x%x\n", *inout, size, prot);
-    else fprintf(stderr,"Runtime: flexible map of %" PRIu64 " bytes failed (0x%x), in use=%" PRIu64 "\n",
-                 size, (unsigned)result, flexible_bytes);
+    else memory_failure(MEM_FAIL_FLEXIBLE_MAP,"map flexible memory",size,flexible_bytes,
+                        ((uint64_t)(unsigned)flags << 32) | (unsigned)prot,result);
     return result;
 }
 static ABI int32_t map_flexible_named(void **inout, uint64_t size, int prot, int flags, const char *name) {
@@ -734,11 +820,16 @@ static ABI int32_t reserve_range(void **inout, uint64_t size, int flags, uint64_
     if (!inout || !size || size%PAGE || !valid_alignment(alignment)) return INVALID;
     write_lock();
     if ((flags & MAP_FIXED_FLAG) && overlaps((uintptr_t)*inout,(uintptr_t)*inout+size,0)) {
-        write_unlock(); return NO_MEMORY;
+        write_unlock();
+        memory_failure(MEM_FAIL_RESERVE,"reserve virtual range (fixed, in use)",size,(uint64_t)(uintptr_t)*inout,
+                       ((uint64_t)(unsigned)flags << 32) | (unsigned)alignment,NO_MEMORY);
+        return NO_MEMORY;
     }
     int32_t result=place(inout,size,0,flags,alignment,KIND_RESERVED,0,0);
     write_unlock();
     if (!result) printf("Runtime: reserved virtual range %p, size=%" PRIu64 "\n", *inout, size);
+    else memory_failure(MEM_FAIL_RESERVE,"reserve virtual range",size,(uint64_t)(uintptr_t)*inout,
+                        ((uint64_t)(unsigned)flags << 32) | (unsigned)alignment,result);
     return result;
 }
 static int32_t protect_locked(uintptr_t start, uint64_t size, int prot, int type) {
@@ -829,6 +920,11 @@ static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, in
     write_unlock();
     flush_hooks();
     if (processed) *processed=done;
+    if (result) {
+        const BatchEntry *e=done<count ? &entries[done] : NULL;
+        memory_failure(MEM_FAIL_BATCH,"batch map",e ? e->length : 0,e ? (uint64_t)(uintptr_t)e->start : 0,
+                       e ? (uint64_t)(unsigned)e->operation : 0,result);
+    }
     return result;
 }
 static ABI int32_t batch_map(BatchEntry *entries, int count, int *processed) {
@@ -873,6 +969,7 @@ void *runtime_low_map(size_t size, int prot) {
             low_next+=size+PAGE; /* reserved gap catches overruns */
         }
     write_unlock();
+    if (!p) memory_failure(MEM_FAIL_LOW_MAP,"low map (guest stack/heap)",size,low_next,(uint64_t)prot,NO_MEMORY);
     CHECK_LOW_ADDR(p);
     return p;
 #else
@@ -883,6 +980,7 @@ void *runtime_low_map(size_t size, int prot) {
         if (p!=MAP_FAILED) break;
     }
     write_unlock();
+    if (p==MAP_FAILED) memory_failure(MEM_FAIL_LOW_MAP,"low map (guest stack/heap)",size,low_next,(uint64_t)prot,NO_MEMORY);
     CHECK_LOW_ADDR(p);
     return p==MAP_FAILED ? NULL : p;
 #endif
@@ -1444,4 +1542,17 @@ void runtime_memory_report(void) {
            allocations, maps, live_bytes, POOL_SIZE);
     printf("Runtime: flexible maps=%zu, in use=%" PRIu64 ", protects=%zu, queries=%zu, regions=%zu\n",
            flexible_maps, flexible_bytes, protects, queries, vma_count);
+    printf("Runtime: ");
+    memory_failures_print(stdout);
+}
+/* Crash dumps: the guest memory totals and every recorded allocation failure. */
+void runtime_memory_report_to(void *file_handle) {
+    FILE *f = (FILE *)file_handle;
+    if (!f) return;
+    fprintf(f, "\n--- GUEST MEMORY ---\n");
+    fprintf(f, "Direct:   allocations=%zu, maps=%zu, live=%" PRIu64 " of %" PRIu64 " bytes\n",
+            allocations, maps, live_bytes, POOL_SIZE);
+    fprintf(f, "Flexible: maps=%zu, in use=%" PRIu64 " of %" PRIu64 " bytes\n",
+            flexible_maps, flexible_bytes, (uint64_t)FLEXIBLE_SIZE);
+    memory_failures_print(f);
 }

@@ -591,6 +591,9 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
 
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
+// The bar slots (2003[11] third argument, 0 the bottom bar) shown since the bar came up: the party
+// HUD keeps clear of every stacked bar (Shadows of Yharnam: three).
+std::atomic<u32> g_boss_bar_slots{0};
 // The last text banner (2007[2], e.g. PREY SLAUGHTERED) or boss defeat (2003[12/15/53]) this game
 // ran, steady-clock seconds: an item notice opened under the banner had no OK row (live pard3 O1).
 std::atomic<double> g_banner_at{-1e9};
@@ -632,6 +635,7 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         g_banner_at.store(SteadyNow(), std::memory_order_relaxed);
     }
     if (instr && !skip && bank == 2003 && (id == 12 || id == 15 || id == 53) && g_boss_bar.exchange(false)) {
+        g_boss_bar_slots.store(0, std::memory_order_relaxed);
         Log("boss health bar: off (a boss defeat, event %d 2003[%d])", event_id, id);
     }
     if (instr && !skip && bank == 2003 && id == 11) {
@@ -641,9 +645,19 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
         const std::size_t n = arg_size < sizeof args ? arg_size : sizeof args;
         if (at && n && SafeRead(at, args, n)) {
             const bool on = args[0] != 0;
+            const int slot = n >= 10 ? *reinterpret_cast<const std::int16_t*>(args + 8) : 0;
+            if (!on && !g_boss_bar.load()) {
+                g_boss_bar_slots.store(0, std::memory_order_relaxed);
+            } else if (on && slot >= 0 && slot < 8) {
+                if (!g_boss_bar.load()) g_boss_bar_slots.store(0, std::memory_order_relaxed);
+                if (!(g_boss_bar_slots.fetch_or(1u << slot) & (1u << slot)) && slot > 0) {
+                    Log("boss health bar: slot %d shown too (event %d)", slot, event_id);
+                }
+            }
             if (g_boss_bar.exchange(on) != on) {
-                Log("boss health bar %s (event %d, entity %d)", on ? "shown: a boss fight" : "hidden", event_id,
-                    n >= 8 ? *reinterpret_cast<const i32*>(args + 4) : -1);
+                Log("boss health bar %s (event %d, entity %d, slot %d)", on ? "shown: a boss fight" : "hidden",
+                    event_id, n >= 8 ? *reinterpret_cast<const i32*>(args + 4) : -1, slot);
+                if (!on) g_boss_bar_slots.store(0, std::memory_order_relaxed);
             }
         }
     }
@@ -838,7 +852,18 @@ bool BossBarShown() {
     return g_boss_bar.load(std::memory_order_relaxed);
 }
 
+int BossBarRows() {
+    if (!g_boss_bar.load(std::memory_order_relaxed)) return 0;
+    const u32 slots = g_boss_bar_slots.load(std::memory_order_relaxed);
+    int rows = 1;
+    for (int i = 1; i < 8; ++i) {
+        if (slots & (1u << i)) rows = i + 1;
+    }
+    return rows;
+}
+
 void BossBarReset() {
+    g_boss_bar_slots.store(0, std::memory_order_relaxed);
     if (g_boss_bar.exchange(false)) Log("boss health bar: reset (a load)");
 }
 
