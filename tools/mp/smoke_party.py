@@ -1820,9 +1820,9 @@ def phase_clg(only):
                    "guest_move=-64.6:31.6:-90.4@25%m29!",         # (3) onto the lift's car
                    "guest_obj=%s:1.2:0@14%%m29!" % CLG_LAMP_OBJ2,  # (4) the bottom lamp: light it
                    "guest_press=0x4000@2%m29!",
-                   "guest_obj=%s:1.2:0@9%%m29!" % CLG_LAMP_OBJ2,   # use it: prompt, the menu, YES, OK
-                   "guest_press=0x4000@4%m29!", "guest_press=0x4000@3%m29!",
-                   "guest_press=0x80@2%m29!", "guest_press=0x4000@1%m29!",
+                   "guest_obj=%s:1.2:0@9%%m29!" % CLG_LAMP_OBJ2,   # use it: the Dream question (r1: at the
+                   "guest_press=0x4000@4%m29!",                    # first Cross), YES (it opens on NO), OK
+                   "guest_press=0x80@3%m29!", "guest_press=0x4000@2%m29!",
                    "guest_press=0@40%m21!"])
     watch = []
     for rx, tag in ((r"died from a fall", "gfall"), (r"up again beside the nearest living member", "gup"),
