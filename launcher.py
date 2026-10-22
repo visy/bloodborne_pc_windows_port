@@ -152,6 +152,8 @@ PARTY_INI_SWITCHES = [
     ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
     ("party_gather", "BB_PARTY_GATHER", True),
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
+    # 0.7.3: covenant outcomes per player (the host's rule; System > Shared world)
+    ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -3283,6 +3285,14 @@ class BloodborneLauncher(tk.Tk):
                     "An NPC that is gone from the host's world (moved on by a story event, such as the one "
                     "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
                     "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
+        self._check(sec, "Covenant outcomes per player", var["party_covenant_per_player"],
+                    "How the covenant quests end stays in each player's own world and save: Alfred killing "
+                    "Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates. While "
+                    "you are summoned the host's world shows the host's state; nothing of it reaches your "
+                    "save, and nothing of yours reaches the host's. Lamps, bosses, doors and other quests "
+                    "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
+                    "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
+                    "System > Shared world).", command=save)
 
         # 0.7.2: rot, the host's rules (System > Rot)
         sec = section(4, 0, "Rot on death (host)")

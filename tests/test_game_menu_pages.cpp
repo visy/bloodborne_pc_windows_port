@@ -485,7 +485,7 @@ static void RulesPages() {
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
     const V chalice = {u"Stay in Chalice Dungeons"};
-    const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world"};
+    const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"Covenants per player"};
     const V rewards = {u"Full rewards for guests", u"Host's item rewards", u"Give the bells", u"Own key items as guest",
                        u"Key items at once", u"Insight for bosses"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings", u"Show party through walls", u"Bloodstain marker",
@@ -498,7 +498,9 @@ static void RulesPages() {
         ps::SetHostRule(ps::HostRule::KillRecord, true);
         ps::SetHostRule(ps::HostRule::Gather, false);
         ps::SetHostRule(ps::HostRule::NpcMirror, true);
+        ps::SetHostRule(ps::HostRule::CovenantPerPlayer, true);
         BbSettings::Get().party_host_revive = true;  // EverySettingSaved changed every row once
+        BbSettings::Get().party_covenant_per_player = true;
         BbSettings::Get().party_gather = true;
         BbSettings::Get().party_kill_record = true;
         BbSettings::Get().party_guests_bring_lamps = false;
@@ -526,6 +528,8 @@ static void RulesPages() {
         const std::string shared_line = P::ShownSummary(PageNamed(u"Shared world"));
         assert(shared_line.find("Host can gather=" + std::string(guest ? "Off" : "On")) != std::string::npos);
         assert(shared_line.find("Enemies stay dead=On") != std::string::npos);
+        // 0.7.3: covenant outcomes per player, the host's rule, on by default (a guest: the host's value).
+        assert(shared_line.find("Covenants per player=On") != std::string::npos);
         // 0.7.2: Guests bring their lamps, the host's rule, off by default (a guest: the host's value).
         const std::string world_line = P::ShownSummary(PageNamed(u"World & PvP"));
         assert(world_line.find("Guests bring their lamps=Off") != std::string::npos);
