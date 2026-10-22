@@ -1793,15 +1793,64 @@ def phase_nfa(only):
     )
 
 
+# Phase eh (echodup, ~5 min, 2 players, group `echo_hold`): Blood Echoes an enemy took are paid once
+# (player report for 0.7.3: 15k from the glowing-eyed enemy and 15k again from the bloodstain the
+# marker pointed to). Guest 1 (15000 echoes, frail) is killed by 2410247 beside it and gets up at
+# the lamp; the game gives its stain to that enemy (glowing eyes, the party stain hidden). Its walk
+# onto the stain spot then pays nothing; its kill of the enemy pays the echoes once and removes the
+# party stain; a walk to the enemy's body (the stain spot) pays nothing again.
+EH_UNTIL = r"1:travel step (\d+)/\1: guest_move"
+
+
+def phase_eh(only):
+    host = ",".join([
+        "god",
+        "host_warp=2412953@20",                                     # the Tomb of Oedon lamp (party travel)
+        "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01",  # its neighbours (rt: a death loop)
+    ] + ["host_press=0@20%m24_01!"] * 14)
+    g1 = ",".join(
+        ["echoes=15000"] + _rt_killed_by(2410247) +                  # killed beside it: the stain there
+        ["guest_move=%s@3%%m24_01" % RT_LAMP,                        # up at the lamp (invincible from here)
+         "guest_press=0@20%m24_01!",                                 # the enemy takes the echoes
+         "guest_stick=stain:0.6:60@2%m24_01!", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
+         "guest_kill=2410247@2%m24_01", "guest_press=0@10%m24_01!",  # its kill: the echoes once
+         "guest_chr=2410247@2%m24_01", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
+         "guest_move=%s@4%%m24_01" % RT_LAMP])
+    return dict(
+        name="eh", seconds=420, count=2, headless=0,
+        env=[],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              "1:BB_PARTY_ROT_TEST_FRAIL=1", "1:BB_PARTY_TEST_GUARD=1", "1:BB_PARTY_TEST_INVINCIBLE=1",
+              "1:BB_PARTY_STAIN_MARKER=1"],
+        watch=["--watch", "party stain: an enemy took=ehheld@1,1", "--watch", "party stain: the game paid=ehpaid@1,1",
+               "--watch", "party stain: recovered=ehparty@1,1"],
+        crash=[], until=[EH_UNTIL], until_hold=8,
+    )
+
+
+def check_eh(v, L):
+    """Phase eh: an enemy that took a guest's echoes pays them once; the party stain never pays them too."""
+    need(v, L, "eh join: 2 players", 0, r"cooperators 0 -> 1")
+    d = need(v, L, "eh guest killed beside 2410247", 1, r"death \d+: killed by an enemy \(chr [0-9a-f]+, entity 2410247")
+    rec = L.find(1, r"guest: bloodstain recorded: echoes \d+ -> 0, stain \d+ echoes", d or 0)
+    v.step("eh its bloodstain holds the echoes", rec is not None, rec[1][:160] if rec else "no record line")
+    held = need(v, L, "eh the enemy takes them (glowing eyes; the party stain hidden)", 1,
+                r"party stain: an enemy took its \d+ Blood Echoes", d or 0)
+    need(v, L, "eh its kill pays them (the game), the party stain goes", 1,
+         r"party stain: the game paid its \d+ Blood Echoes", held or 0)
+    none_of(v, L, "eh the party stain never pays them too", r"party stain: recovered \d+ Blood Echoes", insts=(1,))
+    check_common(v, L, "eh")
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa"}
+          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1812,7 +1861,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1860,6 +1909,7 @@ GROUP_UNTIL = {
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
     "fight_load": BF_UNTIL,
     "rot": [RT_UNTIL],
+    "echo_hold": [EH_UNTIL],
     "boss_rooms": BR_UNTIL,
     "scene_mirror": [SM_UNTIL],
     "dream_apart": DA_UNTIL,
@@ -3943,7 +3993,8 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
-          "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L)}
+          "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
+          "eh": lambda v, L, d: check_eh(v, L)}
 
 
 def main():
@@ -3968,7 +4019,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa")
+                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa", "eh")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

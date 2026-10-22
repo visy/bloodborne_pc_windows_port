@@ -557,6 +557,25 @@ int main() {
     CHECK(PlanStainChange(1, 4843, 1, 4843) == StainChange::None);
     CHECK(PlanStainChange(0, -1, 0, -1) == StainChange::None);
 
+    // echodup (player report: 15k from the glowing-eyed enemy and 15k again from the stain).
+    CHECK(PlanStainHold(true, 0, false, 99.0) == StainHold::Free);     // on the ground: the party stain pays
+    CHECK(PlanStainHold(true, 1, true, 0.0) == StainHold::Held);       // an enemy took it: kill it
+    CHECK(PlanStainHold(true, 1, false, 3.0) == StainHold::Held);      // its death still running
+    CHECK(PlanStainHold(true, 1, false, 11.0) == StainHold::Void);     // hold without its enemy: recoverable
+    CHECK(PlanStainHold(false, 1, true, 0.0) == StainHold::Free);      // another record (not this stain)
+    // The holder's kill paid the record (0x130AB80: flag 0, +0x38 -1, echoes +15000): the party
+    // stain goes, its touch no longer pays.
+    CHECK(StainTakenByGame(true, -1, 15000, 15000));
+    CHECK(StainTakenByGame(true, -1, 15000, 14990));                  // a kill's echoes on top, or rot
+    CHECK(!StainTakenByGame(true, 15000, 15000, 15000));               // record unchanged: someone else's kill
+    CHECK(!StainTakenByGame(true, -1, 15000, 120));                    // only a kill's own echoes came
+    CHECK(!StainTakenByGame(false, -1, 15000, 15000));                 // the record was not this stain
+    CHECK(!StainTakenByGame(true, -1, 0, 0));
+    // A second death before recovery: the old holder lets go (the old echoes are lost).
+    CHECK(ReleaseHoldAtDeath(true, 1));
+    CHECK(!ReleaseHoldAtDeath(true, 0));
+    CHECK(!ReleaseHoldAtDeath(false, 1));                              // a respawn load's record call
+
     // Bug 22: nobody to travel with = single player (no in-world lamp move, no redirect).
     CHECK(PartyTravelActive(true, false, true, false));              // guest in the host's world
     CHECK(!PartyTravelActive(true, false, false, false));            // Join-a-party guest, no host
