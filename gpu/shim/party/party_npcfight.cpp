@@ -49,18 +49,43 @@ bool RuleOn(bool client) {
 // Logged once per (event, what) pair change; a busy map runs these events every load.
 std::atomic<std::uint32_t> g_passed_logs{0}, g_skipped_logs{0};
 std::atomic<std::int32_t> g_last_passed{0}, g_last_restored{0};
+std::atomic<std::uint32_t> g_team_logs{0};
+std::atomic<std::int32_t> g_last_team{0};
+
+// 2004[2] of a TeamEvent: team 27 is no foe for a phantom (party_npcfight_rules.h); a guest's copy
+// writes 23 into the argument, any other game's dispatch puts the data's 27 back.
+bool TeamSwitch(int event_id, int index, Act act, u64 event, u64 instr) {
+    std::uint32_t size = 0;
+    const u64 args = EmevdInstructionArgs(event, instr, &size);
+    std::uint8_t have = 0;
+    if (!args || size <= std::uint32_t(kTeamArg) || !SafeGet(args + kTeamArg, &have)) return false;
+    const std::uint8_t want = TeamFor(act, have);
+    if (want == have || !SafeWrite(args + kTeamArg, &want, 1)) return false;
+    const std::int32_t key = act == Act::foe_team ? event_id : -event_id;
+    if (g_last_team.exchange(key) != key && g_team_logs.fetch_add(1) < 32) {
+        std::int32_t entity = 0;
+        SafeGet(args, &entity);
+        Log("event %d's team switch at %d (entity %d): team %u -> %u (%s)", event_id, index, entity, unsigned(have),
+            unsigned(want),
+            act == Act::foe_team ? "a guest's copy: a foe the phantom can lock on to and hit"
+                                 : "the game's own again");
+    }
+    return false;
+}
 
 // The dispatching thread, before the game reads the instruction's arguments. The gate's argument
 // bytes are the loaded script's (a later run, a role change or the rule going off must see the
 // data's own value again), so every dispatch of the gate writes the value for now.
 bool Predicate(int event_id, int bank, int id, u64 event, u64 instr) {
-    const GuestRun* g = GuestRunFor(event_id);
-    if (!g) return false;
+    if (!TeamEvent(event_id)) return false;
     std::int32_t index = -1;
     SafeGet(event + 0xa0, &index);
     const bool client = LocalSessionRole() == kRoleClient;
     const Act act = Decide(event_id, index, bank, id, client, client && RuleOn(true));
     if (act == Act::none) return false;
+    if (act == Act::foe_team || act == Act::restore_team) return TeamSwitch(event_id, index, act, event, instr);
+    const GuestRun* g = GuestRunFor(event_id);
+    if (!g) return false;
     if (act == Act::skip) {
         if (g_skipped_logs.fetch_add(1) < 24)
             Log("guest copy of event %d (%s): %d[%02d] at %d skipped (the host's copy writes the progress)", event_id,

@@ -30,7 +30,7 @@ int main() {
     assert(Decide(12500053, 0, 1003, 6, true, true) == Act::pass_gate);
     assert(Decide(12500053, 0, 1003, 6, false, true) == Act::restore_gate);  // the host: the data's own
     assert(Decide(12500053, 0, 1003, 6, true, false) == Act::restore_gate);  // the rule off: vanilla
-    assert(Decide(12500053, 7, 2004, 2, true, true) == Act::none);           // the team switch runs
+    assert(Decide(12500053, 7, 2004, 2, true, true) == Act::foe_team);       // the team switch runs, as a foe
     assert(Decide(12500053, 6, 2003, 2, true, true) == Act::skip);           // its flag writes do not
     assert(Decide(12500053, 8, 2003, 22, true, true) == Act::skip);
     assert(Decide(12500053, 10, 2000, 5, true, true) == Act::skip);
@@ -40,9 +40,33 @@ int main() {
     assert(Decide(12400656, 1, 4, 3, true, true) == Act::pass_gate);
     assert(Decide(12400656, 2, 4, 3, true, true) == Act::none);
     assert(Decide(12400656, 1, 3, 0, true, true) == Act::none);
-    assert(Decide(12400656, 9, 2004, 2, true, true) == Act::none);
+    assert(Decide(12400656, 9, 2004, 2, true, true) == Act::foe_team);
     // Another event is never touched, whatever it holds.
     assert(Decide(12410803, 0, 4, 3, true, true) == Act::none && Decide(12410803, 5, 2003, 22, true, true) == Act::none);
+    // The hostile team on a guest's game (live nfa run 2: a phantom cannot lock on to / hit team 27):
+    // a guest's copy writes 23, every other dispatch puts the data's 27 back; other teams untouched.
+    assert(TeamFor(Act::foe_team, kHostileTeam) == kGuestFoeTeam);
+    assert(TeamFor(Act::foe_team, kGuestFoeTeam) == kGuestFoeTeam);  // already written
+    assert(TeamFor(Act::foe_team, 8) == 8);                           // Valtr's friendly team
+    assert(TeamFor(Act::restore_team, kGuestFoeTeam) == kHostileTeam);
+    assert(TeamFor(Act::restore_team, kHostileTeam) == kHostileTeam && TeamFor(Act::restore_team, 8) == 8);
+    assert(TeamFor(Act::none, kHostileTeam) == kHostileTeam && TeamFor(Act::skip, kGuestFoeTeam) == kGuestFoeTeam);
+    for (const GuestRun& g : kGuestRuns) {
+        assert(TeamEvent(g.event));
+        assert(Decide(g.event, 99, 2004, 2, true, true) == Act::foe_team);
+        assert(Decide(g.event, 99, 2004, 2, false, true) == Act::restore_team);  // the host
+        assert(Decide(g.event, 99, 2004, 2, true, false) == Act::restore_team);  // the rule off
+    }
+    for (std::int32_t e : kTeamEvents) {
+        assert(TeamEvent(e) && !GuestRunFor(e));
+        assert(Decide(e, 30, 2004, 2, true, true) == Act::foe_team && Decide(e, 30, 2004, 2, false, false) == Act::restore_team);
+        assert(Decide(e, 0, 4, 3, true, true) == Act::none && Decide(e, 5, 2003, 22, true, true) == Act::none);
+    }
+    assert(!TeamEvent(12410811) && Decide(12410811, 3, 2004, 2, true, true) == Act::none);  // Eileen's ally (28)
+    assert(Decide(12500053, 7, 2004, 8, true, true) == Act::none);                           // not a team switch
+    // the relation: the host's body (19) and a phantom (20) both treat 23 as an enemy (pvp.md);
+    // 27 is one only for 19 - the reason for the switch
+    static_assert(kGuestFoeTeam == 23 && kHostileTeam == 27 && kTeamArg == 4, "2004[2] layout / teams");
     assert(ProgressWrite(2003, 2) && ProgressWrite(2000, 5) && !ProgressWrite(2004, 2) && !ProgressWrite(2004, 8) &&
            !ProgressWrite(2003, 4));
 

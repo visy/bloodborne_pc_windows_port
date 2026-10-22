@@ -3832,16 +3832,19 @@ def check_nfa(v, L):
     hteam = [(t, tm) for t, _, tm in nf_hp(L, 0, NF_ALFRED, prov[0] - 1) if tm == 27]
     v.step("nfa the host's R1s turn Alfred hostile on the host (1349 / team 27)", bool(hflag or hteam),
            "1349 at %s, team 27 at %s" % ("+%.1f" % hflag[0] if hflag else "-", "+%.1f" % hteam[0][0] if hteam else "-"))
-    gteam = [(t, tm) for t, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1) if tm == 27]
+    # the guest's copy: team 23 (a foe for a phantom; 27 is none: party_npcfight_rules.h)
+    gteam = [(t, tm) for t, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1) if tm in (23, 27)]
     t27 = gteam[0][0] if gteam else None
     gnear = L.find(1, r"test: guest_chr %d" % NF_ALFRED, 0, t27 or 1e9)
     hsw = min([x for x in (hflag[0] if hflag else None, hteam[0][0] if hteam else None) if x is not None] or [0])
-    v.step("nfa in-map switch: Alfred hostile on the guest's game while it stands there (team 27)",
-           bool(gteam) and bool(gnear),
-           "team 27 at +%.1f s (the host's switch +%.1f s, the guest at him +%.1f s)" % (t27, hsw, gnear[0])
+    v.step("nfa in-map switch: Alfred hostile on the guest's game while it stands there (team 23)",
+           bool(gteam) and bool(gnear) and gteam[0][1] == 23,
+           "team %d at +%.1f s (the host's switch +%.1f s, the guest at him +%.1f s)" % (gteam[0][1], t27, hsw, gnear[0])
            if gteam and gnear else "guest teams after the host's R1s %s" %
            sorted({tm for _, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1)}))
     need(v, L, "nfa the guest's copy of 12500053 runs as the host's", 1, r"guest copy of event 12500053 runs as the host's")
+    need(v, L, "nfa the guest's copy switches him to a foe it can hit (27 -> 23)", 1,
+         r"event 12500053's team switch at 7 \(entity -?\d+\): team 27 -> 23")
     t0 = t27 or prov[0]
     gkill = L.find(1, r"test: guest_kill: .*entity %d" % NF_ALFRED, t0)
     hits = L.all(1, r"test: guest_press 0x800", t0, gkill[0] if gkill else 1e9)
