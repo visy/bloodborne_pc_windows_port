@@ -864,7 +864,7 @@ def phase_rh(only):
           "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
     return dict(
         name="rh", seconds=360, count=2, headless=0, fps=60,
-        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=45", "BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
@@ -888,7 +888,7 @@ def phase_rs(only):
             "host_press=0@4%m35!"]
     return dict(
         name="rs", seconds=200, count=1, headless=0, fps=int(os.environ.get("BB_RS_FPS", "60")),
-        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=45", "BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
