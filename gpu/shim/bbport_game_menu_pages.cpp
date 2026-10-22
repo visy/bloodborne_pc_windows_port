@@ -1490,7 +1490,7 @@ void DefineAll() {
     AddPage("My party: Look & notices", "Моя группа: вид, оповещ.", "Yours: how the other hunters look on your screen, join/leave notices (bbport)",
             "Ваше: как другие охотники выглядят у вас, уведомления о входе и выходе (bbport)");
     // party_glow.h: the other players' chrs without the phantom glow (display only).
-    own(&Values::party_glow_off, "Companions without glow", "Спутники без свечения",
+    own(&Values::party_glow_off, "No companion glow", "Спутники без свечения",
         "On: the other hunters look like normal hunters on your screen. Off: the game's blue phantom glow",
         "Вкл.: другие охотники выглядят как обычные. Выкл.: синее свечение фантомов, как в игре");
 

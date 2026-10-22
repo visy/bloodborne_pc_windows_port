@@ -376,7 +376,7 @@ before anyone is in the game):
   game's own menus are open; party messages are centred in their box.
 - **Companions look like normal hunters.** Summoned hunters are drawn without the game's blue,
   glowing phantom look (they are still cooperators for the game). Each player chooses for their own
-  screen: *Companions without glow* on *System → My party: Look & notices* or the launcher's *My Party* tab (on by
+  screen: *No companion glow* on *System → My party: Look & notices* or *Companions without glow* on the launcher's *My Party* tab (on by
   default; switches at once, also while playing).
 - **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: `Tab` + `Q`,
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your

@@ -380,7 +380,7 @@ RULES_PAGES = [
     ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
                            "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
-    ("My party: Look & notices", ["Companions without glow", "Join/leave notices"],
+    ("My party: Look & notices", ["No companion glow", "Join/leave notices"],
      ("Join/leave notices", "down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each

@@ -285,7 +285,7 @@ static void LiveValues() {
     Advance(16);
 
     // My party: Look & notices: Companions without glow follows party_glow_off both ways (on by default).
-    const P::Row& glow = RowNamed(PageNamed(u"My party: Look & notices"), u"Companions without glow");
+    const P::Row& glow = RowNamed(PageNamed(u"My party: Look & notices"), u"No companion glow");
     assert(glow.kind == P::Kind::Toggle);
     s.party_glow_off = true;  // (the sweep above may have flipped it)
     Advance(16);
@@ -485,7 +485,7 @@ static void RulesPages() {
     const V rot = {u"Rot on death", u"Rot: boss kill cleanses", u"Rot: kill your killer", u"Rot: echoes back"};
     const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests bring their lamps"};
     const V my_world = {u"Guests use lamps", u"Guests use Hunter's Mark", u"Open world", u"Stay in Chalice Dungeons"};
-    const V look = {u"Companions without glow", u"Join/leave notices"};
+    const V look = {u"No companion glow", u"Join/leave notices"};
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
     const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"Covenants per player",
