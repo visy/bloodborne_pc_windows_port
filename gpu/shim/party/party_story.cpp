@@ -1731,6 +1731,8 @@ std::map<std::uint32_t, double> g_mirrored;
 // Guest: its own plays of boss intros held for the host's copy (StoryHoldClientOwnScene).
 std::mutex g_hold_mu;
 OwnSceneHold g_hold;
+// Guest: the host's scene is pending / playing here as the live mirror (the A11 notice waits).
+std::atomic<bool> g_mirror_playing{false};
 
 namespace {
 std::mutex g_notice_mu;
@@ -1863,6 +1865,9 @@ void RequestGuestStory(const StoryIntent& s) {
         taken = g_guest.Offer(s, phantom, Now());
         mirror = taken && g_guest.MirrorPending();
     }
+    if (mirror && s.kind == StoryKind::Cutscene) {
+        g_mirror_playing.store(true, std::memory_order_relaxed);  // before the host's A11 hold notice
+    }
     if (taken && phantom && s.kind == StoryKind::Cutscene && s.event_id) {
         std::lock_guard<std::mutex> lk(g_mirrored_mu);
         g_mirrored[s.event_id] = Now();
@@ -1986,6 +1991,10 @@ static void GuestHeldSceneTick(const GameSnapshot& g, const StoryState& st, doub
     g_mirrored[due->event_id] = now;  // the event's 2002 again (a rerun) is a duplicate too
 }
 
+bool StoryMirrorPlaying() {
+    return g_mirror_playing.load(std::memory_order_relaxed);
+}
+
 bool StoryMirroredEvent(std::uint32_t event_id) {
     std::lock_guard<std::mutex> lk(g_mirrored_mu);
     const auto it = g_mirrored.find(event_id);
@@ -2067,6 +2076,12 @@ void StoryTick() {
         st.calm = Calm(now);
     }
     party::hud::SetCutscene(st.remo_playing);  // no party HUD / tags over a cutscene
+    {
+        std::lock_guard<std::mutex> lk(g_guest_mu);
+        // pending too: the host's hold notice (A11) comes right after its story, before our remo starts
+        g_mirror_playing.store(role == PartyRole::Guest && (g_guest.MirrorPending() || g_guest.RunningMirror()),
+                               std::memory_order_relaxed);
+    }
     // Remo watch: the playing bit's edges (both roles; the evidence for tests).
     if (st.remo_playing != g_tick.remo_was_playing) {
         if (st.remo_playing) {

@@ -261,6 +261,8 @@ public:
     std::size_t QueueSize() const { return queue_.size(); }
     bool MirrorPending() const { return mirror_.has_value(); }
     bool Running() const { return running_; }
+    /// A live mirror of the host's scene is the running item.
+    bool RunningMirror() const { return running_ && running_mirror_; }
     std::uint64_t LastSeq() const { return last_seq_; }
     /// User decision (2026-10-15): the host's ending asks each guest first. YES: `ending` (see
     /// GuestEndingType) replays in the own Dream (staff roll, NG+ in the own save) as before;
@@ -467,6 +469,8 @@ void RequestGuestStory(const StoryIntent& s);
 /// Guest: the live mirror played the cutscene of EMEVD event `event_id` in the last 10 minutes
 /// (the client's own copy of that event's 2002 is then a duplicate).
 bool StoryMirroredEvent(std::uint32_t event_id);
+/// Guest: a live mirror of the host's cutscene is playing on this game right now (any thread).
+bool StoryMirrorPlaying();
 /// Guest, the EMEVD dispatch (party_b2 ClientIntroSkip): this game's own 2002[`id`] of event
 /// `event_id` (SprjEmkEventIns `event`, instruction record `instr`) is a boss intro the host plays
 /// (HoldOwnSceneForHost): true = skip it here; the host's copy plays as the live mirror (or this

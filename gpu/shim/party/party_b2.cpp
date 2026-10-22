@@ -9324,7 +9324,7 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         if (Role() == RoleHost) return;
         const dsummon::Busy b = dsummon::WaitOf(body);
         g_host_busy.store(static_cast<int>(b));
-        party::bridge::OnHostBusy(dsummon::BusyText(b, false));
+        party::bridge::OnHostBusy(dsummon::BusyText(b, false), b == dsummon::Busy::Cutscene, StoryMirrorPlaying());
         Log("A11: the host's hold: %s%s", dsummon::BusyWord(b), b == dsummon::Busy::None ? " (its bell rings again)" : "");
         return;
     }

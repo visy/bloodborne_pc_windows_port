@@ -4400,7 +4400,7 @@ void PartyDirector::Tick() {
     if (role != PartyRole::None &&
         party::bridge::Tick({role == PartyRole::Host, link, s.world_up, s.loading, s.session_role, s.cooperators,
                              link ? link->max_players() : 3, InWorld(s) && !st.start_ready,
-                             StartStepName(st.start_step)})
+                             StartStepName(st.start_step), role == PartyRole::Guest && StoryMirrorPlaying()})
             .ring_now) {
         st.rung_ever = false; // Rejoin while connected: the next bell goes up at once
     }
