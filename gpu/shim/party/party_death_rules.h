@@ -1172,6 +1172,12 @@ inline bool StainTakenByGame(bool was_stain, int record_echoes_now, int stain_ec
     }
     return record_echoes_now != stain_echoes && gain >= std::max(1, stain_echoes / 2);
 }
+/// The stain object's hold reads 0 (live eh2: 2 s after the take; the stain stood on the ground
+/// again) while a living enemy still has the holder bit and the glowing eyes (its kill pays the
+/// record): the hold is put back, so the echoes have one place again (that enemy), as in vanilla.
+inline bool RestoreHold(bool record_is_stain, int hold_flag, bool holder_alive) {
+    return record_is_stain && hold_flag == 0 && holder_alive;
+}
 /// A new death's record while an enemy still holds the old echoes (a no-load revive keeps that
 /// enemy alive): the old hold is released first (vanilla: the old echoes are lost, and the death's
 /// load brings that enemy back without them); else the new stain is never built (0x1868A50 builds

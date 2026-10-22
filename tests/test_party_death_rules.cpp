@@ -571,6 +571,10 @@ int main() {
     CHECK(!StainTakenByGame(true, -1, 15000, 120));                    // only a kill's own echoes came
     CHECK(!StainTakenByGame(false, -1, 15000, 15000));                 // the record was not this stain
     CHECK(!StainTakenByGame(true, -1, 0, 0));
+    CHECK(RestoreHold(true, 0, true));                                 // eh2: the hold dropped, the enemy still glows
+    CHECK(!RestoreHold(true, 1, true));
+    CHECK(!RestoreHold(true, 0, false));                               // nobody has them: the ground stain stays
+    CHECK(!RestoreHold(false, 0, true));                               // another record
     // A second death before recovery: the old holder lets go (the old echoes are lost).
     CHECK(ReleaseHoldAtDeath(true, 1));
     CHECK(!ReleaseHoldAtDeath(true, 0));

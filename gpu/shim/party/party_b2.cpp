@@ -6817,7 +6817,28 @@ void GuestStainTick(const GameSnapshot& s) {
     static float holder_pos[3] = {};
     static u32 holder_entity = 0;
     static deathrules::StainHold hold_was = deathrules::StainHold::Free;
-    const int hold = StainHoldRulesOn() ? StainHoldFlag() : 0;
+    int hold = StainHoldRulesOn() ? StainHoldFlag() : 0;
+    if (!hold && is_stain && StainHoldRulesOn() && Now() >= next_scan) {
+        // eh2 live: 2 s after the take the stain object's hold read 0 again and the stain stood on the
+        // ground once more, while the enemy kept the holder bit (its kill pays the record): two ways
+        // to the same echoes. A living holder with the bit gets the hold back (deathrules::RestoreHold;
+        // the game's tick then removes the ground stain, 0x1868A50(obj, 0)).
+        next_scan = Now() + 0.5;
+        bool alive = false;
+        float pos[3] = {};
+        u32 ent = 0;
+        const u64 obj = StainObject();
+        if (EchoHolder(&alive, pos, &ent) && deathrules::RestoreHold(is_stain, hold, alive) && obj) {
+            const u8 one = 1;
+            SafeWrite(obj + 0xc0, &one, 1);
+            hold = 1;
+            static int restores = 0;
+            if (++restores <= 3 || restores % 50 == 0) {
+                Log("party stain: enemy %u still has the Blood Echoes (glowing eyes) but the game's stain lost its hold: "
+                    "the hold restored (no stain on the ground; restore %d)", ent, restores);
+            }
+        }
+    }
     if (hold && is_stain) {
         if (Now() >= next_scan) {
             next_scan = Now() + 0.5;

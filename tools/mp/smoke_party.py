@@ -1840,7 +1840,9 @@ def check_eh(v, L):
                 r"party stain: an enemy took its \d+ Blood Echoes", d or 0)
     need(v, L, "eh its kill pays them (the game), the party stain goes", 1,
          r"party stain: the game paid its \d+ Blood Echoes", held or 0)
-    none_of(v, L, "eh the party stain never pays them too", r"party stain: recovered \d+ Blood Echoes", insts=(1,))
+    pays = L.all(1, r"party stain: recovered \d+ Blood Echoes|party stain: the game paid its \d+ Blood Echoes")
+    v.step("eh the echoes are paid exactly once", len(pays) == 1,
+           "; ".join("+%.1f s %s" % (t, l[:110]) for t, l in pays) or "never paid")
     check_common(v, L, "eh")
 
 
