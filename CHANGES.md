@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
+
 - **Fixed: corpses and other objects no longer pop in and out as you move**: with *Model detail* set to *Highest*, the game drew many objects only while you stood within about 10-15 m of them; further away they vanished instead of switching to their simpler model, so the corpses in Central Yharnam's streets kept appearing and disappearing as you walked back and forth. *Highest* is no longer offered, in the game's *Display* menu, the overlay and the launcher; a setting saved as *Highest* now uses the game's own detail, which draws these objects at every distance. Render resolution and the upscaler never changed this. Far buildings still switch between detail levels as on the PS4.
 - **Changed: rot is off by default**: rot is now off by default, also if your settings had it on from an earlier version (the game saved it as on without you choosing it). Turn it back on in *System → Rot* (a new page) or the launcher's *Party Rules & Sync* if you want it; that choice then stays.
 - **Added: killing a boss cleanses rot**: when a boss dies, every party member in the host's world loses all their rot, alive or dead in that fight. A notice says "Rot cleansed: boss defeated". On by default (only matters with rot on).
