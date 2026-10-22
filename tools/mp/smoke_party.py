@@ -1560,12 +1560,13 @@ def phase_da(only):
 #      his HP falls on the host's game) and deals the killing blow on its own game (guest_kill: HP 0
 #      there only); the host's game sees him die and sets the quest flags (12410804: 1367;
 #      12410810's own flag), which reach the guest's own save (read at the next load).
-#   2  Cainhurst (m25, the Queen's Chamber lamp 2502951; Logarius dead), Alfred hostile (state
+#   2  Cainhurst (m25, its first lamp 2502950; Logarius dead), Alfred hostile (state
 #      1349): his init event (12500050) re-teams him (27) on the host's game only (1003[6] "end if
 #      client"). A: the host's rule party_npc_fights OFF: the guest's copy keeps him friendly (26,
 #      the "before"). B: the rule ON and a party round trip to the Tomb and back: the guest's copy
-#      runs as the host's, team 27 on both games. (No fight with him here: in this fixture he drops
-#      through the chamber's floor after the second load, on the host's game too.)
+#      runs as the host's, team 27 on both games. Read from the chr dumps (400 m): the party stays at
+#      the lamp, about 290 m from him (the Queen's Chamber lamp 2502951 put both players into an
+#      undrawn void in this save, Alfred falling through it, so there is no fight with him here).
 NF_HENRYK, NF_EILEEN, NF_ALFRED = 2410901, 2410900, 2500790
 NF_FLAGS = "1349/1363/1365/1366/1367/12410810"
 NF_LOGARIUS_DEAD = "12501800,12501802,12501803"  # Logarius dead: the queen's chamber (Alfred) is open
@@ -1579,10 +1580,10 @@ def phase_nf(only):
         "host_warp=2412953@8^1",                          # 1: the party at the Tomb of Oedon lamp
         "host_chr=%d:4@8%%m24_01" % NF_HENRYK,            # in front of Henryk: his fight starts
         "host_rule=party_npc_fights:0@2%m24_01",          # 2A: the rule off (the "before")
-        "host_warp=2502951@8%m24_01?12410810=1",          # Henryk dead: the party to Cainhurst
+        "host_warp=2502950@8%m24_01?12410810=1",          # Henryk dead: the party to Cainhurst
         "host_rule=party_npc_fights:1@15%m25",            # 2B: the rule on
         "host_warp=2412953@2%m25",                        # a round trip: the guest's init runs again
-        "host_warp=2502951@8%m24_01",
+        "host_warp=2502950@8%m24_01",
         "host_warp=2412953@15%m25",                       # the last load
     ])
     g1 = ",".join(["god", "log_flag=" + NF_FLAGS,
