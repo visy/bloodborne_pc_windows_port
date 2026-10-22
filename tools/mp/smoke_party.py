@@ -1806,13 +1806,15 @@ def phase_eh(only):
     host = ",".join([
         "god",
         "host_warp=2412953@20",                                     # the Tomb of Oedon lamp (party travel)
-        "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01",  # its neighbours (rt: a death loop)
-    ] + ["host_press=0@20%m24_01!"] * 14)
+        # its neighbours (rt: a death loop; eh1: 2410202 killed the guest instead and took the echoes)
+        "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01", "host_kill=2410202@1%m24_01",
+    ] + ["host_press=0@20%m24_01!"] * 12)
     g1 = ",".join(
         ["echoes=15000"] + _rt_killed_by(2410247) +                  # killed beside it: the stain there
         ["guest_move=%s@3%%m24_01" % RT_LAMP,                        # up at the lamp (invincible from here)
          "guest_press=0@20%m24_01!",                                 # the enemy takes the echoes
-         "guest_stick=stain:0.6:60@2%m24_01!", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
+         "guest_chr=2410247@2%m24_01",                               # back beside it (the lamp is 142 m off)
+         "guest_stick=stain:0.6:20@2%m24_01!", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
          "guest_kill=2410247@2%m24_01", "guest_press=0@10%m24_01!",  # its kill: the echoes once
          "guest_chr=2410247@2%m24_01", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
          "guest_move=%s@4%%m24_01" % RT_LAMP])
@@ -1831,7 +1833,7 @@ def phase_eh(only):
 def check_eh(v, L):
     """Phase eh: an enemy that took a guest's echoes pays them once; the party stain never pays them too."""
     need(v, L, "eh join: 2 players", 0, r"cooperators 0 -> 1")
-    d = need(v, L, "eh guest killed beside 2410247", 1, r"death \d+: killed by an enemy \(chr [0-9a-f]+, entity 2410247")
+    d = need(v, L, "eh guest killed by an enemy", 1, r"death \d+: killed by an enemy \(chr [0-9a-f]+, entity 24102\d\d")
     rec = L.find(1, r"guest: bloodstain recorded: echoes \d+ -> 0, stain \d+ echoes", d or 0)
     v.step("eh its bloodstain holds the echoes", rec is not None, rec[1][:160] if rec else "no record line")
     held = need(v, L, "eh the enemy takes them (glowing eyes; the party stain hidden)", 1,

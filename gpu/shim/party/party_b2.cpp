@@ -6844,14 +6844,18 @@ void GuestStainTick(const GameSnapshot& s) {
     if (hs != hold_was) {
         hold_was = hs;
         if (hs == deathrules::StainHold::Held) {
-            Log("party stain: an enemy took its %d Blood Echoes (entity %u at (%.1f, %.1f, %.1f), glowing eyes): kill it "
-                "to get them back; nothing to pick up on the ground", p.s.echoes, holder_entity, double(holder_pos[0]),
-                double(holder_pos[1]), double(holder_pos[2]));
+            static int takes = 0;
+            Log("party stain: an enemy took its %d Blood Echoes (entity %u at (%.1f, %.1f, %.1f), glowing eyes; take %d): "
+                "kill it to get them back; nothing to pick up on the ground", p.s.echoes, holder_entity,
+                double(holder_pos[0]), double(holder_pos[1]), double(holder_pos[2]), ++takes);
         } else if (hs == deathrules::StainHold::Void) {
             Log("party stain: the enemy hold outlived its enemy (none loaded for 10 s): the stain is recoverable on the "
                 "ground again");
         } else {
-            Log("party stain: no enemy holds its Blood Echoes");
+            const u64 so = StainObject();
+            Log("party stain: no enemy holds its Blood Echoes (hold %d, record %d echoes flag %d, stain object %s, "
+                "%.1f s after the last hold)", hold, own_echoes, own_flag, so && Field<u64>(so, 0x88) ? "built" : "none",
+                hold_seen_at < 0 ? -1.0 : Now() - hold_seen_at);
         }
     }
     party::ping::StainMark m;
