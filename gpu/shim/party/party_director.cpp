@@ -1829,6 +1829,17 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
     TargetAnimTick(t, now);
+    // BB_PARTY_TEST_GUARD=1 (test aid, smoke rt): invincible from each revive until the next die /
+    // chr step (deathrules::TestGuard); set every tick (the revive and the stain warp reset it).
+    static const bool guard_env = std::getenv("BB_PARTY_TEST_GUARD") && std::getenv("BB_PARTY_TEST_GUARD")[0] == '1';
+    static deathrules::TestGuard guard;
+    if (guard_env) {
+        const bool was = guard.on;
+        if (deathrules::TestGuardTick(guard, b2::LocalHp(), s.world_up && !s.loading)) {
+            SetTestInvincible(true);
+            if (!was) Log("test: guard (BB_PARTY_TEST_GUARD): up again after a death: invincible until the next die / chr step");
+        }
+    }
     if (t.pin_until != Clock::time_point{}) {
         // ":pin=S": the chr kept at the move's spot every frame until the floor's collision is in.
         const std::uint64_t player = LocalPlayer();
@@ -2211,6 +2222,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     t.step_at = now;
     t.ran = true;
     t.last_kind = step.kind;
+    if (guard_env &&
+        deathrules::TestGuardStepRan(guard, step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie ||
+                                                step.kind == TravelStep::HostChr || step.kind == TravelStep::GuestChr)) {
+        SetTestInvincible(false);
+        Log("test: guard (BB_PARTY_TEST_GUARD): off for %s", TravelStepName(step.kind));
+    }
     Log("test: travel step %zu/%zu: %s%s%u (%s)", t.next_step, t.steps.size(), TravelStepName(step.kind),
         step.kind == TravelStep::HostWarp ? " to lamp " : step.kind == TravelStep::HostKill ? " entity " : "",
         step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill ? step.id : 0u, Describe(s).c_str());
