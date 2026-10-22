@@ -3304,7 +3304,7 @@ class BloodborneLauncher(tk.Tk):
                     "Default: off (bbport.ini party_travel_vote; in the game: System > Shared world).", command=save)
         self._check(sec, "NPC hunters fight the whole party", var["party_npc_fights"],
                     "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
-                    "DLC hunters) turns on the guests too, and Brador is shown on every guest's screen: "
+                    "DLC hunters) turns on the guests too (Brador should show for guests too; not tried yet): "
                     "everyone sees and fights the same hunter, and its death counts for all. The host's "
                     "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
                     "System > Shared world).", command=save)
