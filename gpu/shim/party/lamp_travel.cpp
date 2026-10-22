@@ -358,6 +358,7 @@ struct TestState {
     int pose = 0;             // listonly: the stand spot tried (PlacePose)
     double pose_at = 0;
     bool lit_seen = false;
+    bool pose_pressed = false;
     bool setup_only = false;  // setuponly: done after continue / start= (no lamp walk, no warp menu)
     bool start_any = false;  // startany: the start= warp also when the save is in that map  // dream: Cross, Left (YES), Cross at the lamp; done when a load starts (#22)  // titleany: also in a party process whose host never answers (#22)
     u32 lamp = 0;          // lamp=ID (0: the nearest lit one)
@@ -674,7 +675,17 @@ void TestTick(const GameSnapshot& s, double now) {
                 g_t.at = now + 2.5;
                 return;
             }
-            if (now - g_t.pose_at >= (g_t.presses > 0 ? 8.0 : 3.0)) {
+            if (!g_t.pose_pressed && g_t.presses == 0 && now - g_t.pose_at >= 2.0) {
+                // The lamp's own "Light lamp" text is not one GuestSvcPromptUp knows (lamprule run 4:
+                // the prompt was on screen, never detected): one Cross per spot as well.
+                g_t.pose_pressed = true;
+                Log("test: Cross at the lamp (spot %d, no prompt text seen; lamp %s)", g_t.pose, lit ? "lit" : "unlit");
+                Press(kPadCross, now);
+                g_t.at = now + 2.5;
+                return;
+            }
+            if (now - g_t.pose_at >= (g_t.presses > 0 || lit ? 8.0 : 4.5)) {
+                g_t.pose_pressed = false;
                 if (++g_t.pose >= 8 || !PlacePose(s, g_t.walked, g_t.pose)) {
                     Log("test: FAILED: no action prompt at lamp %u from any spot (%d press(es))", g_t.walked, g_t.presses);
                     g_t.stage = TestState::Done;
