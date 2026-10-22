@@ -409,6 +409,7 @@ struct TestState {
     u32 to = 0;            // to=ID (0: "other": the first lamp of another map)
     u32 start = 0;         // start=ID: first a plain lamp warp there when the save is in another map
     bool started = false;
+    double wait = 0;       // wait=S: S s more in the first steady world before the setup (another fixture first)
     enum Stage { Title, Settle, Walk, Press, Choose, Wait, Done } stage = Title;
     double at = 0, steady_since = 0, release_at = 0, members_at = 0, members_wait = 12.0;
     int presses = 0, downs = 0, want_downs = -1, confirms = 0;
@@ -438,6 +439,7 @@ void TestParse() {
         else if (item == "listonly") g_t.list_only = true;
         else if (item == "members") g_t.members = true;
         else if (item.rfind("lamp=", 0) == 0) g_t.lamp = static_cast<u32>(std::strtoul(item.c_str() + 5, nullptr, 10));
+        else if (item.rfind("wait=", 0) == 0) g_t.wait = std::strtod(item.c_str() + 5, nullptr);
         else if (item.rfind("start=", 0) == 0) g_t.start = static_cast<u32>(std::strtoul(item.c_str() + 6, nullptr, 10));
         else if (item.rfind("to=", 0) == 0) g_t.to = item == "to=other" ? 0 : static_cast<u32>(std::strtoul(item.c_str() + 3, nullptr, 10));
     }
@@ -533,7 +535,7 @@ void TestTick(const GameSnapshot& s, double now) {
             g_t.steady_since = now;
             return;
         }
-        if (now - g_t.steady_since < 3.0) return;
+        if (now - g_t.steady_since < 3.0 + (g_t.started ? 0.0 : g_t.wait)) return;
         if (g_t.start && !g_t.started && (g_t.start_any || MapOf(g_t.start) != (s.map_id & 0xffff0000u))) {
             g_t.started = true;
             Log("test: setup: the save is in %s; lamp warp to %u first", MapName(s.map_id).c_str(), g_t.start);
