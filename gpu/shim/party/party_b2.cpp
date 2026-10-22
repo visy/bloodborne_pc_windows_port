@@ -6055,12 +6055,13 @@ void GlowTick(double now) {
     }
 }
 
-/// Test aid (BB_PARTY_GLOW_TEST=1, off by default): the glow setting switched live in one session.
-/// 6 s after a remote player chr is first seen, every 6 s: phase 0 the glow on (party_glow_off = 0),
+/// Test aid (BB_PARTY_GLOW_TEST=N, off by default): the glow setting switched live in one session.
+/// 6 s after N remote player chrs are seen (1 if N is not a number), every 8 s: phase 0 the glow on (party_glow_off = 0),
 /// 1 off, 2 on, 3 off with the long Chalice notice (the centred alert), 4 done. Each phase logs the
 /// glow rows and the SpEffects of the local and every remote player chr (9006: the cooperator's).
 void GlowTestTick(const GameSnapshot& s, double now) {
-    static const bool on = std::getenv("BB_PARTY_GLOW_TEST") && std::getenv("BB_PARTY_GLOW_TEST")[0] == '1';
+    static const int need = std::getenv("BB_PARTY_GLOW_TEST") ? std::max(1, std::atoi(std::getenv("BB_PARTY_GLOW_TEST"))) : 0;
+    static const bool on = need > 0 && std::getenv("BB_PARTY_GLOW_TEST")[0] != '0';
     static double t0 = -1;
     static int phase = -1;
     if (!on || !s.world_up || s.loading || !s.player || phase >= 4) {
@@ -6074,14 +6075,14 @@ void GlowTestTick(const GameSnapshot& s, double now) {
         const u64 c = Field<u64>(entries + u64(i) * 0x38, 0);
         if (c && c != s.player) chrs.push_back(c);
     }
-    if (chrs.size() < 2) {
+    if (chrs.size() < 2 || (t0 < 0 && int(chrs.size()) - 1 < need)) {
         return;
     }
     if (t0 < 0) {
         t0 = now + 6.0;
         Log("glow test: %zu remote player chr(s); phases in 6 s", chrs.size() - 1);
     }
-    const int want = now < t0 ? -1 : std::min(4, int((now - t0) / 6.0));
+    const int want = now < t0 ? -1 : std::min(4, int((now - t0) / 8.0));
     if (want == phase) {
         return;
     }
