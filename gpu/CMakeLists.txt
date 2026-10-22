@@ -624,6 +624,11 @@ add_executable(party-guestvals-test EXCLUDE_FROM_ALL ../tests/test_party_guestva
 target_compile_options(party-guestvals-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-guestvals-test PRIVATE shim)
 set_target_properties(party-guestvals-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Companions without the phantom glow (party_glow_rules.h). ninja -C out/gpu party-glow-test
+add_executable(party-glow-test EXCLUDE_FROM_ALL ../tests/test_party_glow.cpp)
+target_compile_options(party-glow-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-glow-test PRIVATE shim)
+set_target_properties(party-glow-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Direct lamp travel (lamp_travel_rules.h). ninja -C out/gpu lamp-travel-test
 add_executable(lamp-travel-test EXCLUDE_FROM_ALL ../tests/test_lamp_travel.cpp)
 target_compile_options(lamp-travel-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

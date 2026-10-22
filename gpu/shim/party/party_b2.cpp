@@ -35,6 +35,7 @@
 #include "party_hud.h"
 #include "party_status.h"
 #include "party_guestvals_rules.h"
+#include "party_glow_rules.h"
 #include "party_remote_show_rules.h"
 #include "party_ping.h"
 #include "party_flow.h"
@@ -6012,6 +6013,106 @@ void RemoteChrRenderWatch(const GameSnapshot& s, double now) {
     }
 }
 
+// ---- Companions without the phantom glow (party_glow_rules.h, 0.7.2) ----
+/// Main thread, every 0.2 s: this game's SpEffectVfxParam glow rows (272 / 276: the cooperator
+/// SpEffects' midst SFX) hold "no SFX" while the glow is off (setting party_glow_off, on by
+/// default; BB_PARTY_GLOW_OFF=0/1 for tests) and the game's ids otherwise. The chr's effect update
+/// reads the row every frame; a live switch also pauses the rows for a moment (Refresh) so the
+/// effect entries already made on the chrs end and come back from the new id. Display only: the
+/// SpEffect rows, the chr type and the team stay as the game set them.
+void GlowTick(double now) {
+    static double next = 0;
+    if (now < next) {
+        return;
+    }
+    next = now + 0.2;
+    static const char* const env = std::getenv("BB_PARTY_GLOW_OFF");
+    static coop::glow::Refresh refresh;
+    const bool off = coop::glow::GlowOff(BbSettings::Get().party_glow_off.load(), env, party::status::Enabled());
+    const u8 type = refresh.Update(off, now);
+    for (const coop::glow::GlowRow& r : coop::glow::kGlowRows) {
+        const u64 row = GameParamRow("SpEffectVfxParam", "SP_EFFECT_VFX_PARAM_ST", r.row);
+        if (!row) {
+            continue;
+        }
+        const u8 had = Field<u8>(row, 0x2a, 0xff);  // effectType
+        if (had != type && (had == coop::glow::kEffectSfx || had == coop::glow::kEffectPaused) &&
+            SafeWrite(row + 0x2a, &type, 1)) {
+            Log("glow: SpEffectVfxParam %u effectType %u -> %u (%s)", r.row, unsigned(had), unsigned(type),
+                type == coop::glow::kEffectPaused ? "a live switch: the chrs' glow entries end" : "plays again");
+        }
+        const std::int32_t cur = Field<std::int32_t>(row, 0, r.sfx);
+        const std::int32_t want = coop::glow::WantedSfx(cur, r.sfx, off);
+        if (want != cur && SafeWrite(row, &want, sizeof want)) {
+            Log("glow: SpEffectVfxParam %u midst SFX %d -> %d (%s)", r.row, cur, want,
+                off ? "companions without the phantom glow" : "the game's phantom glow");
+        } else if (want == cur && cur != r.sfx && cur != coop::glow::kNoSfx) {
+            static bool told = false;
+            if (!told) {
+                told = true;
+                Log("glow: SpEffectVfxParam %u midst SFX is %d (not the game's %d): left alone", r.row, cur, r.sfx);
+            }
+        }
+    }
+}
+
+/// Test aid (BB_PARTY_GLOW_TEST=N, off by default): the glow setting switched live in one session.
+/// 6 s after N remote player chrs are seen (1 if N is not a number), every 8 s: phase 0 the glow on (party_glow_off = 0),
+/// 1 off, 2 on, 3 off with the long Chalice notice (the centred alert), 4 done. Each phase logs the
+/// glow rows and the SpEffects of the local and every remote player chr (9006: the cooperator's).
+void GlowTestTick(const GameSnapshot& s, double now) {
+    static const int need = std::getenv("BB_PARTY_GLOW_TEST") ? std::max(1, std::atoi(std::getenv("BB_PARTY_GLOW_TEST"))) : 0;
+    static const bool on = need > 0 && std::getenv("BB_PARTY_GLOW_TEST")[0] != '0';
+    static double t0 = -1;
+    static int phase = -1;
+    if (!on || !s.world_up || s.loading || !s.player || phase >= 4) {
+        return;
+    }
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    const int n = Field<int>(wcm, 0x30, 0);
+    const u64 entries = Field<u64>(wcm, 0x38);
+    std::vector<u64> chrs{s.player};
+    for (int i = 0; entries && n > 0 && n <= 8 && i < n; ++i) {
+        const u64 c = Field<u64>(entries + u64(i) * 0x38, 0);
+        if (c && c != s.player) chrs.push_back(c);
+    }
+    if (chrs.size() < 2 || (t0 < 0 && int(chrs.size()) - 1 < need)) {
+        return;
+    }
+    if (t0 < 0) {
+        t0 = now + 6.0;
+        Log("glow test: %zu remote player chr(s); phases in 6 s", chrs.size() - 1);
+    }
+    const int want = now < t0 ? -1 : std::min(4, int((now - t0) / 8.0));
+    if (want == phase) {
+        return;
+    }
+    phase = want;
+    static const char* const names[] = {"glow on", "glow off", "glow on again", "glow off again", "done"};
+    if (phase < 4) {
+        BbSettings::Get().party_glow_off = phase % 2 == 1;  // GlowTick applies it within 0.2 s
+    }
+    if (phase == 3) {
+        party::status::SetAlert(deathrules::ChaliceApartNotice());
+    }
+    std::string rows;
+    for (const coop::glow::GlowRow& r : coop::glow::kGlowRows) {
+        const u64 row = GameParamRow("SpEffectVfxParam", "SP_EFFECT_VFX_PARAM_ST", r.row);
+        rows += " " + std::to_string(r.row) + "=" + std::to_string(Field<std::int32_t>(row, 0, 0));
+    }
+    Log("glow test: phase %d %s (party_glow_off %d; vfx rows%s)", phase, names[phase],
+        int(BbSettings::Get().party_glow_off.load()), rows.c_str());
+    for (const u64 c : chrs) {
+        std::string sp;
+        u64 node = Field<u64>(Field<u64>(c, 0x1c8), 8);
+        for (int k = 0; node && k < 32; ++k, node = Field<u64>(node, 0x58)) {
+            sp += " " + std::to_string(Field<int>(node, 0x40));
+        }
+        Log("glow test: %s chr %#llx type %d team %d speffects%s", c == s.player ? "local" : "remote", ull(c),
+            Field<int>(c, 0x78, -1), Field<int>(c, 0x88, -1), sp.c_str());
+    }
+}
+
 /// Diagnostics (BB_PARTY_POS_SCAN=1): where the local player's position is kept besides the chr -
 /// GSM (*0x5556678, 0x2000 bytes), GameDataMan (*0x553B130, 0x400) and PlayerGameData (GameDataMan
 /// +8, 0x2000): every float triple within 1 m of the player's position, every 10 s while it changes.
@@ -10477,6 +10578,8 @@ void Tick(const GameSnapshot& s) {
     PinOwnSpotTick(s);
     PosScanTick(s, Now());
     RemoteChrRenderWatch(s, Now());
+    GlowTick(Now());
+    GlowTestTick(s, Now());
     MemberRevivedTick(s);
     AppearanceTick(s);
     ReviveRearmTick(s);

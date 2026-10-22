@@ -1900,6 +1900,8 @@ class BloodborneLauncher(tk.Tk):
         self.hdr_paper_var = tk.StringVar(value=hdr_paper_white_label(_ini))
         self.party_hud = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud"))
         self.party_name_tags = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_tags"))
+        # Companions without the phantom glow: a game setting (bbport.ini party_glow_off, default on).
+        self.party_glow_off = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_glow_off"))
         # Shared NPC dialogue: a game setting (bbport.ini party_npc_talk, also in the game's menus).
         self.party_npc_talk = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_npc_talk"))
         # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
@@ -2546,6 +2548,12 @@ class BloodborneLauncher(tk.Tk):
                               "the game: System > Party display > Party name tags. Default: on (bbport.ini "
                               "party_name_tags).",
                               command=self.save_party_name_tags)
+        glow_cb = self._check(sec, "Companions without glow", self.party_glow_off,
+                              "On: the other hunters of the party look like normal hunters on your screen, "
+                              "without the game's blue, glowing phantom look. Off: that look, as in the "
+                              "original game. Only how you see them: they stay cooperators. Also in the game: "
+                              "System > Party look. Default: on (bbport.ini party_glow_off).",
+                              command=self.save_party_glow_off)
         npc_talk_cb = self._check(sec, "Share NPC dialogue", self.party_npc_talk,
                                   "When a companion near you talks to an NPC you get the conversation too: "
                                   "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
@@ -2723,7 +2731,7 @@ class BloodborneLauncher(tk.Tk):
 
         # Fields enabled in each mode: on (host or join), host only, join only
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 dsummon_cb, hud_cb, tags_cb, npc_talk_cb, pings_cb, walls_cb, stain_cb, save_cb,
+                                 dsummon_cb, hud_cb, tags_cb, glow_cb, npc_talk_cb, pings_cb, walls_cb, stain_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, relay_cb, ipv6_cb, stun_lbl,
                                  self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
@@ -2808,6 +2816,7 @@ class BloodborneLauncher(tk.Tk):
         self.hdr_peak_var.set(hdr_peak_label(ini))
         self.hdr_paper_var.set(hdr_paper_white_label(ini))
         for key, var, default in (("party_hud", self.party_hud, True), ("party_name_tags", self.party_name_tags, True),
+                                  ("party_glow_off", self.party_glow_off, True),
                                   ("party_npc_talk", self.party_npc_talk, True), ("party_pings", self.party_pings, True),
                                   ("party_through_walls", self.party_through_walls, False),
                                   ("party_stain_marker", self.party_stain_marker, False),
@@ -2860,6 +2869,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_name_tags": "1" if self.party_name_tags.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save the Party name tags setting to bbport.ini: {ex}")
+
+    def save_party_glow_off(self):
+        """The Companions without glow checkbox: bbport.ini party_glow_off (a running game picks it up
+        on its next start; in game: System > Party look, live)."""
+        try:
+            update_ini(bbport_ini_path(), {"party_glow_off": "1" if self.party_glow_off.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the Companions without glow setting to bbport.ini: {ex}")
 
     def save_party_npc_talk(self):
         """The Share NPC dialogue checkbox: bbport.ini party_npc_talk (a running game picks it up on its

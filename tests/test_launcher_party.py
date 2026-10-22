@@ -225,6 +225,30 @@ class PartyNameTagsSetting(unittest.TestCase):
             self.assertTrue(self.L.ini_flag(ini, "party_name_tags"))
 
 
+class CompanionsWithoutGlowSetting(unittest.TestCase):
+    """The launcher's Companions without glow checkbox: bbport.ini party_glow_off, on unless set to 0."""
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_default_on_and_round_trip(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertTrue(self.L.ini_flag(ini, "party_glow_off"))  # no file: on (glow removed)
+            ini.write_text("party_name_tags=0" + chr(10), encoding="utf-8")
+            self.assertTrue(self.L.ini_flag(ini, "party_glow_off"))  # not set: on
+            self.L.update_ini(ini, {"party_glow_off": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_glow_off"))
+            self.assertFalse(self.L.ini_flag(ini, "party_name_tags"))  # other keys kept
+            self.L.update_ini(ini, {"party_glow_off": "1"})
+            self.assertTrue(self.L.ini_flag(ini, "party_glow_off"))
+
+
 class ShareNpcDialogueSetting(unittest.TestCase):
     """The launcher's Share NPC dialogue checkbox: bbport.ini party_npc_talk, on unless set to 0."""
     @classmethod
