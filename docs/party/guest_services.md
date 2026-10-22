@@ -453,3 +453,18 @@ placed by `host_chr`, screenshots of both games after each step.
 * Same session, before it: `levelup|levelup|levelup`: three level-ups at the Doll in a row as a
   guest (37 -> 38 -> 39 -> 40), each LevelUp menu built on the second press after her lines.
 
+## 2026-10-22 (covenants, 0.7.3): Valtr's Impurity rune for a guest
+
+* Valtr's two gifts are not common 9040 talk gifts: m27 event 12700906 (`DLC_NPCアイテム入手XX`, slots
+  0 / 1) ends when the lot's personal flag is set (6676 / 6678), tests the player's character type
+  (4[3] on 10000), waits for the talk's trigger (72700321 / 72700322) and awards lot 43120 (the
+  Impurity rune, GemGen 200030) / 43130 (the League Staff, goods 131) host-only (2003[4]). A guest's
+  League talk in the host's world set the trigger in the host-world overlay only (discarded at
+  home) and its own copy of the event never awarded; as a world action (npc_quest) the trigger made
+  the HOST's 12700906 give the host the rune (when the host lacked 6676).
+* Now (`worldact::OwnTalkGiftLot`): the trigger is never a world action; the guest's own SetEventFlag
+  of it while summoned queues its own grant (`items::OfferOwnGift`, ItemSource::Own, the lot's
+  personal flag: once per player), given while summoned or at home like the Messenger gifts. Joining
+  the League (Valtr's state, his talk block) is a covenant outcome and stays in the host's world
+  (event_flags.md 7); the rune is the guest's own item.
+
