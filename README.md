@@ -257,7 +257,8 @@ before anyone is in the game):
   press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
-  cannot gather during its own boss fight or cutscene, and only once every 30 s. The host can turn
+  cannot gather during its own boss fight or cutscene, on a ladder or in mid-air, and only once every
+  30 s. If there is no ground beside the host, the guest comes with one loading screen instead. The host can turn
   gathering off (*Host can gather* on *System → Shared world*).
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
