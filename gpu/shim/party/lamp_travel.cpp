@@ -10,6 +10,7 @@
 #include "party_balance.h"
 #include "party_director.h"
 #include "party_guestsvc.h"
+#include "../bbport_game_menu.h"
 #include "party_ids.h"
 #include "party_split.h"
 #include "seamless_rules.h"
@@ -662,22 +663,29 @@ void TestTick(const GameSnapshot& s, double now) {
                 g_t.lit_seen = true;
                 Log("test: listonly: lamp %u is lit on this game after %d press(es)", g_t.walked, g_t.presses);
             }
+            // The lamp's prompt by its text (lamprule run 4: "Light lamp" was on screen, its id is
+            // not one GuestSvcPromptUp knows): looked up since this spot / the last press.
+            const auto seen = [&](const char* t) {
+                const std::int64_t ms = BbGameMenu::TextSeenMs(t);
+                return ms > 0 && double(ms) / 1000.0 >= g_t.pose_at + 0.3;
+            };
+            const char* text = seen("light lamp") ? "Light lamp" : seen("return to the hunter") ? "Return to the Hunter's Dream" : nullptr;
             u32 pid = 0;
-            if (GuestSvcPromptUp(&pid)) {
+            if (text || GuestSvcPromptUp(&pid)) {
                 if (++g_t.presses > 10) {
                     Log("test: FAILED: no warp menu after 10 Cross presses at the lamp's prompt");
                     g_t.stage = TestState::Done;
                     return;
                 }
-                Log("test: Cross at the lamp #%d (prompt %u, lamp %s)", g_t.presses, pid, lit ? "lit" : "unlit");
+                const std::string what = text ? std::string("\"") + text + "\"" : "id " + std::to_string(pid);
+                Log("test: Cross at the lamp #%d (prompt %s, lamp %s)", g_t.presses, what.c_str(), lit ? "lit" : "unlit");
                 Press(kPadCross, now);
                 g_t.pose_at = now;
                 g_t.at = now + 2.5;
                 return;
             }
             if (!g_t.pose_pressed && g_t.presses == 0 && now - g_t.pose_at >= 2.0) {
-                // The lamp's own "Light lamp" text is not one GuestSvcPromptUp knows (lamprule run 4:
-                // the prompt was on screen, never detected): one Cross per spot as well.
+                // Fallback: no prompt text seen at this spot in 2 s: one Cross anyway.
                 g_t.pose_pressed = true;
                 Log("test: Cross at the lamp (spot %d, no prompt text seen; lamp %s)", g_t.pose, lit ? "lit" : "unlit");
                 Press(kPadCross, now);
