@@ -445,3 +445,12 @@ Note (splittravel): in the vis2-vis4 runs the host's copy did get position updat
   that guest now goes there itself (`TravelAlone`: a re-join at that lamp, the host does not move).
   Other YES answers stay the host's party travel; NO stays the guest's alone trip (plus the rest
   request, as before).
+* **Live (da2, 2026-10-22)**: guest `send-home at +0x138a51c (OnLeave_Limit) dropped: split travel` at
+  +51.3 s, then `the leave state's action-button hold lifted ... (Lua load wait +0x8d 1, hold +0x52 1 -> 0)`
+  (the cause seen live); the guest's Cross at headstone t210000 opened "Awaken Above Ground" in the
+  host's empty Dream (screenshot `smoke/da2/da/shots/dahs_3s_inst1.png`). But its choice, 1st Floor
+  Sickroom (flag 72102410, the host's destination), warped nowhere: the host's headstone flag had
+  already run the guest's own copy of event 12107000 for that lamp at +45.2 s (split dropped that warp
+  as "another member's lamp"), and the instance stays used up until the guest's next load. Fix:
+  `HeadstoneWarpTick` in split `Tick` (`stayrules::HeadstoneFlagLamp`, `HeadstoneWarpFallback`): a
+  guest's own headstone flag with no warp for 8 s runs the warp itself (the travel question follows).

@@ -1168,19 +1168,23 @@ def phase_rt(only):
 # host is in another area the guest uses headstone t210000 itself, travels alone and arrives (the
 # same lamp as the host's: a re-join into the host's area).
 # (after the host's alone travel: the guest's start-of-run re-join into the Dream is a "travels alone (lamp)")
-DA_UNTIL = [r"1:the host travels alone[\s\S]*guest: travels alone \(headstone\)[\s\S]*(arrived in the host world|map - -> m2[2-9])"]
+# Also ends on a failure: the fixture's FAILED (no prompt / no menu), a travel refused or closed.
+DA_UNTIL = [r"1:the host travels alone[\s\S]*(guest: travels alone \(headstone\)[\s\S]*(arrived in the host world|map - -> m2[2-9])"
+            r"|test: levelup: FAILED|travel alone \(headstone\) refused|travelling alone is not possible|nothing runs"
+            r"|the question is closed|no party request possible)"]
 
 
 def phase_da(only):
     return dict(
-        name="da", seconds=360, count=2, headless=0,
+        name="da", seconds=240, count=2, headless=0,
         env=["BB_PARTY_GUEST_LAMPS=1"],
         ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=god",
               "0:BB_PARTY_GUESTSVC_TEST=hostheadstone;hsdelay=12;keys=cross,cross,left,cross,cross",
               "0:BB_PARTY_TRAVEL_CHOICE=alone", "1:BB_PARTY_DIRECTOR_TEST=god",
-              "1:BB_PARTY_GUESTSVC_TEST=guestheadstone;hsapart;hsdelay=10;keys=cross,cross,cross,cross",
+              "1:BB_PARTY_GUESTSVC_TEST=guestheadstone;needprompt;hsapart;hsdelay=10;keys=cross,cross,cross,cross",
               "1:BB_PARTY_TRAVEL_CHOICE=alone"],
-        watch=["--watch", r"test: guest headstone: starting=dahs@1,3,6",
+        watch=["--watch", r"test: levelup: action prompt up=daprompt@0.2",
+               "--watch", r"test: levelup: no talk list: the menu was requested=dahs@0.5,2",
                "--watch", r"the host travels alone=dahost@1,8"],
         crash=[], until=DA_UNTIL, until_hold=10,
     )
@@ -2731,6 +2735,10 @@ def check_da(v, L):
     need(v, L, "da guest's send-home dropped (split)", 1, r"\(OnLeave_Limit\) dropped: split travel", left)
     lift = need(v, L, "da guest's action-button hold lifted", 1, r"the leave state's action-button hold lifted", left)
     hs = need(v, L, "da guest uses a headstone (fixture started)", 1, r"test: guest headstone: starting", left)
+    pr = need(v, L, "da guest sees the headstone's action prompt (no press without it)", 1,
+              r"test: levelup: action prompt up", hs or left)
+    need(v, L, "da guest's Cross opens the headstone's travel list", 1,
+         r"test: levelup: no talk list: the menu was requested", pr or hs or left)
     flag = need(v, L, "da guest's headstone choice (its lamp flag)", 1,
                 r"lamp flag \d+ set by this game|lamp \d+ \(guest\): (held for the choice|BB_PARTY_TRAVEL_CHOICE)",
                 hs or left)

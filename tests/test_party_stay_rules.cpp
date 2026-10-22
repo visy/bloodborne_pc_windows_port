@@ -120,6 +120,24 @@ int main() {
     CHECK(PlanApartGuestYes(true, kM24_01, 0xffffffffu) == ApartYes::PartyRequest);
     CHECK(PlanApartGuestYes(true, 0, kM24_01) == ApartYes::PartyRequest);
 
+    // Headstone choice flags (live: 72102410 "1st Floor Sickroom" -> 2412950).
+    CHECK(HeadstoneFlagLamp(72102410) == 2412950);
+    CHECK(HeadstoneFlagLamp(72102411) == 2412951);
+    CHECK(HeadstoneFlagLamp(72103210) == 3212950);
+    CHECK(HeadstoneFlagLamp(72100110) == 0);  // talk state (721001xx), not a headstone
+    CHECK(HeadstoneFlagLamp(72102100) == 0);  // the Dream itself
+    CHECK(HeadstoneFlagLamp(72410201) == 0);  // a lamp-lit flag
+    CHECK(HeadstoneFlagLamp(12107000) == 0);
+    // The fallback: only a guest in the Dream whose choice brought no warp for 8 s (not before the
+    // kneel's ~4 s, not past 9.5 s: the own-use window, once).
+    CHECK(HeadstoneWarpFallback(true, true, 8.5, false, false));
+    CHECK(!HeadstoneWarpFallback(true, true, 4.0, false, false));
+    CHECK(!HeadstoneWarpFallback(true, true, 25.0, false, false));
+    CHECK(!HeadstoneWarpFallback(true, true, 8.5, true, false));   // the event warped
+    CHECK(!HeadstoneWarpFallback(true, true, 8.5, false, true));   // already run
+    CHECK(!HeadstoneWarpFallback(false, true, 8.5, false, false)); // the host: its own events
+    CHECK(!HeadstoneWarpFallback(true, false, 8.5, false, false)); // left the Dream
+
     if (g_fail) {
         std::printf("party-stay-rules-test: %d failure(s)\n", g_fail);
         return 1;

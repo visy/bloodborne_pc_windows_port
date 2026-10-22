@@ -111,4 +111,29 @@ inline ApartYes PlanApartGuestYes(bool host_apart, std::uint32_t lamp_map, std::
     return host_apart && known && (lamp_map >> 16) == (host_map >> 16) ? ApartYes::OwnTrip : ApartYes::PartyRequest;
 }
 
+/// A Dream headstone's choice flag (the warp list sets it; m21 event 12107000, one instance per lamp,
+/// waits for it and warps): 7210AABn -> lamp AAB2950 + n (72102410 "1st Floor Sickroom" -> 2412950,
+/// live). 0 for any other flag.
+inline std::uint32_t HeadstoneFlagLamp(std::uint32_t flag) {
+    if (flag / 10000 != 7210) {
+        return 0;
+    }
+    const std::uint32_t aab = flag % 10000 / 10, n = flag % 10;
+    return aab >= 220 && aab <= 369 && aab % 10 <= 2 ? aab * 10000 + 2950 + n : 0;
+}
+
+/// Live (dreamstone da2): after the host's headstone warp to lamp L, the guest's own copy of event
+/// 12107000 for L ran too (the host's flag reached it; split travel dropped that warp as "another
+/// member's lamp") and ended. The guest's later choice of L at a headstone set the flag again and
+/// nothing warped: the event instance is used up until the guest's next load. So a guest's own
+/// headstone choice that brings no warp within kHeadstoneWarpWait s runs the warp itself (the path
+/// the event's warp would take: the travel question, then the guest's trip or the party request).
+/// The event's own warp comes about 4 s after the choice (the kneel; live host 41.2 -> 45.2 s).
+constexpr double kHeadstoneWarpWait = 8.0;
+constexpr double kHeadstoneWarpGiveUp = 9.5;  // inside split travel's own-use window (kLampOriginWindow 10 s)
+inline bool HeadstoneWarpFallback(bool guest_client, bool in_dream, double since_flag, bool warp_since_flag, bool done) {
+    return guest_client && in_dream && !warp_since_flag && !done && since_flag >= kHeadstoneWarpWait &&
+           since_flag < kHeadstoneWarpGiveUp;
+}
+
 }  // namespace coop::stayrules
