@@ -281,6 +281,19 @@ static void LiveValues() {
     s.party_pings = true;
     s.party_through_walls = false;
     Advance(16);
+
+    // Party look: Companions without glow follows party_glow_off both ways (on by default).
+    const P::Row& glow = RowNamed(PageNamed(u"Party look"), u"Companions without glow");
+    assert(glow.kind == P::Kind::Toggle);
+    s.party_glow_off = true;  // (the sweep above may have flipped it)
+    Advance(16);
+    assert(*P::Byte(glow.field) == 1);
+    *P::Byte(glow.field) = 0;
+    Advance(16);
+    assert(!s.party_glow_off);
+    s.party_glow_off = true;
+    Advance(16);
+    assert(*P::Byte(glow.field) == 1);
 }
 
 /// Cross on a button row (the glue calls Press while the row has the cursor).

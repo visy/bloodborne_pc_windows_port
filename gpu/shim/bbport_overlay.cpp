@@ -1825,6 +1825,12 @@ void PartyTab() {
              "Вкл.: наша табличка с именем над спутниками вместо игровой (та прячется за любым деревом "
              "или углом). Выкл.: игровая табличка, как в оригинальной игре."),
            on);
+    Toggle("party_glow_off", T("Companions without glow", "Спутники без свечения"), s.party_glow_off,
+           T("On: the other hunters of the party look like normal hunters on your screen. Off: the game's "
+             "blue, glowing phantom look. Only how you see them; they stay cooperators.",
+             "Вкл.: другие охотники группы выглядят на вашем экране как обычные охотники. Выкл.: синее "
+             "свечение фантомов, как в игре. Только вид у вас; они остаются союзниками."),
+           on);
     Toggle("party_npc_talk", T("Share NPC dialogue", "Общие диалоги NPC"), s.party_npc_talk,
            T("See and hear the NPC conversations of companions near you: the game's subtitles, the NPC's "
              "voice, their choices and gifts. Range: System > Story & dialogue > NPC dialogue range.",
