@@ -337,11 +337,14 @@ before anyone is in the game):
 
 **Rules, difficulty and HUD**
 
-- **Death has a cost.** Each death stacks "rot", picked at random, up to 5: −10% max HP, −10% max
-  stamina, +10% stamina use, −15% rally or −10 Item Discovery. Using a lamp (even just opening its
-  travel menu) or levelling up clears it. Each save slot keeps its own. Your current rot and what it
-  does ("Rot 2/5: max HP -20 %") show on the *Party* page and under the party HUD. On by default; the
-  host can turn it off on the *Deaths & revives* page.
+- **Death can have a cost (optional).** With "rot" on, each death stacks a penalty, picked at random,
+  up to 5: −10% max HP, −10% max stamina, +10% stamina use, −15% rally or −10 Item Discovery. Using a
+  lamp (even just opening its travel menu) or levelling up clears it. Killing a boss clears it for the
+  whole party; when the enemy that killed you dies (whoever kills it), or when you pick up your Blood
+  Echoes, the rot from that death goes. Each save slot keeps its own. Your current rot and what it
+  does ("Rot 2/5: max HP -20 %") show on the *Party* page and under the party HUD, and a notice says
+  when some is cleansed. Off by default; the host turns it and each of the three cleanses on or off on
+  the *Rot* page (or in the launcher's *Party Rules & Sync*).
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter; normal enemies get tougher too. Six values (boss / enemy health, damage,
   poise) on the *Enemy scaling* page.
@@ -362,7 +365,7 @@ before anyone is in the game):
   gets no Echoes or Insight.
 - **Party HUD.** Party members and events in a small HUD.
 - **Every party rule in the game's own menu.** The *System* menu has the party pages *Deaths &
-  revives* (rot, getting up without a loading screen, respawns), *World & PvP*, *Shared world*
+  revives* (getting up without a loading screen, respawns), *Rot* (rot on death and what cleanses it), *World & PvP*, *Shared world*
   (enemies the party killed stay dead, gathering the party, NPCs as in the host's world), *Story &
   dialogue*, *Party rewards* (also your key items as a guest), *Enemy scaling* and *Party display*;
   the host's rules show read-only for guests. The launcher's *Party Rules & Sync* shows the same

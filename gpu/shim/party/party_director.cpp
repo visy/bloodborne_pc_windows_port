@@ -2220,6 +2220,21 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         Log("test: host_spfx: SpEffect %d on entity %d: %s", id, entity, ok ? what.c_str() : "FAILED: no such chr loaded");
     } else if (step.kind == TravelStep::HostGfx) {
         GfxTestStep(step.args);
+    } else if (step.kind == TravelStep::HostPoise && step.args.find(':') != std::string::npos) {
+        // host_rule=KEY:0|1 (smoke group rot): a party gameplay switch (BbSettings::PartySwitches,
+        // e.g. party_rot_cleanse_killer) set live, not saved; the host's rules go out with it.
+        const std::string key = step.args.substr(0, step.args.find(':'));
+        const bool on = step.args.substr(step.args.find(':') + 1) != "0";
+        bool found = false;
+        for (int i = 0; i < BbSettings::PartySwitchCount; ++i) {
+            const BbSettings::PartySwitch& sw = BbSettings::PartySwitches[i];
+            if (key != sw.key) continue;
+            found = true;
+            const bool was = (BbSettings::Get().*(sw.member)).load();
+            (BbSettings::Get().*(sw.member)).store(on);
+            Log("test: host_rule: %s %d -> %d", sw.key, was ? 1 : 0, on ? 1 : 0);
+        }
+        if (!found) Log("test: host_rule: no party switch %s", key.c_str());
     } else if (step.kind == TravelStep::HostPoise) {
         // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the
         // balance pass rewrites row 7503 and sends the rules on.
@@ -3731,6 +3746,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
                        item.rfind("host_poise=", 0) == 0 || item.rfind("host_spfx=", 0) == 0 ||
                        item.rfind("host_gfx=", 0) == 0 ||
+                       item.rfind("host_rule=", 0) == 0 ||
                        item.rfind("guest_home", 0) == 0 || item.rfind("host_leave", 0) == 0 ||
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
                        item.rfind("guest_rejoin", 0) == 0 || item.rfind("host_gather", 0) == 0) {
@@ -3740,6 +3756,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
                             : item.rfind("host_poise", 0) == 0    ? TravelStep::HostPoise
                             : item.rfind("host_gfx", 0) == 0      ? TravelStep::HostGfx
+                            : item.rfind("host_rule=", 0) == 0    ? TravelStep::HostPoise
                             : item.rfind("host_spfx", 0) == 0     ? TravelStep::HostSpfx
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress

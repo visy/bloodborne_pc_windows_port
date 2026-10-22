@@ -143,5 +143,30 @@ int main() {
     BbSettings::Load();
     assert(BbSettings::Get().model_lod == 0);
     std::remove(path);
-    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines, model detail -2 read as 0");
+
+    // 0.7.2 settings_rev 1: a 0.7.1 bbport.ini's party_rot=1 (the game wrote its old default at
+    // every save) goes to 0 once; a later explicit 1 stays; a new file starts at the revision.
+    {
+        const char old_ini[] = "upscaler=fsr3\nparty_rot=1\nshow_fps=1\n";
+        assert(bb_test_write_file(path, old_ini, sizeof(old_ini) - 1) == 0);
+        BbSettings::Load();
+        assert(!s.party_rot && s.settings_rev == BbSettings::kSettingsRev);
+        std::string text = Read(path);
+        assert(text.find("party_rot=0\n") != std::string::npos && text.find("party_rot=1") == std::string::npos &&
+               text.find("settings_rev=1\n") != std::string::npos && text.find("show_fps=1\n") != std::string::npos);
+        s.party_rot = true;  // the player turns it on again
+        BbSettings::Save();
+        BbSettings::Load();
+        assert(s.party_rot && s.settings_rev == BbSettings::kSettingsRev);  // once only
+        text = Read(path);
+        assert(text.find("party_rot=1\n") != std::string::npos && text.find("settings_rev=1\n") != std::string::npos);
+        std::remove(path);
+        BbSettings::Load();  // no file: nothing to migrate (rot as it was), the revision is current
+        assert(s.party_rot && s.settings_rev == BbSettings::kSettingsRev);
+        BbSettings::Save();
+        BbSettings::Load();
+        assert(s.party_rot && Read(path).find("settings_rev=1\n") != std::string::npos);
+    }
+    std::remove(path);
+    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines, model detail -2 read as 0, 0.7.2 rot migration");
 }

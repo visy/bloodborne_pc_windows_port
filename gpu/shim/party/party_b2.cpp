@@ -6,6 +6,7 @@
 // is System V: every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_b2.h"
 #include "party_async_io.h"
+#include "party_balance.h"
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_runtime.h"
@@ -6282,8 +6283,22 @@ void OwnStainLogTick(const GameSnapshot& s) {
 void OwnStainWatchTick(const GameSnapshot& s) {
     static int flag_was = -1, echoes_was = -1;
     static float pos_was[3] = {};
+    // 0.7.2 rot (cleansed by retrieving the Blood Echoes): a stain taken counts once its echoes came
+    // back (a load that drops the record's flag takes nothing; pard2 c10).
+    static int own_echoes_was = -1, taken_stain = 0, echoes_before = 0;
+    static double taken_at = -1;
     if (!g_on.load() || !s.world_up || s.loading || !s.player) {
         return;
+    }
+    if (taken_at > 0) {
+        if (s.echoes - echoes_before >= std::max(1, taken_stain / 2)) {
+            Log("own bloodstain taken and its Blood Echoes back (%d -> %d, the stain held %d): retrieved", echoes_before,
+                s.echoes, taken_stain);
+            balance::NoteEchoesRetrieved("the own bloodstain");
+            taken_at = -1;
+        } else if (Now() - taken_at > 5.0) {
+            taken_at = -1;  // the echoes never came: not a pickup
+        }
     }
     const u64 gdm = Slot(kSlotGameData);
     const u64 rec = Field<u64>(gdm, 0x30);
@@ -6296,10 +6311,16 @@ void OwnStainWatchTick(const GameSnapshot& s) {
     if (flag_was < 0) {
         flag_was = flag;
         echoes_was = echoes;
+        own_echoes_was = s.echoes;
         std::memcpy(pos_was, p, sizeof pos_was);
         return;
     }
     const deathrules::StainChange c = deathrules::PlanStainChange(flag_was, echoes_was, flag, echoes);
+    if (c == deathrules::StainChange::Taken && own_echoes_was >= 0) {
+        taken_at = Now();
+        taken_stain = echoes_was;
+        echoes_before = own_echoes_was;
+    }
     if (c != deathrules::StainChange::None) {
         // +0x18 is the chr's spot at the death; +0x00 the game's own stain spot (0x1904660, the last
         // safe spot of the chr's position history), where 0x1868A50 builds the live stain and its
@@ -6317,6 +6338,7 @@ void OwnStainWatchTick(const GameSnapshot& s) {
     }
     flag_was = flag;
     echoes_was = echoes;
+    own_echoes_was = s.echoes;
     std::memcpy(pos_was, p, sizeof pos_was);
 }
 
@@ -6474,6 +6496,7 @@ void GuestStainTick(const GameSnapshot& s) {
     char toast[96];
     std::snprintf(toast, sizeof toast, "Blood Echoes recovered: %d", p.s.echoes);
     party::status::SetLastEvent(toast);
+    balance::NoteEchoesRetrieved("the party stain in the host's world");
     p = PartyStain{};
     WriteStainLocked(slot);
     party::ping::SetStain({});

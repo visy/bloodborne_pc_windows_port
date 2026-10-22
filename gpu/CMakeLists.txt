@@ -755,6 +755,13 @@ add_executable(party-balance-test EXCLUDE_FROM_ALL ../tests/test_party_balance.c
 target_compile_options(party-balance-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-balance-test PRIVATE shim)
 set_target_properties(party-balance-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# C4 rot cleanses (0.7.2, shim/party/party_rot_rules.h, header only) with the rules / party_rot.txt
+# fields of party_balance_rules. cmake --build out/gpu --target party-rot-test
+add_executable(party-rot-test EXCLUDE_FROM_ALL ../tests/test_party_rot.cpp shim/party/party_balance_rules.cpp
+    shim/net/json.cpp)
+target_compile_options(party-rot-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-rot-test PRIVATE shim)
+set_target_properties(party-rot-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Friendly fire / PvP (I1, shim/party/party_pvp_rules.h; the game side party_pvp.cpp is in bbgpu
 # through SHIM_SOURCES): session gate, the guest's rule, team pairs, test steps.
 # cmake --build out/gpu --target party-pvp-test

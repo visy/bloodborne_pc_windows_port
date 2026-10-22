@@ -47,6 +47,10 @@ const PartySwitch PartySwitches[] = {
     {"party_gather", "BB_PARTY_GATHER", &Values::party_gather, false},
     {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
     {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
+    // 0.7.2: the rot cleanses (party_balance reads them live; host's rules).
+    {"party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", &Values::party_rot_cleanse_boss, false},
+    {"party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", &Values::party_rot_cleanse_killer, false},
+    {"party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", &Values::party_rot_cleanse_echoes, false},
 };
 const int PartySwitchCount = int(std::size(PartySwitches));
 
@@ -204,6 +208,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_guest_lamps = i != 0;
     } else if (key == "party_rot") {
         v.party_rot = i != 0;
+    } else if (key == "settings_rev") {
+        v.settings_rev = i;
     } else if (key == "party_boss_hp") {
         v.party_boss_hp = std::clamp(i, 0, 400);
     } else if (key == "party_boss_damage") {
@@ -335,7 +341,10 @@ void Load() {
                               ? MenuLanguage::Russian
                               : MenuLanguage::English;
     }
+    v.settings_rev = 0;
+    bool have_file = false;
     if (FILE* file = std::fopen(Path(), "r")) {
+        have_file = true;
         char line[256];
         while (std::fgets(line, sizeof(line), file)) {
             std::string text{line};
@@ -348,6 +357,19 @@ void Load() {
         }
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
+    }
+    // One-time changes of saved settings (kSettingsRev; the launcher does the same when it starts
+    // first). A new bbport.ini starts at the current revision.
+    if (!have_file) {
+        v.settings_rev = kSettingsRev;
+    } else if (v.settings_rev < kSettingsRev) {
+        const int was = v.settings_rev.load();
+        if (was < 1) v.party_rot = false;  // rev 1 (0.7.2): rot off by default, the old saved 1 was the old default
+        v.settings_rev = kSettingsRev;
+        WriteBindingLines({{"party_rot", std::string(v.party_rot ? "1" : "0")},
+                           {"settings_rev", std::to_string(kSettingsRev)}});
+        std::printf("Settings: bbport.ini settings_rev %d -> %d (rot off by default: party_rot=0 once)\n", was,
+                    kSettingsRev);
     }
     NoteFileTime();
     // Environment overrides (scripts, A/B tests).
@@ -390,6 +412,8 @@ void Load() {
         v.party_share_lamps = sl[0] == '1';
     if (const char* gb = std::getenv("BB_PARTY_GUESTS_BRING_LAMPS"); gb && (gb[0] == '0' || gb[0] == '1'))
         v.party_guests_bring_lamps = gb[0] == '1';
+    // C4 rot (tests, scripted hosts): BB_PARTY_ROT=0/1 wins over the ini.
+    if (const char* ro = std::getenv("BB_PARTY_ROT"); ro && (ro[0] == '0' || ro[0] == '1')) v.party_rot = ro[0] == '1';
     // The party gameplay switches: BB_PARTY_*=0/1 (tools/mp, scripts) wins over the ini; an unset
     // variable gets the ini's value, for the party modules that read their switch at start.
     // BB_PARTY_SWITCH_ENV lists the variables put there: a restart from the menu (runtime_restart
@@ -706,6 +730,7 @@ void Save() {
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));
     put("party_rot", flag(v.party_rot));
+    put("settings_rev", std::to_string(v.settings_rev.load()));
     put("party_boss_hp", std::to_string(v.party_boss_hp.load()));
     put("party_boss_damage", std::to_string(v.party_boss_damage.load()));
     put("party_boss_poise", std::to_string(v.party_boss_poise.load()));
