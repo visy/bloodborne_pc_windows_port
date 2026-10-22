@@ -833,31 +833,35 @@ RH_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
 
 
 def phase_rh(only):
-    # liftfix runs 11 / 12: a test warp out of the car at the bottom made the car leave upward in that
-    # frame (the down event's "every player out" and the up event's "the player in" saw two positions)
-    # and the next warp in fell into the pit at y 1546, where the report's host died. The riders walk
-    # in and out here (the left stick), as a player does.
+    # liftfix runs 11-15: the car left upward again in the frame its rider stepped out of the bottom box
+    # (the Research Hall lifts clear their busy flag in that frame: liftrules::BusyDefer) and a host on
+    # the platform's edge or stepping back fell into the 12 m pit (the report's death at y 1546). Each
+    # exit is followed by a wait in which the car must stay; then the next ride. (A) the host down
+    # alone, the guest at the lamp; (B) the host up alone; (C) host and guest down; (D) host and guest up.
     common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s/13501117" % (RH_CAR, RH_POS, RH_BUSY)
     arrived = lambda anim: "?obj=%s:%s" % (RH_CAR, anim)
-    trig = "-344.56:-792.84:0.35:40"      # the car's trigger box (3502106 top / 3502107 bottom)
-    bot_out = "-341.5:-795.0:0.7:40"       # the bottom landing beside the car, toward lever 3501107
-    top_out = "-351.0:-793.0:0.7:40"       # the top landing beside the car, toward lever 3501106
+    top_out = RH_TOP_OUT
+    bot_out = "-341.0:1557.9:-796.0:0:native:pin=2"   # the bottom landing beside the car, off its platform
     host = [common,
-            "host_move=%s@4%%m35^1" % RH_TOP_OUT,                                  # at the top landing
-            "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) into the car: down
-            "host_stick=%s@2%%m35%s" % (bot_out, arrived(2)),                      # 2 s after the arrival, out
-            "host_stick=%s@4%%m35" % trig,                                         # (B) 4 s later back in: up
-            "host_stick=%s@2%%m35%s" % (top_out, arrived(6)),                      # out at the top
-            "host_stick=%s@2%%m35?near=%s:1.0" % (trig, RH_TOP_BESIDE.rsplit(":", 0)[0]),  # (C) in, the guest on it
-            "host_stick=%s@2%%m35%s" % (bot_out, arrived(2)),                      # out at the bottom
+            "host_move=%s@4%%m35^1" % top_out,                                     # at the top landing
+            "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) down alone
+            "host_move=%s@2%%m35%s" % (bot_out, arrived(2)),                        # 2 s in, out; the car stays
+            "host_move=%s@6%%m35" % RH_BOT_IN,                                     # (B) 6 s later back in: up
+            "host_move=%s@2%%m35%s" % (RH_TOP_OUT2, arrived(6)),                    # out at the top
+            "host_move=%s@2%%m35?near=%s:1.0" % (RH_TOP_IN, ":".join(RH_TOP_BESIDE.split(":")[:3])),  # (C) both
+            "host_move=%s@2%%m35%s" % (bot_out, arrived(2)),                        # out at the bottom
+            "host_move=%s@6%%m35?near=%s:1.0" % (RH_BOT_IN, ":".join(RH_BOT_BESIDE.split(":")[:3])),  # (D) both
+            "host_move=%s@2%%m35%s" % (top_out, arrived(6)),
             "host_press=0@4%%m35!?%s=0" % RH_BUSY]
     g1 = [common,
           "guest_move=%s@6%%m35" % RH_LAMP,                                         # at the lamp, 40 m away
-          "guest_move=%s@1%%m35?near=-351.0:1583.1:-793.0:1.5" % RH_TOP_BESIDE,     # (C) on the car beside
-          "guest_move=%s@2%%m35%s" % (RH_LAMP, arrived(2)),                         # back at the lamp
+          "guest_move=%s@1%%m35?near=-357.6:1583.1:-790.2:1.0" % RH_TOP_BESIDE,     # (C) on the car at the top
+          "guest_move=%s@2%%m35%s" % (RH_LAMP, arrived(2)),                         # out at the bottom (lamp)
+          "guest_move=%s@3%%m35?near=-341.0:1557.9:-796.0:1.5" % RH_BOT_BESIDE,     # (D) on the car at the bottom
+          "guest_move=%s@2%%m35%s" % (RH_TOP_OUT2, arrived(6)),                    # out at the top
           "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
     return dict(
-        name="rh", seconds=300, count=2, headless=0, fps=60,
+        name="rh", seconds=360, count=2, headless=0, fps=60,
         env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
@@ -876,8 +880,10 @@ def phase_rs(only):
     host = [common,
             "host_move=%s@4%%m35" % RH_TOP_OUT,                                    # at the top landing
             "host_move=%s@3%%m35" % RH_TOP_IN,                                     # into the car: down
-            "host_move=%s@2%%m35?obj=%s:2" % (RH_BOT_OUT, RH_CAR),                  # out 2 s after the arrival
-            "host_press=0@8%m35!"]                                                 # 8 s to see the car
+            "host_move=-341.0:1557.9:-796.0:0:native:pin=2@2%%m35?obj=%s:2" % RH_CAR,  # out 2 s after the arrival
+            "host_move=%s@6%%m35" % RH_BOT_IN,                                     # 6 s later back in: up
+            "host_move=%s@2%%m35?obj=%s:6" % (RH_TOP_OUT, RH_CAR),                  # out at the top
+            "host_press=0@4%m35!"]
     return dict(
         name="rs", seconds=200, count=1, headless=0, fps=int(os.environ.get("BB_RS_FPS", "60")),
         env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
@@ -892,9 +898,16 @@ def phase_rs(only):
 def check_rs(v, L):
     # every ride start (anim 1 down / 5 up playing), not only the ended ones: run 15's up departure
     # started before the down ride's end animation
-    starts = [(t, "up" if " anim 5 " in l else "down") for t, l in L.all(0, r"test: object %s anim [15] playing 1" % RH_CAR)]
-    v.step("rs one ride, the car stays down after the host left it", len(starts) == 1,
+    starts = []
+    for t, l in L.all(0, r"test: object %s anim [15] playing 1" % RH_CAR):
+        if not starts or t - starts[-1][0] > 3.0:
+            starts.append((t, "up" if " anim 5 " in l else "down"))
+    v.step("rs two rides (down, then up with the host): the car stays down after the host left it",
+           [d for _t, d in starts] == ["down", "up"],
            "%d ride starts: %s" % (len(starts), ", ".join("%s at +%.1f s" % (d, t) for t, d in starts)))
+    f = falls(L, 0, rate=16.0)
+    v.step("rs no fall (vertical speed under 16 m/s)", not f, ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "none")
+    jump_steps(v, "rs", L, [[dict(t=t, t_end=t + 14) for t, _d in starts]], (-345.0, -792.5), ["down", "up"])
     none_of(v, L, "rs nobody died", r"local death: HP 0", 0, 1e9, (0,))
     check_common(v, L, "rs")
 
@@ -2887,18 +2900,28 @@ def rh_rides(L, i):
 
 def check_rh(v, L):
     need(v, L, "rh join: 2 players", 0, r"cooperators 0 -> 1")
-    names = ["A host alone down", "B host alone up", "C host and guest down"]
-    riders = [(0,), (0,), (0, 1)]
+    names = ["A host alone down", "B host alone up", "C host and guest down", "D host and guest up"]
+    riders = [(0,), (0,), (0, 1), (0, 1)]
     rides = [rh_rides(L, i) for i in (0, 1)]
-    v.step("rh rides: 3 on each game", len(rides[0]) == 3 and len(rides[1]) == 3,
+    v.step("rh rides: 4 on each game", len(rides[0]) == 4 and len(rides[1]) == 4,
            "host %d, guest %d" % (len(rides[0]), len(rides[1])))
+    # every ride start (the car's ride animation 1 / 5 begins): 4, none without a step into the car
+    starts = []
+    for t, l in L.all(0, r"test: object %s anim [15] playing 1" % RH_CAR):
+        if not starts or t - starts[-1] > 3.0:
+            starts.append(t)
+    v.step("rh the car never leaves on its own (4 ride starts on the host)", len(starts) == 4,
+           "%d starts at %s" % (len(starts), ", ".join("+%.1f s" % t for t in starts)))
+    v.step("rh the busy flag clears after the end animation",
+           bool(L.all(0, r"lift ride end: event 1350111[23] clears busy")),
+           "%d lines" % len(L.all(0, r"lift ride end: event 1350111[23] clears busy")))
     for k, name in enumerate(names):
         rh_ = rides[0][k] if k < len(rides[0]) else None
         rg = rides[1][k] if k < len(rides[1]) else None
         if not rh_ or not rg or rh_["end"] is None or rg["end"] is None:
             v.step("rh %s: ran and ended on both games" % name, False, "host %s, guest %s" % (rh_, rg))
             continue
-        up = k == 1
+        up = k in (1, 3)
         v.step("rh %s: one ride on both games" % name, rh_["up"] == up and rg["up"] == up and
                abs(rh_["start"] - rg["start"]) < 1.0, "start host %.2f / guest %.2f" % (rh_["start"] % 3600, rg["start"] % 3600))
         w = max(rh_["end"], rg["end"]) + 0.5

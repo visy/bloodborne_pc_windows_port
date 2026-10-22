@@ -193,6 +193,23 @@ int main() {
         CHECK(RiderTick(n, true, false, 0.5, -350.0f, 1570.0f, -793.0f, put) == RiderStep::idle);
     }
 
+    // The Research Hall busy clear moved to the event's end (runs 11-15).
+    {
+        const BusyDefer* d = nullptr;
+        CHECK(BusyDeferStep(13501113, 2003, 2, 26, 13504110u, &d) == BusyStep::keep && d && d->busy == 13504110u);
+        CHECK(BusyDeferStep(13501112, 1000, 4, 30, 0, &d) == BusyStep::clear);
+        CHECK(BusyDeferStep(13501123, 2003, 2, 26, 13504120u, &d) == BusyStep::keep);
+        CHECK(BusyDeferStep(13501113, 2003, 2, 19, 13501116u, &d) == BusyStep::none);   // the position flag
+        CHECK(BusyDeferStep(13501113, 2003, 2, 26, 13501116u, &d) == BusyStep::none);   // not the busy flag
+        CHECK(BusyDeferStep(13501103, 2003, 2, 47, 13504100u, &d) == BusyStep::none);   // the altar lift waits 1 s
+        CHECK(BusyDeferStep(12410322, 1000, 4, 26, 0, &d) == BusyStep::none);
+        for (const BusyDefer& b : BusyDefers()) {
+            bool lift = false;
+            for (const Lift& l : Lifts()) lift = lift || l.busy == b.busy;
+            CHECK(lift);  // a lift of the table
+        }
+    }
+
     if (g_fail) {
         std::printf("%d check(s) failed\n", g_fail);
         return 1;

@@ -194,6 +194,50 @@ inline RiderStep RiderTick(RiderTrack& r, bool car_playing, bool ride_bit, doubl
     return RiderStep::through;
 }
 
+/// liftfix (the Research Hall report, live runs 11-15): the Research Hall's two lifts (1F <-> 3F car
+/// 3501105, 3F <-> 5F car 3501110) clear their busy flag in the frame their ride's "every player out of
+/// the arrival box" check passes (13501112 / 13 / 22 / 23: 3[7] then 2003[2] busy = 0), while the other
+/// direction's start check "the player in that same box" (3[2]) still reads the player inside for that
+/// frame. So the car leaves again the moment its rider steps out of the box: live, alone and in a party,
+/// at 30 and 60 FPS, the car went back up from the bottom with the host still on its wide platform or
+/// just off it, and the host fell into the 12 m pit under the car (HP 0 at y 1546, the report's spot).
+/// Every other lift of the game clears busy only after its end animation (or after a 1 s wait: the
+/// Research Hall altar lift 13501102 / 03). Here the clear is moved to the event's end, after the end
+/// animation: the instruction is rewritten to keep busy on, and the end (1000[4]) clears it.
+struct BusyDefer {
+    std::int32_t event;
+    std::int32_t clear_index, end_index;  // the 2003[2] busy = 0 right after the 3[7]; the 1000[4] end
+    std::uint32_t busy;
+};
+inline const std::vector<BusyDefer>& BusyDefers() {
+    static const std::vector<BusyDefer> d = {
+        {13501112, 26, 30, 13504110u},  // Research Hall 1F <-> 3F, up
+        {13501113, 26, 30, 13504110u},  // ... down
+        {13501122, 26, 30, 13504120u},  // Research Hall 3F <-> 5F, up
+        {13501123, 26, 30, 13504120u},  // ... down
+    };
+    return d;
+}
+enum class BusyStep { none, keep, clear };
+/// The instruction (bank, id) at `index` of event `event_id`: `keep` (rewrite the busy clear to keep it
+/// on: its flag must be `flag`), `clear` (the event's end: clear busy now), or none.
+inline BusyStep BusyDeferStep(std::int32_t event_id, std::int32_t bank, std::int32_t id, std::int32_t index,
+                              std::uint32_t flag, const BusyDefer** which) {
+    for (const BusyDefer& d : BusyDefers()) {
+        if (d.event != event_id) {
+            continue;
+        }
+        if (which) *which = &d;
+        if (bank == 2003 && id == 2 && index == d.clear_index && flag == d.busy) {
+            return BusyStep::keep;
+        }
+        if (bank == 1000 && id == 4 && index == d.end_index) {
+            return BusyStep::clear;
+        }
+    }
+    return BusyStep::none;
+}
+
 /// The lift whose position flag is `pos`, or nullptr.
 inline const Lift* LiftByPosFlag(std::uint32_t pos) {
     for (const Lift& l : Lifts()) {
