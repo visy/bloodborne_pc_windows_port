@@ -3799,7 +3799,8 @@ def check_nf(v, L):
     rule = need(v, L, "nf (rule on) the guest's copy of Alfred's init runs as the host's", 1,
                 r"guest copy of event 12500050 runs as the host's", on[0])
     guest_b = nf_hp(L, 1, NF_ALFRED, rule or on[0])
-    v.step("nf (rule on) Alfred hostile on the guest's game too (team 27)", any(tm == 27 for _, _, tm in guest_b),
+    # a guest's copy switches him to 23 (a foe for a phantom; 27 is none: party_npcfight_rules.h)
+    v.step("nf (rule on) Alfred hostile on the guest's game too (team 23)", any(tm == 23 for _, _, tm in guest_b),
            "teams %s" % sorted({tm for _, _, tm in guest_b}))
     none_of(v, L, "nf no flag write from a guest copy reaches the host as a world action",
             r"world action sent to the host[^\n]*\b(134[0-9]|1350)\b", 0, insts=(1,))
