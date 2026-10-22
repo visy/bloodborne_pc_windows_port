@@ -1038,7 +1038,9 @@ LP_NEW = ("2412951", ["12417830", "12417831", "72410201"])   # Central Yharnam: 
 # arrival must be a lamp lit in the host's world, never the unlit one nearest the host), and dies
 # once the guest lit that lamp: it must get up at its own last lamp, not the guest's.
 LP_HOST_LAMP = "2412953"
-LP_HOST_NEAR = "-187.4:-28.6:70.5"  # 6-8 m from lamp 2412951's spot (-193.4, -28.65, 68.5)
+# 1.2 m behind lamp 2412951's object (run 7's spot 8 m off dropped the host 10 m into a niche); the
+# host beside the lamp a guest lights must still keep its own last lamp
+LP_HOST_NEAR = "-196.8:-28.6:64.2"
 LP_UNTIL = [r"1:test: listonly: warp menu closed", r"0:host death taken: .*revive at lamp",
             r"0:save requested \(.*a lamp a guest lit in the host's world",
             r"1:written into the own save \(shared lamps; lamps.* %s[\s\S]*save requested \(.*shared lamps from "

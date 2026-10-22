@@ -193,6 +193,8 @@ static void TestLampShare() {
     CHECK(!RestoreLastLamp(3402951u, 3502950u, 9.0, 40.0f, false));  // lit long ago: a rest / travel
     CHECK(!RestoreLastLamp(3502950u, 3502950u, 0.4, 40.0f, false));  // unchanged
     CHECK(RestoreLastLamp(3402951u, 3502950u, 0.4, -1.0f, false));   // position unknown: guarded
+    CHECK(RestoreLastLamp(3402951u, 3502950u, 0.4, 2.0f, false, true));  // host beside it, a guest lit it
+    CHECK(!RestoreLastLamp(3402951u, 3502950u, 0.4, 2.0f, true, true));   // a load: a travel
     // Guest-lit only after a real use: at the lamp, not right after a load (a lamp warp's arrival).
     CHECK(CountsAsGuestLit(45.0, 2.0f));
     CHECK(!CountsAsGuestLit(3.0, 0.5f));    // the report: arrived by the lamp warp, flag rose at once

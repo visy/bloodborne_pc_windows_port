@@ -219,9 +219,12 @@ inline std::vector<std::uint32_t> LitFlagsOfLampLit(std::uint32_t id) {
 /// a travel, the party's own placements, a lamp this player lit itself).
 constexpr double kLitWindowS = 5.0;
 constexpr float kNearM = 8.0f;
-inline bool RestoreLastLamp(std::uint32_t was_rp, std::uint32_t now_rp, double lit_ago, float dist_m, bool loading) {
+/// `by_guest`: the host lit that lamp for a guest's lamp_lit event (it knows; then the distance does
+/// not matter: a host standing at the lamp did not use it).
+inline bool RestoreLastLamp(std::uint32_t was_rp, std::uint32_t now_rp, double lit_ago, float dist_m, bool loading,
+                            bool by_guest = false) {
     return now_rp != was_rp && now_rp != 0 && !loading && lit_ago >= 0.0 && lit_ago <= kLitWindowS &&
-           !(dist_m >= 0.0f && dist_m <= kNearM);
+           (by_guest || !(dist_m >= 0.0f && dist_m <= kNearM));
 }
 
 /// A lamp the guest's game shows lit in the host's world counts as lit BY the guest (EVENT lamp_lit to

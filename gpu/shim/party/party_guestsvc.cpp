@@ -1504,6 +1504,9 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
 }
 
 std::mutex g_lit_mu;
+// Host: the lamp (return point) a guest's lamp_lit event lit here last, and when (the guard).
+std::atomic<std::uint32_t> g_guest_lit_rp{0};
+std::atomic<double> g_guest_lit_at{-1};
 std::deque<std::pair<int, std::vector<std::uint32_t>>> g_lit_in;  // host: from guests
 std::vector<std::uint32_t> g_lit_out;                             // guest: to send
 
@@ -2306,6 +2309,10 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
                 list += " " + std::to_string(id) + (before ? "(was set)" : ok ? "" : "(NOT written)");
                 wrote_own = wrote_own || (own && ok && !before);
                 wrote_lit = wrote_lit || (!own && ok && !before);
+                if (!own && ok && LampOfLitFlag(id)) {
+                    g_guest_lit_rp = LampOfLitFlag(id);
+                    g_guest_lit_at = Now();
+                }
             }
             if (own) {
                 Log("lamps: slot %d's own save has lamps this world lacked (shared lamps): set%s", slot, list.c_str());
@@ -2531,7 +2538,8 @@ void LastLampGuardTick(const GameSnapshot& s) {
         dist = std::sqrt((me[0] - sp[0]) * (me[0] - sp[0]) + (me[1] - sp[1]) * (me[1] - sp[1]) +
                          (me[2] - sp[2]) * (me[2] - sp[2]));
     }
-    const bool restore = lampshare::RestoreLastLamp(std::uint32_t(was.lamp), now_rp, pending_lit_ago, dist, false);
+    const bool by_guest = g_guest_lit_rp.load() == now_rp && Now() - g_guest_lit_at.load() <= lampshare::kLitWindowS + 3.0;
+    const bool restore = lampshare::RestoreLastLamp(std::uint32_t(was.lamp), now_rp, pending_lit_ago, dist, false, by_guest);
     if (!restore) {
         pending = false;
         base = cur;
