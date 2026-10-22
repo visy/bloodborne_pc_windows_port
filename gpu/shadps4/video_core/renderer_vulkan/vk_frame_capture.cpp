@@ -19,7 +19,16 @@ struct Target {
     VAddr address{};
     vk::Format format{};
     u32 width{}, height{};
+    u32 tile{}, levels{}, layers{};
     bool operator==(const Target&) const = default;
+};
+
+/// The draws of one vs/ps pair in a pass, with the textures its first draw sampled.
+struct Group {
+    u64 vs{}, ps{};
+    u32 draws{};
+    u64 indices{};
+    std::vector<std::pair<Target, bool>> sampled;
 };
 
 struct Entry {
@@ -32,6 +41,7 @@ struct Entry {
     std::vector<std::pair<Target, bool>> sampled; ///< textures (false) and storage images (true)
     std::string note;
     std::vector<std::string> buffers; ///< dumped constants, per draw
+    std::vector<Group> groups;
 };
 
 // GPU thread only.
@@ -57,14 +67,16 @@ std::array<std::atomic<VAddr>, 16> display_list{};
 std::atomic<u32> display_count{0};
 
 Target ToTarget(const VideoCore::ImageInfo& info) {
-    return {info.guest_address, info.pixel_format, info.size.width, info.size.height};
+    return {info.guest_address, info.pixel_format, info.size.width, info.size.height,
+            u32(info.tile_mode), info.resources.levels, info.resources.layers};
 }
 
 std::string Describe(const Target& t) {
     if (!t.address) {
         return "-";
     }
-    return std::format("{:#x} {} {}x{}", t.address, vk::to_string(t.format), t.width, t.height);
+    return std::format("{:#x} {} {}x{} tile {} mips {} layers {}", t.address,
+                       vk::to_string(t.format), t.width, t.height, t.tile, t.levels, t.layers);
 }
 
 void AddSampled(Entry& entry) {
@@ -120,6 +132,15 @@ void Write(VAddr presented) {
         for (const auto& b : e.buffers) {
             std::fprintf(f, "%s\n", b.c_str());
         }
+        for (const auto& g : e.groups) {
+            std::fprintf(f, "  group vs %016llx ps %016llx: draws %u (indices %llu)\n",
+                         static_cast<unsigned long long>(g.vs),
+                         static_cast<unsigned long long>(g.ps), g.draws,
+                         static_cast<unsigned long long>(g.indices));
+            for (const auto& [t, storage] : g.sampled) {
+                std::fprintf(f, "    %s %s\n", storage ? "writes " : "samples", Describe(t).c_str());
+            }
+        }
     }
     std::fclose(f);
     std::printf("Frame capture: %zu passes written to %s\n", entries.size(), path.c_str());
@@ -137,6 +158,34 @@ void FrameCapture::OnFlip(VAddr presented_address) {
         std::filesystem::remove(trigger, ec);
         state.store(Armed, std::memory_order_release);
         std::printf("Frame capture: armed\n");
+    }
+    // BB_DRAW_SKIP_FILE: the list of shaders whose draws are skipped, re-read when it changes.
+    static const char* skip_file = std::getenv("BB_DRAW_SKIP_FILE");
+    static std::filesystem::file_time_type skip_time{};
+    if (skip_file) {
+        std::error_code ec;
+        const auto time = std::filesystem::last_write_time(skip_file, ec);
+        if (ec) {
+            if (skip_count.exchange(0) != 0) {
+                skip_time = {};
+                std::printf("Draw skip: none\n");
+            }
+        } else if (time != skip_time) {
+            skip_time = time;
+            u32 count = 0;
+            std::string list;
+            if (FILE* f = std::fopen(skip_file, "r")) {
+                unsigned long long h = 0;
+                while (count < skip_hashes.size() && std::fscanf(f, "%llx", &h) == 1) {
+                    skip_hashes[count++].store(h, std::memory_order_relaxed);
+                    list += std::format(" {:016x}", h);
+                }
+                std::fclose(f);
+            }
+            skip_count.store(count, std::memory_order_release);
+            std::printf("Draw skip: %u shader(s)%s\n", count, list.c_str());
+            std::fflush(stdout);
+        }
     }
 }
 
@@ -222,6 +271,14 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
     e.indices += u64(num_indices) * std::max(num_instances, 1u);
     AddShader(e, vs_hash);
     AddShader(e, ps_hash);
+    auto group = std::ranges::find_if(
+        e.groups, [&](const Group& g) { return g.vs == vs_hash && g.ps == ps_hash; });
+    if (group == e.groups.end()) {
+        e.groups.push_back({.vs = vs_hash, .ps = ps_hash, .sampled = pending_sampled});
+        group = e.groups.end() - 1;
+    }
+    ++group->draws;
+    group->indices += u64(num_indices) * std::max(num_instances, 1u);
     AddSampled(e);
     AddBuffers(e);
 }

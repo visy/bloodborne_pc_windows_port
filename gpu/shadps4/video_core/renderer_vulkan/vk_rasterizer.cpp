@@ -1812,7 +1812,11 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
         .count = {num_indices, num_instances, 0},
     };
+    const bool skipped = FrameCapture::SkipDraw(crumb.hash[0], crumb.hash[1]);  // BB_DRAW_SKIP_FILE
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
+        if (skipped) {
+            return;
+        }
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
         if (is_indexed) {
             cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
