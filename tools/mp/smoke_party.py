@@ -1266,9 +1266,17 @@ def phase_kw(only):
 # EMEVD runs): the host enters alone, guest 1 is summoned back into the dungeon (a forced trip: home
 # by itself, then the summon). (6) Guest 1 CHOOSES to leave: its lamp to the Dream answered "alone"
 # (user decision, option b): it stays out (the notice, no send-home) until (7) Party > Rejoin, which
-# takes it home first and the summon brings it into the dungeon again.
+# takes it home first and the summon brings it into the dungeon again. (8) Guest 1 starts from
+# chalice_hintertomb_ritual (its own Hintertomb dungeon in slot 1, a different ChannelId): in the
+# host's dungeon its game's current dungeon (FrpgNetMan +0xa88, what its signs and messages carry)
+# is the host's, never its own; then it leaves, and the altar's awaken warp takes it into its own
+# dungeon (its own ChannelId again). Its save keeps its own slot-1 dungeon (checked by the smoke).
 CL_FIXTURE = Path(r"E:\games\bbport\test_saves\chalice_pthumeru_inside\savedata")
 CL_DEFAULT = Path(r"E:\games\bbport\test_saves\savedata")
+CL_GUEST_FIXTURE = Path(r"E:\games\bbport\test_saves\chalice_hintertomb_ritual\savedata")
+CL_HOST_CH = "0x3f22b458bd799"   # the host's Pthumeru dungeon (fixture slot 1)
+CL_GUEST_CH = "0xdb68ed64129b"   # guest 1's own Hintertomb dungeon (fixture slot 1)
+CL_OWN_ENTRY = "2902950"         # the altar's first awaken point (the current slot's dungeon)
 CL_LAMP_OBJ = "2901952"   # the layer 1 boss room's lamp object (its return point 2902952)
 CL_LAMP = "2902952"
 CL_UNTIL = r"0:travel step (\d+)/\1: "  # the host's last step (back in the dungeon, guest 1 summoned)
@@ -1276,9 +1284,9 @@ CL_UNTIL_G = r"1:travel step (\d+)/\1: "  # guest 1's last step (back in the dun
 CL_DREAM = "2102954"  # the Dream's altar spot a dungeon lamp's "Return to the Hunter's Dream" warps to (slot 0)
 
 
-def _cl_saves(root: Path, src: Path):
-    """inst0's test save (instances.py copies it to savedata_party with --fresh-saves)."""
-    dst = root / "inst0" / "user" / "savedata"
+def _cl_saves(root: Path, src: Path, inst: int = 0):
+    """inst<inst>'s test save (instances.py copies it to savedata_party with --fresh-saves)."""
+    dst = root / ("inst%d" % inst) / "user" / "savedata"
     if dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -1290,10 +1298,14 @@ def prep_chalamp(root: Path):
         sys.exit("chalamp: the fixture %s is missing (docs/party/test_saves.md)" % CL_FIXTURE)
     _cl_saves(root, CL_FIXTURE)
     print("[smoke] chalamp: inst0 starts from %s" % CL_FIXTURE, flush=True)
+    if CL_GUEST_FIXTURE.is_dir():
+        _cl_saves(root, CL_GUEST_FIXTURE, 1)
+        print("[smoke] chalamp: inst1 starts from %s" % CL_GUEST_FIXTURE, flush=True)
 
 
 def post_chalamp(root: Path):
     _cl_saves(root, CL_DEFAULT)  # the other phases' host starts from the default save again
+    _cl_saves(root, CL_DEFAULT, 1)
 
 
 def _cl_lamp_use():
@@ -1317,14 +1329,17 @@ def phase_cl(only):
     g1 = ",".join(["guest_die@25%m29",
                    "guest_lamp=%s@15#2%%m29" % CL_DREAM,          # (6) back in (join 2): alone to the Dream
                    "guest_rejoin:now@25%m21",                     # (7) stayed out 25 s: Party > Rejoin
-                   "guest_press=0@10%m29!"])                      # summoned into the dungeon: the end
+                   "guest_press=0@10%m29!",                       # summoned into the dungeon
+                   "guest_leave@3%m29",                           # (8) home, then into its own dungeon
+                   "guest_lamp=%s@15%%m21&" % CL_OWN_ENTRY,      # "&": out of the party, its own world
+                   "guest_press=0@15%m29!&"])                     # in its own dungeon: the end
     watch = []
     for rx, tag in ((r"lamp spot: Chalice Dungeon lamp", "lit"), (r"up again beside the nearest living member", "gup"),
                     (r"host revive #\d+: after", "hrev"), (r"Chalice Dungeon lamp: answered 0", "lamp"),
                     (r"map .* -> m21_00", "dream"), (r"travel step \d+/\d+: host_lamp", "back")):
         watch += ["--watch", "%s=%s@1,4" % (rx, tag)]
     return dict(
-        name="cl", seconds=330, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
+        name="cl", seconds=420, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
         env=["BB_PARTY_TRAVEL_CHOICE=party"],
         watch=watch,
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
@@ -3278,6 +3293,23 @@ def check_cl(v, L):
                     if press:
                         need(v, L, "cl Rejoin: home first", 1, r"chalice: Party > Rejoin while apart", press - 1)
                         need(v, L, "cl guest 1 back in the dungeon after Rejoin", 1, r"map .* -> m29_00", press)
+    # (8) Guest 1's current dungeon (FrpgNetMan +0xa88) in the host's dungeon: the host's, never its own.
+    first = need(v, L, "cl join: guest 1 summoned into the dungeon (for +0xa88)", 1, r"map .* -> m29_00")
+    if first and CL_GUEST_FIXTURE.is_dir():
+        need(v, L, "cl guest 1's current dungeon is the host's (+0xa88 retargeted)", 1,
+             r"chalice: in the host's dungeon: the game's current dungeon \(FrpgNetMan \+0xa88\) is the quick-joined slot 0",
+             first - 5)
+        need(v, L, "cl guest 1's +0xa88 holds the host's dungeon", 1,
+             r"chalice: FrpgNetMan ChannelId %s .*the host's dungeon" % CL_HOST_CH, first - 5)
+        none_of(v, L, "cl guest 1's +0xa88 never its own dungeon in the host's",
+                r"chalice: FrpgNetMan ChannelId .*NOT the host's dungeon", 0, 1e9, (1,))
+        left = need(v, L, "cl guest 1 left (Party > Leave)", 1, r"guest_leave: Party > Leave pressed", first)
+        if left:
+            own = need(v, L, "cl guest 1 into its own dungeon from the altar", 1, r"travel step \d+/\d+: guest_lamp",
+                       left)
+            if own:
+                need(v, L, "cl guest 1 in its own dungeon (m29)", 1, r"map .* -> m29_00", own)
+                need(v, L, "cl guest 1's +0xa88 its own dungeon again", 1, r"chalice: FrpgNetMan ChannelId %s " % CL_GUEST_CH, own)
     # A re-summon into the dungeon whose layer boss is dead never pays it again (cl6 / cl8: PREY
     # SLAUGHTERED, +1995 echoes and +1 Insight at every re-summon).
     none_of(v, L, "cl no second paid kill of 2900100 after a re-summon",
