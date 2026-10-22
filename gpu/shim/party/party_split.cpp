@@ -9,9 +9,11 @@
 #include "party_death_rules.h"
 #include "party_director.h"
 #include "party_guestsvc.h"
+#include "party_ids.h"
 #include "party_link.h"
 #include "party_progress.h"
 #include "party_status.h"
+#include "party_stay_rules.h"
 #include "party_travel.h"
 #include "../bbport_game_menu_pages.h"
 
@@ -315,6 +317,22 @@ void Carry(const Pending& p, bool alone, const char* how) {
             return;
         }
         Log("lamp %u: travelling alone is not possible now; the party travels together", p.id);
+    }
+    if (!alone && !p.mark &&
+        stayrules::PlanApartGuestYes(b2::MemberApart(0), ids::EntityMap(p.id), b2::MemberMap(0)) ==
+            stayrules::ApartYes::OwnTrip) {
+        // A guest in another area than the host (left in the Dream by the host's alone travel)
+        // chose a lamp of the block the host stands in: the host ignores such a request (it would
+        // only be moved inside its own map), so this guest goes there itself - a re-join at that
+        // lamp, one loading screen, the host does not move (party_stay_rules.h).
+        TravelIntent t;
+        if (b2::LampTravelIntent(p.id, &t) &&
+            b2::TravelAlone(t, p.id == 2102950 ? b2::AloneWhy::Lamp : b2::AloneWhy::Headstone)) {
+            Log("lamp %u (guest): the host is in another area and this lamp is in its map: this guest goes there "
+                "itself (a re-join, the host does not move)", p.id);
+            return;
+        }
+        Log("lamp %u: the guest's own trip into the host's map is not possible now; the party request instead", p.id);
     }
     // With the party: a guest's Hunter's Mark takes the party to the host's last lamp.
     const u32 id = p.mark ? GuestDeathRedirectLamp() : p.id;
