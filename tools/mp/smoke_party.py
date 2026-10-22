@@ -1166,7 +1166,9 @@ def ld_walks(who):
 
 def ld_climb(who, first):
     return ["%s_obj=2401024:1.0:180@%d%%m24_00" % (who, first),  # the ladder's foot ("Ascend Ladder")
-            "%s_press=0x4000@1%%m24_00!" % who,                     # Cross: onto the ladder
+            # Cross: onto the ladder, 2 s after the turn ("Ascend Ladder" came 1.5 s after it in the
+            # 0.7.3 release smoke, under load: a press at 1 s did nothing)
+            "%s_press=0x4000@2%%m24_00!" % who,
             "%s_die:ladder@2%%m24_00" % who,                        # dies on it (only while on it)
             "%s_press=0@3%%m24_00!" % who]                          # up again at the lamp
 
