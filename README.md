@@ -279,6 +279,12 @@ before anyone is in the game):
   what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
   until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
   starts with anyone's hit.
+- **NPC hunters fight the whole party.** Eileen and Henryk at the Tomb of Oedon, Alfred, the
+  blood-drunk Eileen, Valtr, Brador and the DLC hunters are there for everyone in the host's world:
+  anyone can hurt them, and their death and the quest step after it count for every player's own
+  save. A hunter that turns on the host turns on the guests too (*NPC hunters fight all*, a host
+  setting on *System → Shared world*, on by default). Covenant outcomes, such as the host's Alfred
+  killing Annalise, stay each player's own.
 - **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
   where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
   the guest is taken to the host with one loading screen.

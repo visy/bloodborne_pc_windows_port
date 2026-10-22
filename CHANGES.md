@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Added: NPC hunters fight the whole party**: when a story hunter turns on the host in a party (Alfred in Cathedral Ward or Cainhurst, the blood-drunk Eileen at the Grand Cathedral, Valtr, the hunters of the Hunter's Nightmare and the Research Hall), it now turns on every guest too: before, a guest still saw a friendly hunter it could not lock on to or hurt while it fought the host. Brador and the Fishing Hamlet's hunters are meant to show up on every guest's screen too when they come for the host (not tried in a real session yet). Everyone sees the same hunter, anyone's hits count, and its death and the quest step after it count for the whole party, in every player's own save. Fights where an NPC helps you (Eileen against Henryk at the Tomb of Oedon) already worked for everyone and still do. Covenant outcomes stay your own: the host's Alfred killing Annalise is not written into a guest's save. A host setting, on by default: *System → Shared world → NPC hunters fight all*, the launcher's *Party Rules & Sync* (`bbport.ini` `party_npc_fights`).
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: the Research Hall lifts no longer leave without you**: on the two lifts inside the Research Hall (Old Hunters DLC), the car could leave again the moment you stepped off it, with you still at its edge or about to step back in, and you fell into the pit under it and died. The car now waits until its ride is fully over, as every other lift does.

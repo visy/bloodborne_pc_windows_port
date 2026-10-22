@@ -1556,7 +1556,9 @@ def phase_da(only):
 #      the host's game, and its killing blow kills him for the party (12500054: 1350).
 NF_HENRYK, NF_EILEEN, NF_ALFRED = 2410901, 2410900, 2500790
 NF_FLAGS = "1349/1350/1363/1365/1366/1367/12410810"
-NF_UNTIL = r"1:test: guest_kill: NPC entity 2500790[\s\S]*test read \(load mode 1[^\n]*1350="
+NF_LOGARIUS_DEAD = "12501800,12501802,12501803"  # Alfred hostile stands on Logarius's roof: the boss dead first
+# the host's last step (its load after Alfred's death, or after the condition's timeout), its world up
+NF_UNTIL = r"0:test: travel step 10/10: host_warp[\s\S]*test read \(load mode 0"
 
 
 def phase_nf(only):
@@ -1573,28 +1575,29 @@ def phase_nf(only):
         "host_chr=%d:5@10%%m25" % NF_ALFRED,
         "host_warp=2412953@8%m25?1350=1",                 # Alfred dead: the last load (the save read)
     ])
-    hits = lambda n, at: ["guest_press=0x800@1.2%%m25#%d!" % at] * n
+    hits = lambda n: ["guest_press=0x800@1.2%m25!"] * n
     g1 = ",".join(["god", "log_flag=" + NF_FLAGS,
                    "guest_chr=%d:1.6@14%%m24_01" % NF_HENRYK,        # 1: in front of Henryk
                    "guest_press=0x4@1%m24_01!", "guest_press=0x4:lock@1%m24_01!"]
                   + ["guest_press=0x800@1.2%m24_01!"] * 8          # R1: the guest's hits
                   + ["guest_kill=%d:hp@2%%m24_01" % NF_HENRYK]      # its killing blow (HP 0 on its game)
-                  + ["guest_chr=%d:1.6@12%%m25#3" % NF_ALFRED,       # 2A: Alfred, rule off
-                     "guest_press=0x4@1%m25#3!", "guest_press=0x4:lock@1%m25#3!"] + hits(4, 3)
-                  + ["guest_chr=%d:1.6@12%%m25#5" % NF_ALFRED,       # 2B: Alfred, rule on
-                     "guest_press=0x4@1%m25#5!", "guest_press=0x4:lock@1%m25#5!"] + hits(6, 5)
-                  + ["guest_kill=%d:hp@2%%m25#5" % NF_ALFRED])
+                  + ["guest_chr=%d:1.6@12%%m25" % NF_ALFRED,         # 2A: Alfred, rule off
+                     "guest_press=0x4@1%m25!", "guest_press=0x4:lock@1%m25!"] + hits(4)
+                  + ["guest_press=0@1%m24_01"]                         # the round trip (a guest's joins stay 1)
+                  + ["guest_chr=%d:1.6@12%%m25" % NF_ALFRED,         # 2B: Alfred, rule on
+                     "guest_press=0x4@1%m25!", "guest_press=0x4:lock@1%m25!"] + hits(6)
+                  + ["guest_kill=%d:hp@2%%m25" % NF_ALFRED])
     clear = ("1340,1341,1342,1343,1344,1345,1346,1347,1348,1350,1351,1352,1353,1354,1355,1356,1357,1358,1359,"
              "1360,1361,1362,1364,1365,1366,1367,1368,1369,1700,1701,1702,1703,1704,1705,12410810,5912")
     return dict(
         name="nf", seconds=600, count=2, headless=0,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=1363,1349",
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=1363,1349," + NF_LOGARIUS_DEAD,
              "BB_PARTY_PROGRESS_TEST_READ=1349,1350,1363,1365,1367,12410810", "BB_PARTY_CHR_DUMP=30",
              "BB_PARTY_TEST_COND_TIMEOUT=100"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
         watch=["--watch", r"test: host_chr=nfhost@1,4", "--watch", r"test: guest_chr=nfguest@1,4",
                "--watch", r"guest_press 0x800=nfhit@0.5", "--watch", r"test: guest_kill=nfkill@1,4"],
-        crash=[], until=[NF_UNTIL], until_hold=5,
+        crash=[], until=[NF_UNTIL], until_hold=12,
     )
 
 
