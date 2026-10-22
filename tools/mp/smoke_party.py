@@ -2775,7 +2775,10 @@ def check_sk(v, L):
     if away is not None:
         v.step("sk host left within 5 s of the kill (before any census)", away - kill < 5, "%.1f s" % (away - kill))
         gone = need(v, L, "sk host far: %s not loaded (its map streamed out)" % SK_ENEMY, 0,
-                    r"test: host_kill: no target \(entity %s\)" % SK_ENEMY, away)
+                    # 0.7.3 (673d1b29): a ':hp' kill outside the census tries the chr by entity id
+                    # first, so an unloaded enemy logs "chr 0" in place of "no target"
+                    r"test: host_kill: (no target \(entity {0}\)|NPC entity {0} \(chr 0, not in the census list\))"
+                    .format(SK_ENEMY), away)
     for i in (1, 2):
         need(v, L, "sk guest %d: %s dead there too (the kill record)" % (i, SK_ENEMY), i,
              r"kill record: entity %s alive here, killed by the party 3 s ago: put to death|kill seen: entity %s died here"
@@ -2793,7 +2796,8 @@ def check_sk(v, L):
         ech = L.all(0, r"\] Echoes \d+ -> \d+", rk - 0.1, rk + 6)
         v.step("sk host: no echoes from the second death", not ech, "none in 6 s" if not ech else ech[0][1][:160])
     end = need(v, L, "sk host: %s still dead at the end (no target)" % SK_ENEMY, 0,
-               r"test: host_kill: no target \(entity %s\)" % SK_ENEMY, (rk or back) + 15)
+               r"test: host_kill: (no target \(entity {0}\)|NPC entity {0} \(chr 0x[0-9a-f]+, not in the census list\): "
+               r"HP 0 -> 0)".format(SK_ENEMY), (rk or back) + 15)
     for i in (1, 2):
         need(v, L, "sk guest %d census matches the host's after the return" % i, i,
              r"enemy census: digest \d+ matches the host's", rk or back, (end or 1e9) + 1)
