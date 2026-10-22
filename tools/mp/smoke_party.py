@@ -1167,7 +1167,8 @@ def phase_rt(only):
 # action-button hold), split travel drops its send-home, and the hold must be lifted; 10 s after the
 # host is in another area the guest uses headstone t210000 itself, travels alone and arrives (the
 # same lamp as the host's: a re-join into the host's area).
-DA_UNTIL = [r"1:guest: travels alone \((headstone|lamp)\)[\s\S]*(arrived in the host world|map - -> m2[2-9])"]
+# (after the host's alone travel: the guest's start-of-run re-join into the Dream is a "travels alone (lamp)")
+DA_UNTIL = [r"1:the host travels alone[\s\S]*guest: travels alone \(headstone\)[\s\S]*(arrived in the host world|map - -> m2[2-9])"]
 
 
 def phase_da(only):
@@ -2733,7 +2734,7 @@ def check_da(v, L):
     flag = need(v, L, "da guest's headstone choice (its lamp flag)", 1,
                 r"lamp flag \d+ set by this game|lamp \d+ \(guest\): (held for the choice|BB_PARTY_TRAVEL_CHOICE)",
                 hs or left)
-    go = need(v, L, "da guest travels from the Dream", 1, r"guest: travels alone \((headstone|lamp)\)", flag or left)
+    go = need(v, L, "da guest travels from the Dream", 1, r"guest: travels alone \(headstone\)", flag or left)
     if go is not None:
         need(v, L, "da guest arrives (not stuck in the Dream)", 1, r"arrived in the host world|map - -> m2[2-9]", go)
     if lift is not None and hs is not None:
