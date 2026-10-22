@@ -281,8 +281,10 @@ def intel_tonemap_fix(env=os.environ, cpuinfo=None):
     forced=env.get('BB_INTEL_TONEMAP_FIX')
     return forced=='1' if forced in ('0','1') else intel_cpu(cpuinfo, env)
 
-# model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
-MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
+# model_lod: -2 highest, 0 the game's, 1 lower. 2 ("Model LOD 2 (Lowest)") applies the Lower patch:
+# with the lowest level the game draws nothing for a model that has no third level of detail, and
+# some map floors have none (the Lecture Building's floor showed the background through it).
+MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 1 (Lower)'}
 
 
 DEBUG_MENU='Restore Debug Menu (READ NOTES)'
