@@ -11802,23 +11802,76 @@ bool HostChrHere(float* distance_m) {
     return true;
 }
 
-bool GatherBesideHost(const char* why) {
+bool GatherBesideHost(const char* why, const float* spot, float spot_yaw, float test_lift_m, float* dest, float* from) {
     alignas(16) float hp[4], hr[4];
     if (LocalHp() <= 0 || !HostChrTransform(hp, hr)) {
         return false;
     }
+    if (from) {
+        alignas(16) float mp[4] = {}, mr[4] = {};
+        const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+        if (!player || !ChrTransform(player, mp, mr)) {
+            return false;
+        }
+        from[0] = mp[0];
+        from[1] = mp[1];
+        from[2] = mp[2];
+        from[3] = mr[1];
+    }
     float pos[4];
     std::memcpy(pos, hp, sizeof pos);
-    BesideHost(pos, hr, g_local_slot.load());
+    alignas(16) float rot[4];
+    std::memcpy(rot, hr, sizeof rot);
+    if (spot) {
+        // I5: beside the spot the host asked from (ground) - its chr climbs or falls now
+        pos[0] = spot[0];
+        pos[1] = spot[1];
+        pos[2] = spot[2];
+        rot[1] = spot_yaw;
+    }
+    BesideHost(pos, rot, g_local_slot.load());
+    pos[1] += test_lift_m;  // test aid (BB_PARTY_GATHER_TEST "yesdrop"): a spot with no ground under it
     pos[3] = 1.0f;
     char b[96];
     std::snprintf(b, sizeof b, "%s: beside the host", why ? why : "gather");
-    if (!WarpLocal(pos, hr[1], b)) {
+    if (!WarpLocal(pos, rot[1], b)) {
         return false;
     }
-    Log("gather: put beside the host (%.1f, %.1f, %.1f), the host at (%.1f, %.1f, %.1f), no load", double(pos[0]),
-        double(pos[1]), double(pos[2]), double(hp[0]), double(hp[1]), double(hp[2]));
+    if (dest) {
+        dest[0] = pos[0];
+        dest[1] = pos[1];
+        dest[2] = pos[2];
+    }
+    Log("gather: put beside %s (%.1f, %.1f, %.1f), the host at (%.1f, %.1f, %.1f)%s, no load",
+        spot ? "the spot the host asked from" : "the host", double(pos[0]), double(pos[1]), double(pos[2]), double(hp[0]),
+        double(hp[1]), double(hp[2]), test_lift_m != 0.0f ? " (test: lifted)" : "");
     return true;
+}
+
+bool HostChrPos(float pos[3]) {
+    alignas(16) float hp[4], hr[4];
+    if (!HostChrTransform(hp, hr)) {
+        return false;
+    }
+    pos[0] = hp[0];
+    pos[1] = hp[1];
+    pos[2] = hp[2];
+    return true;
+}
+
+float OwnYaw() {
+    alignas(16) float mp[4] = {}, mr[4] = {};
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    return player && ChrTransform(player, mp, mr) ? mr[1] : 0.0f;
+}
+
+int OwnLadderState() {
+    const u64 player = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
+    return player ? LadderActState(player) : deathrules::kLadderUnread;
+}
+
+bool GatherWarpBack(const float pos[3], float yaw, const char* why) {
+    return LocalHp() > 0 && WarpLocal(pos, yaw, why);
 }
 
 bool Spectating() {

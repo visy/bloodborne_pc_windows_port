@@ -257,7 +257,8 @@ before anyone is in the game):
   press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
-  cannot gather during its own boss fight or cutscene, and only once every 30 s. The host can turn
+  cannot gather during its own boss fight or cutscene, on a ladder or in mid-air, and only once every
+  30 s. If there is no ground beside the host, the guest comes with one loading screen instead. The host can turn
   gathering off (*Host can gather* on *System → Shared world*).
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
@@ -410,6 +411,11 @@ before anyone is in the game):
   The launcher's *Party* tab has **Undo last party session** (itself undoable). After a session the
   launcher also checks the party save (characters load, no boss kill or lamp lost, level and play
   time never go down) and offers the undo if something looks wrong.
+- **Save editors.** A save the game made while you were a guest in someone else's world cannot be read
+  by save editors (the game leaves out your own world's state there). The launcher's *Party* tab has
+  **Export for save editor** (any single-player or party save, any slot: a copy the editor can open,
+  your save is not touched) and **Import from save editor** (the edited copy back into its slot, your
+  saves backed up first, put back the way the game wrote them so party progress stays).
 
 ### Deaths
 
@@ -564,6 +570,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
 | vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); Chalice Dungeon entry with a party (PR #8); co-op bug reports |
 | zackcage6 | Testing and bug reports |
+| Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) (GPL-3.0): its save parsing, ported in `tools/party/editor_check.py` to check that exported saves open in it |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
 included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license
