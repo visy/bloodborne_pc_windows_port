@@ -1033,7 +1033,13 @@ def phase_cl(only):
 # there shows the host's world's lamps only (no 2302950). Then both saves on disk (copies).
 LP_OLD = ("2302950", ["12307810", "12307811", "72300200"])   # Old Yharnam: lit in the guest's save only
 LP_NEW = ("2412951", ["12417830", "12417831", "72410201"])   # Central Yharnam: lit by the guest in the run
-LP_UNTIL = [r"1:test: listonly: warp menu closed",
+# 0.7.2 Research Hall report: the host's last lamp is the Tomb of Oedon (LP_HOST_LAMP); it stands 8 m
+# from the unlit Central Yharnam lamp when the guest joins from its Dream (an A5 cross-map join: the
+# arrival must be a lamp lit in the host's world, never the unlit one nearest the host), and dies
+# once the guest lit that lamp: it must get up at its own last lamp, not the guest's.
+LP_HOST_LAMP = "2412953"
+LP_HOST_NEAR = "-187.4:-28.6:70.5"  # 6-8 m from lamp 2412951's spot (-193.4, -28.65, 68.5)
+LP_UNTIL = [r"1:test: listonly: warp menu closed", r"0:host death taken: .*revive at lamp",
             r"0:save requested \(.*a lamp a guest lit in the host's world",
             r"1:written into the own save \(shared lamps; lamps.* %s[\s\S]*save requested \(.*shared lamps from "
             r"the host's world" % LP_NEW[0]]
@@ -1044,13 +1050,18 @@ def phase_lp(only):
     return dict(
         name="lp", seconds=300, count=2, headless=0,
         env=["BB_PARTY_PROGRESS_TEST_READ=" + read, "BB_PARTY_GUESTS_BRING_LAMPS=0", "BB_PARTY_SHARE_LAMPS=1"],
-        ienv=["0:BB_PARTY_TEST_START_LAMP=2412952", "0:BB_PARTY_DIRECTOR_TEST=god",
+        ienv=["0:BB_PARTY_TEST_START_LAMP=" + LP_HOST_LAMP, "0:BB_PARTY_DIRECTOR_TEST_SOLO=1",
+              "0:BB_PARTY_TEST_INVINCIBLE=1",
+              "0:BB_PARTY_DIRECTOR_TEST=" + ",".join([
+                  "host_move=%s@3%%m24_01" % LP_HOST_NEAR,          # beside the unlit lamp, before the join
+                  "host_die@6%%m24_01?%s=1" % LP_NEW[1][2]]),       # once the guest lit it
               "0:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_OLD[1] + LP_NEW[1]),
               "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1]),
               "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0]],
         watch=["--watch", r"lamps: the own save's lamps the host's world lacks stay out=lpjoin@3",
                "--watch", r"lamp: slot \d+ lit a lamp in the host's world=lplit@1,5",
                "--watch", r"test: warp menu up \(listonly\)=lplist@1"],
+        start_when=[r"1/0:travel step \d+/\d+: host_move"],
         crash=[], until=LP_UNTIL, until_hold=8,
     )
 
@@ -2559,6 +2570,13 @@ def check_lp(v, L, d: Path):
          r"lamps: the own save's lamps the host's world lacks stay out of it .*lamps.* %s" % LP_OLD[0], j or 0)
     none_of(v, L, "lp host takes none of the guest's own lamps",
             r"own save has lamps this world lacked|lamps: \d+ flag\(s\) of lamps lit in the own save", insts=(0, 1))
+    # The arrival: a lamp lit in the host's world (its last lamp), never the unlit one beside it.
+    arr = L.find(1, r"arrival lamp in m24_01_00_00: (\d+)")
+    v.step("lp guest's arrival: a lamp lit in the host's world", bool(arr) and ("arrival lamp in m24_01_00_00: %s " % LP_HOST_LAMP) in arr[1] + " ",
+           arr[1][:200] if arr else "no A5 arrival line (joined without a cross-map load?)")
+    press = L.find(1, r"test: Cross at the lamp #1")
+    none_of(v, L, "lp nothing lit for the guest before its own lamp use",
+            r"lamp: slot \d+ lit a lamp in the host's world", 0, press[0] if press else 1e9, insts=(0,))
     lit = need(v, L, "lp guest lights a lamp in the host's world", 1,
                r"lamp: the guest lit a lamp of the host's world \(overlay:.*%s" % LP_NEW[1][2])
     need(v, L, "lp host lights it in its world", 0, r"lamp: slot \d+ lit a lamp in the host's world: set.*%s" % LP_NEW[1][2],
@@ -2595,6 +2613,10 @@ def check_lp(v, L, d: Path):
     v.step("lp host's save: the lamp the guest lit", host is not None and all(host[f] for f in LP_NEW[1]), fmt(host))
     v.step("lp guest's save: its own old lamp kept", guest is not None and all(guest[f] for f in LP_OLD[1]), fmt(guest))
     v.step("lp guest's save: the lamp it lit", guest is not None and all(guest[f] for f in LP_NEW[1]), fmt(guest))
+    # The host dies after the guest lit the lamp: up at its own last lamp, never the guest's.
+    rev = L.find(0, r"host death taken: .*revive at lamp (\d+)")
+    v.step("lp host gets up at its own last lamp", bool(rev) and ("revive at lamp %s " % LP_HOST_LAMP) in rev[1],
+           rev[1][:200] if rev else "no host death line")
     check_common(v, L, "lp")
 
 

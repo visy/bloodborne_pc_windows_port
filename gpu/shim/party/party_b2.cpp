@@ -3697,6 +3697,35 @@ bool LampIntent(u32 id, TravelIntent* t) {
 /// A lit lamp of the map the guest stands in (the host's world): the ReturnPointParam ids AAB295k
 /// of that map whose lamp flag 1AAB7800 + 20k (2009[5] registration, party_flags.inc) is set in
 /// the host-world overlay. The first one (lowest k); 0 if none.
+/// Lamp `rp` (ReturnPointParam AAB295n) is lit in the host's world: its lamp-lit flag 7AAB0200 + n
+/// or its headstone flag 1AAB7810 + 20n in the host's world image (the mirror; any thread). False
+/// when not known (no image yet) - callers then never pick it.
+bool LampLitInHostWorld(u32 rp) {
+    if (rp % 10000 / 10 != 295) {
+        return false;
+    }
+    const u32 aab = rp / 10000, n = rp % 10;
+    bool a = false, b = false;
+    progress::HostWorldFlag(70000000u + aab * 10000u + 200u + n, &a);
+    progress::HostWorldFlag(10000000u + aab * 10000u + 7810u + 20u * n, &b);
+    return a || b;
+}
+
+/// A guest's own last lamp `own` may be a load's destination: outside the host's area always (its
+/// own world); in the host's area only when the host's world has it lit (a lamp warp there would
+/// light it in the host's world, 0.7.2).
+bool OwnLampUsable(u32 own) {
+    const u32 host = HostMap();
+    if (own == 0 || own == kTravelNone || host == 0 || host == 0xffffffffu || AreaOf(host) != AreaOf(ids::EntityMap(own))) {
+        return true;
+    }
+    if (LampLitInHostWorld(own)) {
+        return true;
+    }
+    Log("guest: its own last lamp %u is not lit in the host's world: not used", own);
+    return false;
+}
+
 u32 LitLampInMap(u32 map) {
     const u64 man = Slot(0x553b100);
     if (!man) {
@@ -3714,7 +3743,7 @@ u32 LitLampInMap(u32 map) {
         // (party_progress world_groups) copies into the guest's overlay. (The 2009[5] registration
         // flags 1AAB7800 + 20k read 0 here: T1 zone 7 is not mirrored.)
         const u32 flag = 70000000u + id / 10000 * 10000 + 200 + (id % 10);
-        const u32 lit = reinterpret_cast<Get>(Guest(0x13cfd80))(man, flag, 1);
+        const u32 lit = reinterpret_cast<Get>(Guest(0x13cfd80))(man, flag, 1) || LampLitInHostWorld(id);
         seen += " " + std::to_string(id) + (lit ? ":lit" : ":-");
         if (lit) {
             Log("guest: lamps of %s:%s", MapName(map).c_str(), seen.c_str());
@@ -3724,10 +3753,11 @@ u32 LitLampInMap(u32 map) {
             first = id;
         }
     }
-    // None reads lit here (the host-world overlay may not carry these flags): a lamp of this map
-    // all the same - any ReturnPointParam row of the map is a valid respawn spot in it.
-    Log("guest: lamps of %s:%s; none read lit, using %u", MapName(map).c_str(), seen.c_str(), first);
-    return first;
+    // None reads lit here: no lamp (0.7.2: a respawn or arrival by a lamp warp lights its lamp in
+    // the host's world; never an unlit one). The caller takes its other path.
+    (void)first;
+    Log("guest: lamps of %s:%s; none lit in the host's world: no lamp", MapName(map).c_str(), seen.c_str());
+    return 0;
 }
 
 bool GuestDeadLoadAt(u32 lamp, double held_for, const char* which);
@@ -5601,7 +5631,7 @@ bool GuestDeathAloneToOwnLamp(const GameSnapshot& s, u32 own) {
     // On by default since 2026-10-15 (live: Cathedral Ward re-join, Hemwick alone load); "0" off.
     static const bool on = !(std::getenv("BB_PARTY_GUEST_DEATH_ALONE") && std::getenv("BB_PARTY_GUEST_DEATH_ALONE")[0] == '0');
     TravelIntent lt;
-    if (!on || own == 0 || own == kTravelNone || !LampIntent(own, &lt)) {
+    if (!on || own == 0 || own == kTravelNone || !OwnLampUsable(own) || !LampIntent(own, &lt)) {
         return false;
     }
     LampSpot none;  // not valid: revived where it lies, no warp
@@ -7515,27 +7545,53 @@ void CarryGameDataTick(const GameSnapshot& s, double now) {
     }
 }
 
-/// The lamp of the host's map nearest to where the host stands (its vitals position); without a
-/// position the host's last lamp when it lies in that map (GatherLampFor). 0: none.
+/// The host's map's lamps and where it stands: the arrival lamp of a guest's load into it
+/// (lampshare::ArrivalLamp): the host's last lamp when its world has it lit, else the lit lamp
+/// nearest the host, never an unlit one (a lamp warp's arrival lights its lamp: the 0.7.2 report,
+/// the A5 join arrived at Research Hall's unlit 3502950 and the host took it as its last lamp).
+/// 0: no lit lamp known there (the caller places the guest beside the host).
 u32 LampNearHost(u32 host_map) {
-    u32 lamp = GatherLampFor(GuestDeathRedirectLamp(), host_map);
     const Where* w = WhereOf(0);
-    if (w && w->has_pos) {
-        float best = 1e18f;
-        for (const std::uint32_t id : ids::kPartyReturnPoints) {
-            float sp[4];
-            if (ids::EntityMap(id) >> 16 != host_map >> 16 || id / 100000 == 29 || !ids::ReturnSpot(id, sp)) {
-                continue;
-            }
-            const float dx = sp[0] - w->pos[0], dy = sp[1] - w->pos[1], dz = sp[2] - w->pos[2];
-            const float d = dx * dx + dy * dy + dz * dz;
-            if (d < best) {
-                best = d;
-                lamp = id;
-            }
+    std::vector<lampshare::LampCandidate> c;
+    std::string seen;
+    for (const std::uint32_t id : ids::kPartyReturnPoints) {
+        float sp[4];
+        if (ids::EntityMap(id) >> 16 != host_map >> 16 || id / 100000 == 29 || id % 10000 / 10 != 295 ||
+            !ids::ReturnSpot(id, sp)) {
+            continue;
         }
+        lampshare::LampCandidate l;
+        l.rp = id;
+        l.lit = LampLitInHostWorld(id);
+        if (w && w->has_pos) {
+            const float dx = sp[0] - w->pos[0], dy = sp[1] - w->pos[1], dz = sp[2] - w->pos[2];
+            l.d2 = dx * dx + dy * dy + dz * dz;
+        }
+        c.push_back(l);
+        seen += " " + std::to_string(id) + (l.lit ? ":lit" : ":-");
     }
-    return lamp == kTravelNone ? 0u : lamp;
+    const u32 last = GuestDeathRedirectLamp();
+    const u32 lamp = lampshare::ArrivalLamp(last == kTravelNone ? 0u : last, c);
+    Log("arrival lamp in %s: %u (host's last lamp %u; lamps%s)", MapName(host_map).c_str(), lamp,
+        last == kTravelNone ? 0u : last, seen.c_str());
+    return lamp;
+}
+
+/// A guest's load into the host's map without a lit lamp there: a transform beside the host (its
+/// vitals position), no lamp warp, so no lamp lights by the arrival. False: the host's position is
+/// not known.
+bool BesideHostIntent(u32 host_map, TravelIntent* t) {
+    const Where* w = WhereOf(0);
+    if (!w || !w->has_pos) {
+        return false;
+    }
+    *t = TravelIntent{};
+    t->kind = TravelKind::Transform;
+    t->has_pos = true;
+    t->pos_map = host_map & 0xffff0000u;
+    t->packed_map = host_map & 0xffff0000u;
+    t->pos[0] = w->pos[0] + 1.5f, t->pos[1] = w->pos[1], t->pos[2] = w->pos[2], t->pos[3] = 1.0f;
+    return true;
 }
 
 void CarryArrivalTick(const GameSnapshot& s, double now) {
@@ -7574,8 +7630,9 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
     tried = now;
     const u32 lamp = LampNearHost(host);
     TravelIntent t;
-    if (lamp == 0 || !LampIntent(lamp, &t)) {
-        Log("A5: cross-map join: no lamp of the host's map %s known; waiting", MapName(host).c_str());
+    if (lamp == 0 ? !BesideHostIntent(host, &t) : !LampIntent(lamp, &t)) {
+        Log("A5: cross-map join: no lit lamp of the host's map %s and no host position known; waiting",
+            MapName(host).c_str());
         return;
     }
     const bool started = TravelAlone(t, AloneWhy::Join);
@@ -7583,9 +7640,11 @@ void CarryArrivalTick(const GameSnapshot& s, double now) {
     if (started) {
         g_carry_gd_at = now;
         g_carry_join_at = -1;
-        Log("A5: cross-map join: client in %s, the host in %s: one load into the host's map (lamp %u, then beside "
+        Log("A5: cross-map join: client in %s, the host in %s: one load into the host's map (%s, then beside "
             "the host) %.1f s after the join",
-            MapName(s.map_id).c_str(), MapName(host).c_str(), lamp, now - at);
+            MapName(s.map_id).c_str(), MapName(host).c_str(),
+            lamp ? ("lamp " + std::to_string(lamp)).c_str() : "no lit lamp there: a placement beside the host",
+            now - at);
     }
 }
 
@@ -11271,8 +11330,8 @@ bool GatherTravelToHost() {
     }
     const u32 lamp = LampNearHost(host);
     TravelIntent t;
-    if (lamp == 0 || !LampIntent(lamp, &t)) {
-        Log("gather: no lamp of the host's map %s known", MapName(host).c_str());
+    if (lamp == 0 ? !BesideHostIntent(host, &t) : !LampIntent(lamp, &t)) {
+        Log("gather: no lit lamp of the host's map %s and no host position known", MapName(host).c_str());
         return false;
     }
     Log("gather: one load into the host's map %s (lamp %u, nearest the host), then beside the host", MapName(host).c_str(),
@@ -11500,7 +11559,7 @@ bool TravelAlone(const TravelIntent& t, AloneWhy why, std::uint32_t rest_lamp, b
 bool RespawnAloneAtOwnLamp() {
     const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
     TravelIntent t;
-    if (!g_on.load() || own == 0 || own == kTravelNone || !LampIntent(own, &t)) {
+    if (!g_on.load() || own == 0 || own == kTravelNone || !OwnLampUsable(own) || !LampIntent(own, &t)) {
         Log("guest: own-lamp respawn refused (own last lamp %u)", own);
         return false;
     }
@@ -11513,7 +11572,7 @@ bool ReloadAtHostLamp(const char* why) {
     // the boss's area restarted the fight there from the mirrored host-entered flag - a loop.
     const u32 host = GuestDeathRedirectLamp();
     const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
-    const u32 lamp = host != 0 && host != kTravelNone ? host : own;
+    const u32 lamp = host != 0 && host != kTravelNone ? host : OwnLampUsable(own) ? own : 0u;
     TravelIntent t;
     if (!g_on.load() || lamp == 0 || lamp == kTravelNone || !LampIntent(lamp, &t)) {
         Log("guest: %s: no alone load (host's last lamp %u, own %u)", why, host, own);
