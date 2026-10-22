@@ -510,6 +510,24 @@ inline bool LevelCameraDue(bool released, bool warped, int chrcam_mode) {
 // The follow camera looks down at the chr from a little above (fl run 1: view y -0.00); the fall
 // camera's leftover pitch read -0.78 .. -0.98 (fdj run r3). Steeper than this is not the level view.
 constexpr double kReviveLookDownMax = -0.4;
+// The ladder (fallcam 3, a player's report: "dying on a ladder makes it so you can only walk
+// forward"). The behavior script asks the chr's ladder action state (HKS env GetLadderActState
+// 0x1259850 -> 0x1290E50: the int8 at [ChrCtrl +0x38] +0x60; IsLadderAct 0x1259860: it is not -1)
+// and drives the chr as on a ladder while it is set. A death on a ladder leaves it; a vanilla death
+// load builds a new chr (its action ctrl's constructor 0x150A480 writes +0x60 = 0xFF). An in-world
+// revive keeps the chr: every revive / in-world warp of the local player puts it back to -1.
+constexpr int kNoLadder = -1;
+constexpr int kLadderUnread = -1000;  // no ChrCtrl / action ctrl to read
+inline bool LadderLeftover(int ladder_act) {
+    return ladder_act >= 0 && ladder_act <= 127;  // a ladder action's state index
+}
+// The walk check after it (smoke ld): a stick walk toward each of four points 4 m away must move the
+// chr at least kWalkMin m toward it (a chr stuck in the ladder's climbing axis moves one way only).
+constexpr double kWalkMin = 1.5;
+inline bool WalkedToward(double dx, double dz, double tx, double tz) {
+    const double len = std::sqrt(tx * tx + tz * tz);
+    return len > 0.0 && (dx * tx + dz * tz) / len >= kWalkMin;
+}
 // The check after a revive (logged; smoke fl / fd): the render camera follows the chr (within
 // kReviveCamNear m of its physics position: the follow camera sits 3-6 m behind, a wall pushes it
 // nearer), the latch is off, and the chr is drawn where it stands (ChrCtrl's world matrix within

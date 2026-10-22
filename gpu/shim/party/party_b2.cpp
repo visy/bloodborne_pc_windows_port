@@ -2147,6 +2147,29 @@ void CameraBehindPlayer() {
     using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
     reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
 }
+/// fallcam 3: the chr's ladder action state (deathrules::LadderLeftover): the int8 at [ChrCtrl +0x38]
+/// +0x60, what the behavior's GetLadderActState / IsLadderAct read (0x1290E50); -1 none.
+int LadderActState(u64 chr) {
+    const u64 a = Field<u64>(Field<u64>(chr, 0x58), 0x38);
+    std::int8_t v = 0;
+    return a && SafeGet(a + 0x60, &v) ? int(v) : deathrules::kLadderUnread;
+}
+/// A ladder state left from a death on a ladder put back to none (the action ctrl constructor's
+/// 0xFF). Main thread; true: it was set.
+bool ReleaseLadder(u64 chr, const char* why) {
+    const int was = LadderActState(chr);
+    if (!deathrules::LadderLeftover(was)) {
+        return false;
+    }
+    const u64 a = Field<u64>(Field<u64>(chr, 0x58), 0x38);
+    const u8 none = 0xff;
+    SafeWrite(a + 0x60, &none, 1);
+    Log("%s: the chr's ladder state released (ChrCtrl +0x38 +0x60 %d -> %d; +0x74 %08x +0x78 %08x +0x7C %08x "
+        "+0xA0 %08x): free movement again", why, was, LadderActState(chr), Field<u32>(a, 0x74), Field<u32>(a, 0x78),
+        Field<u32>(a, 0x7c), Field<u32>(a, 0xa0));
+    return true;
+}
+
 /// fallcam 2: the follow camera's own level reset (deathrules::LevelCameraDue). The ChrCam
 /// (*0x553E860 +0x2830, vtable 0x536B700, built by 0x1435FC0): +0x84 its mode (4 = the fall-die
 /// camera), +0x88 the blend; +0x60 its follow camera (0x143AC60): +0x13C a reset request, +0x13D
@@ -2212,8 +2235,9 @@ bool WarpLocal(const float pos[3], float yaw, const char* why) {
         return false;
     }
     // fallcam: a fall caught by the recovery net (or any warp after the game's fall-death camera
-    // took over) would keep that camera at the old spot: released first.
+    // took over) would keep that camera at the old spot: released first; a ladder state too.
     const bool latched = ReleaseFallCamera(why);
+    ReleaseLadder(player, why);
     // The camera stayed where it was and swung through the walls after a long in-world warp
     // (live vis6: the host looked out of the geometry 3 s after a 68 m move): the Lua CamReset
     // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player; level (fallcam 2).
@@ -5105,6 +5129,8 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
     if (cam.release_latch) {
         ReleaseFallCamera(host ? "host revive" : "guest revive");
     }
+    // fallcam 3: a death on a ladder left the chr's ladder state (only forward movement after it).
+    ReleaseLadder(p, host ? "host revive" : "guest revive");
     if (RecipeHas("gsm")) {
         const u64 gsm = Slot(kSlotGsm);
         const u8 zero = 0;
@@ -5300,12 +5326,12 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         g_local_safe.valid = deathrules::SafeSpotUsable(read, g_local_safe.pos, p);
         const double dx = double(g_local_safe.pos[0] - p[0]), dz = double(g_local_safe.pos[2] - p[2]);
         Log("local death: HP 0 at (%.1f, %.1f, %.1f), dropped %.1f m in the 3 s before%s%s; the game's last safe ground "
-            "spot (%.1f, %.1f, %.1f), %.1f m away (height %+.1f m)%s",
+            "spot (%.1f, %.1f, %.1f), %.1f m away (height %+.1f m)%s; ladder state %d",
             double(p[0]), double(p[1]), double(p[2]), d.peak - d.at_death, d.known ? "" : " (no height history)",
             d.riding ? " (on a moving object: a lift's car)" : "",
             double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]),
             std::sqrt(dx * dx + dz * dz), double(g_local_safe.pos[1] - p[1]),
-            g_local_safe.valid ? "" : read ? " (not usable)" : " (none)");
+            g_local_safe.valid ? "" : read ? " (not usable)" : " (none)", LadderActState(s.player));
     }
     was_dead = dead;
 }
@@ -5492,10 +5518,10 @@ void ReviveViewTick(const GameSnapshot& s, double now) {
     if (w.step == 1 || v != deathrules::ReviveView::Ok) {
         Log("revive view (%s, %.1f s after): camera (%.1f, %.1f, %.1f) %.1f m from the chr (%.1f, %.1f, %.1f), looking "
             "(%.2f, %.2f, %.2f); ChrCtrl +0xC0 (%.1f, %.1f, %.1f) %.2f m off (logged only); fall-death camera %u, "
-            "hp %d: %s",
+            "ladder state %d, hp %d: %s",
             w.what, now - w.at, double(c[0]), double(c[1]), double(c[2]), cam_dist, double(me[0]), double(me[1]),
             double(me[2]), double(cam.view[8]), double(cam.view[9]), double(cam.view[10]), double(drawn[0]),
-            double(drawn[1]), double(drawn[2]), drawn_off, unsigned(latch), ChrHp(s.player),
+            double(drawn[1]), double(drawn[2]), drawn_off, unsigned(latch), LadderActState(s.player), ChrHp(s.player),
             deathrules::ReviveViewName(v));
     }
     if (latch && ChrHp(s.player) > 0 && ReleaseFallCamera("revive view: the latch was set again")) {

@@ -662,6 +662,16 @@ int main() {
     CHECK(LevelCameraDue(false, false, kChrCamFallDieMode));
     CHECK(!LevelCameraDue(false, false, 0));    // up where it lies, no fall: the camera as it is
     CHECK(!LevelCameraDue(false, false, 1));
+    // fallcam 3: a ladder action state left on the chr is put back to none by the revive
+    CHECK(LadderLeftover(0));              // on a ladder (state 0 .. n)
+    CHECK(LadderLeftover(3));
+    CHECK(!LadderLeftover(kNoLadder));     // the constructor's 0xFF: no ladder
+    CHECK(!LadderLeftover(kLadderUnread)); // unreadable (no ChrCtrl)
+    CHECK(WalkedToward(0.0, 3.0, 0.0, 4.0));    // 3 m of a 4 m walk north
+    CHECK(WalkedToward(-2.0, 0.1, -4.0, 0.0));  // west
+    CHECK(!WalkedToward(0.0, 3.0, 4.0, 0.0));   // asked east, went north: stuck on one axis
+    CHECK(!WalkedToward(0.0, -0.5, 0.0, 4.0));  // backwards
+    CHECK(!WalkedToward(1.0, 1.0, 0.0, 0.0));   // no target
     CHECK(std::string(ReviveViewName(ReviveView::Ok)) == "ok");
     CHECK(std::string(ReviveViewName(ReviveView::FallCamera)).rfind("BAD", 0) == 0);
     CHECK(PlanGuestRevive(0.0, true, false) == GuestRevive::InPlace);        // a normal death
