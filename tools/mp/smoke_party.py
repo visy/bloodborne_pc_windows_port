@@ -808,27 +808,28 @@ RH_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
 
 
 def phase_rh(only):
+    # liftfix runs 11 / 12: a test warp out of the car at the bottom made the car leave upward in that
+    # frame (the down event's "every player out" and the up event's "the player in" saw two positions)
+    # and the next warp in fell into the pit at y 1546, where the report's host died. The riders walk
+    # in and out here (the left stick), as a player does.
     common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s/13501117" % (RH_CAR, RH_POS, RH_BUSY)
     arrived = lambda anim: "?obj=%s:%s" % (RH_CAR, anim)
-    xyz = lambda spot: ":".join(spot.split(":")[:3])
+    trig = "-344.56:-792.84:0.35:40"      # the car's trigger box (3502106 top / 3502107 bottom)
+    bot_out = "-341.5:-795.0:0.7:40"       # the bottom landing beside the car, toward lever 3501107
+    top_out = "-351.0:-793.0:0.7:40"       # the top landing beside the car, toward lever 3501106
     host = [common,
             "host_move=%s@4%%m35^1" % RH_TOP_OUT,                                  # at the top landing
-            "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) alone down
-            "host_move=-342.9:1557.9:-792.8:0:native@2%%m35%s" % arrived(2),         # 2 s in, a step out (1.7 m)
-            "host_move=%s@4%%m35" % RH_BOT_OUT,                                      # (stays out 4 s)
-            "host_move=%s@1%%m35?near=%s:1.0" % (RH_BOT_IN, xyz(RH_BOT_BESIDE)),   # (B) with the guest, up
-            "host_move=%s@0.3%%m35%s" % (RH_TOP_OUT, arrived(6)),
-            "host_move=%s@1%%m35?near=%s:1.0" % (RH_TOP_IN, xyz(RH_TOP_BESIDE)),   # (C) with the guest, down
-            "host_move=%s@0.3%%m35%s" % (RH_BOT_OUT, arrived(2)),
+            "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) into the car: down
+            "host_stick=%s@2%%m35%s" % (bot_out, arrived(2)),                      # 2 s after the arrival, out
+            "host_stick=%s@4%%m35" % trig,                                         # (B) 4 s later back in: up
+            "host_stick=%s@2%%m35%s" % (top_out, arrived(6)),                      # out at the top
+            "host_stick=%s@2%%m35?near=%s:1.0" % (trig, RH_TOP_BESIDE.rsplit(":", 0)[0]),  # (C) in, the guest on it
+            "host_stick=%s@2%%m35%s" % (bot_out, arrived(2)),                      # out at the bottom
             "host_press=0@4%%m35!?%s=0" % RH_BUSY]
     g1 = [common,
           "guest_move=%s@6%%m35" % RH_LAMP,                                         # at the lamp, 40 m away
-          # (B) on the car beside once the host is out at the bottom (run 10: its own copy of (A) ended at
-          # once 40 m away, so its flag said "bottom" while the host still rode down)
-          "guest_move=%s@2%%m35?near=%s:3.0" % (RH_BOT_BESIDE, xyz(RH_BOT_OUT)),
-          "guest_move=%s@0.3%%m35%s" % (RH_TOP_OUT2, arrived(6)),                  # out at the arrival
-          "guest_move=%s@3%%m35?%s=1" % (RH_TOP_BESIDE, RH_POS),                   # (C) on the car beside
-          "guest_move=%s@0.3%%m35%s" % (RH_LAMP, arrived(2)),
+          "guest_move=%s@1%%m35?near=-351.0:1583.1:-793.0:1.5" % RH_TOP_BESIDE,     # (C) on the car beside
+          "guest_move=%s@2%%m35%s" % (RH_LAMP, arrived(2)),                         # back at the lamp
           "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
     return dict(
         name="rh", seconds=300, count=2, headless=0, fps=60,
@@ -2429,8 +2430,8 @@ def rh_rides(L, i):
 
 def check_rh(v, L):
     need(v, L, "rh join: 2 players", 0, r"cooperators 0 -> 1")
-    names = ["A host alone down", "B host and guest up", "C host and guest down"]
-    riders = [(0,), (0, 1), (0, 1)]
+    names = ["A host alone down", "B host alone up", "C host and guest down"]
+    riders = [(0,), (0,), (0, 1)]
     rides = [rh_rides(L, i) for i in (0, 1)]
     v.step("rh rides: 3 on each game", len(rides[0]) == 3 and len(rides[1]) == 3,
            "host %d, guest %d" % (len(rides[0]), len(rides[1])))
