@@ -9,6 +9,7 @@
 #include "party_async_io.h"
 #include "party_balance.h"
 #include "party_director.h"
+#include "party_guestsvc.h"
 #include "party_ids.h"
 #include "party_split.h"
 #include "seamless_rules.h"
@@ -354,6 +355,9 @@ struct TestState {
     int rewalks = 0;
     bool list_only = false;   // listonly: once the warp menu is up, log its entries and close it (Circle)
     bool listed = false;
+    int pose = 0;             // listonly: the stand spot tried (PlacePose)
+    double pose_at = 0;
+    bool lit_seen = false;
     bool setup_only = false;  // setuponly: done after continue / start= (no lamp walk, no warp menu)
     bool start_any = false;  // startany: the start= warp also when the save is in that map  // dream: Cross, Left (YES), Cross at the lamp; done when a load starts (#22)  // titleany: also in a party process whose host never answers (#22)
     u32 lamp = 0;          // lamp=ID (0: the nearest lit one)
@@ -419,6 +423,33 @@ bool WalkTo(const GameSnapshot& s, u32 rp) {
     reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u64)>(fn)(s.player, pos, rot, 0);
     Log("test: standing 1 m in front of lamp %u (object %d at %.1f, %.1f, %.1f; was %.1f m away)", rp,
         static_cast<int>(rp - 1000), t[0], t[1], t[2], std::sqrt(h * h + (me[1] - t[1]) * (me[1] - t[1])));
+    return true;
+}
+
+/// listonly (an unlit lamp: lighting needs its action prompt): stand spot `k` for lamp `rp`: 0-3 the
+/// lamp's return spot (where the game puts a player at it) with its own yaw, then turned by 90
+/// degrees each; 4-7 1.2 m from the lamp object on each side, facing it. False: no such spot.
+bool PlacePose(const GameSnapshot& s, u32 rp, int k) {
+    alignas(16) float pos[4] = {0, 0, 0, 1.0f};
+    alignas(16) float rot[4] = {0, 0, 0, 0};
+    if (k < 4) {
+        float sp[4];
+        if (!ids::ReturnSpot(rp, sp)) return false;
+        pos[0] = sp[0], pos[1] = sp[1], pos[2] = sp[2];
+        rot[1] = sp[3] + 1.5707963f * static_cast<float>(k);
+    } else {
+        u32 idx = 0xffffffffu;
+        float m[12] = {};
+        const u64 rec = reinterpret_cast<u64(BB_COOP_SYSV*)(i32, u32*)>(Guest(kMapObject))(static_cast<i32>(rp - 1000), &idx);
+        if (!rec || !SafeRead(rec + 0x240, m, sizeof m)) return false;
+        const float a = 1.5707963f * static_cast<float>(k - 4);
+        pos[0] = m[3] + 1.2f * std::sin(a), pos[1] = m[7], pos[2] = m[11] + 1.2f * std::cos(a);
+        rot[1] = std::atan2(m[3] - pos[0], m[11] - pos[2]) + 3.14159265f;  // as WalkTo: facing the object
+    }
+    u64 vtbl = 0, fn = 0;
+    if (!SafeGet(s.player, &vtbl) || !SafeGet(vtbl + 0x5f8, &fn) || !fn) return false;
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, const float*, const float*, u64)>(fn)(s.player, pos, rot, 0);
+    Log("test: listonly: spot %d at lamp %u: (%.1f, %.1f, %.1f) yaw %.2f", k, rp, pos[0], pos[1], pos[2], rot[1]);
     return true;
 }
 
@@ -510,6 +541,19 @@ void TestTick(const GameSnapshot& s, double now) {
             }
         }
         g_t.walked = lamp;
+        if (g_t.list_only && lamp) {
+            g_t.pose = 0;
+            g_t.pose_at = now;
+            if (!PlacePose(s, lamp, 0)) {
+                Log("test: FAILED: lamp %u has no return spot", lamp);
+                g_t.stage = TestState::Done;
+                return;
+            }
+            g_t.stage = TestState::Press;
+            g_t.at = now + 1.0;
+            g_t.presses = 0;
+            return;
+        }
         if (!lamp || !WalkTo(s, lamp)) {
             Log("test: FAILED: no lit lamp to stand at in %s", MapName(s.map_id).c_str());
             g_t.stage = TestState::Done;
@@ -608,9 +652,41 @@ void TestTick(const GameSnapshot& s, double now) {
             Log("test: warp menu up; choosing lamp %u (entry %d of %zu)", target, pos + 1, list.size());
             return;
         }
-        // listonly at an unlit lamp: the first Cross lights it (its animation), a later one opens the menu.
-        if (++g_t.presses > (g_t.list_only ? 9 : 6)) {
-            Log("test: FAILED: no warp menu after %d Cross presses at the lamp", g_t.presses - 1);
+        if (g_t.list_only) {
+            // Cross only while the lamp's action prompt is up ("Light lamp", then "Return to the
+            // Hunter's Dream" once lit); no prompt for 3 s (8 s after a press): the next spot.
+            Lamp l{};
+            const bool lit = LampOf(g_t.walked, &l) && Flag(LitFlag(l));
+            if (lit && !g_t.lit_seen) {
+                g_t.lit_seen = true;
+                Log("test: listonly: lamp %u is lit on this game after %d press(es)", g_t.walked, g_t.presses);
+            }
+            u32 pid = 0;
+            if (GuestSvcPromptUp(&pid)) {
+                if (++g_t.presses > 10) {
+                    Log("test: FAILED: no warp menu after 10 Cross presses at the lamp's prompt");
+                    g_t.stage = TestState::Done;
+                    return;
+                }
+                Log("test: Cross at the lamp #%d (prompt %u, lamp %s)", g_t.presses, pid, lit ? "lit" : "unlit");
+                Press(kPadCross, now);
+                g_t.pose_at = now;
+                g_t.at = now + 2.5;
+                return;
+            }
+            if (now - g_t.pose_at >= (g_t.presses > 0 ? 8.0 : 3.0)) {
+                if (++g_t.pose >= 8 || !PlacePose(s, g_t.walked, g_t.pose)) {
+                    Log("test: FAILED: no action prompt at lamp %u from any spot (%d press(es))", g_t.walked, g_t.presses);
+                    g_t.stage = TestState::Done;
+                    return;
+                }
+                g_t.pose_at = now;
+            }
+            g_t.at = now + 0.25;
+            return;
+        }
+        if (++g_t.presses > 6) {
+            Log("test: FAILED: no warp menu after 6 Cross presses at the lamp");
             g_t.stage = TestState::Done;
             return;
         }
