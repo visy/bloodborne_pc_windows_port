@@ -1707,7 +1707,9 @@ def run_phase(a, ph, out: Path):
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
         cmd += ["--until", u]
-    env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"))
+    # BB_MP_PARENT_PID: this harness; instances.py (and the reaper, by the slot's "parent") end the
+    # games once it is gone (a killed smoke left its phase's games running to their cap).
+    env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"), BB_MP_PARENT_PID=str(os.getpid()))
     shots = out / "shots"
     shots.mkdir(exist_ok=True)
     print("[smoke] %s: %s" % (ph["name"], " ".join(cmd)), flush=True)
