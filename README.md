@@ -247,8 +247,8 @@ before anyone is in the game):
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later.
-- **Vote on travel** (host's switch, off by default: *Party votes on travel* on *System → Shared
-  world*, or the launcher). The party then travels only when everyone agrees: after *Yes* to
+- **Vote on travel** (host's switch, off by default: *Party votes on travel* on *System → Party rules:
+  World*, or the launcher). The party then travels only when everyone agrees: after *Yes* to
   "Travel with the party?" every other player gets the game's *Yes* / *No* question with who wants
   to go and where. One *No*, or no answer within 20 s, cancels the trip for everyone, and the notice
   says who said no or didn't answer. A guest's own *Yes* is a vote too (the host and the other
@@ -257,7 +257,8 @@ before anyone is in the game):
   press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
-  cannot gather during its own boss fight or cutscene, and only once every 30 s. The host can turn
+  cannot gather during its own boss fight or cutscene, on a ladder or in mid-air, and only once every
+  30 s. If there is no ground beside the host, the guest comes with one loading screen instead. The host can turn
   gathering off (*Host can gather* on *System → Party rules: World*).
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
@@ -349,7 +350,7 @@ before anyone is in the game):
   party (the covenant quests of Annalise, Alfred and Valtr stay each player's own), and NPCs look
   solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
-  Story & dialogue → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
+  My party: Story → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
   headstones show no caption. One-time NPC gifts go to every party member;
   repeatable ones (Blood of Arianna, Iosefka's vials, ...) and Valtr's League gifts to whoever asked.
 - **Change your appearance at the Dream's mirror.** The workshop mirror opens the appearance editor
@@ -420,7 +421,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing. **A fall** (off a ledge, or out of the world): it gets up at its own lamp, or at the host's lamp when its own is in another area, with no loading screen when that lamp is in the area, never in the Hunter's Dream; its Blood Echoes wait on the last solid ground before the fall, never under the map |
 | The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. After a fall (off a ledge or out of the world) it also gets up at its lamp (no loading screen when the lamp is in the area, never in the Hunter's Dream); its echoes wait on the last solid ground before the fall. A death that takes the host somewhere else by the story (a Snatcher's kidnap to the Hypogean Gaol) takes the whole party there instead: one loading screen for everyone, the guests wake beside the host. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (after a fall: on the last solid ground before it, where their bloodstain is; or beside a living hunter), never under the map, no load, their echoes still in their bloodstain. the host's *System → Deaths & revives → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (after a fall: on the last solid ground before it, where their bloodstain is; or beside a living hunter), never under the map, no load, their echoes still in their bloodstain. the host's *System → Party rules: Deaths → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp with one loading screen; the session stays. Also when the last hunter falls long after the others (the ones already down wait for it, however long the fight goes on); its echoes wait in a bloodstain where it fell |
 
 A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.

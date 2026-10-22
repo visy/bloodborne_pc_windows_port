@@ -256,6 +256,8 @@ struct HdrTexts {
 } hdr_texts;
 struct BalanceTexts {
     u32 scale_help[6]{};
+    /// guestrules (0.7.3): a guest's read-only lines with the host's scaling (value, help).
+    u32 guest_scale_value[6]{}, guest_scale_help[6]{};
     u32 npc_range_help = 0;
 } balance;
 /// A host's rule on a guest: the read-only line's value and help, from the rule in force.
@@ -1348,7 +1350,12 @@ void DefineAll() {
                    Kind::Slider,
                    [member, table](const Values& v) { return coop::balance::Position(table, (v.*member).load()); },
                    [member, table](int i) { (BbSettings::Get().*member) = coop::balance::AtPosition(table, i); }),
-               AddText(en, ru), balance.scale_help[index], {}, Kind::Slider);
+               AddText(en, ru), balance.scale_help[index], {}, Kind::Slider, [is_guest] { return !is_guest(); });
+        // guestrules (0.7.3): a guest's read-only line with the host's value
+        balance.guest_scale_value[index] = AddDynamic(MaxValueLength);
+        balance.guest_scale_help[index] = AddDynamic(MaxHelpLength);
+        AddRow(Info(), AddText(en, ru), balance.guest_scale_help[index], {balance.guest_scale_value[index]},
+               Kind::Button, is_guest);
     };
     using namespace coop::balance;
     // Health and damage first (changed most), poise last.
@@ -1503,8 +1510,6 @@ void DefineAll() {
 void RefreshBalance() {
     if (!balance.npc_range_help) return;
     const auto& v = BbSettings::Get();
-    const bool guest = party::status::Snapshot().role == party::status::Role::Guest;
-    const std::string g_en = guest ? " (host decides)" : "", g_ru = guest ? " (решает хост)" : "";
     {
         const int r = coop::npctalk::RangeAtPosition(coop::npctalk::RangePosition(v.party_npc_talk_range.load()));
         SetDynamic(balance.npc_range_help, "Companions' NPC dialogue reaches you " + coop::npctalk::DescribeRange(r),
@@ -1529,7 +1534,23 @@ void RefreshBalance() {
         const char* ref_en = k < 3 ? "; 100 % = Bloodborne" : "; vanilla 0";
         const char* ref_ru = k < 3 ? "; 100 % = как в игре" : "; в игре 0";
         if (!balance.scale_help[k]) continue;  // poise: overlay Party tab / bbport.ini only
-        SetDynamic(balance.scale_help[k], en + (kind == 1 ? "" : ref_en) + g_en, ru + (kind == 1 ? "" : ref_ru) + g_ru);
+        SetDynamic(balance.scale_help[k], en + (kind == 1 ? "" : ref_en), ru + (kind == 1 ? "" : ref_ru));
+    }
+    // A guest's read-only lines: the host's values in force (party_status HostScaling).
+    int host[party::status::kScalingValues];
+    party::status::HostScaling(host);
+    for (int k = 0; k < 6; ++k) {
+        if (!balance.guest_scale_value[k]) continue;
+        const int kind = k % 3;
+        const int value = host[k];
+        char shown[16];
+        std::snprintf(shown, sizeof shown, kind == 1 ? "+%d %%" : "%d %%", value);
+        SetDynamic(balance.guest_scale_value[k], shown, shown);
+        const std::string en = kind == 0 ? DescribeHp(value, false)
+                               : kind == 1 ? DescribeDamage(value, false) : DescribePoise(value, false);
+        const std::string ru = kind == 0 ? DescribeHp(value, true)
+                               : kind == 1 ? DescribeDamage(value, true) : DescribePoise(value, true);
+        SetDynamic(balance.guest_scale_help[k], "The host's setting: " + en, "Настройка хоста: " + ru);
     }
 }
 

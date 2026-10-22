@@ -1913,6 +1913,21 @@ void PartyTab() {
     // Party rules (party_balance.h): the host's values count for the whole party.
     ImGui::Spacing();
     Note(T("Party rules (the host's count for everyone)", "Правила группы (действуют правила хоста)"), Dim());
+    // guestrules (0.7.3): a guest sees the host's rot and scaling, read-only (its own bbport.ini
+    // values stay for when it hosts).
+    const bool rules_guest = b.role == ps::Role::Guest;
+    if (rules_guest) {
+        const auto rule_note = [&](const char* en, const char* ru, ps::HostRule rule) {
+            std::snprintf(line, sizeof(line), "%s: %s", T(en, ru),
+                          ps::HostRuleOn(rule) ? T("on (the host's rule)", "вкл. (правило хоста)")
+                                               : T("off (the host decides)", "выкл. (решает хост)"));
+            Note(line, Dim());
+        };
+        rule_note("Rot on death", "Гниль при смерти", ps::HostRule::Rot);
+        rule_note("  Rot: a boss kill cleanses it", "  Гниль: смерть босса снимает", ps::HostRule::RotCleanseBoss);
+        rule_note("  Rot: kill your killer", "  Гниль: убить своего убийцу", ps::HostRule::RotCleanseKiller);
+        rule_note("  Rot: retrieve your Blood Echoes", "  Гниль: вернуть отголоски крови", ps::HostRule::RotCleanseEchoes);
+    } else {
     Toggle("party_rot", T("Rot on death", "Гниль при смерти"), s.party_rot,
            T("Each death stacks one penalty (max HP or stamina -10 %, stamina costs +10 %, rally -15 % or "
              "item discovery -10; up to 5); resting at a lamp or levelling up cleanses it. Default: off.",
@@ -1940,6 +1955,7 @@ void PartyTab() {
              "Подобранное пятно крови снимает гниль смерти, оставившей его (не дважды, если убийца уже погиб). "
              "По умолчанию: вкл."),
            on);
+    }
     // I1 friendly fire / PvP (party_pvp.h): the host's switch; a guest sees the host's rule.
     if (b.role == ps::Role::Guest) {
         Note(ps::FriendlyFire() ? T("Friendly fire / PvP: ON (the host's rule) - party members can hurt each other",
@@ -2015,7 +2031,21 @@ void PartyTab() {
     };
     const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
     static std::string scale_text[11];
+    if (rules_guest) {
+        int host[ps::kScalingValues];
+        ps::HostScaling(host);
+        for (int k = 0; k < ps::kScalingValues; ++k) {
+            const Scale& sc = scales[k];
+            const std::string v = sc.kind == 0   ? coop::balance::DescribeHp(host[k], ru)
+                                  : sc.kind == 1 ? coop::balance::DescribeDamage(host[k], ru)
+                                                 : coop::balance::DescribePoise(host[k], ru);
+            std::snprintf(line, sizeof(line), "%s: %s %s", T(sc.en, sc.ru), v.c_str(),
+                          T("(the host's)", "(хоста)"));
+            Note(line, Dim());
+        }
+    }
     for (const Scale& sc : scales) {
+        if (rules_guest) break;
         const int pos = coop::balance::Position(sc.table, sc.value->load());
         for (int i = 0; i < 11; ++i) {
             const int v = sc.table[i];

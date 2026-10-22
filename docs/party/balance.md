@@ -11,8 +11,11 @@ Addresses are our offsets (raw ELF VA of `out/eboot.elf`, 1.09).
 The host's settings are the party's: `balance::Tick` (director tick, party mode) posts EVENT
 `balance` `{"rot":true,"boss_hp":150,...}` to every guest on change and every 15 s (late joiners);
 the guest's runtime hands it to `balance::OnHostRules` (JSON parsed with limits, every value clamped
-to the menu's range). A guest uses its own settings until the first event arrives. The menu's help
-lines say "(host decides)" on a guest. `BB_PARTY_BALANCE=0`: nothing (no hook, no param write, no
+to the menu's range). The host also sends it at once when a guest connects (0.7.3), so a guest
+uses its own settings only until that first event arrives. On a guest every rule is a read-only line
+with the host's value (System > Party rules: Enemies: "The host's setting: ...", from
+`party_status::HostScaling`; the overlay's Party tab: notes); the guest's own `bbport.ini` values
+are never changed by the host's and count again when it hosts. `BB_PARTY_BALANCE=0`: nothing (no hook, no param write, no
 event).
 
 ## 2. D7: enemy scaling
@@ -41,7 +44,7 @@ the code (docs/party/four_players.md section 4):
 
 ### 2.2 Settings
 
-System > Enemy scaling: six sliders (boss / enemy health, damage, poise; the help line shows the
+System > Party rules: Enemies: six sliders (boss / enemy health, damage, poise; the help line shows the
 value), also in the overlay's Party tab and bbport.ini. The page layout the port uses
 ("ControllSetting") has six rows; the System list itself scrolls, and the port's page cap
 (MaxPages, one factory per page: our own constant, not the game's) is now 16. Live 2026-10-11

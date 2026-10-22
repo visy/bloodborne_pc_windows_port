@@ -503,6 +503,12 @@ static void RulesPages() {
         ps::SetHostRule(ps::HostRule::Gather, false);
         ps::SetHostRule(ps::HostRule::NpcMirror, true);
         ps::SetHostRule(ps::HostRule::CovenantPerPlayer, true);
+        {   // guestrules: the host's scaling differs from this player's own bbport.ini values
+            const int host_scaling[ps::kScalingValues] = {300, 50, 200, 100, 20, 0};
+            ps::SetHostScaling(host_scaling);
+            BbSettings::Get().party_boss_hp = 150;
+            BbSettings::Get().party_boss_damage = 10;
+        }
         BbSettings::Get().party_host_revive = true;  // EverySettingSaved changed every row once
         BbSettings::Get().party_covenant_per_player = true;
         BbSettings::Get().party_gather = true;
@@ -526,6 +532,27 @@ static void RulesPages() {
         // Every row of a Party rules page is a host's rule (a toggle for the host, a read-only line
         // for a guest; the Enemies sliders: the host's values); every My party row a toggle / slider /
         // list for everyone.
+        // guestrules (0.7.3): the enemy scaling is the host's rule: sliders for the host, read-only
+        // lines with the host's values for a guest (its own bbport.ini values are kept).
+        assert(names(u"Party rules: Enemies") == (V{u"Boss health", u"Boss damage", u"Enemy health", u"Enemy damage",
+                                             u"Boss poise", u"Enemy poise"}));
+        for (const P::Kind kind : kinds(u"Party rules: Enemies")) assert(kind == (guest ? P::Kind::Button : P::Kind::Slider));
+        if (guest) {
+            const auto scale = P::ShownRows(PageNamed(u"Party rules: Enemies"));
+            assert(std::u16string(P::Text(scale[0]->choices[0], false)) == u"300 %");
+            assert(std::u16string(P::Text(scale[1]->choices[0], false)) == u"+50 %");
+            assert(std::u16string(P::Text(scale[2]->choices[0], false)) == u"100 %");
+            assert(std::u16string(P::Text(scale[0]->help, false)).find(u"The host's setting: 300 %") == 0);
+            assert(std::u16string(P::Text(scale[1]->help, true)).find(u"Настройка хоста") == 0);
+            for (const P::Row* row : scale) {  // a press changes nothing (a read-only line)
+                assert(P::IsButton(row->field));
+                Press(*row);
+            }
+            Advance(16);
+            const std::string line = P::ShownSummary(PageNamed(u"Party rules: Enemies"));
+            assert(line.find("Boss health=300 %") != std::string::npos);
+            assert(BbSettings::Get().party_boss_hp == 150 && BbSettings::Get().party_boss_damage == 10);
+        }
         const P::Kind host_kind = guest ? P::Kind::Button : P::Kind::Toggle;
         for (const char16_t* page : {u"Party rules: World", u"Party rules: PvP & lamps", u"Party rules: Deaths",
                                      u"Party rules: Rot"})
