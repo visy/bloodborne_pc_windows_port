@@ -1925,6 +1925,27 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         runtime.FlushBarriers();
     }
 
+    ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
+                                 : sizeof(VkDrawIndirectCommand)));
+    // bbport: the commands checked on the GPU first (vk_indirect_guard.h), outside the render
+    // pass (closed here, resumed by BeginRendering below) and before the pipeline's bindings,
+    // which the check's own pipeline would disturb. Experiment bit 64 of BB_TOGGLE_FILE: drawn
+    // unchecked (A/B of the check's cost while the game runs).
+    vk::Buffer args = buffer->Handle();
+    u64 args_offset = base;
+    u32 args_slot = ~0u;
+    if (IndirectGuard::Enabled() && !BbToggle::Experiment(64)) {
+        if (!indirect_guard) {
+            indirect_guard = std::make_unique<IndirectGuard>(instance, scheduler);
+        }
+        if (scheduler.SuspendRendering()) {
+            IndirectGuard::NoteRenderPassSplit();
+        }
+        args_slot = Breadcrumbs::ArgsSlot();
+        std::tie(args, args_offset) =
+            indirect_guard->CheckDrawArgs(*buffer, base, stride, max_count, args_slot);
+    }
+
     // bbport: screen-space (clip disabled) draws into the upscaler's output-size images.
     push_data.xscale *= target_scale[0];
     push_data.xoffset *= target_scale[0];
@@ -1943,11 +1964,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     }
     scheduler.BeginRendering(state);
 
-    ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
-                                 : sizeof(VkDrawIndirectCommand)));
     const vk::Pipeline handle = pipeline->Handle();
-    const vk::Buffer args = buffer->Handle();
-    const u64 args_offset = base;
     const vk::Buffer counts = count_address != 0 ? count_buffer->Handle() : vk::Buffer{};
     const u64 counts_offset = count_address != 0 ? count_offset : 0;
     const auto* vs_crumb = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
@@ -1959,6 +1976,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
                     ps_crumb ? ps_crumb->ProgramBase() : 0},
         .address = indirect.args,
         .count = {max_count, stride, 0},
+        .args_slot = args_slot,
     };
     scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
