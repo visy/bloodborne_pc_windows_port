@@ -158,6 +158,10 @@ struct StoryState {
     bool remo_playing = false;         ///< SprjRemo player +0x168 bit 0
     bool sex_variant = false;          ///< play the +1000 remo files
     std::uint32_t map_id = 0xffffffffu;
+    /// Map blocks (0xAABB0000) this game has loaded: a block counts when a loaded enemy's map entity
+    /// id (chr +0x1F0, AABNNNN) is of it (MapOfEntity). Filled only while a story item waits.
+    std::vector<std::uint32_t> loaded_blocks;
+    float host_dist = -1;              ///< m to the host's reported position (same area); -1 unknown
     int tod_value = 0;                 ///< 9800..9802 3-bit value of the own save (summoned: the pool)
     bool calm = true;                  ///< no HP lost lately (a summoned replay waits for it)
 };
@@ -192,6 +196,31 @@ const char* StoryActionName(StoryAction::Kind k);
 constexpr bool MirrorMapOk(std::uint32_t remo, std::uint32_t map_id) {
     return map_id == 0xffffffffu || ((remo / 1000000u) << 24 | (remo / 10000u % 100u) << 16) == (map_id & 0xffff0000u);
 }
+
+/// The map block (0xAABB0000) of a map entity id AABNNNN (7 digits: area AA, block B), 0 for any
+/// other id (players, generated ids).
+constexpr std::uint32_t MapOfEntity(std::uint32_t entity) {
+    return entity >= 1000000u && entity < 10000000u ? (entity / 100000u) << 24 | (entity / 10000u % 10u) << 16 : 0u;
+}
+/// The map block (0xAABB0000) a remo AABBnnnn plays in.
+constexpr std::uint32_t MapOfRemo(std::uint32_t remo) {
+    return (remo / 1000000u) << 24 | (remo / 10000u % 100u) << 16;
+}
+/// A live mirror stays near the host (player report 2026-10-22, the Cathedral Ward door): the
+/// guest stood 2-3 m behind the host at the m24_01 / m24_00 door, so its current block was m24_01
+/// while the host's scene 24000020 is m24_00; MirrorMapOk dropped it and the guest got the scene
+/// as a replay later. Besides the scene's own block, a guest in the scene's AREA plays the mirror
+/// when the scene's block is loaded on its game (`block_loaded`) or it stands within
+/// kMirrorNearHost m of the host (`host_dist`, -1 unknown). A guest in another area (the host's
+/// Gaol waking scene for guests in the Cathedral Ward) or far away in an unloaded block still gets none.
+constexpr float kMirrorNearHost = 30.0f;
+constexpr bool MirrorSceneOk(std::uint32_t remo, std::uint32_t map_id, bool block_loaded, float host_dist) {
+    return MirrorMapOk(remo, map_id) ||
+           ((map_id >> 24) == remo / 1000000u &&
+            (block_loaded || (host_dist >= 0.0f && host_dist <= kMirrorNearHost)));
+}
+/// `st`'s loaded blocks hold the block of `remo`.
+bool SceneBlockLoaded(const StoryState& st, std::uint32_t remo);
 
 class GuestStory {
 public:
@@ -256,6 +285,13 @@ public:
     }
     /// The remo of a live mirror dropped because this guest stands in another map (MirrorMapOk;
     /// 0 = none) and that map, once.
+    /// The remo of a live mirror that plays outside its own block (MirrorSceneOk: loaded / near the
+    /// host; 0 = none), once.
+    std::uint32_t TakeMirrorNearby() {
+        const std::uint32_t r = mirror_nearby_;
+        mirror_nearby_ = 0;
+        return r;
+    }
     std::uint32_t TakeMirrorOtherMap(std::uint32_t* map = nullptr) {
         const std::uint32_t r = mirror_other_map_;
         if (map) *map = mirror_other_map_at_;
@@ -290,6 +326,7 @@ private:
     std::uint32_t mirror_cut_ = 0; ///< a live mirror stopped early (kMirrorMinSeen); TakeMirrorCut
     std::uint32_t mirror_other_map_ = 0;     ///< a mirror dropped for another map; TakeMirrorOtherMap
     std::uint32_t mirror_other_map_at_ = 0;  ///< the guest's map then
+    std::uint32_t mirror_nearby_ = 0;        ///< a mirror played outside its block; TakeMirrorNearby
     std::uint64_t last_seq_ = 0;
     int stable_mirror_ = 0, stable_own_ = 0;
     bool dirty_ = false;

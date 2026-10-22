@@ -11291,6 +11291,16 @@ void SetWhere(const std::vector<Where>& members) {
     g_where = members;
 }
 
+bool MemberWhere(int slot, Where* out) {
+    for (const Where& w : g_where) {
+        if (w.slot == slot) {
+            if (out) *out = w;
+            return true;
+        }
+    }
+    return false;
+}
+
 int MembersApart() {
     return g_apart.load();
 }

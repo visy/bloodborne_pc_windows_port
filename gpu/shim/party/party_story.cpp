@@ -26,10 +26,12 @@
 #include "seamless_rules.h"
 #include "party_split.h"
 #include "party_worldact.h"
+#include "party_balance.h"
 #include "../bbport_game_menu_pages.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdlib>
 #include <fstream>
@@ -467,6 +469,11 @@ const char* HostStoryUpGuard::Refuse(std::uint32_t remo_id, bool boss_fight, dou
     return nullptr;
 }
 
+bool SceneBlockLoaded(const StoryState& st, std::uint32_t remo) {
+    const std::uint32_t block = MapOfRemo(remo);
+    return std::find(st.loaded_blocks.begin(), st.loaded_blocks.end(), block) != st.loaded_blocks.end();
+}
+
 bool OwnSceneHold::Hold(const Item& it) {
     if (Holding(it.remo)) {
         return true;  // the same scene again: the first hold stands
@@ -846,7 +853,8 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
     if (mirror_) {
         if (now - mirror_since_ > kMirrorTimeout || st.session_role != 6) {
             mirror_.reset();
-        } else if (stable_mirror_ >= kStableTicks && !MirrorMapOk(mirror_->id, st.map_id)) {
+        } else if (stable_mirror_ >= kStableTicks &&
+                   !MirrorSceneOk(mirror_->id, st.map_id, SceneBlockLoaded(st, mirror_->id), st.host_dist)) {
             mirror_other_map_ = mirror_->id;
             mirror_other_map_at_ = st.map_id;
             mirror_.reset();
@@ -854,6 +862,9 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
         } else if (stable_mirror_ >= kStableTicks) {
             const StoryIntent s = *mirror_;
             mirror_.reset();
+            if (!MirrorMapOk(s.id, st.map_id)) {
+                mirror_nearby_ = s.id;
+            }
             Build(s, true);
             return Run(st, now);
         } else {
@@ -880,7 +891,8 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
             }
             // A scene of another map waits (for its map, or for the own world as before): played
             // here it drew without its scenery, as the live mirror did (MirrorMapOk).
-            if (it->kind == StoryKind::Cutscene && !MirrorMapOk(it->id, st.map_id)) {
+            if (it->kind == StoryKind::Cutscene &&
+                !MirrorSceneOk(it->id, st.map_id, SceneBlockLoaded(st, it->id), st.host_dist)) {
                 continue;
             }
             const StoryIntent s = *it;
@@ -2030,6 +2042,24 @@ void StoryTick() {
     if (g.world_up && !g.loading && (busy || (g_tick.test_on && !g_tick.test_done))) {
         st.sex_variant = SexVariant(); // a virtual call into the game: only when a play may follow
     }
+    if (busy && g.world_up && !g.loading && g.session_role == RoleClient) {
+        // A mirror / summoned replay outside the scene's own block (MirrorSceneOk): the blocks this
+        // game has loaded (its loaded enemies' map entity ids) and the host's distance.
+        for (const EnemyKillCandidate& e : balance::LoadedEnemies()) {
+            const u32 m = MapOfEntity(e.entity);
+            if (m && std::find(st.loaded_blocks.begin(), st.loaded_blocks.end(), m) == st.loaded_blocks.end()) {
+                st.loaded_blocks.push_back(m);
+            }
+        }
+        b2::Where host;
+        float me[3] = {};
+        const u64 player = Field<u64>(Slot(kWorldChrMan), 0x60, 0);
+        if (b2::MemberWhere(0, &host) && host.has_pos && host.age_ms < 3000 && host.map &&
+            (host.map >> 24) == (g.map_id >> 24) && player && balance::ChrPosition(player, me)) {
+            const float dx = host.pos[0] - me[0], dy = host.pos[1] - me[1], dz = host.pos[2] - me[2];
+            st.host_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
     if (g.world_up && !g.loading) {
         // Summoned: the own save's clock (the overlay shows the host's).
         const int tv = Summoned() ? OwnTodValue() : FlagValue(9800, 3);
@@ -2248,8 +2278,14 @@ void StoryTick() {
         }
         u32 other_at = 0;
         if (const u32 other = g_guest.TakeMirrorOtherMap(&other_at)) {
-            Log("live mirror of remo %u dropped: its map is not loaded here (this guest is in %s); no host "
-                "cutscene over another map's scenery", other, MapName(other_at).c_str());
+            Log("live mirror of remo %u dropped: its map is not loaded here (this guest is in %s, %zu block(s) "
+                "loaded, the host %.1f m away); no host cutscene over another map's scenery", other,
+                MapName(other_at).c_str(), st.loaded_blocks.size(), double(st.host_dist));
+        }
+        if (const u32 near = g_guest.TakeMirrorNearby()) {
+            Log("live mirror of remo %u plays here though this guest is in %s: the scene's map %s is %s, the host "
+                "%.1f m away", near, MapName(st.map_id).c_str(), MapName(MapOfRemo(near)).c_str(),
+                SceneBlockLoaded(st, near) ? "loaded" : "not seen loaded", double(st.host_dist));
         }
     }
     if (a) {

@@ -938,6 +938,83 @@ static void test_own_intro_held_for_host() {
     }
 }
 
+// Player report 2026-10-22 (cwscene.log 3149-3227): the guest stood 2-3 m behind the host at the
+// Cathedral Ward door. The host's scene 24000020 (event 12400750) is m24_00, the guest's current
+// block was m24_01: the mirror was dropped ("its map is not loaded here") and the scene came as a
+// replay once the guest walked into m24_00. The same area with the scene's block loaded, or the
+// host near, now plays it live; another area or a far guest in an unloaded block still does not.
+static void test_mirror_at_block_boundary() {
+    const std::uint32_t m24_00 = 0x18000000, m24_01 = 0x18010000, m28_00 = 0x1c000000;
+    CHECK(MapOfRemo(24000020) == m24_00 && MapOfRemo(24010010) == m24_01);
+    CHECK(MapOfEntity(2410800) == m24_01 && MapOfEntity(2400123) == m24_00 && MapOfEntity(3602805) == 0x24000000);
+    CHECK(MapOfEntity(10000) == 0 && MapOfEntity(0) == 0 && MapOfEntity(24000020) == 0);
+    // The door: m24_01, the scene's block m24_00 loaded, the host 2.5 m away.
+    CHECK(!MirrorMapOk(24000020, m24_01));
+    CHECK(MirrorSceneOk(24000020, m24_01, true, 2.5f));
+    CHECK(MirrorSceneOk(24000020, m24_01, false, 2.5f));   // block not seen loaded, the host right there
+    CHECK(MirrorSceneOk(24000020, m24_01, true, -1.0f));   // loaded, no host position
+    CHECK(MirrorSceneOk(24000020, m24_01, false, kMirrorNearHost));
+    // Far away in the same area with the scene's block not loaded: none (no scenery).
+    CHECK(!MirrorSceneOk(24000020, m24_01, false, 180.0f));
+    CHECK(!MirrorSceneOk(24000020, m24_01, false, -1.0f));
+    // Another area (the Gaol waking scene for guests in the Cathedral Ward): none, whatever is loaded.
+    CHECK(!MirrorSceneOk(28000010, m24_01, true, 2.0f));
+    CHECK(!MirrorSceneOk(24000020, m28_00, true, 2.0f));
+    CHECK(MirrorSceneOk(24000020, m24_00, false, -1.0f));  // its own block: as before
+    StoryState ph = Phantom();
+    ph.map_id = m24_01;
+    ph.loaded_blocks = {m24_01, m24_00};
+    CHECK(SceneBlockLoaded(ph, 24000020) && !SceneBlockLoaded(ph, 28000010));
+
+    StoryIntent s;
+    s.seq = 1;
+    s.kind = StoryKind::Cutscene;
+    s.id = 24000020;
+    s.instr = 6;
+    s.tod = 1;
+    s.event_id = 12400750;
+    s.map = m24_00;
+    {  // The door: the live mirror plays within 1 s, flagged as played outside its block; no replay.
+        GuestStory g;
+        double t = 100;
+        StoryState door = ph;
+        door.host_dist = 2.5f;
+        CHECK(g.Offer(s, true, t));
+        const double sent = t;
+        auto a = Until(g, door, t);
+        CHECK(a && a->kind == StoryAction::PlayRemo && a->id == 24000020 && a->mirror && t - sent < 1.0);
+        CHECK(g.TakeMirrorNearby() == 24000020 && g.TakeMirrorNearby() == 0);
+        CHECK(g.TakeMirrorOtherMap() == 0);
+        PlayToEnd(g, door, t);
+        t += 1.0 / 60;
+        CHECK(!g.Step(door, t));
+        CHECK(g.Seen(24000020));
+        // Its queued catch-up (a world phase change: tod 1) keeps the time of day, never the scene again.
+        StoryState in00 = door;
+        in00.map_id = m24_00;
+        in00.calm = true;
+        for (int i = 0; i < 400; ++i) {
+            t += 1.0 / 60;
+            if (auto b = g.Step(in00, t)) {
+                CHECK(b->kind != StoryAction::PlayRemo);
+                if (b->kind == StoryAction::PlayRemo) break;
+            }
+        }
+    }
+    {  // A far guest in m24_01 with m24_00 not loaded: dropped as before.
+        GuestStory g;
+        double t = 100;
+        StoryState far = Phantom();
+        far.map_id = m24_01;
+        far.loaded_blocks = {m24_01};
+        far.host_dist = 180.0f;
+        CHECK(g.Offer(s, true, t));
+        CHECK(!Until(g, far, t, 100));
+        std::uint32_t at = 0;
+        CHECK(g.TakeMirrorOtherMap(&at) == 24000020 && at == m24_01 && g.TakeMirrorNearby() == 0);
+    }
+}
+
 int main() {
     test_tables();
     test_guest_phase_change();
@@ -961,6 +1038,7 @@ int main() {
     test_host_story_up_guard();
     test_guest_intro_once_on_host();
     test_own_intro_held_for_host();
+    test_mirror_at_block_boundary();
     std::printf("party-story-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
