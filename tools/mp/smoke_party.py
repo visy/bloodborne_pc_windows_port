@@ -864,7 +864,7 @@ def phase_rh(only):
           "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
     return dict(
         name="rh", seconds=360, count=2, headless=0, fps=60,
-        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=45", "BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
@@ -888,7 +888,7 @@ def phase_rs(only):
             "host_press=0@4%m35!"]
     return dict(
         name="rs", seconds=200, count=1, headless=0, fps=int(os.environ.get("BB_RS_FPS", "60")),
-        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=45", "BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
@@ -1501,9 +1501,11 @@ def phase_sm(only):
     ])
     return dict(
         name="sm", seconds=480, count=2, headless=0,
+        # Only the host skips its scenes (5 s): the guest's live mirror must end with the host's
+        # skip (the player-facing rule), not by a skip of its own.
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + ",12400750,9800,9801,9802",
-             "BB_PARTY_TEST_INVINCIBLE=1"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+             "BB_PARTY_TEST_INVINCIBLE=1", "BB_TEST_REMO_SKIP_AFTER=0"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "0:BB_TEST_REMO_SKIP_AFTER=5"],
         watch=["--watch", r"remo playing=smremo@0.5,1.5,4", "--watch", r"cutscene 24000020=smdoor@0.5,1.5,4",
                "--watch", r"map m24_01_00_00 -> m24_00_00_00=smwalk@2,8"],
         crash=[], until=[SM_UNTIL], until_hold=15,
@@ -1683,6 +1685,10 @@ def run_phase(a, ph, out: Path):
            "--label", "smoke %s" % ph["name"]] + ph.get("args", [])
     if getattr(a, "real_net", False):
         cmd += ["--real-net"]  # the real network instead of loopback (instances.py --real-net)
+    # Speed (user decision 2026-10-22): every cutscene is watched 5 s, then skipped by the game's own
+    # skip / end path (its end actions still run); a phase that needs whole scenes sets full_scenes.
+    if not ph.get("full_scenes") and not any(e.startswith("BB_TEST_REMO_SKIP_AFTER=") for e in ph["env"]):
+        cmd += ["--env", "BB_TEST_REMO_SKIP_AFTER=5"]
     for e in ph["env"]:
         cmd += ["--env", e.replace("{root}", str(root))]
     for e in ph["ienv"]:
@@ -3279,15 +3285,17 @@ def check_rt(v, L):
         need(v, L, "rt 1 a stack (health)", 1, r"death 1; rot on, 1 stack\(s\) \(this one: health\)", d1 - 1)
         k1 = need(v, L, "rt 1 the host kills it", 0, r"travel step \d+/\d+: host_kill entity %s" % ent, d1)
         c1 = need(v, L, "rt 1 killer dead: -1 (notice)", 1,
-                  r"rot: an enemy died \(entity %s, .*\): 1 stack\(s\) off, \d+ left; notice: Rot -1: your killer is dead"
+                  # [1-5]: the stain test can put the frail guest back onto its stain beside the living
+                  # killer, a second death by it (release smoke 0.7.2: "Rot -2: your killer is dead")
+                  r"rot: an enemy died \(entity %s, .*\): [1-5] stack\(s\) off, \d+ left; notice: Rot -[1-5]: your killer is dead"
                   % ent, d1)
         if c1 is not None and k1 is not None:
             v.step("rt 1 the cleanse came from the host's kill", c1 >= k1 - 1 and c1 - k1 < 15,
                    "+%.1f s after the host's kill" % (c1 - k1))
     d2 = need(v, L, "rt 2 a scripted death (no killer), a stain", 1,
-              r"death 2: killed by nobody", k1 or 0)
+              r"death \d+: killed by nobody", k1 or 0)
     if d2 is not None:
-        need(v, L, "rt 2 stack +1", 1, r"death 2; rot on, 1 stack\(s\)", d2 - 1)
+        need(v, L, "rt 2 stack +1", 1, r"death \d+; rot on, 1 stack\(s\)", d2 - 1)
         need(v, L, "rt 2 bloodstain picked up", 1, r"party stain: recovered \d+ Blood Echoes|own bloodstain taken and its Blood Echoes back", d2)
         need(v, L, "rt 2 echoes back: -1 (notice)", 1,
              r"rot: the bloodstain was picked up .*: 1 stack\(s\) off, 0 left; notice: Rot -1: Blood Echoes retrieved", d2)
@@ -3403,6 +3411,9 @@ def check_sm(v, L):
         v.step("sm intro: one play on the guest", len(g) == 1, "%d remo start(s) on the guest" % len(g))
         none_of(v, L, "sm intro: no own copy after a wait", r"held own boss intro|this player triggered and watched it itself",
                 hm, end1, insts=(1,))
+        if L.find(0, r"test: remo 2401(0|1)010 skipped after", hm, end1):
+            need(v, L, "sm intro: the host's skip ends the guest's mirror", 1,
+                 r"the host's cutscene ended: the live mirror of remo \d+ ends here too", hm, end1)
     # 2: the Cathedral Ward door
     presses = L.all(0, r"travel step \d+/\d+: host_press", end1 if end1 < 1e9 else 0)
     pr = presses[-1] if presses else None  # the last one opens the door (the first closes the key notice)
@@ -3418,6 +3429,10 @@ def check_sm(v, L):
         ok = bool(h and g and abs(g[0] - h[0]) <= 1.0)
         v.step("sm door: guest's scene within 1 s of the host's", ok,
                "host +%.1f guest +%.1f" % (h[0], g[0]) if h and g else "host %s guest %s" % (h, g))
+        if L.find(0, r"test: remo 2400(0|1)020 skipped after", pr[0] - 1):
+            need(v, L, "sm door: the host's skip ends the guest's mirror", 1,
+                 r"the host's cutscene ended: the live mirror of remo \d+ ends here too", pr[0] - 1)
+            need(v, L, "sm door: the scene's time of day after the skip", 1, r"time_of_day 1 .*taken", pr[0] - 1)
         walk = need(v, L, "sm door: guest walks into m24_00 after it", 1, r"map m24_01_00_00 -> m24_00_00_00", pr[0])
         if walk is not None:
             none_of(v, L, "sm door: no catch-up replay of the scene", r"replay: remo 2400(0|1)020", pr[0], insts=(1,))
