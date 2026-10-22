@@ -2425,7 +2425,12 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
                                           g.test.find("hosttalk=") != std::string::npos
                                     ? 3
                                     : -1;
-        if (!started && role >= 0 && s.session_role == role &&
+        // "hsapart" (guestheadstone): the delay counts from the moment the host is in another area
+        // (a guest left in the Dream by the host's alone travel, party_stay_rules.h).
+        static const bool apart_only = g.test.find("hsapart") != std::string::npos;
+        if (!started && apart_only && !b2::MemberApart(0)) {
+            coop_at = 0;
+        } else if (!started && role >= 0 && s.session_role == role &&
             IsDreamMap(s.map_id) && s.world_up && !s.loading && (role != 3 || s.cooperators >= 1)) {
             if (coop_at == 0) {
                 coop_at = Now();
