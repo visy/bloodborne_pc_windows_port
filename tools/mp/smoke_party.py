@@ -524,6 +524,12 @@ LF_FLAGS = "12400827/12400828/12410285"  # lift position / busy, the ladder leve
 LF_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
 
+def RIDE_BURST(car, start, end):
+    """liftfix: a screenshot of every rendered window every second from a ride's start (the car's ride
+    animation on any game) to 2 s after its end (shot.py --burst): ride<N>_<t>s_inst<i>.png."""
+    return ["--burst", r"test: object %s anim %s playing 1 => test: object %s anim %s playing 0" % (car, start, car, end)]
+
+
 def phase_lf(only):
     common = "god,log_pos=0.5,log_objanim=%s,log_objanim=2411204,log_flag=%s" % (LF_LIFT, LF_FLAGS)
     host = ",".join([common,
@@ -550,6 +556,7 @@ def phase_lf(only):
     g2 = "god,log_objanim=%s,log_objanim=2411204,log_flag=%s" % (LF_LIFT, LF_FLAGS)
     return dict(
         name="lf", seconds=300,
+        watch=RIDE_BURST(LF_LIFT, "(1|31)", "(7|29)"),  # the up ride 31, 32, end 7; the down ride 1, 28, end 29
         env=["BB_PARTY_TEST_START_LAMP=2412953", "BB_PARTY_PROGRESS_TEST_CLEAR=12410285"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
         crash=[],
@@ -655,7 +662,7 @@ def phase_el(only):
              "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12601352"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
         watch=["--watch", r"object %s stopped at anim [35] now=arrive@0.2,2" % EL_CAR,
-               "--watch", r"_move to \(119\.40=incar@1,8"],
+               "--watch", r"_move to \(119\.40=incar@1,8"] + RIDE_BURST(EL_CAR, "[68]", "[79]"),
         crash=[], until=EL_UNTIL,
     )
 
@@ -700,7 +707,7 @@ def phase_lt(only):
         env=["BB_PARTY_TEST_START_LAMP=2412953", "BB_PARTY_PROGRESS_TEST_SET=12410330,%s" % LT_POS],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
         watch=["--watch", r"object %s stopped at anim [13] now=arrive@0.3,2" % LT_CAR,
-               "--watch", r"guest_move to \(-128\.72=together@1,5"],
+               "--watch", r"guest_move to \(-128\.72=together@1,5"] + RIDE_BURST(LT_CAR, "[46]", "[57]"),
         crash=[], until=LT_UNTIL,
     )
 
@@ -749,7 +756,7 @@ def phase_ch(only):
              "BB_PARTY_PROGRESS_TEST_SET=12500000",
              "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12500076,12500077"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
-        watch=["--watch", r"object %s stopped at anim (0|10) now=arrive@0.2,2" % CH_CAR],
+        watch=["--watch", r"object %s stopped at anim (0|10) now=arrive@0.2,2" % CH_CAR] + RIDE_BURST(CH_CAR, "(0|10)", "(1|11)"),
         crash=[], until=CH_UNTIL,
     )
 
@@ -1721,6 +1728,12 @@ def check_lf(v, L):
         f = falls(L, i, into[0] if into else 0.0)
         v.step("lf lift: %s no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
+    # the warp check on guest 1's ride (the car's anims 31, 32 up to its end 7)
+    st = L.find(1, r"test: object %s anim 31 playing 1" % LF_LIFT)
+    en = L.find(1, r"test: object %s anim 7 playing 0" % LF_LIFT, st[0] if st else 0) if st else None
+    j = jumps(L, 1, st[0], en[0], (24.28, 194.17)) if st and en else None
+    v.step("lf lift: guest 1 no jump on the car", j == [], ("; ".join("+%.1f s %.1f m" % x for x in j[:4])) if j else
+           ("no jump over 2 m while on the car" if j == [] else "no ride seen"))
     none_of(v, L, "lf lift: nobody died", r"local death: HP 0", 0, 1e9, (0, 1, 2))
     check_common(v, L, "lf")
 
@@ -1885,6 +1898,39 @@ def falls(L, i, after=0.0, before=1e9, rate=8.0):
     return out
 
 
+def jumps(L, i, t0, t1, axis, radius=1.5, horiz=2.0, rate=16.0):
+    """liftfix (the warp check): position samples of instance i between t0 and t1 while its chr is on the car
+    (within `radius` m of the car's axis `axis` = (x, z)): pairs that moved more than `horiz` m sideways or
+    more than a lift's rate allows up or down (+ `horiz` m), except across a test step: [(t, metres)]."""
+    steps = [t for t, _ in L.all(i, r"travel step \d+/\d+: ", t0, t1)]
+    pos = []
+    for t, line in L.all(i, POS_RX.pattern, t0, t1):
+        m = POS_RX.search(line)
+        x, y, z = float(m.group(1)), float(m.group(2)), float(m.group(3))
+        if ((x - axis[0]) ** 2 + (z - axis[1]) ** 2) ** 0.5 <= radius:
+            pos.append((t, x, y, z))
+    out = []
+    for (ta, xa, ya, za), (tb, xb, yb, zb) in zip(pos, pos[1:]):
+        if tb <= ta or any(ta <= s <= tb for s in steps):
+            continue
+        h = ((xb - xa) ** 2 + (zb - za) ** 2) ** 0.5
+        if h > horiz or abs(yb - ya) > rate * (tb - ta) + horiz:
+            out.append((tb, max(h, abs(yb - ya))))
+    return out
+
+
+def jump_steps(v, tag, L, rides_by_game, axis, names):
+    """One warp-check row per ride and game: the rider and anyone else on the car."""
+    for i, rides in enumerate(rides_by_game):
+        for k, r in enumerate(rides[:len(names)]):
+            if r.get("t") is None:
+                continue
+            t1 = r.get("t_end") or (r["t"] + 60)
+            j = jumps(L, i, r["t"], t1, axis)
+            v.step("%s %s: no jump on the car (inst%d)" % (tag, names[k], i), not j,
+                   ("; ".join("+%.1f s %.1f m" % x for x in j[:4])) if j else "no jump over 2 m while on the car")
+
+
 def el_rides(L, i):
     """The library lift's rides on instance i from its car's animations: [{start, up, end, end_anim}]
     (wall clock); a ride starts with anim 6 (down) / 8 (up) and ends when its end anim 9 / 7 stops."""
@@ -1974,6 +2020,7 @@ def check_el(v, L):
         f = falls(L, i)
         v.step("el %s: no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
+    jump_steps(v, "el", L, rides, (119.43, -18.52), names)
     none_of(v, L, "el no fall recovery on the lift", r"recovery: falling", 0, 1e9, (0, 1))
     none_of(v, L, "el nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     # liftfix: the library lift's ride end became the all-players check once per map load on every game
@@ -2055,6 +2102,7 @@ def check_lt(v, L):
         f = falls(L, i)
         v.step("lt %s: no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
+    jump_steps(v, "lt", L, rides, (-128.72, -9.73), ["A together down", "B together up"])
     none_of(v, L, "lt nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     none_of(v, L, "lt no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
     check_common(v, L, "lt")
@@ -2144,6 +2192,7 @@ def check_ch(v, L):
         later = L.all(i, r"EMEVD event 1250007[67] \[12\] 3\[07\]")
         v.step("ch %s: the lift's ride end checks every player (rewritten once per event)" % who,
                len(rw) == 2 and len(later) >= 1, "%d rewrites, %d later 3[07] dispatches" % (len(rw), len(later)))
+    jump_steps(v, "ch", L, rides, (-22.78, -237.74), names)
     none_of(v, L, "ch nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     none_of(v, L, "ch no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
     check_common(v, L, "ch")

@@ -414,6 +414,15 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   warp (the guest fell through at two spots, runs 2-5); the move step's `:pin=4` holds the chr in front
   of the bottom lever while it streams in ("Operate Device" shown), and the speed check runs from the
   approach on.
+* Ride frames (liftfix runs 7 / 8): the smoke shoots every rendered window each second through every
+  ride (`shot.py --burst`, `ride<N>_<t>s_inst<i>.png` in each group's shots folder) and checks the
+  position samples on the car for a jump (over 2 m sideways, or faster up or down than a lift). All 12
+  rides: the riders on the car all the way, no jump, no fall. Seen in them: the library lift has a
+  second cage (2601261, so far called its "gate"; regions 2602243 / 2602244 are its trigger spots) that
+  moves the other way: it arrives beside a player waiting at the far end; Cainhurst's car is a wide
+  platform (the landing spots of phase ch, 2.5 m from its axis, are on it, so both hunters rode every
+  ch ride); in the narrow shafts (Cathedral Ward's, Cainhurst's) the camera goes into the rider's own
+  model for a few seconds.
 * The lf smoke's guest ride (lifts071) never was one: the guest was put on the car object's root, which
   stays at the TOP while the car is at the bottom; it fell the 48 m shaft through the switch region, the
   up event ran with nobody in the car and the guest died at the shaft's foot (god mode does not stop a
