@@ -2254,7 +2254,19 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             const bool own = tagged < 0;
             const int slot = own ? -1 - tagged : tagged;
             std::string list;
-            for (std::uint32_t id : ids) {
+            std::vector<std::uint32_t> all = ids;
+            if (!own) {
+                // 0.7.2: the whole lamp at once (its object's base+10 / +11 come a second after the
+                // lamp-lit flag from the guest), so the save requested below holds all of it.
+                for (std::uint32_t id : ids) {
+                    for (std::uint32_t f : lampshare::LitFlagsOfLampLit(id)) {
+                        if (LampLitFlagAllowed(f) && std::find(all.begin(), all.end(), f) == all.end()) {
+                            all.push_back(f);
+                        }
+                    }
+                }
+            }
+            for (std::uint32_t id : all) {
                 bool before = false;
                 progress::ReadFlag(id, &before);
                 const bool ok = progress::WriteFlagOwnSave(id, true);  // the host's world (load mode 0)

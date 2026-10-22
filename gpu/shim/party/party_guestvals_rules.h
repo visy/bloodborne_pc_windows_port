@@ -199,6 +199,15 @@ inline std::vector<std::uint32_t> LitFlags(std::uint32_t aab, std::uint32_t n) {
     return {base + 10u, base + 11u, 70000000u + aab * 10000u + 200u + n};
 }
 
+/// The lamp of a lamp-lit flag 7AAB0200 + n: its LitFlags (empty for any other id). The host
+/// lighting a guest's lamp sets all three at once, so a save right after it has the whole lamp
+/// (lamprule run 5: the guest's 7AAB02xx came 1 s before its base+10 / +11; the host's save in
+/// between kept only the lamp-lit flag).
+inline std::vector<std::uint32_t> LitFlagsOfLampLit(std::uint32_t id) {
+    if (id < 70000000u || id >= 80000000u || id % 10000u < 200u || id % 10000u >= 220u) return {};
+    return LitFlags((id - 70000000u) / 10000u, id % 10000u - 200u);
+}
+
 /// The flags to send so the other world has this lamp lit: the ones `mine` has and `theirs` lacks,
 /// only when the lamp counts as lit in `mine` (its headstone flag base+10 is set).
 template <class MineFn, class TheirsFn>

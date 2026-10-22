@@ -180,6 +180,12 @@ static void TestLampShare() {
     CHECK(!HeldForBoss(0, true, false));   // the block's first lamp: the way in
     CHECK(!HeldForBoss(1, true, true));    // beaten there too
     CHECK(!HeldForBoss(1, false, false));  // nobody beat it: the lamp is not past it
+    // A lamp-lit flag names its whole lamp (Central Yharnam's 241_1; Old Yharnam's 230_0).
+    const auto whole = LitFlagsOfLampLit(72410201u);
+    CHECK(whole.size() == 3 && whole[0] == 12417830u && whole[1] == 12417831u && whole[2] == 72410201u);
+    CHECK(LitFlagsOfLampLit(72300200u).size() == 3 && LitFlagsOfLampLit(72300200u)[0] == 12307810u);
+    CHECK(LitFlagsOfLampLit(12417830u).empty() && LitFlagsOfLampLit(72410101u).empty() &&
+          LitFlagsOfLampLit(72410230u).empty());
 }
 
 // 0.7.2 (user decision 2026-10-21): "host state saves lamps, anybody can light them".
