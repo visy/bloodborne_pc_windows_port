@@ -1196,8 +1196,8 @@ def phase_ld(only):
 # map: the guest's own loading screen, the host stays. Then from the Hunter's Dream (guest 1 goes there
 # alone from the lamp: a rest, the host's world reloads and guest 2 follows): (2) the Hunter's Mark,
 # (3) the Bold Mark, each a re-join into the host's world (a Mark is no rest); (4) the lamp 2402950
-# itself from the Dream (a headstone's travel: a rest the re-join carries, the host's rest load for it
-# and guest 2 following: the report's host log). After each everyone is back (the host rewinds its
+# itself from the Dream (a headstone's travel: since 0.7.3 a split-travel re-join with the host's
+# snapshot, no host rest load, guest 2 stays: a guest leaving the Dream never resets the host's world). After each everyone is back (the host rewinds its
 # member tasks for the arrivals); no crash, no device lost.
 # The host's Marks come first (hostmark; the host answers "Travel with the party?" by
 # BB_PARTY_SPLIT_TEST, its last lamp the Cathedral Ward's): (h1) the Bold Mark in its own map, YES:
@@ -3563,11 +3563,14 @@ def check_mk(v, L):
         end = starts[k + 1][0] if k + 1 < len(starts) else 1e9
         back = need(v, L, "mk %d guest 1 back in the host's map" % (k + 1), 1, r"map - -> m24_00", u[0], end)
         if kind == "rest":
-            rest = need(v, L, "mk %d host: the rest load the re-join carries" % (k + 1), 0,
-                        r"slot \d rested at lamp %s" % MK_LAMP, u[0] - 1, end)
-            need(v, L, "mk %d guest 2 followed the rest load" % (k + 1), 2, r"map - -> m24_00", rest or u[0], end)
-            need(v, L, "mk %d host: arrivals, member tasks rewound" % (k + 1), 0,
-                 r"a guest arrived; \d+ member task\(s\) rewound", rest or u[0], end)
+            # 0.7.3 (5c286072, user decision): a guest leaving the Dream alone never resets the host's
+            # world: a split-travel re-join with the host's snapshot, no rest load, guest 2 stays
+            need(v, L, "mk %d host: the guest's lone travel, the snapshot again" % (k + 1), 0,
+                 r"host: a guest travels alone into this area \(split travel\)", u[0] - 1, end)
+            none_of(v, L, "mk %d host: no rest load from the guest leaving the Dream" % (k + 1),
+                    r"rested at lamp %s" % MK_LAMP, u[0] - 1, end, (0,))
+            none_of(v, L, "mk %d guest 2 stays (no load)" % (k + 1), r"map - -> m24_00", u[0], end, (2,))
+            need(v, L, "mk %d host: guest 1 arrived" % (k + 1), 0, r"host: slot \d arrived", u[0], end)
         else:
             if kind == "mark_here":
                 none_of(v, L, "mk %d host stays (no rest load for a Mark)" % (k + 1), r"rested at lamp %s" % MK_LAMP,
