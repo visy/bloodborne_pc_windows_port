@@ -1540,14 +1540,54 @@ def phase_da(only):
     )
 
 
+# Phase nf (npcfights, ~4 min, 2 players, group `npc_fights`; ERSC parity D11): a scripted NPC
+# hunter fight with the whole party (user decision 2026-10-22: the NPC is there for everyone, anyone
+# can hurt it, its death and the quest step count for all, like a boss). Eileen's quest at the Tomb
+# of Oedon (m24_01): her state 1363 (she waits there, hidden) with Henryk (2410901) on the graves;
+# his fight brings her in as the player's ally (event 12410811: team 28, the phantom look 7608, quest
+# state 1365); his death moves her on (12410804: 1367, 12410810's own flag). The host stands at
+# Henryk (his fight starts), the guest beside him hits him (R1 taps: his HP falls on the host's
+# game) and then deals the killing blow on its own game (guest_kill: HP 0 there only); the host's
+# game must see him die (the party's NPC fight sync) and set the quest flags, which reach the
+# guest's own save (read at the next load: the party's lamp travel to Central Yharnam).
+NF_HENRYK, NF_EILEEN = 2410901, 2410900
+NF_FLAGS = "1363/1365/1366/1367/12410810/5912"
+NF_UNTIL = r"1:test: guest_kill[\s\S]*test read \(load mode 1[^\n]*1367="
+
+
+def phase_nf(only):
+    host = ",".join([
+        "god", "log_flag=" + NF_FLAGS,
+        "host_warp=2412953@8^1",                          # the party at the Tomb of Oedon lamp
+        "host_chr=%d:4@8%%m24_01" % NF_HENRYK,            # in front of Henryk: his fight starts
+        "host_warp=2412951@40%m24_01",                    # later: the party's load (the guest's save read)
+    ])
+    g1 = ",".join(["god", "log_flag=" + NF_FLAGS,
+                   "guest_chr=%d:2:90@14%%m24_01" % NF_HENRYK,       # beside him
+                   "guest_press=0x4@1%m24_01!", "guest_press=0x4:lock@1%m24_01!"]
+                  + ["guest_press=0x800@1.2%m24_01!"] * 8          # R1: the guest's hits
+                  + ["guest_kill=%d:hp@2%%m24_01" % NF_HENRYK])        # its killing blow (HP 0 on its game)
+    clear = "1360,1361,1362,1364,1365,1366,1367,1368,1369,1700,1701,1702,1703,1704,1705,12410810,5912"
+    return dict(
+        name="nf", seconds=330, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=1363",
+             "BB_PARTY_PROGRESS_TEST_READ=1363,1365,1366,1367,12410810,5912", "BB_PARTY_CHR_DUMP=30",
+             "BB_PARTY_TARGET_ANIM=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: host_chr=nfhost@1,4", "--watch", r"test: guest_chr=nfguest@1,4",
+               "--watch", r"guest_press 0x800=nfhit@0.5", "--watch", r"test: guest_kill=nfkill@1,4"],
+        crash=[], until=[NF_UNTIL], until_hold=5,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "nf": phase_nf}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
-          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da"}
+          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "npc_fights": "nf"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1556,7 +1596,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
-              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da "}
+              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ", "npc_fights": r"^nf "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1607,6 +1647,7 @@ GROUP_UNTIL = {
     "boss_rooms": BR_UNTIL,
     "scene_mirror": [SM_UNTIL],
     "dream_apart": DA_UNTIL,
+    "npc_fights": [NF_UNTIL],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -3454,13 +3495,22 @@ def check_da(v, L):
     check_common(v, L, "da")
 
 
+def check_nf(v, L):
+    need(v, L, "nf join: 2 players", 0, r"cooperators 0 -> 1")
+    at = need(v, L, "nf host at Henryk (his fight)", 0, r"test: host_chr", 0)
+    need(v, L, "nf guest beside Henryk", 1, r"test: guest_chr", 0)
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, "nf %s's game shows Henryk" % who, i, r"chr dump: entity %d .*HP [1-9]" % NF_HENRYK, at or 0)
+    check_common(v, L, "nf")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "nf": lambda v, L, d: check_nf(v, L),
           "rt": lambda v, L, d: check_rt(v, L)}
 
 
@@ -3486,7 +3536,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "rh", "rs")
+                                     "lp", "rt", "br", "sm", "da", "nf", "rh", "rs")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
