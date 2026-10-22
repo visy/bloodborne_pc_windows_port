@@ -277,6 +277,9 @@ struct Values {
     /// 0.7.3 (user decision 2026-10-22): covenant outcomes (Annalise, Alfred, Valtr) stay in each
     /// player's own save (party_progress Category::covenant_outcome). The host's; on by default.
     std::atomic<bool> party_covenant_per_player{true};
+    /// 0.7.3: a party travel by lamp, headstone or Hunter's Mark runs only once every member voted
+    /// YES (party_vote.h). The host's rule; OFF by default.
+    std::atomic<bool> party_travel_vote{false};
     /// Each player's own (while it is a guest; party_items):
     std::atomic<bool> party_key_view{true};     ///< the own key items while summoned (next start)
     std::atomic<bool> party_key_items_summoned{true}; ///< a host-world key item given at once (needs key_view)

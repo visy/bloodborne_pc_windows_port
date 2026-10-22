@@ -73,6 +73,9 @@ struct Rules {
     /// 0.7.3 (user decision 2026-10-22): covenant outcomes per player (party_progress
     /// covenant_outcome). The host's; on by default (a host from before it sends none: on).
     bool covenant_per_player = true;
+    /// 0.7.3 lamp travel voting (party_vote.h): every member votes on a party travel. The host's;
+    /// off by default (a host from before it sends none: off).
+    bool travel_vote = false;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };

@@ -171,6 +171,7 @@ u32 split_text[1] = {0};
 u32 notice_text[1] = {0};
 u32 ending_text[1] = {0};
 u32 gather_text[1] = {0};
+u32 vote_text[1] = {0};  // 0.7.3: the travel vote's question (run-time: who, where)
 
 /// A confirmed button's help line: the row's own help, or "press again to confirm" while armed
 /// (a run-time text of its own wrapping the row's).
@@ -1157,6 +1158,9 @@ void DefineAll() {
                              "Тайна ритуала раскрыта. Ищите новорождённого кошмара.");
 
     // I5: the host gathers the party (party_gather.cpp): each guest is asked first.
+    // 0.7.3: lamp travel voting (party_vote.cpp): who wants to travel where, set before it opens.
+    vote_text[0] = AddDynamic(DynamicCapacity - 1);
+
     gather_text[0] = AddText("The host gathers the party.\nYES: go to the host now.  NO: stay where you are.",
                              "Хозяин собирает группу.\nДА: перейти к хозяину сейчас.  НЕТ: остаться здесь.");
 
@@ -1291,10 +1295,11 @@ void DefineAll() {
         "No co-op walls on area borders: the party walks anywhere. Keep it the same for everyone. Next start",
         "Без стен совместной игры на границах зон: группа ходит везде. Одинаково у всех. Со следующего запуска");
 
-    // ---- Shared world (0.7.1: party_kill_record, party_npc_mirror, party_gather; 0.7.3: covenants): the host's ----
+    // ---- Shared world (0.7.1: party_kill_record, party_npc_mirror, party_gather; 0.7.3: covenants,
+    // party_travel_vote): the host's ----
     AddPage("Shared world", "Общий мир",
-            "Enemies stay dead, gathering the party, NPCs as in the host's world, covenants (bbport)",
-            "Враги не оживают, сбор группы, NPC как в мире хоста, ковенанты (bbport)");
+            "Enemies stay dead, gathering, NPCs as in the host's world, covenants, travel votes (bbport)",
+            "Враги не оживают, сбор группы, NPC как в мире хоста, ковенанты, голосование (bbport)");
     host_rule(&Values::party_kill_record, "Enemies stay dead", "Враги не оживают",
               AddText("A party kill is dead for everyone, also as maps stream in again, until a rest. Party rule",
                       "Убитый группой враг мёртв у всех, и при новой подгрузке карты, до отдыха. Правило группы"),
@@ -1328,6 +1333,15 @@ void DefineAll() {
                "Правило хоста: исходы ковенантов в мире хоста не попадают в ваше сохранение"},
               {"The host shares covenant outcomes: they reach your save like other quests",
                "Хост делит исходы ковенантов: они попадают в ваше сохранение, как другие квесты"});
+    // 0.7.3 (user: "everybody has to vote yes"): a party travel waits for every member's YES.
+    host_rule(&Values::party_travel_vote, "Party votes on travel", "Голосование за путь",
+              AddText("A party lamp, headstone or Mark travel needs every member's YES; one NO cancels it. Party rule",
+                      "Путь группы через фонарь, надгробие или Метку - только если все за; одно НЕТ отменяет. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::TravelVote); },
+              {"The host's rule: the party travels only when everyone votes YES",
+               "Правило хоста: группа идёт, только если все проголосовали ДА"},
+              {"The host decides; off: the one who travels takes the party along",
+               "Решает хост; выкл.: кто путешествует, ведёт за собой группу"});
 
     // ---- Story & dialogue (party_npctalk, party_progress, party_story) ----
     AddPage("Story & dialogue", "Сюжет и диалоги", "Shared NPC dialogue, story progress, NPC quests, cutscenes (bbport)",
@@ -1501,6 +1515,18 @@ u32 EndingQuestionText() {
 u32 GatherQuestionText() {
     Define();
     return gather_text[0];
+}
+
+u32 TravelVoteQuestionText() {
+    Define();
+    return vote_text[0];
+}
+
+void SetTravelVoteQuestion(const std::string& who, const std::u16string& lamp) {
+    Define();
+    const std::u16string w = Utf16(who.c_str());
+    SetDynamic16(vote_text[0], w + u" wants the party to travel to " + lamp + u".\nYES: travel together.  NO: the party stays.",
+                 w + u" хочет вести группу: " + lamp + u".\nДА: идти вместе.  НЕТ: группа остаётся.");
 }
 
 u32 StoryNoticeText(u32 game_message) {
