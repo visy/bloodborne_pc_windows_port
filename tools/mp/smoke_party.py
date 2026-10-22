@@ -49,6 +49,10 @@ Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from 
   fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
   with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
   safe floor.
+Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
+  lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
+  guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
+  travel list shows only the host's world's lamps (both saves read from copies after the run).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -309,7 +313,8 @@ RULES_PAGES = [
     ("Deaths & revives", ["Rot on death", "Guest gets up, no load", "Host gets up, no load", "Up after boss kill",
                           "Respawn at host's lamp", "Refill vials, bullets"],
      ("Rot on death", "", "left", "Off", "right", "party_rot=0", "party_rot=1", '"rot":false')),
-    ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests use lamps", "Guests use Hunter's Mark", "Open world"],
+    ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps", "Guests use lamps",
+                     "Guests use Hunter's Mark", "Open world"],
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
@@ -332,7 +337,8 @@ RULES_PAGES = [
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
 RULES_INI_RESET = ["party_rot", "party_friendly_fire", "party_npc_talk", "party_full_rewards", "party_boss_hp",
-                   "party_pings", "party_host_revive", "party_share_lamps", "party_kill_record", "party_gather",
+                   "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
+                   "party_kill_record", "party_gather",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned"]
 
 
@@ -1008,6 +1014,37 @@ def phase_cl(only):
     )
 
 
+# Phase lp (lamprule, ~3 min, 2 players, group `lamps`; user decision 2026-10-21: "host state saves
+# lamps, anybody can light them", Guests bring their lamps off by default). Fixture: the host's save
+# without Old Yharnam's lamp (2302950: the guest's has it) and both saves without Central Yharnam's
+# 2412951; the host starts at the Cleric Beast's lamp (m24_01). The guest joins: its Old Yharnam
+# lamp stays out of the host's world (and the host's save); it walks to the unlit 2412951, lights it
+# (the host lights it in its world and saves; the guest's own save gets it), and its lamp travel list
+# there shows the host's world's lamps only (no 2302950). Then both saves on disk (copies).
+LP_OLD = ("2302950", ["12307810", "12307811", "72300200"])   # Old Yharnam: lit in the guest's save only
+LP_NEW = ("2412951", ["12417830", "12417831", "72410201"])   # Central Yharnam: lit by the guest in the run
+LP_UNTIL = [r"1:test: listonly: warp menu closed",
+            r"0:save requested \(.*a lamp a guest lit in the host's world",
+            r"1:written into the own save \(shared lamps; lamps.* %s[\s\S]*save requested \(.*shared lamps from "
+            r"the host's world" % LP_NEW[0]]
+
+
+def phase_lp(only):
+    read = ",".join(LP_OLD[1] + LP_NEW[1])
+    return dict(
+        name="lp", seconds=300, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_READ=" + read, "BB_PARTY_GUESTS_BRING_LAMPS=0", "BB_PARTY_SHARE_LAMPS=1"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2412952", "0:BB_PARTY_DIRECTOR_TEST=god",
+              "0:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_OLD[1] + LP_NEW[1]),
+              "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1]),
+              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0]],
+        watch=["--watch", r"lamps: the own save's lamps the host's world lacks stay out=lpjoin@3",
+               "--watch", r"lamp: slot \d+ lit a lamp in the host's world=lplit@1,5",
+               "--watch", r"test: warp menu up \(listonly\)=lplist@1"],
+        crash=[], until=LP_UNTIL, until_hold=8,
+    )
+
+
 # Phase bf (wipeboss, ~3 min, 3 players, group `fight_load`): loads into the host's world while the
 # host's boss fight goes on. The host walks into Father Gascoigne's first-fight region (intro, then
 # the fight; invincible, it fights on). Guest 1 at the Tomb of Oedon lamp uses a Hunter's Mark (an
@@ -1040,12 +1077,12 @@ def phase_bf(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1053,7 +1090,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch "}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1091,6 +1128,7 @@ GROUP_UNTIL = {
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
     "cainhurst_lift": CH_UNTIL,
+    "lamps": LP_UNTIL,
     "mark": [MK_UNTIL],
     # the host awake in the cell (its last step) and both guests in m28_00
     "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
@@ -1567,6 +1605,9 @@ def check_rules(v, L):
     ff = L.find(1, r"Game menu: page \d+ rows \(\d+\): Friendly fire / PvP=")
     v.step("rules guest: sees the host's friendly fire (On, read-only)", ff and "Friendly fire / PvP=On" in ff[1],
            ff[1][:200] if ff else "no World & PvP rows line on the guest")
+    # 0.7.2: and the host's Guests bring their lamps (off by default)
+    v.step("rules guest: sees the host's Guests bring their lamps (Off, read-only)",
+           ff and "Guests bring their lamps=Off" in ff[1], ff[1][:300] if ff else "no World & PvP rows line on the guest")
     # 0.7.1: the guest's Shared world page shows the host's rules (read-only lines, the host's values)
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
     v.step("rules guest: sees the host's Shared world rules (read-only)",
@@ -2399,6 +2440,69 @@ def check_cl(v, L):
     check_common(v, L, "cl")
 
 
+def lp_save_flags(d: Path, i, ids):
+    """Instance i's party save slot 0 (userdata0000): copied into the phase's output first, the copy
+    decoded (save_decode.py). {id: bool}, or None without a readable save."""
+    sys.path.insert(0, str(REPO / "tools" / "party"))
+    import save_decode  # noqa: E402
+    src = sorted((Path(RUN_ROOT[0]) / f"inst{i}" / "user" / "savedata_party").rglob("userdata0000"))
+    if not src:
+        return None
+    copy = d / "saves" / f"inst{i}_userdata0000"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src[0], copy)
+    try:
+        sv = save_decode.Save.read(copy)
+    except (OSError, ValueError):
+        return None
+    return {f: bool(sv.flag(int(f))) for f in ids}
+
+
+def check_lp(v, L, d: Path):
+    j = need(v, L, "lp join: the guest is in", 0, r"cooperators 0 -> 1")
+    need(v, L, "lp guest's own lamps stay out of the host's world", 1,
+         r"lamps: the own save's lamps the host's world lacks stay out of it .*lamps.* %s" % LP_OLD[0], j or 0)
+    none_of(v, L, "lp host takes none of the guest's own lamps",
+            r"own save has lamps this world lacked|lamps: \d+ flag\(s\) of lamps lit in the own save", insts=(0, 1))
+    lit = need(v, L, "lp guest lights a lamp in the host's world", 1,
+               r"lamp: the guest lit a lamp of the host's world \(overlay:.*%s" % LP_NEW[1][2])
+    need(v, L, "lp host lights it in its world", 0, r"lamp: slot \d+ lit a lamp in the host's world: set.*%s" % LP_NEW[1][2],
+         lit or 0)
+    need(v, L, "lp host saves it", 0, r"save requested \(.*a lamp a guest lit in the host's world", lit or 0)
+    need(v, L, "lp the guest's own save gets it", 1,
+         r"written into the own save \(shared lamps; lamps.* %s" % LP_NEW[0], lit or 0)
+    need(v, L, "lp guest's lamp travel list opens", 1, r"test: warp menu up \(listonly\)")
+    hit = L.find(1, r"test: warp menu up \(listonly\): \d+ entries:")
+    entries = re.findall(r"\b(\d{7})\b", hit[1].split("entries:", 1)[1]) if hit else []
+    v.step("lp guest's list: only the host's world's lamps", hit and LP_OLD[0] not in entries and "2412953" in entries,
+           "entries %s" % " ".join(entries) if hit else "no list")
+    # Every lamp lit in the host's world (its save at the end: lit flag 1AAB7810+20n set, name /
+    # blocked flag 7000AABn clear, as lamp_travel_rules.h BuildList) is in the guest's list, but the
+    # one it stands at ("lamp N (...): the warp menu").
+    src = (REPO / "gpu" / "shim" / "party" / "lamp_travel_rules.h").read_text(encoding="utf-8")
+    table = src.split("kLamps[] = {", 1)[1].split("};", 1)[0]
+    lamps = [(int(a), int(n)) for a, n in re.findall(r"\{(\d{3}), (\d), \w+\}", table)]
+    lit_f = {(a, n): str(10000000 + a * 10000 + 7810 + 20 * n) for a, n in lamps}
+    name_f = {(a, n): str(70000000 + a * 10 + n) for a, n in lamps}
+    hw = lp_save_flags(d, 0, sorted(set(lit_f.values()) | set(name_f.values())))
+    here = L.find(1, r"Lamp travel: lamp (\d+) \(.*the warp menu instead")
+    here_id = re.search(r"lamp (\d+) ", here[1]).group(1) if here else ""
+    want = sorted(str(a * 10000 + 2950 + n) for a, n in lamps
+                  if hw and hw[lit_f[(a, n)]] and not hw[name_f[(a, n)]]) if hw else []
+    missing = [w for w in want if w != here_id and w not in entries]
+    v.step("lp guest's list: made at the lamp it lit", here_id == LP_NEW[0], "here %s" % (here_id or "?"))
+    v.step("lp guest's list: every lamp lit in the host's world", bool(hit and hw) and not missing,
+           "here %s; host world lit %s; missing %s" % (here_id, " ".join(want), " ".join(missing) or "none"))
+    host = lp_save_flags(d, 0, LP_OLD[1] + LP_NEW[1])
+    guest = lp_save_flags(d, 1, LP_OLD[1] + LP_NEW[1])
+    fmt = lambda m: " ".join("%s=%d" % (k, m[k]) for k in m) if m else "no save"
+    v.step("lp host's save: the guest's old lamp unlit", host is not None and not any(host[f] for f in LP_OLD[1]), fmt(host))
+    v.step("lp host's save: the lamp the guest lit", host is not None and all(host[f] for f in LP_NEW[1]), fmt(host))
+    v.step("lp guest's save: its own old lamp kept", guest is not None and all(guest[f] for f in LP_OLD[1]), fmt(guest))
+    v.step("lp guest's save: the lamp it lit", guest is not None and all(guest[f] for f in LP_NEW[1]), fmt(guest))
+    check_common(v, L, "lp")
+
+
 def check_bf(v, L):
     """Loads into the host's world while its boss fight goes on (phase bf)."""
     need(v, L, "bf join: 3 players", 0, r"cooperators [01] -> 2")
@@ -2442,7 +2546,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L)}
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp}
 
 
 def main():
@@ -2451,7 +2555,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf,lp")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2466,7 +2570,8 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch",
+                                     "lp")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

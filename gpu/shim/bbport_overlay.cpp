@@ -1918,12 +1918,28 @@ void PartyTab() {
              Dim());
     } else {
         Toggle("party_share_lamps", T("Shared lamps", "Общие фонари"), s.party_share_lamps,
-               T("A lamp any party member lights is lit for everyone, in each member's own save too: a guest's "
-                 "lamps light up in your world when it joins, and yours reach its save. The host's setting "
-                 "counts. Default: on.",
-                 "Фонарь, зажжённый любым членом группы, горит у всех и в каждом сохранении: фонари гостя "
-                 "загораются в вашем мире при входе, ваши попадают в его сохранение. Действует настройка "
-                 "хоста. По умолчанию: вкл."),
+               T("A lamp any party member lights in your world is lit for everyone, in each member's own save "
+                 "too, and your lamps reach the guests' saves. The host's setting counts. Default: on.",
+                 "Фонарь, зажжённый любым членом группы в вашем мире, горит у всех и в каждом сохранении, а "
+                 "ваши фонари попадают в сохранения гостей. Действует настройка хоста. По умолчанию: вкл."),
+               on);
+    }
+    // 0.7.2 (user decision 2026-10-21): a guest's own lamps in the host's world, the host's rule.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::HostRuleOn(ps::HostRule::GuestsBringLamps)
+                 ? T("Guests bring their lamps: on (the host's rule) - your lamps light up in the host's world",
+                     "Фонари гостей: вкл. (правило хоста) - ваши фонари горят и в мире хоста")
+                 : T("Guests bring their lamps: off (the host decides) - the host's world keeps its own lamps",
+                     "Фонари гостей: выкл. (решает хост) - мир хоста хранит свои фонари"),
+             Dim());
+    } else {
+        Toggle("party_guests_bring_lamps", T("Guests bring their lamps", "Фонари гостей"), s.party_guests_bring_lamps,
+               T("A joining guest's lamps from its own world light up in yours too (needs Shared lamps). Off: "
+                 "your world keeps its own lamps; any lamp a party member lights in it is saved for everyone. "
+                 "The host's setting counts. Default: off.",
+                 "Фонари из мира входящего гостя загораются и в вашем (нужны общие фонари). Выкл.: ваш мир "
+                 "хранит свои фонари; фонарь, зажжённый в нём любым членом группы, сохраняется у всех. "
+                 "Действует настройка хоста. По умолчанию: выкл."),
                on);
     }
     static const char* overhead_en[] = {"Nothing", "Name", "Name and level", "Name and health", "Name and deaths", "Name and ping"};

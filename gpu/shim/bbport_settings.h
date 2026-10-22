@@ -211,6 +211,11 @@ struct Values {
     /// everyone, in each member's own save too). A party rule: the host's value counts. On by
     /// default (ini party_share_lamps; env BB_PARTY_SHARE_LAMPS=0/1 overrides at start).
     std::atomic<bool> party_share_lamps{true};
+    /// 0.7.2 (user decision 2026-10-21: "host state saves lamps, anybody can light them"): a guest's
+    /// lamps from its own world light up in the host's world when it joins (needs Shared lamps). A
+    /// party rule: the host's value counts. Off by default (ini party_guests_bring_lamps; env
+    /// BB_PARTY_GUESTS_BRING_LAMPS=0/1 overrides at start).
+    std::atomic<bool> party_guests_bring_lamps{false};
     /// ... within this many metres of the NPC (0 = anywhere on the same map; ini
     /// party_npc_talk_range; env BB_PARTY_NPC_TALK_RANGE overrides). Live, local.
     std::atomic<int> party_npc_talk_range{25};
