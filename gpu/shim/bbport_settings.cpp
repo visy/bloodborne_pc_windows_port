@@ -218,6 +218,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_enemy_poise = std::clamp(i, 0, 300);
     } else if (key == "party_name_tags") {
         v.party_name_tags = i != 0;
+    } else if (key == "party_glow_off") {
+        v.party_glow_off = i != 0;
     } else if (key == "party_npc_talk") {
         v.party_npc_talk = i != 0;
     } else if (key == "party_pings") {
@@ -688,6 +690,7 @@ void Save() {
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
     put("party_name_tags", flag(v.party_name_tags));
+    put("party_glow_off", flag(v.party_glow_off));
     put("party_npc_talk", flag(v.party_npc_talk));
     put("party_pings", flag(v.party_pings));
     put("party_through_walls", flag(v.party_through_walls));

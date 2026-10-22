@@ -1825,6 +1825,12 @@ void PartyTab() {
              "Вкл.: наша табличка с именем над спутниками вместо игровой (та прячется за любым деревом "
              "или углом). Выкл.: игровая табличка, как в оригинальной игре."),
            on);
+    Toggle("party_glow_off", T("Companions without glow", "Спутники без свечения"), s.party_glow_off,
+           T("On: the other hunters of the party look like normal hunters on your screen. Off: the game's "
+             "blue, glowing phantom look. Only how you see them; they stay cooperators.",
+             "Вкл.: другие охотники группы выглядят на вашем экране как обычные охотники. Выкл.: синее "
+             "свечение фантомов, как в игре. Только вид у вас; они остаются союзниками."),
+           on);
     Toggle("party_npc_talk", T("Share NPC dialogue", "Общие диалоги NPC"), s.party_npc_talk,
            T("See and hear the NPC conversations of companions near you: the game's subtitles, the NPC's "
              "voice, their choices and gifts. Range: System > Story & dialogue > NPC dialogue range.",
@@ -3086,9 +3092,18 @@ void PartyToast() {
                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
     const ImVec2 at = ImGui::GetCursorScreenPos();
-    ImGui::TextColored(ImVec4(0.96f, 0.88f, 0.70f, alpha), "%s", toast_text.c_str());
+    // A notice of several lines: each line centred in the box (the box is as wide as the widest).
+    const auto measure = [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; };
+    const std::vector<std::string> lines = party::hud::WrapNoticeLines(toast_text, 1e9f, measure);
+    float w = 0.0f;
+    for (const std::string& line : lines) w = std::max(w, measure(line));
+    const float x0 = ImGui::GetCursorPosX();
+    for (const std::string& line : lines) {
+        ImGui::SetCursorPosX(party::hud::CenteredLineX(x0, w, measure(line)));
+        ImGui::TextColored(ImVec4(0.96f, 0.88f, 0.70f, alpha), "%s", line.c_str());
+    }
     // The game's gold underline, fading to both ends.
-    const float w = ImGui::GetItemRectSize().x, y = ImGui::GetItemRectMax().y + 3.0f * base_scale;
+    const float y = ImGui::GetItemRectMax().y + 3.0f * base_scale;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImU32 gold = ImGui::GetColorU32(ImVec4(0.80f, 0.68f, 0.46f, 0.85f * alpha));
     const ImU32 clear = ImGui::GetColorU32(ImVec4(0.80f, 0.68f, 0.46f, 0.0f));
@@ -3174,17 +3189,22 @@ void PartyAlert() {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::PushFont(game_font, 22.0f);
-    ImGui::TextColored(ImVec4(0.96f, 0.88f, 0.70f, alpha), "%s", title.c_str());
-    ImGui::PopFont();
+    // Every line centred in the box (party_hud.h WrapNoticeLines: wrapped at spaces to the box).
+    const float x0 = ImGui::GetCursorPosX(), inner = ImGui::GetContentRegionAvail().x;
+    const auto centred = [&](const std::string& text, float size, ImVec4 colour) {
+        ImGui::PushFont(game_font, size);
+        const auto measure = [](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; };
+        for (const std::string& line : party::hud::WrapNoticeLines(text, inner, measure)) {
+            ImGui::SetCursorPosX(party::hud::CenteredLineX(x0, inner, measure(line)));
+            ImGui::TextColored(colour, "%s", line.c_str());
+        }
+        ImGui::PopFont();
+    };
+    centred(title, 22.0f, ImVec4(0.96f, 0.88f, 0.70f, alpha));
     if (!body.empty()) {
         ImGui::Dummy(ImVec2(0.0f, 6.0f * base_scale));
-        ImGui::PushFont(game_font, 18.0f);
-        ImGui::TextColored(ImVec4(0.90f, 0.90f, 0.88f, alpha), "%s", body.c_str());
-        ImGui::PopFont();
+        centred(body, 18.0f, ImVec4(0.90f, 0.90f, 0.88f, alpha));
     }
-    ImGui::PopTextWrapPos();
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);

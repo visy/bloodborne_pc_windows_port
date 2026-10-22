@@ -188,6 +188,11 @@ struct Values {
     /// (which hides behind any occluder); off = the game's own plate as in vanilla, ours not drawn
     /// (ini party_name_tags; env BB_PARTY_HUD_GAME_PLATE=1 keeps the game's plate for tests). Live.
     std::atomic<bool> party_name_tags{true};
+    /// Companions drawn as plain hunters: on (default) = the other players' characters on this
+    /// screen without the game's blue, glowing phantom look; off = that look as in vanilla
+    /// (ini party_glow_off; env BB_PARTY_GLOW_OFF=0/1 overrides). Display only: nothing about the
+    /// game's cooperator state changes. Live, local.
+    std::atomic<bool> party_glow_off{true};
     /// D8: a party member's NPC conversation (subtitles, voice, choices, gifts) is shared with the
     /// members near it (ini party_npc_talk; env BB_PARTY_NPC_TALK overrides). Live, local.
     std::atomic<bool> party_npc_talk{true};

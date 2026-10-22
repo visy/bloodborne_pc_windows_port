@@ -1402,6 +1402,14 @@ void DefineAll() {
             AddText("Name and ping", "Имя и пинг")},
            Kind::List);
 
+    // ---- Party look: how companions are drawn on this screen (local; Party display is full) ----
+    AddPage("Party look", "Вид группы", "How the other hunters of the party look on your screen (bbport)",
+            "Как другие охотники группы выглядят на вашем экране (bbport)");
+    // party_glow.h: the other players' chrs without the phantom glow (display only).
+    own(&Values::party_glow_off, "Companions without glow", "Спутники без свечения",
+        "On: the other hunters look like normal hunters on your screen. Off: the game's blue phantom glow",
+        "Вкл.: другие охотники выглядят как обычные. Выкл.: синее свечение фантомов, как в игре");
+
     // ---- Chalice Dungeons (party_guestsvc, party_b2; docs/party/chalice.md): each player's own, read live ----
     AddPage("Chalice Dungeons", "Подземелья Чаши", "Deaths and getting back in, in a party's Chalice Dungeon (bbport)",
             "Смерти и возвращение в Подземелье Чаши группы (bbport)");
