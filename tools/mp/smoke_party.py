@@ -2056,25 +2056,26 @@ def check_fl(v, L):
 
 
 REVIVE_VIEW = re.compile(r"revive view \((?P<what>[^,]+), (?P<t>[\d.]+) s after\): camera \([^)]*\) (?P<cam>[-\w.]+) m "
-                         r"from the chr \((?P<chr>[^)]*)\).*?; drawn \([^)]*\) (?P<drawn>[-\w.]+) m off; "
+                         r"from the chr \((?P<chr>[^)]*)\).*?; (?:drawn|ChrCtrl \+0xC0) \([^)]*\) (?P<drawn>[-\w.]+) m off(?: \(logged only\))?; "
                          r"fall-death camera (?P<latch>\d+), hp (?P<hp>-?\d+): (?P<verdict>.*)$")
 
 
 def check_revive_view(v, L, tag, i, what, after):
-    """fallcam: the revive's 3 s view line (ReviveViewTick): the render camera within 12 m of the chr,
-    the game's fall-death camera off, the chr drawn where it stands (within 1 m)."""
+    """fallcam: the revive's 3 s view line (ReviveViewTick): the render camera within 12 m of the chr
+    and the game's fall-death camera off."""
     hit = L.find(i, r"revive view \(%s, [2-9]\.\d s after\)" % re.escape(what), after, after + 40)
     m = REVIVE_VIEW.search(hit[1]) if hit else None
     if not m:
         v.step(tag + " camera on its chr after the revive", False, "no 3 s 'revive view (%s' line on inst%d" % (what, i))
-        v.step(tag + " drawn where it stands after the revive", False, "no view line")
         return
     cam, drawn, latch = float(m.group("cam")), float(m.group("drawn")), int(m.group("latch"))
     v.step(tag + " camera on its chr after the revive (within 12 m, the fall-death camera off)",
            latch == 0 and cam == cam and cam <= 12.0, "camera %.1f m from the chr, fall-death camera %d: %s" %
            (cam, latch, m.group("verdict")[:80]))
-    v.step(tag + " drawn where it stands after the revive (drawn = physics position)", drawn == drawn and drawn <= 1.0,
-           "drawn %.2f m off the physics position (chr %s)" % (drawn, m.group("chr")))
+    # Logged only (fl run 1: ChrCtrl +0xC0 is a rotation row, not the drawn position); the screenshots
+    # show whether the chr is drawn at its spot.
+    v.step(tag + " ChrCtrl +0xC0 logged (not judged)", True,
+           "%.2f m off the physics position (chr %s)" % (drawn, m.group("chr")))
 
 
 def check_fd(v, L):

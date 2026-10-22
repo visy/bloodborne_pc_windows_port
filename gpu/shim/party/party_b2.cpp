@@ -5447,11 +5447,14 @@ void ReviveViewTick(const GameSnapshot& s, double now) {
         drawn_off = std::sqrt(dx * dx + dy * dy + dz * dz);
     }
     const bool latch = FallCameraLatched();
-    const deathrules::ReviveView v = deathrules::JudgeReviveView(cam_dist, drawn_off, latch);
+    // ChrCtrl +0xC0 is logged only (fl run 1: it holds a rotation row, (1, 0, 0) / (-0.7, 0, 0.7), not
+    // the drawn position); the camera and the latch are what the view is judged by.
+    const deathrules::ReviveView v = deathrules::JudgeReviveView(cam_dist, nan, latch);
     // Part of the revive's own lines: the 3 s line always, the 0.5 s one only when it is not right.
     if (w.step == 1 || v != deathrules::ReviveView::Ok) {
         Log("revive view (%s, %.1f s after): camera (%.1f, %.1f, %.1f) %.1f m from the chr (%.1f, %.1f, %.1f), looking "
-            "(%.2f, %.2f, %.2f); drawn (%.1f, %.1f, %.1f) %.2f m off; fall-death camera %u, hp %d: %s",
+            "(%.2f, %.2f, %.2f); ChrCtrl +0xC0 (%.1f, %.1f, %.1f) %.2f m off (logged only); fall-death camera %u, "
+            "hp %d: %s",
             w.what, now - w.at, double(c[0]), double(c[1]), double(c[2]), cam_dist, double(me[0]), double(me[1]),
             double(me[2]), double(cam.view[8]), double(cam.view[9]), double(cam.view[10]), double(drawn[0]),
             double(drawn[1]), double(drawn[2]), drawn_off, unsigned(latch), ChrHp(s.player),
