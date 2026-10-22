@@ -2103,6 +2103,11 @@ def check_revive_view(v, L, tag, i, what, after):
     v.step(tag + " camera on its chr after the revive (within 12 m, the fall-death camera off)",
            latch == 0 and cam == cam and cam <= 12.0, "camera %.1f m from the chr, fall-death camera %d: %s" %
            (cam, latch, m.group("verdict")[:80]))
+    # fallcam 2: level as after a load, not the fall camera's steep look down (fdj r3: -0.78 .. -0.98)
+    look = re.search(r"looking \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", hit[1])
+    ly = float(look.group(2)) if look else float("nan")
+    v.step(tag + " camera level after the revive (view down at most 0.4)", ly == ly and ly >= -0.4,
+           look.group(0) if look else "no look direction")
     # Logged only (fl run 1: ChrCtrl +0xC0 is a rotation row, not the drawn position); the screenshots
     # show whether the chr is drawn at its spot.
     v.step(tag + " ChrCtrl +0xC0 logged (not judged)", True,
