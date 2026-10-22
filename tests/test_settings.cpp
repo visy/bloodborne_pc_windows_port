@@ -92,8 +92,8 @@ int main() {
     BbSettings::Load();
     assert(s.party_ipv6 && !s.party_member_relay);
     assert(bb_test_setenv("BB_PARTY_IPV6", "") == 0 && bb_test_setenv("BB_PARTY_MEMBER_RELAY", "") == 0);
-    // 0.7.1 party switches with rows (System > Shared world / Party rewards, the launcher's Party
-    // Rules & Sync): on by default, saved under their key, an explicit variable wins at start and
+    // 0.7.1 party switches with rows (System > Party rules: World / My party: Rewards, the launcher's Party
+    // Rules / My Party tabs): on by default, saved under their key, an explicit variable wins at start and
     // nothing is put into the environment (the modules read the setting live).
     const char* const new_envs[] = {"BB_PARTY_KILL_RECORD", "BB_PARTY_NPC_MIRROR", "BB_PARTY_GATHER",
                                     "BB_PARTY_KEY_VIEW", "BB_PARTY_KEY_ITEMS_SUMMONED", "BB_PARTY_NPC_FIGHTS"};

@@ -156,14 +156,14 @@ stamina cost, rally and item discovery (see the table).
   "Rot 1/5: stamina costs +10 %" under the party HUD after the respawn (screenshots); the Party
   page row is unit-tested (game-menu-pages-test), not seen live.
 - Kept in `<user>/party_rot.txt` across restarts. Party mode only; host and guests alike; the
-  host's on/off is the party's. Setting: System > Rot > "Rot on death" (0.7.2: its own page; before on Deaths & revives) (and the overlay's Party tab, the
-  launcher's Party Rules & Sync). Off by default since 0.7.2 (user decision 2026-10-22; on 0.6.0 - 0.7.1): an unset
+  host's on/off is the party's. Setting: System > Party rules: Rot > "Rot on death" (0.7.2: its own page; before on Deaths & revives) (and the overlay's Party tab, the
+  launcher's Party Rules tab). Off by default since 0.7.2 (user decision 2026-10-22; on 0.6.0 - 0.7.1): an unset
   `party_rot` is off. The game's settings save (`BbSettings::Save`) wrote every key, so 0.6.0 - 0.7.1 left
   `party_rot=1` in most bbport.ini files unchosen: bbport.ini `settings_rev` 1 (`kSettingsRev`, launcher
   `INI_SETTINGS_REV`) sets `party_rot=0` once, in the game's settings load or the launcher's start, whichever comes
   first (coordinator decision 2026-10-22); a later explicit 1 stays.
 - 0.7.2, what else cleanses it (`party_rot_rules.h`, unit test `party-rot-test`; three host rules on by default, rows
-  under "Rot on death" on System > Rot, ini `party_rot_cleanse_boss` / `_killer` / `_echoes`, an older host's rules: off). The
+  under "Rot on death" on System > Party rules: Rot, ini `party_rot_cleanse_boss` / `_killer` / `_echoes`, an older host's rules: off). The
   `Ledger` keeps one entry per death that added a stack: its kind, its killer (entity id / chr / census key) and
   whether its killer still lives (this world) and its bloodstain is still there (the last death's only).
   - boss: the game's boss clear here (`BossBonusHook`, 0x1335400 with the boss entity) or the host's boss notice
@@ -186,7 +186,7 @@ stamina cost, rally and item discovery (see the table).
 
 ERSC `overhead_player_display`: normal / none / ping / level / death count. Ours: the party HUD's
 name tags (projected with the game camera above each companion in view, 1-80 m), now a setting of
-their own, independent of the HUD panel: System > Party display > "Above companions": Nothing / Name
+their own, independent of the HUD panel: System > My party: Display > "Above companions": Nothing / Name
 / Name and level ("Hunter1  Lv 37") / Name and health (default, the HP bar as before) / Name and
 deaths ("Hunter0  deaths 1, rot 1"). Local only. Bloodborne itself draws a phantom plate
 (FrpgMenuDlgFloatingPCGauge: blue role line, name, thin HP bar), but hides it whenever anything is

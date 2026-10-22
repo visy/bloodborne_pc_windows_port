@@ -152,19 +152,19 @@ PARTY_INI_SWITCHES = [
     ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
     ("party_gather", "BB_PARTY_GATHER", True),
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
-    # 0.7.3: covenant outcomes per player (the host's rule; System > Shared world)
+    # 0.7.3: covenant outcomes per player (the host's rule; System > Party rules: World)
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
-    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Shared world)
+    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Party rules: World)
     ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
-    # stays) and what else cleanses it (the host's rules; System > Deaths & revives)
+    # stays) and what else cleanses it (the host's rules; System > Party rules: Rot)
     ("party_rot", "BB_PARTY_ROT", False),
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
-    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Shared world)
+    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party rules: World)
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
@@ -794,7 +794,7 @@ PARTY_RENDEZVOUS_TIP = (
     "your party can compute, so the host finds you and punches through both routers without a guest code. "
     "DHT nodes can see your IP, like with any torrent client. Both the host and the guest must turn it on. "
     "Off: the guest sends the host its guest code (the host uses Add a guest code), or use port forwarding "
-    "or a VPN. Also in the game: System > Party members. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
+    "or a VPN. Also in the game: System > Party network. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
 
 
 PARTY_MEMBER_RELAY_TIP = (

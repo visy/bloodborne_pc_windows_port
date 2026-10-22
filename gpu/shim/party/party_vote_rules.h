@@ -3,7 +3,7 @@
 // vote is over and how it ended, the wire and the player texts. Game side: party_vote.cpp; unit
 // test tests/test_party_vote.cpp.
 //
-//   With the host's rule on (System > Shared world "Party votes on travel", bbport.ini
+//   With the host's rule on (System > Party rules: World "Party votes on travel", bbport.ini
 //   party_travel_vote, off by default) a party travel by lamp, headstone or Hunter's Mark runs only
 //   once every other member said YES:
 //     host   its YES to "Travel with the party?" starts a vote among the connected guests;

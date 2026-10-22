@@ -242,7 +242,7 @@ struct Values {
     /// carry the PC's IPv6 address). ini party_ipv6; env BB_PARTY_IPV6 overrides at start. Read when
     /// the party starts.
     std::atomic<bool> party_ipv6{false};
-    /// Party gameplay switches (the launcher's Party Rules & Sync, the game's party rules pages in
+    /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,
     /// so the party modules that read their switch once at start see the ini's value (the rows of

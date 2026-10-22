@@ -142,7 +142,7 @@ static void EverySettingSaved() {
             }
         }
     }
-    // Every party gameplay switch (the launcher's Party Rules & Sync) has a row (2026-10-21).
+    // Every party gameplay switch (the launcher's Party Rules tab) has a row (2026-10-21).
     for (int k = 0; k < BbSettings::PartySwitchCount; ++k) {
         if (!changed.count(BbSettings::PartySwitches[k].key)) {
             std::fprintf(stderr, "no game menu row changes %s\n", BbSettings::PartySwitches[k].key);
@@ -592,7 +592,7 @@ static void RulesPages() {
     *P::Byte(limbo.field) = 1;
     Advance(16);
     assert(s.party_host_limbo_revive && ReadIni()["party_host_limbo_revive"] == "1");
-    // 0.7.1: the new rows write their keys too (the launcher's Party Rules & Sync reads them).
+    // 0.7.1: the new rows write their keys too (the launcher's Party Rules tab reads them).
     for (const auto& [page, row, key, member] :
          {std::tuple{u"Party rules: World", u"Enemies stay dead", "party_kill_record", &BbSettings::Values::party_kill_record},
           std::tuple{u"Party rules: Rot", u"Rot: boss kill cleanses", "party_rot_cleanse_boss",

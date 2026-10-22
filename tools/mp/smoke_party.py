@@ -23,12 +23,13 @@ Phase s2 (~8 min, the Cleric Beast un-killed: the b2_seamless 6.7 fixture flags)
   kill (A3 / K10b), a guest crash and its title rejoin (C6), the host's crash and recovery (the
   guests wait, then are summoned back), the host's Leave (every guest home).
 Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real System menu walked
-  by the game's own pad path): host and guest open each party rules page (Deaths & revives, Rot, World &
-  PvP, Shared world, Story & dialogue, Party rewards, Enemy scaling, Party display; a screenshot of each); every
+  by the game's own pad path): host and guest open each party settings page (0.7.3: Party rules: World,
+  PvP & lamps, Deaths, Rot, Enemies; My party: Deaths, World, Story, Rewards, Display, Look & notices;
+  a screenshot of each); every
   page's rows and values from its trace line ("Game menu: page N rows (k): NAME=VALUE | ...", no
   text cut); the host changes one option per page and sets it back (the menu's "row ... -> ..." line,
   bbport.ini's line, the party's rules line where the rule is the host's); the guest sees the host's
-  friendly fire and Shared world rules on its read-only rows.
+  friendly fire and Party rules: World rules on its read-only rows.
 Phase summonfail (~3 min, 3 players): guest 1's party port is held by the smoke (every join of it
   fails); guest 2 starts after guest 1's failed direct summon and must be served within 30 s and end
   up in the host's world (a failed join once locked the host's direct summon for minutes).
@@ -346,34 +347,41 @@ def phase_sc(only):
 # after or None)). The labels are the shown rows of a host (a guest's read-only lines have the same
 # names). Toggles: Left = Off, Right = On; sliders: Right = one step up.
 RULES_PAGES = [
-    ("Deaths & revives", ["Guest gets up, no load", "Host gets up, no load", "Up after boss kill",
-                          "Respawn at host's lamp", "Refill vials, bullets"],
-     ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
-      "party_guest_revive_inplace=1", None)),
-    # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
-    ("Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
-     ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
-    ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps", "Guests use lamps",
-                     "Guests use Hunter's Mark", "Open world"],
+    # 0.7.3: the host's rules (Party rules: ..., read-only lines on a guest), then each player's own
+    # (My party: ...), in the System menu's order.
+    # 0.7.1 / 0.7.3: the host's world rules
+    ("Party rules: World", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
+                            "Party votes on travel", "NPC hunters fight all"],
+     ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
+      '"kill_record":false')),
+    ("Party rules: PvP & lamps", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps"],
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
-    # 0.7.1: the host's world rules (switches that had only an env variable before)
-    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
-                      "Party votes on travel"],
-     ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
-      '"kill_record":false')),
-    ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
-                          "Share cutscenes, endings", "Cutscenes live with host"],
-     ("Share NPC dialogue", "", "left", "Off", "right", "party_npc_talk=0", "party_npc_talk=1", None)),
-    ("Party rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Own key items as guest",
-                       "Key items at once", "Insight for bosses"],
-     ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
-    ("Enemy scaling", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
+    ("Party rules: Deaths", ["Host gets up, no load", "Up after boss kill"],
+     ("Host gets up, no load", "", "left", "Off", "right", "party_host_revive=0", "party_host_revive=1",
+      '"host_revive":false')),
+    # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
+    ("Party rules: Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
+     ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
+    ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
-    ("Party display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
-                       "Above companions"],
+    ("My party: Deaths", ["Guest gets up, no load", "Respawn at host's lamp", "Refill vials, bullets"],
+     ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
+      "party_guest_revive_inplace=1", None)),
+    ("My party: World", ["Guests use lamps", "Guests use Hunter's Mark", "Open world", "Stay in Chalice Dungeons"],
+     ("Open world", "down/down/", "left", "Off", "right", "party_open_world=0", "party_open_world=1", None)),
+    ("My party: Story", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
+                         "Share cutscenes, endings", "Cutscenes live with host"],
+     ("Share NPC dialogue", "", "left", "Off", "right", "party_npc_talk=0", "party_npc_talk=1", None)),
+    ("My party: Rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Own key items as guest",
+                           "Key items at once", "Insight for bosses"],
+     ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
+    ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
+                           "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
+    ("My party: Look & notices", ["Companions without glow", "Join/leave notices"],
+     ("Join/leave notices", "down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
@@ -381,7 +389,8 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
-                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "settings_rev"]
+                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
+                   "party_toasts", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -404,8 +413,8 @@ def phase_rules(only):
         row, to_row, press, _, back = change[:5]
         host += "/" + to_row + press + "/mark=rules_h%dc" % (k + 1) + ("/" + back if back else "")
     # Friendly fire back off once the guest has seen it (the guest starts 22 s later)
-    # from the last page back up to World & PvP (0.7.2: the Rot page before it moved it one down)
-    up = "/".join(["up"] * (len(RULES_PAGES) - 1 - [pg[0] for pg in RULES_PAGES].index("World & PvP")))
+    # from the last page back up to Party rules: PvP & lamps
+    up = "/".join(["up"] * (len(RULES_PAGES) - 1 - [pg[0] for pg in RULES_PAGES].index("Party rules: PvP & lamps")))
     host += "/" + "/".join(["wait"] * 12) + "/circle/" + up + "/cross/left/mark=rules_h_ffoff/circle/circle/circle"
     guest += "/circle/circle/circle"
     watch = []
@@ -2343,22 +2352,22 @@ def check_rules(v, L):
         if effect:
             need(v, L, "rules host: %s in force (%s)" % (page, effect), 0,
                  r"rules sent to the party: .*%s" % re.escape(effect), t - 1)
-        if back or page == "World & PvP":
+        if back or page == "Party rules: PvP & lamps":
             b = need(v, L, "rules host: %s set back (bbport.ini %s)" % (page, ini_back), 0,
                      r"Settings: bbport.ini %s$" % re.escape(ini_back), t)
-    # The host's rule on the guest: its World & PvP page shows the host's friendly fire (on then)
+    # The host's rule on the guest: its Party rules: PvP & lamps page shows the host's friendly fire (on then)
     ff = L.find(1, r"Game menu: page \d+ rows \(\d+\): Friendly fire / PvP=")
     v.step("rules guest: sees the host's friendly fire (On, read-only)", ff and "Friendly fire / PvP=On" in ff[1],
-           ff[1][:200] if ff else "no World & PvP rows line on the guest")
+           ff[1][:200] if ff else "no PvP & lamps rows line on the guest")
     # 0.7.2: and the host's Guests bring their lamps (off by default)
     v.step("rules guest: sees the host's Guests bring their lamps (Off, read-only)",
-           ff and "Guests bring their lamps=Off" in ff[1], ff[1][:300] if ff else "no World & PvP rows line on the guest")
-    # 0.7.1: the guest's Shared world page shows the host's rules (read-only lines, the host's values)
+           ff and "Guests bring their lamps=Off" in ff[1], ff[1][:300] if ff else "no PvP & lamps rows line on the guest")
+    # 0.7.1: the guest's Party rules: World page shows the host's rules (read-only lines, the host's values)
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
-    v.step("rules guest: sees the host's Shared world rules (read-only)",
+    v.step("rules guest: sees the host's Party rules: World rules (read-only)",
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
            and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
-           sw[1][:250] if sw else "no Shared world rows line on the guest")
+           sw[1][:250] if sw else "no Party rules: World rows line on the guest")
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
     for i, who in ((0, "host"), (1, "guest")):
         need(v, L, "rules %s: 0.7.1 bbport.ini migrated (rot off once)" % who, i,

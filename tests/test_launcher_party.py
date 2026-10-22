@@ -370,7 +370,7 @@ class GuestsBringLampsSetting(unittest.TestCase):
 
 class TravelVoteSetting(unittest.TestCase):
     """0.7.3: the host's Party votes on travel checkbox: bbport.ini party_travel_vote, off by default,
-    no variable set (System > Shared world)."""
+    no variable set (System > Party rules: World)."""
 
     @classmethod
     def setUpClass(cls):
@@ -392,7 +392,7 @@ class TravelVoteSetting(unittest.TestCase):
 
 
 class PartyRules071Settings(unittest.TestCase):
-    """0.7.1: the switches that had only an env variable got rows (System > Shared world / Party
+    """0.7.1: the switches that had only an env variable got rows (System > Party rules: World / Party
     rewards) and launcher checkboxes (Party Rules / My Party tabs): bbport.ini keys, on by default, no variable set."""
     KEYS = {"party_kill_record": "BB_PARTY_KILL_RECORD", "party_gather": "BB_PARTY_GATHER",
             "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_npc_fights": "BB_PARTY_NPC_FIGHTS",
@@ -426,7 +426,7 @@ class PartyRules071Settings(unittest.TestCase):
 
 
 class CovenantRuleSetting(unittest.TestCase):
-    """0.7.3: Covenant outcomes per player, the host's rule (System > Shared world): bbport.ini
+    """0.7.3: Covenant outcomes per player, the host's rule (System > Party rules: World): bbport.ini
     party_covenant_per_player, on by default, a Party Rules tab checkbox, no variable set."""
     @classmethod
     def setUpClass(cls):
