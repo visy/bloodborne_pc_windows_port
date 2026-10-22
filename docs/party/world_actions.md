@@ -401,11 +401,24 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   stood there), down and back up: both rode the whole way (16-17 samples each with the ride bit, at the
   far end on arrival), the same flags and car end on both games after each ride, no fall, no recovery.
   Run 4: el 22/22, lf 16/16, lt 16/16.
+* Cainhurst's lift (liftfix, live run 6, smoke group `cainhurst_lift`, phase ch: the guest down, the guest
+  up staying 2 s in the car, the host down): every ride on both games within 0.06 s, flags (12500074 /
+  12505074) and car end equal after each, the rider on the car all the way (its peak 12.7 m/s: the lift
+  speed limit is 16 m/s now), the end check rewritten once per event on each game. Run 5 found the host
+  sitting 40 s in Cainhurst's first-arrival cutscene (the fixture now sets 12500000): its copies did not
+  follow the guest's ride and the host's world kept the car at the top ("loaded, its copy did not
+  follow"). Cainhurst's lift therefore replays like the library lift, and a ride refused while the host
+  stands in the car (within 1.2 m now; 4 m refused every ride seen from its landing) is applied once
+  the host is out (`HostLiftWaitTick`).
+* The lf approach (liftfix run 6): the bottom landing's floor collision is not there right after a long
+  warp (the guest fell through at two spots, runs 2-5); the move step's `:pin=4` holds the chr in front
+  of the bottom lever while it streams in ("Operate Device" shown), and the speed check runs from the
+  approach on.
 * The lf smoke's guest ride (lifts071) never was one: the guest was put on the car object's root, which
   stays at the TOP while the car is at the bottom; it fell the 48 m shaft through the switch region, the
   up event ran with nobody in the car and the guest died at the shaft's foot (god mode does not stop a
   fall death; the verdict read flags only). It now steps in beside the car at the bottom.
-* Fall recovery (liftfix): the nets also need one sample faster than any lift (10 m/s), so no lift ride
+* Fall recovery (liftfix): the nets also need one sample faster than any lift (16 m/s; Cainhurst's car peaks at 12.7), so no lift ride
   is a fall even where the ride test misses the car (the Chalice Dungeons' generated lifts).
 * Ladders: the shortcut ladder of Central Yharnam's start (2411204, lowered by lever 2411316, event
   12410285): a guest's pull lowers it on every game (l10: the host's game gets the guest's ObjAct kick

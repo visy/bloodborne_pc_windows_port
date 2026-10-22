@@ -42,6 +42,9 @@ Phase el (~4 min, 2 players, group `elevator`): the Nightmare of Mensis' 60 m li
   it down together, up together (both out at the arrival), the host alone, the guest alone; after
   every ride both games show the same flag and the car at that end, nobody drops faster than a lift
   or leaves the car mid-ride, nobody is moved by the fall recovery, nobody dies.
+Phase bf (~3 min, 3 players, group `fight_load`): while the host fights Father Gascoigne, guest 1
+  takes a Hunter's Mark to the same lamp (a re-join load with the host's snapshot): the fight still
+  runs for it, and its walk through the fog joins it; guest 2 dies outside the fog (its limbo).
 Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from the Great Bridge (its
   fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
   with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
@@ -148,7 +151,16 @@ def phase_s1(only):
             "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
             "guest_die@46%m24_01~",               # 40 s after the host's death: the last one down
         ])
-        g2 = "guest_die@16%m24_01~"
+        # wipeboss (0.7.2 known issue 2): guest 2 (its scripted death always runs; guest 1's waits
+        # forever when Gascoigne kills it first), back at the host's lamp after the respawn load:
+        # 30 s near Gascoigne's fog with nobody going in (HP logged every 10 s: no boss, no hits),
+        # then a real walk through the fog: the fight must open for everyone from that alone.
+        g2 = ",".join([
+            "guest_die@16%m24_01~",
+            "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!",
+            "guest_obj=2411810@2%m24_01",
+            "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
+        ])
     return dict(
         name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -503,7 +515,11 @@ LF_FAR = "-158.10:-41.72:16.93"    # 130 m from the Tomb of Oedon lamp: m24_00 s
 LF_BACK = "-36.8:-40.75:84.3"      # the lamp (m24_00 streams in again)
 LF_LIFT = "2401102"                # Cathedral Ward <-> lower Cathedral Ward lift car
 LF_CAR_LOW = "24.28:-45.3:194.17"  # region 2402059 (the up event's switch): in the car at the bottom
-LF_LOW_SIDE = "30.11:-45.6:197.56:0.82"  # 1 m in front of the bottom lever 2401103 (MSB (29.37, -45.71, 196.88))
+# the bottom landing between the car (24.28, 194.17) and its bottom lever 2401103 (MSB (29.37, -45.71,
+# 196.88)): 1 m in front of the lever (30.11, 197.56) has no floor (the guest fell to y -118, runs 2 / 3)
+LF_LOW_SIDE = "30.11:-45.6:197.56:0.82:native:pin=4"  # in front of the lever, held there 4 s while the floor
+                                                      # streams in (run 5: no collision at the arrival anywhere
+                                                      # near: the guest fell to y -118 from both spots)
 LF_FLAGS = "12400827/12400828/12410285"  # lift position / busy, the ladder lever's event (ladder down)
 LF_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
@@ -524,10 +540,9 @@ def phase_lf(only):
         # which is at the TOP with the car at the bottom: the guest fell the 48 m shaft through the
         # region, the up event ran with nobody in the car and the guest stayed at the bottom; god mode
         # and the flags-only checks hid it.)
-        # beside the car at the bottom (1 m in front of its bottom lever 2401103), by the game's own
-        # in-world warp: the bare chr warp put the guest there before the floor's collision was in and it
-        # fell through (liftfix run 2); then a few seconds for the car object to be active
-        "guest_move=%s:native@8%%m24_0" % LF_LOW_SIDE,
+        # onto the bottom landing beside the car by the game's own in-world warp, then a few seconds for
+        # the car object to be active
+        "guest_move=%s@8%%m24_0" % LF_LOW_SIDE,
         "guest_move=%s@4%%m24_0" % LF_CAR_LOW,             # into the car: up it goes
         "guest_obj=2401104:1.0:0@0.5%%m24_0?obj=%s:32" % LF_LIFT,  # out at the top on the arrival
         "guest_press=0@10!",                               # (in m24_00 there: no map condition)
@@ -687,6 +702,55 @@ def phase_lt(only):
         watch=["--watch", r"object %s stopped at anim [13] now=arrive@0.3,2" % LT_CAR,
                "--watch", r"guest_move to \(-128\.72=together@1,5"],
         crash=[], until=LT_UNTIL,
+    )
+
+
+# Phase ch (liftfix, ~2.5 min, 2 players, group `cainhurst_lift`): Cainhurst Castle's lift 2501010 (34 m,
+# y 65 -> 31; down 12500077: car anims 0 then 1, up 12500076: 10 then 11). Like the library lift it ended
+# its ride once the LOCAL player was out of the car (the party rewrites it to every player, as the other
+# lifts: liftrules::LocalEndToAllPlayers). Fixture: the car at the top (12500074 cleared). The players
+# reach the landings beside its levers by the game's own in-world warp from the Cainhurst lamp. (A) the
+# guest rides down alone, out at the arrival; (B) the guest rides up alone and stays 2 s in the car (the
+# host's copy would end first without the rewrite); (C) the host rides down alone, out at the arrival.
+# After each ride both games show the same flags and the car at that end, the rider rode in the car all
+# the way, nobody drops faster than a lift (from the approach on), nobody dies.
+CH_CAR, CH_POS, CH_BUSY = "2501010", "12500074", "12505074"
+CH_TOP_IN = "-22.78:64.95:-237.74"     # region 2502001 (the down ride's trigger, a 1.4 m box)
+CH_BOT_IN = "-22.78:30.9:-237.74"      # region 2502000 (the up ride's trigger)
+CH_TOP_H = "-25.3:65.1:-237.0"         # the top landing, between the car and its lever 2501011 (-27, 65, -239)
+CH_TOP_G = "-25.0:65.1:-238.5"
+CH_BOT_H = "-20.4:31.1:-237.9"         # the bottom landing, toward its lever 2501012 (-18.6, 31, -236)
+CH_BOT_G = "-20.6:31.1:-236.6"
+CH_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
+CH_RIDERS = ("guest", "guest", "host")
+
+
+def phase_ch(only):
+    common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s" % (CH_CAR, CH_POS, CH_BUSY)
+    nat = lambda xyz: xyz + ":0:native"
+    arrived = lambda anim: "?obj=%s:%s" % (CH_CAR, anim)
+    host = [common,
+            "host_move=%s@4%%m25^1" % nat(CH_TOP_H),                               # at the top landing
+            "host_press=0@1%%m25!?%s=1" % CH_POS,                                   # (A) over here
+            "host_move=%s@3%%m25?%s=0" % (CH_TOP_IN, CH_POS),                      # (C) once (B) is over here
+            "host_move=%s@0.3%%m25%s" % (nat(CH_BOT_H), arrived(0)),              # out at the arrival
+            "host_press=0@3%%m25!?%s=0" % CH_BUSY]                                # (C) over here
+    g1 = [common,
+          "guest_move=%s@6%%m25" % nat(CH_TOP_G),                                  # at the top landing
+          "guest_move=%s@3%%m25?near=%s:1.5" % (CH_TOP_IN, CH_TOP_H),  # (A) down
+          "guest_move=%s@0.3%%m25%s" % (nat(CH_BOT_G), arrived(0)),               # out at the arrival
+          "guest_move=%s@3%%m25?%s=0" % (CH_BOT_IN, CH_BUSY),                      # (B) up
+          "guest_move=%s@2%%m25%s" % (nat(CH_TOP_G), arrived(10)),                # 2 s in the car, then out
+          "guest_press=0@4%%m25!?%s=0" % CH_BUSY]                                  # (B) over here
+    return dict(
+        name="ch", seconds=300, count=2, headless=0,
+        # 12500000: the first-arrival cutscene seen (run 5: the host sat 40 s in it, its copies paused)
+        env=["BB_PARTY_TEST_START_LAMP=2502950", "BB_PARTY_PROGRESS_TEST_CLEAR=%s,%s" % (CH_POS, CH_BUSY),
+             "BB_PARTY_PROGRESS_TEST_SET=12500000",
+             "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12500076,12500077"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
+        watch=["--watch", r"object %s stopped at anim (0|10) now=arrive@0.2,2" % CH_CAR],
+        crash=[], until=CH_UNTIL,
     )
 
 
@@ -928,13 +992,44 @@ def phase_cl(only):
     )
 
 
+# Phase bf (wipeboss, ~3 min, 3 players, group `fight_load`): loads into the host's world while the
+# host's boss fight goes on. The host walks into Father Gascoigne's first-fight region (intro, then
+# the fight; invincible, it fights on). Guest 1 at the Tomb of Oedon lamp uses a Hunter's Mark (an
+# alone trip to its last lamp, the same lamp: a re-join with the host's snapshot, no rest) - the
+# only load path into a running fight (a rest resets it, a summon waits for it, a death in it is a
+# limbo); after it the fight must still run for it (its host-entered flag 1, its own guest flag 0,
+# the host's fight not reset), and its walk through the fog must join the fight. Guest 2 dies
+# outside the fog meanwhile: with the fight on it lies in its limbo (no load of its own).
+BF_UNTIL = [r"1:guest_use goods 100[\s\S]*went through boss fog", r"0:boss fog: slot 1 went in",
+            r"2:guest: dead in a boss fight|travels alone \(death\)"]
+
+
+def phase_bf(only):
+    host = ",".join(["host_warp=2412953@8^2",                               # the party to the Tomb of Oedon
+                     "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER])         # the host starts the fight (intro)
+    g1 = ",".join(["guest_lastlamp=2412953@4%m24_01~",                      # 4 s after the intro: its last lamp here
+                   "guest_use=100@3%m24_01",                                # Hunter's Mark: the re-join load
+                   "guest_press=0x0@5%m24_01!",                             # back, alive (HP logged)
+                   "guest_obj=2411810@3%m24_01",                            # at the fog
+                   "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!"])  # through it
+    g2 = "guest_die@8%m24_01~"                                               # outside the fog, the fight on
+    return dict(
+        name="bf", seconds=300, until_hold=8,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
+              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        crash=[],
+        until=BF_UNTIL,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -942,7 +1037,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt "}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -956,7 +1051,10 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following", "1:Party HUD: slot 0 spectating"],
     "wipe": [WIPE_UNTIL],
     # guest 1 back from the late wipe's respawn load (then the hold: no revive of its own after it)
-    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)"],
+    # and guest 2's walk through Gascoigne's fog 30 s later: the fight opens on the host
+    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)",
+                  r"2:own chr at HP 0: told the host[\s\S]*went through boss fog",
+                  r"0:a wipe; the[\s\S]*boss fog: slot \d+ went in first"],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
@@ -976,15 +1074,17 @@ GROUP_UNTIL = {
     "fall": [FL_UNTIL, FL_HOST_UNTIL],
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
+    "cainhurst_lift": CH_UNTIL,
     "mark": [MK_UNTIL],
     # the host awake in the cell (its last step) and both guests in m28_00
     "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
     "story_warp": [KW_UNTIL],
     # the host back in the dungeon from the Dream, ~40 s after (guest 1 summoned back in)
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
+    "fight_load": BF_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
-GROUP_HOLD = {"host_death": 10, "wipe_late": 15}  # wipe_late: a held death's grace + the game's death state  # the spectate on every screen (the guests' panels: "Spectating")
+GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
 
@@ -1247,6 +1347,36 @@ def check_wipe_late(v, L, hd):
     none_of(v, L, "s1 late wipe: no revive of its own after the load", r"died alone: revived|revived at its own last lamp|"
             r"died alone \(no host travel|guest death redirect runs|own death in the host's world held", arr, arr + 15, insts=(1,))
     need(v, L, "s1 late wipe: host re-join done", 0, r"host: re-join done", arr - 2)
+    check_wipe_boss(v, L, w, arr)
+
+
+# A boss fight's start on any game (the health bar, the host opening it for a guest, a guest's walk-in)
+BOSS_START = (r"boss health bar shown|host: boss fog: slot \d+ went in|guest: went through boss fog|"
+              r"host's first-fight event \d+ starts now")
+
+
+def check_wipe_boss(v, L, w, arr):
+    """wipeboss (0.7.2 known issue 2): after the wipe's respawn load every game has the boss as the
+    host's load reset it - no fight at the lamp for 30 s while nobody goes in - and a real walk
+    through the fog afterwards still opens the fight for everyone."""
+    back = L.find(0, r"loading screen gone", w)
+    t0 = back[0] if back else arr
+    for i in (0, 1, 2):
+        need(v, L, "s1 late wipe boss: boss reset by the load on inst%d" % i, i, r"boss health bar: reset \(a load\)", w - 1)
+    walk = L.find(2, r"travel step \d+/\d+: guest_obj", arr)  # guest 2 (headless) walks in
+    t1 = walk[0] if walk else 1e9
+    v.step("s1 late wipe boss: 30 s at the lamp before the walk-in", walk is not None and t1 - arr >= 30,
+           "walk +%.1f s, guest 1 back +%.1f s" % (t1, arr) if walk else "no guest_obj step after +%.1f s" % arr)
+    none_of(v, L, "s1 late wipe boss: no fight starts at the lamp (bar, fog, intro)", BOSS_START, t0, t1)
+    none_of(v, L, "s1 late wipe boss: no stale fog flag held back", r"already 1 when this stay began", arr - 15, t1, insts=(1, 2))
+    if walk is None:
+        return
+    went = need(v, L, "s1 late wipe boss: guest 2 walks through the fog", 2, r"guest: went through boss fog", t1)
+    if went is None:
+        return
+    need(v, L, "s1 late wipe boss: the host opens the fight from it", 0, r"boss fog: slot \d+ went in first", went - 0.5)
+    for i in (0, 1, 2):
+        need(v, L, "s1 late wipe boss: the fight is on for inst%d (bar)" % i, i, r"boss health bar shown", went - 0.5)
 
 def check_arena(v, L, k):
     """Guest 2 dead in the fight when the boss dies: up in the arena, no load (arenaguest 2026-10-21)."""
@@ -1584,9 +1714,9 @@ def check_lf(v, L):
     v.step("lf guest's lift ride: guest 1 at the top on the car's arrival", y is not None and y > -5.0,
            ("y %.1f at +%.1f s" % (y, arr[0])) if pos else "no arrival seen")
     # liftfix: the ride itself: no drop faster than a lift (god mode would hide a fall down the shaft)
-    # the ride: from the step into the car (the approach warp beside it is the test's: its floor may not
-    # be in yet, run 3)
-    into = L.find(1, r"guest_move to \(24\.28, -45\.30")
+    # from the approach beside the car on (a fall there must show too)
+    into = L.find(1, r"guest_move to \(30\.11, -45\.60")
+    v.step("lf lift: guest 1 reached the car's landing", into is not None, "+%.1f s" % into[0] if into else "no approach")
     for i, who in ((0, "host"), (1, "guest 1")):
         f = falls(L, i, into[0] if into else 0.0)
         v.step("lf lift: %s no fall (vertical speed under 8 m/s)" % who, not f,
@@ -1939,6 +2069,86 @@ def car_anim_lt(L, i, w):
     return val
 
 
+def ch_rides(L, i):
+    """Cainhurst's lift on instance i: [{start, up, end, t, t_arr, t_end}] (down 0 -> end 1, up 10 -> end 11)."""
+    rides = []
+    for t, line in L.all(i, r"test: object %s anim -?\d+ playing" % CH_CAR):
+        m = re.search(r"anim (-?\d+) playing (\d)", line)
+        anim, playing, w = int(m.group(1)), m.group(2) == "1", wall(line)
+        if anim in (0, 10) and playing and (not rides or rides[-1]["end"] is not None):
+            rides.append(dict(start=w, t=t, up=anim == 10, end=None, t_end=None, t_arr=None))
+        elif anim in (0, 10) and not playing and rides and rides[-1]["end"] is None:
+            rides[-1]["t_arr"] = rides[-1]["t_arr"] or t
+        elif anim in (1, 11) and not playing and rides and rides[-1]["end"] is None:
+            rides[-1].update(end=w, t_end=t)
+    return rides
+
+
+def ch_at(L, i, w):
+    """(pos, busy) and the car's animation on instance i at wall time w."""
+    flags = anim = None
+    for _t, line in L.all(i, r"test: flags %s=" % CH_POS):
+        if wall(line) is not None and wall(line) <= w:
+            flags = tuple(int(x) for x in re.findall(r"=(-?\d)", line)[:2])
+    for _t, line in L.all(i, r"test: object %s anim -?\d+ playing" % CH_CAR):
+        if wall(line) is not None and wall(line) <= w:
+            anim = int(re.search(r"anim (-?\d+)", line).group(1))
+    return flags, anim
+
+
+def check_ch(v, L):
+    need(v, L, "ch join: 2 players", 0, r"cooperators 0 -> 1")
+    names = ["A guest alone down", "B guest alone up, 2 s in the car", "C host alone down"]
+    rides = [ch_rides(L, i) for i in (0, 1)]
+    v.step("ch rides: 3 on each game (no ride without a step into the car)", len(rides[0]) == 3 and len(rides[1]) == 3,
+           "host %d, guest %d" % (len(rides[0]), len(rides[1])))
+    for k, name in enumerate(names):
+        rh = rides[0][k] if k < len(rides[0]) else None
+        rg = rides[1][k] if k < len(rides[1]) else None
+        if not rh or not rg or rh["end"] is None or rg["end"] is None:
+            v.step("ch %s: ran and ended on both games" % name, False, "host %s, guest %s" % (rh, rg))
+            continue
+        up = k == 1
+        v.step("ch %s: one ride on both games (the game's own sync)" % name, rh["up"] == up and rg["up"] == up and
+               abs(rh["start"] - rg["start"]) < 1.0, "start host %.2f / guest %.2f" % (rh["start"] % 3600, rg["start"] % 3600))
+        w = max(rh["end"], rg["end"]) + 0.5
+        (fh, ah), (fg, ag) = ch_at(L, 0, w), ch_at(L, 1, w)
+        want = (0 if up else 1, 0)  # 12500074: 1 = the car at the bottom
+        v.step("ch %s: same flags and car end on both games" % name, fh == fg == want and ah == ag == (11 if up else 1),
+               "pos/busy host %s / guest %s (want %s), car anim host %s / guest %s, ends %.1f s apart"
+               % (fh, fg, want, ah, ag, abs(rh["end"] - rg["end"])))
+        i = 0 if CH_RIDERS[k] == "host" else 1
+        r = rides[i][k]
+        arr = r["t_arr"]
+        pos = L.all(i, POS_RX.pattern, arr - 1.0, arr + 0.05) if arr else []
+        y = float(POS_RX.search(pos[-1][1]).group(2)) if pos else None
+        far = y is not None and (y > 63.0 if up else y < 33.0)
+        n = off = 0
+        for _t, line in L.all(i, POS_RX.pattern, r["t"] + 0.6, (arr or r["t"]) - 0.3):
+            m = POS_RX.search(line)
+            f = re.search(r" f ([0-9a-f]{10})", line)
+            if f and ((float(m.group(1)) + 22.78) ** 2 + (float(m.group(3)) + 237.74) ** 2) ** 0.5 < 1.2:
+                n += 1
+                off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+        v.step("ch %s: the %s rode in the car to the %s" % (name, CH_RIDERS[k], "top" if up else "bottom"),
+               far and n >= 5 and off == 0,
+               "y %s at the arrival, %d samples in the car, %d off it" % ("%.1f" % y if y is not None else "-", n, off))
+    for i, who in ((0, "host"), (1, "guest")):
+        # from the first warp to the lift on: the approach counts too
+        start = L.find(i, r"_move to \(-2[0-5]\.")
+        f = falls(L, i, start[0] - 0.1 if start else 0.0, rate=16.0)  # this car peaks at 12.7 m/s (run 5)
+        v.step("ch %s: no fall from the approach on (vertical speed under 16 m/s)" % who, start is not None and not f,
+               ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else
+               ("fastest drop within a lift's speed" if start else "never reached the lift"))
+        rw = L.all(i, r"lift ride end: event 1250007[67] waits until every player is out")
+        later = L.all(i, r"EMEVD event 1250007[67] \[12\] 3\[07\]")
+        v.step("ch %s: the lift's ride end checks every player (rewritten once per event)" % who,
+               len(rw) == 2 and len(later) >= 1, "%d rewrites, %d later 3[07] dispatches" % (len(rw), len(later)))
+    none_of(v, L, "ch nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
+    none_of(v, L, "ch no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
+    check_common(v, L, "ch")
+
+
 def check_mk_host(v, L, guests_from):
     """The host's Marks (MK_HOST_CASES): the question and its answer, then per the travel rules: in
     its own map no load for anyone (YES: both guests follow in-world; NO: they stay); from another
@@ -2119,13 +2329,50 @@ def check_cl(v, L):
     check_common(v, L, "cl")
 
 
+def check_bf(v, L):
+    """Loads into the host's world while its boss fight goes on (phase bf)."""
+    need(v, L, "bf join: 3 players", 0, r"cooperators [01] -> 2")
+    hm = need(v, L, "bf host walks into the fight's region", 0, r"travel step \d+/\d+: host_move")
+    on = need(v, L, "bf the host's fight is on (bar)", 0, r"boss health bar shown", hm or 0)
+    if on is None:
+        return
+    mark = need(v, L, "bf guest 1 uses a Hunter's Mark in the fight", 1, r"guest_use goods 100", on)
+    if mark is not None:
+        need(v, L, "bf guest 1: a re-join with the host's snapshot", 1,
+             r"travels alone \(hunters_mark\) to .*a re-join with the host's snapshot", mark - 1)
+        need(v, L, "bf host re-sends the snapshot (fight on)", 0, r"slot 1 travels alone into this area", mark - 1)
+        arr = need(v, L, "bf guest 1 back in the host's world", 1, r"arrived in the host world \(flow 4\)", mark)
+        if arr is not None:
+            need(v, L, "bf guest 1 sees the fight running (host-entered 1, its own fog flag 0)", 1,
+                 r"boss fogs of this block: .*\[12414811: read 1 intro 1 host 1 dead 0", arr - 0.5, arr + 10)
+            none_of(v, L, "bf guest 1: no stale fog flag", r"already 1 when this stay began", mark, insts=(1,))
+            bar = L.find(1, r"boss health bar shown", mark + 0.5)  # after the load's reset
+            v.step("bf guest 1's boss bar after its load (shown for every member in the map while the fight runs)",
+                   True, ("+%.1f s (back +%.1f s)" % (bar[0], arr)) if bar else "not shown before its walk-in")
+            walk = L.find(1, r"travel step \d+/\d+: guest_obj", arr)
+            went = need(v, L, "bf guest 1 walks through the fog", 1, r"guest: went through boss fog", walk[0] if walk else arr)
+            if went is not None:
+                none_of(v, L, "bf guest 1 did not report before its walk", r"guest: went through boss fog", mark,
+                        walk[0] if walk else went - 0.1, insts=(1,))
+                need(v, L, "bf the host: guest 1 joins the running fight (nothing to open)", 0,
+                     r"boss fog: slot 1 went in \(flag 12414801\); nothing to open \(host in 1", went - 0.5)
+                need(v, L, "bf guest 1 in the fight (bar)", 1, r"boss health bar shown", mark + 0.5)
+        none_of(v, L, "bf the host's fight is never reset", r"boss health bar: reset|host: rest load|a wipe; the",
+                on, insts=(0,))
+    d2 = need(v, L, "bf guest 2 dies outside the fog", 2, r"travel step \d+/\d+: guest_die", on)
+    if d2 is not None:
+        need(v, L, "bf guest 2: its limbo (the fight is on: no load of its own)", 2, r"guest: dead in a boss fight", d2)
+        none_of(v, L, "bf guest 2: no respawn load in the fight", r"travels alone \(death\)|loading screen up", d2, insts=(2,))
+    check_common(v, L, "bf")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L),
+          "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L),
-          "cl": lambda v, L, d: check_cl(v, L)}
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L)}
 
 
 def main():
@@ -2134,7 +2381,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2149,7 +2396,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

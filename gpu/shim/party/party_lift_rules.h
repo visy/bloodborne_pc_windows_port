@@ -56,7 +56,12 @@ inline const std::vector<Lift>& Lifts() {
         {12400827u, 12400828u, 0u, 2401102},         // Cathedral Ward <-> Old Yharnam
         {12410350u, 12415350u, 12410351u, 2411320},  // Central Yharnam
         {12420154u, 12420155u, 0u, 2421250},         // Upper Cathedral Ward (to Ebrietas)
-        {12500074u, 12505074u, 0u, 2501010},         // Cainhurst Castle (liftfall)
+        // Cainhurst Castle (liftfall): it replays (live liftfix run 5: the host sat in its first-arrival
+        // cutscene, its copy did not follow the guest's ride, and the host's world kept the car at the top
+        // as "loaded, its copy did not follow"): a guest's ride is applied with the car loaded and the
+        // car put at that end. Down 12500077: car 0, end 1, pos 1 (the car at the bottom); up 12500076:
+        // car 10, end 11, pos 0. Init: pos 1 car 1, pos 0 car 11.
+        {12500074u, 12505074u, 0u, 2501010, 0, 1, 11, -1, -1, {10, -1}, {0, -1}, 1, 11},
         // Nightmare of Mensis (liftfall: its common up / down events 12601320 / 12601330, slots 0-5)
         {12601250u, 12605250u, 0u, 2601210},
         {12601251u, 12605251u, 0u, 2601220},         // roof lift (start state reversed, 12601340)

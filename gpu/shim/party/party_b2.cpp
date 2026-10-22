@@ -30,6 +30,7 @@
 #include "party_spectate.h"
 #include "party_director.h"
 #include "party_death_rules.h"
+#include "party_bossfog_rules.h"
 #include "party_hud.h"
 #include "party_status.h"
 #include "party_guestvals_rules.h"
@@ -2550,7 +2551,9 @@ void BesideHost(float pos[4], const float rot[4], int spot) {
 // key +0x20, buffer +0x28). Run 18 showed the overlay all zero after the B2 re-sent snapshot was
 // applied (9401 / 12410000 = 0 where the join's snapshot had 1), so the client replayed the
 // opening cutscene. The guest keeps a copy of the overlay it had in the host's world and, after
-// the new snapshot, restores every group that came back all zero.
+// the new snapshot, restores every group that came back all zero - except a map's fight-state
+// groups (bossfog::GuardRestores: T1 zones 4-6, the boss fog / fight flags): the host's load reset
+// them, and a restore brought a wiped boss fight back to the lamp (0.7.2 known issue 2).
 std::map<u32, std::vector<u8>> g_overlay_saved;
 
 template <class F>
@@ -2596,7 +2599,8 @@ void SaveOverlay() {
 }
 
 void RestoreZeroedOverlay() {
-    int zero = 0, restored = 0, total = 0;
+    int zero = 0, restored = 0, total = 0, reset = 0;
+    std::string reset_list;
     ForEachOverlayGroup([&](u32 key, u64 buf) {
         ++total;
         u8 v[125];
@@ -2619,12 +2623,21 @@ void RestoreZeroedOverlay() {
         for (u8 b : it->second) {
             saved_any = saved_any || b;
         }
+        const u32 block = coop::progress::BlockOfPoolKey(int(key));
+        if (saved_any && !bossfog::GuardRestores(block, true, true)) {
+            ++reset;  // the boss fight / enemy state the host's load reset: the snapshot's zero stands
+            if (reset_list.size() < 200) {
+                reset_list += " " + std::to_string(block);
+            }
+            return;
+        }
         if (saved_any && SafeWrite(buf, it->second.data(), it->second.size())) {
             ++restored;
         }
     });
-    Log("overlay guard: %d groups, %d all-zero after the new snapshot, %d restored from the saved overlay", total,
-        zero, restored);
+    Log("overlay guard: %d groups, %d all-zero after the new snapshot, %d restored from the saved overlay; %d "
+        "fight-state group(s) left as the host's (reset by its load)%s", total, zero, restored, reset,
+        reset_list.c_str());
 }
 
 /// The flags the opening cutscene depends on, as the store answers now (overlay in load mode 1).
