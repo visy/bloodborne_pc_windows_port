@@ -3279,15 +3279,17 @@ def check_rt(v, L):
         need(v, L, "rt 1 a stack (health)", 1, r"death 1; rot on, 1 stack\(s\) \(this one: health\)", d1 - 1)
         k1 = need(v, L, "rt 1 the host kills it", 0, r"travel step \d+/\d+: host_kill entity %s" % ent, d1)
         c1 = need(v, L, "rt 1 killer dead: -1 (notice)", 1,
-                  r"rot: an enemy died \(entity %s, .*\): 1 stack\(s\) off, \d+ left; notice: Rot -1: your killer is dead"
+                  # [1-5]: the stain test can put the frail guest back onto its stain beside the living
+                  # killer, a second death by it (release smoke 0.7.2: "Rot -2: your killer is dead")
+                  r"rot: an enemy died \(entity %s, .*\): [1-5] stack\(s\) off, \d+ left; notice: Rot -[1-5]: your killer is dead"
                   % ent, d1)
         if c1 is not None and k1 is not None:
             v.step("rt 1 the cleanse came from the host's kill", c1 >= k1 - 1 and c1 - k1 < 15,
                    "+%.1f s after the host's kill" % (c1 - k1))
     d2 = need(v, L, "rt 2 a scripted death (no killer), a stain", 1,
-              r"death 2: killed by nobody", k1 or 0)
+              r"death \d+: killed by nobody", k1 or 0)
     if d2 is not None:
-        need(v, L, "rt 2 stack +1", 1, r"death 2; rot on, 1 stack\(s\)", d2 - 1)
+        need(v, L, "rt 2 stack +1", 1, r"death \d+; rot on, 1 stack\(s\)", d2 - 1)
         need(v, L, "rt 2 bloodstain picked up", 1, r"party stain: recovered \d+ Blood Echoes|own bloodstain taken and its Blood Echoes back", d2)
         need(v, L, "rt 2 echoes back: -1 (notice)", 1,
              r"rot: the bloodstain was picked up .*: 1 stack\(s\) off, 0 left; notice: Rot -1: Blood Echoes retrieved", d2)
