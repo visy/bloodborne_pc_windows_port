@@ -34,6 +34,7 @@
 #include <sys/uio.h>
 #endif
 #include "gpu/shim/boot_marks.h"
+#include "gpu/shim/bbport_boot_watch.h"
 
 typedef struct { uint64_t address, size, flags; } Segment;
 typedef struct { uint64_t target, kind, value, addend; } Reloc;
@@ -510,9 +511,9 @@ static void print_main_samples(FILE *f) {
     fprintf(f, "\n");
 }
 
-static void dump_watchdog(void) {
+static void dump_watchdog(const char *title) {
     printf("\n================================================================================\n");
-    printf(">>> WATCHDOG: NO FRAMES FOR 10 SECONDS! THREAD & IMPORT DUMP <<<\n");
+    printf(">>> WATCHDOG: %s! THREAD & IMPORT DUMP <<<\n", title);
     printf("================================================================================\n");
 
     pthread_mutex_t *tlock = (pthread_mutex_t *)runtime_thread_get_lock();
@@ -748,7 +749,7 @@ static void dump_hang_snapshot(const char *path, uint64_t elapsed_s, uint64_t cu
     if (!g_trace_imports) {
         fprintf(f, "(recent imports: only with BB_TRACE_IMPORTS=1)\n\n=== END SNAPSHOT ===\n");
         fclose(f);
-        printf("\n[WATCHDOG] Flips stalled for 5s: snapshot written to %s\n\n", path);
+        printf("\n[WATCHDOG] Hang snapshot written to %s\n\n", path);
         fflush(stdout);
         return;
     }
@@ -801,11 +802,33 @@ static void dump_hang_snapshot(const char *path, uint64_t elapsed_s, uint64_t cu
     fprintf(f, "=== END SNAPSHOT ===\n");
     fflush(f);
     fclose(f);
-    printf("\n[WATCHDOG] Flips stalled for 5s: snapshot written to %s\n\n", path);
+    printf("\n[WATCHDOG] Hang snapshot written to %s\n\n", path);
     fflush(stdout);
 }
 
 #ifdef _WIN32
+/* The boot watchdog's snapshot: out\boot_hang_<time>.log (dump_hang_snapshot's thread waits and
+ * main-thread samples), then the same and the stack walks into the log itself, so a test run's
+ * log shows it. */
+static void write_boot_snapshot(int why, const char *detail, uint64_t elapsed_s, uint64_t flips, uint64_t submits,
+                                uint64_t now) {
+    char path[160];
+    snprintf(path, sizeof(path), "out/boot_hang_%s.log", g_run_timestamp[0] ? g_run_timestamp : "run");
+    printf("\n[WATCHDOG] Boot stalled at %llu s: %s%s%s (flips %llu, director ticks %llu); snapshot %s\n",
+           (unsigned long long)elapsed_s, bb_boot_watch_reason(why), detail && *detail ? ": " : "",
+           detail ? detail : "", (unsigned long long)flips, (unsigned long long)(gpu_enabled ? bbgpu_boot_ticks() : 0),
+           path);
+    fflush(stdout);
+    dump_hang_snapshot(path, elapsed_s, flips, submits, now);
+    FILE *f = fopen(path, "r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f)) fputs(line, stdout);
+        fclose(f);
+    }
+    dump_watchdog("BOOT STALLED");
+}
+
 static DWORD WINAPI watchdog_worker(LPVOID param) {
     (void)param;
     uint64_t last_flips = 0;
@@ -823,6 +846,13 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
 
     FILE *f_heartbeat_ts = (g_bb_trace && g_run_timestamp[0]) ? fopen(hb_ts_path, "w") : NULL;
     FILE *f_heartbeat = g_bb_trace ? fopen("out/heartbeat.log", "w") : NULL;
+    /* BB_BOOT_WATCHDOG=S (gpu/shim/bbport_boot_watch.h): a snapshot when the boot stops moving. */
+    BbBootWatch boot_watch;
+    memset(&boot_watch, 0, sizeof(boot_watch));
+    boot_watch.limit_ms = bb_boot_watch_limit_ms(getenv("BB_BOOT_WATCHDOG"));
+    if (boot_watch.limit_ms)
+        printf("[WATCHDOG] Boot watchdog: a thread snapshot if the boot stops for %llu s (BB_BOOT_WATCHDOG)\n",
+               (unsigned long long)(boot_watch.limit_ms / 1000));
 
     while (g_watchdog_running) {
         Sleep(1000);
@@ -832,8 +862,16 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
         uint64_t cur_flips = gpu_enabled ? bbgpu_get_flip_count() : 0;
         uint64_t cur_submits = gpu_enabled ? bbgpu_get_submit_count() : 0;
         uint64_t cur_imports = g_total_import_calls;
-        if (g_bb_trace) sample_main_thread(elapsed_s);
+        const int boot_armed = boot_watch.limit_ms && !boot_watch.done;
+        if (g_bb_trace || boot_armed) sample_main_thread(elapsed_s);
         if (cur_flips != last_flips) last_flip_tick = now;
+        if (boot_armed) {
+            char boot_why[256] = "";
+            const int requested = gpu_enabled && bbgpu_boot_take_request(boot_why, sizeof(boot_why));
+            const int why = bb_boot_watch_step(&boot_watch, now, cur_flips, gpu_enabled ? bbgpu_boot_ticks() : 0,
+                                               gpu_enabled && bbgpu_boot_done(), requested);
+            if (why) write_boot_snapshot(why, boot_why, elapsed_s, cur_flips, cur_submits, now);
+        }
 
         uint64_t flip_delta = cur_flips >= last_flips ? cur_flips - last_flips : 0;
         uint64_t submit_delta = cur_submits >= last_submits ? cur_submits - last_submits : 0;
@@ -919,7 +957,7 @@ static DWORD WINAPI watchdog_worker(LPVOID param) {
             if (now - last_flip_tick >= 10000) {
                 if (now - last_dump_tick >= 10000) {
                     last_dump_tick = now;
-                    dump_watchdog();
+                    dump_watchdog("NO FRAMES FOR 10 SECONDS");
                 }
             }
         }

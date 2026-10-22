@@ -1,4 +1,5 @@
 #include "bbport_write_log.h"
+#include "bbport_boot_watch.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
 #include "bbport_frame_rate.h"
@@ -421,6 +422,25 @@ extern "C" unsigned bbgpu_symbol_count(void) {
 
 extern "C" uint64_t bbgpu_get_flip_count(void) {
     return BbStats::flips.load(std::memory_order_relaxed);
+}
+
+extern "C" uint64_t bbgpu_boot_ticks(void) {
+    return BbBootWatchState::ticks.load(std::memory_order_relaxed);
+}
+
+extern "C" int bbgpu_boot_done(void) {
+    return BbBootWatchState::done.load(std::memory_order_relaxed) ? 1 : 0;
+}
+
+extern "C" int bbgpu_boot_take_request(char* why, unsigned size) {
+    if (!BbBootWatchState::requested.exchange(false, std::memory_order_acquire)) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lk(BbBootWatchState::why_mu);
+    if (why && size) {
+        std::snprintf(why, size, "%s", BbBootWatchState::why.c_str());
+    }
+    return 1;
 }
 
 extern "C" uint64_t bbgpu_get_submit_count(void) {
