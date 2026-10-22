@@ -49,6 +49,13 @@ void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 int runtime_memory_vma_info(uintptr_t address, int *prot, int *type, uintptr_t *end);
 void runtime_memory_dump_recent_ops(void *file_handle);
+/* Crash dumps: guest memory totals and the recorded allocation failures (a guest NULL
+ * dereference after a failed allocation otherwise looks like a guest bug). */
+void runtime_memory_report_to(void *file_handle);
+size_t runtime_memory_failures(void);
+/* The game's raise of a debug exception / its panic printer (probe.c): the crash dump's
+ * "last assertion" section. */
+void runtime_note_guest_assert(uint32_t code, uint64_t argument, uint64_t guest_offset);
 /* The CPU is about to write the range outside guest code (a file read): tells the GPU side. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size);
 void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size);

@@ -5,6 +5,11 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Changed: crash logs say more about why the game stopped** (from Mrsuss60's Windows port): a crash log (`out\crash_<time>.log`) now lists every time the game could not get memory, the game's own error checks that failed before the crash (its "panic" messages with their source file and line, and its debug exceptions), and the instruction that crashed. The first few of these also go into the game's log as they happen. The game goes on after its own checks as it did before, as on a PS4.
+- **Changed: crash exit codes by cause**: a crash ends the game with code 140 when the game read through an empty pointer (often right after memory ran out, see the crash log), 141 when the game stopped itself on a failed check, 139 for other crashes and 132 for an illegal instruction (the same code when the crash handler itself gets stuck). Bug reports can tell crashes apart by the code.
+- **Fixed: a crash with a bad thread pointer no longer freezes the game**: a crash in code that reads the game's thread data could retry forever at full CPU instead of writing a crash log and closing; it now writes the log and closes. The game's start also keeps its own exit routine safe from being overwritten (from Mrsuss60's Windows port).
+- **Changed: a much smaller `bbport.exe`**: the release `bbport.exe` no longer carries its debug information (about 100 MB less to download and unpack; from Mrsuss60's Windows port). Nothing changes in the game.
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: the Research Hall lifts no longer leave without you**: on the two lifts inside the Research Hall (Old Hunters DLC), the car could leave again the moment you stepped off it, with you still at its edge or about to step back in, and you fell into the pit under it and died. The car now waits until its ride is fully over, as every other lift does.

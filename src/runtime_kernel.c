@@ -5,6 +5,7 @@
 #define _CRT_RAND_S
 #include "runtime.h"
 #include <stdatomic.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -182,6 +183,44 @@ static ABI int64_t posix_time(int64_t *out) { int64_t t=(int64_t)time(NULL); if 
 static ABI int32_t get_pagesize(void) { return PAGE; }
 static ABI int32_t get_pid(void) { return 1000; }
 static ABI int32_t yield(void) { host_yield(); return 0; }
+static void guest_call_sites(uint64_t out[3]);
+/* sceKernelDebugRaiseException(code, argument): the game's own assertions (0xa0020007 is the
+ * usual code; the Yebis renderer raises it on blur-kernel sample counts). On a retail PS4 no
+ * debugger takes it and the shipped game goes on past its checks (that a separate
+ * ...OnReleaseMode call exists says the plain one is meant for development kits). This port has
+ * always returned 0 for both, unlogged (they were unbound imports).
+ * Now the first 20 are logged with their call sites and the last one is in every crash dump;
+ * the game still goes on. BB_GAME_ASSERT_STOP=1 (debugging) stops instead, exit code 142.
+ * From Mrsuss60/bloodborne_pc_windows_port 4035ab4e (its "code 23" stop with no report). */
+static int32_t guest_raise(uint32_t code, uint64_t argument, const char *what, uint64_t caller) {
+    static int stop = -1;
+    if (stop < 0) { const char *e = getenv("BB_GAME_ASSERT_STOP"); stop = e && e[0] == '1'; }
+    /* The game calls the import directly: its return address is the raising site. */
+    const uint64_t text_lo = 0x800000000ull, text_hi = 0x800000000ull + 0x50d96dcull;
+    const uint64_t at = caller >= text_lo && caller < text_hi ? caller - text_lo : 0;
+    uint64_t sites[3];
+    guest_call_sites(sites);
+    runtime_note_guest_assert(code, argument, at);
+    static _Atomic unsigned told;
+    const unsigned n = atomic_fetch_add(&told, 1) + 1;
+    if (stop || n <= 20) {
+        fprintf(stderr, "Runtime: the game raised %s 0x%x (argument 0x%" PRIx64 ") from +%#" PRIx64 " (stack +%#" PRIx64
+                        " +%#" PRIx64 " +%#" PRIx64 "); %s\n", what, code, argument, at, sites[0], sites[1], sites[2],
+                stop ? "stopping (BB_GAME_ASSERT_STOP=1)"
+                     : n == 20 ? "going on as on a PS4 (further ones are only counted)" : "going on as on a PS4");
+        fflush(stderr);
+    }
+    if (!stop) return 0;
+    runtime_report();
+    fflush(NULL);
+    exit(142);
+}
+static ABI int32_t debug_raise_exception(uint32_t code, uint64_t argument) {
+    return guest_raise(code, argument, "debug exception", (uint64_t)__builtin_return_address(0));
+}
+static ABI int32_t debug_raise_exception_release(uint32_t code, uint64_t argument) {
+    return guest_raise(code, argument, "release-mode debug exception", (uint64_t)__builtin_return_address(0));
+}
 static ABI __attribute__((noreturn)) void hard_exit(int status) {
     printf("Runtime: guest requested _exit(%d)\n",status);
     runtime_report();
@@ -340,6 +379,8 @@ static const RuntimeExport exports[]={
     {"yS8U2TGCe1A#p#J",kernel_nanosleep},
     {"6XG4B33N09g#p#J",yield},
     {"T72hz6ffq08#p#J",yield},
+    {"sceKernelDebugRaiseException",debug_raise_exception},
+    {"sceKernelDebugRaiseExceptionOnReleaseMode",debug_raise_exception_release},
     {"6Z83sYWFlA8#p#J",hard_exit},
     {"3kg7rT0NQIs#p#J",hard_exit},
     {"ejekcaNQNq0#p#J",posix_gettimeofday},
