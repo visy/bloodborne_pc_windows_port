@@ -822,6 +822,10 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         }));
         draw_scheduler.DeferOperation([device, image_view] { device.destroyImageView(image_view); });
         image_size = vk::Extent2D{display.width, display.height};
+        // BB_PRESENT_DUMP_TRIGGER: labelled with the format it is shown in, as below.
+        if (auto& upscaler = rasterizer->GetUpscaler(); upscaler.PresentDumpDue()) {
+            upscaler.DumpPresented(display.image, display.width, display.height, view_info.format);
+        }
         draw_scheduler.Record([image = display.image](vk::CommandBuffer cmdbuf) {
             const vk::ImageMemoryBarrier2 to_read{
                 .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,

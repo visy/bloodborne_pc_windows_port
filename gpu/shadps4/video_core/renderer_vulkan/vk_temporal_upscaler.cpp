@@ -2476,9 +2476,10 @@ bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
         return false;
     }
     display = {vk::Image(it->second.image), it->second.format, it->second.width, it->second.height};
-    if (PresentDumpDue()) {
-        DumpPresented(display.image, display.width, display.height, display.format);
-    }
+    // BB_PRESENT_DUMP_TRIGGER: the presenter dumps this image with the format it shows it in (the
+    // game's display format, e.g. B8G8R8A8; the image is created as the render target's R8G8B8A8
+    // and its bytes were written through the game's view, so a dump labelled with the creation
+    // format had red and blue swapped).
     return true;
 }
 
