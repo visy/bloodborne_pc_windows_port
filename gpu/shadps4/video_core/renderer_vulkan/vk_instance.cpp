@@ -1203,6 +1203,21 @@ u64 Instance::GetDeviceMemoryBudgetNow() const {
     return VramLimit() != 0 ? std::min(total_budget, VramLimit()) : total_budget;
 }
 
+u64 Instance::GetDeviceBlockSlack() const {
+    if (!allocator) {
+        return 0;
+    }
+    std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+    vmaGetHeapBudgets(allocator, budgets.data());
+    u64 slack = 0;
+    for (const size_t heap : valid_heaps) {
+        const auto& stats = budgets[heap].statistics;
+        slack += stats.blockBytes > stats.allocationBytes ? stats.blockBytes - stats.allocationBytes
+                                                          : 0;
+    }
+    return slack;
+}
+
 vk::FormatFeatureFlags2 Instance::GetFormatFeatureFlags(vk::Format format) const {
     const auto it = format_properties.find(format);
     if (it == format_properties.end()) {

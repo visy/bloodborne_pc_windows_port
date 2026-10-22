@@ -157,6 +157,91 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(r.returncode,20,r.stderr)
         self.assertIn('_init_env=0',r.stdout)
 
+    def run_in_tmp(self, data, *options, env=None, timeout=30):
+        """Runs an image in a temporary folder; returns the result and its crash log (or '')."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'boot.bin'
+            path.write_bytes(data)
+            r = subprocess.run([str(EXE.resolve()), str(path), '--cpu-only', *options],
+                               capture_output=True, text=True, timeout=timeout, cwd=tmp,
+                               env=None if env is None else {**os.environ, **env})
+            logs = sorted((Path(tmp) / 'out').glob('crash_*.log'))
+            return r, logs[-1].read_text(errors='replace') if logs else ''
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows crash handler')
+    def test_guest_null_dereference_has_its_own_exit_code(self):
+        r, dump = self.run_in_tmp(package(b'\x8b\x04\x25\x08\0\0\0'))  # mov eax, [8]
+        self.assertEqual(r.returncode, 140, r.stdout + r.stderr)
+        self.assertIn('Exit code:      140 (guest NULL dereference', dump)
+        self.assertRegex(dump, r'Instruction:    mov eax, \[0x0*8\]')
+        self.assertIn('--- GUEST MEMORY ---', dump)
+        self.assertIn('Memory failures: pool=0 allocate=0', dump)
+        self.assertIn('--- GUEST ASSERTIONS ---\nNone this run.', dump)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows crash handler')
+    def test_other_guest_fault_keeps_139(self):
+        # movabs rax, 0x7ff0dead0000; mov eax, [rax]
+        r, dump = self.run_in_tmp(package(b'\x48\xb8' + struct.pack('<Q', 0x7ff0dead0000) + b'\x8b\x00'))
+        self.assertEqual(r.returncode, 139, r.stdout + r.stderr)
+        self.assertIn('Exit code:      139\n', dump)
+        self.assertRegex(dump, r'Instruction:    mov eax, \[rax\]')
+
+    def raise_image(self):
+        # edi=0xa0020007, esi=5; call sceKernelDebugRaiseException through +32, then tail-jump
+        # to the unknown import at +40.
+        code = (b'\xbf\x07\x00\x02\xa0\xbe\x05\0\0\0'
+                b'\x48\x83\xec\x08\xff\x15\x0c\0\0\0\x48\x83\xc4\x08\xff\x25\x0a\0\0\0')
+        return package(code, [(32, 1, 0, 0), (40, 1, 1, 0)], ['OMDRKKAZ8I4#p#J', 'after-raise'], 1)
+
+    def test_debug_exception_is_logged_and_the_game_goes_on(self):
+        r, _ = self.run_in_tmp(self.raise_image(), env={'BB_GAME_ASSERT_STOP': ''})
+        self.assertEqual(r.returncode, 20, r.stdout + r.stderr)
+        self.assertIn('raised debug exception 0xa0020007 (argument 0x5) from +0x14 ', r.stderr)
+        self.assertIn('going on as on a PS4', r.stderr)
+        self.assertIn('first unsupported PS4 import: after-raise', r.stdout)
+
+    def test_debug_exception_stops_with_assert_stop(self):
+        r, _ = self.run_in_tmp(self.raise_image(), env={'BB_GAME_ASSERT_STOP': '1'})
+        self.assertEqual(r.returncode, 142, r.stdout + r.stderr)
+        self.assertIn('stopping (BB_GAME_ASSERT_STOP=1)', r.stderr)
+        self.assertNotIn('after-raise', r.stdout)
+
+    def panic_image(self):
+        # The game's panic printer prologue at +0x100 (body: return the line), called with
+        # rdi="Foo.cpp", esi=42, rdx="panic %d", rcx=1, r8=2; the result goes on as the first
+        # argument of the unknown import at +0x40.
+        code = (b'\x48\x8d\x3d\x59\0\0\0' b'\xbe\x2a\0\0\0' b'\x48\x8d\x15\x5d\0\0\0'
+                b'\xb9\x01\0\0\0' b'\x41\xb8\x02\0\0\0' b'\x31\xc0' b'\x48\x83\xec\x08'
+                b'\xe8\xd7\0\0\0' b'\x48\x83\xc4\x08' b'\x89\xc7' b'\xff\x25\x0b\0\0\0')
+        image = bytearray(code.ljust(0x100, b'\0'))
+        image[0x60:0x68] = b'Foo.cpp\0'
+        image[0x70:0x79] = b'panic %d\0'
+        image = bytes(image)
+        image += (b'\x55\x48\x89\xe5\x41\x57\x41\x56\x41\x54\x53\x48\x81\xec\x00\x01\x00\x00'  # prologue
+                  b'\x89\xf0' b'\x48\x81\xc4\x00\x01\x00\x00' b'\x5b\x41\x5c\x41\x5e\x41\x5f\x5d\xc3')
+        return package(image, [(0x40, 1, 0, 0)], ['after-panic'])
+
+    def test_panic_printer_hook_records_and_preserves_arguments(self):
+        plain, _ = self.run_in_tmp(self.panic_image(), env={'BB_GAME_PANIC_HOOK': ''})
+        self.assertEqual(plain.returncode, 20, plain.stdout + plain.stderr)
+        self.assertIn('first argument: 0x2a', plain.stdout)
+        self.assertNotIn('[GAME PANIC]', plain.stderr)
+        r, _ = self.run_in_tmp(self.panic_image(), env={'BB_GAME_PANIC_HOOK': '0x100'})
+        self.assertEqual(r.returncode, 20, r.stdout + r.stderr)
+        self.assertIn("panic printer (+0x100) is recorded", r.stdout)
+        self.assertIn('[GAME PANIC] Foo.cpp(42): "panic %d" (0x1, 0x2) from +0x29', r.stderr)
+        self.assertIn('first argument: 0x2a', r.stdout)  # the printer still got its arguments
+
+    def test_failed_allocation_is_recorded(self):
+        # sceKernelAllocateDirectMemory(low 0, high 0, 64 KiB, ...): no space in an empty range.
+        code = (b'\x31\xff\x31\xf6\xba\x00\x00\x01\x00\x31\xc9\x45\x31\xc0'
+                b'\x48\x83\xec\x18\x49\x89\xe1\xff\x15\x15\0\0\0\x48\x83\xc4\x18\xff\x25\x13\0\0\0')
+        data = package(code, [(48, 1, 0, 0), (56, 1, 1, 0)], ['rTXw65xmLIA#p#J', 'after-alloc'], 1)
+        r, _ = self.run_in_tmp(data)
+        self.assertEqual(r.returncode, 20, r.stdout + r.stderr)
+        self.assertIn('Runtime: memory failure [direct allocate (range)] size=65536', r.stderr)
+        self.assertIn('Memory failures: pool=0 allocate=1 direct-map=0', r.stdout)
+
     def test_unknown_capabilities_rejected(self):
         r = self.run_image(package(b'\xc3',capabilities=2))
         self.assertEqual(r.returncode,1)
