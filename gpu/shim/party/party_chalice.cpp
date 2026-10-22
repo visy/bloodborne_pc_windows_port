@@ -535,7 +535,9 @@ void Tick(bool host) {
         const std::uint64_t at = Guest(0x553b120);
         if (at && SafeGet(at, &net) && net && SafeGet(net + 0xa88, &ch) && ch != last_net_channel) {
             last_net_channel = ch;
-            const std::uint64_t carried = g_carried.load();
+            // Compared with the carried host's dungeon only in a dungeon (area 29): elsewhere the
+            // game leaves +0xa88 as the last map load set it.
+            const std::uint64_t carried = (g.map_id >> 24) == 29 ? g_carried.load() : 0;
             std::printf("Party: chalice: FrpgNetMan ChannelId 0x%llx (%llu)%s\n", static_cast<unsigned long long>(ch),
                         static_cast<unsigned long long>(ch),
                         carried && ch == carried ? ", the host's dungeon" : carried ? ", NOT the host's dungeon" : "");
