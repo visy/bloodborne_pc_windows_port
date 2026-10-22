@@ -250,6 +250,16 @@ int main() {
         assert(TakeStack(s, H) && !TakeStack(s, H) && !TakeStack(s, -1) && !TakeStack(s, 5));
     }
 
+    // The party HUD's short line while a boss bar is up (2+ kinds on one line).
+    {
+        const int two[kKinds] = {1, 0, 0, 1, 0};
+        assert(bal::DescribeRotShort(two, false) == "Rot 2/5: HP, rally");
+        const int none[kKinds] = {};
+        assert(bal::DescribeRotShort(none, false).empty());
+        const int all[kKinds] = {1, 1, 1, 1, 1};
+        assert(bal::DescribeRotShort(all, false) == "Rot 5/5: HP, stamina, costs, rally, finds");
+    }
+
     std::printf("party-rot-test: ok\n");
     return 0;
 }

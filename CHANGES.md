@@ -5,7 +5,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
-- **Changed: rot is off by default**: the death penalty "rot" is now an option the host turns on (*System → Rot*, a new page, or the launcher's *Party Rules & Sync*). If you already saved a choice for it, that choice stays. Note: the game writes all its settings when you change any of them, so if you changed any setting in 0.7.1 your bbport.ini holds rot as "on": turn it off there once if you don't want it.
+- **Changed: rot is off by default**: rot is now off by default, also if your settings had it on from an earlier version (the game saved it as on without you choosing it). Turn it back on in *System → Rot* (a new page) or the launcher's *Party Rules & Sync* if you want it; that choice then stays.
 - **Added: killing a boss cleanses rot**: when a boss dies, every party member in the host's world loses all their rot, alive or dead in that fight. A notice says "Rot cleansed: boss defeated". On by default (only matters with rot on).
 - **Added: kill your killer to cleanse its rot**: when the enemy that killed you dies, whoever in the party kills it, you lose the rot that death gave you ("Rot -1: your killer is dead"). A fall or a trap has no killer to hunt, and a rest or a party wipe brings the killer back, so the chance is gone then. On by default.
 - **Added: retrieving your Blood Echoes cleanses its rot**: picking up your bloodstain removes the rot of the death that dropped it ("Rot -1: Blood Echoes retrieved"), unless killing your killer already removed it. Dying again before you get there loses the stain and keeps that rot. On by default.

@@ -159,6 +159,26 @@ class IniSync(unittest.TestCase):
             self.assertEqual(L.party_insight_label({"party_guest_insight": v}), label)
         self.assertEqual(L.party_insight_label({}), L.PARTY_INSIGHT_CHOICES[0][0])
 
+    def test_rot_off_migration_once(self):
+        """0.7.2 settings_rev 1: party_rot=1 saved by a 0.7.1 game goes to 0 once; a later 1 stays."""
+        L = self.L
+        self.assertIsNone(L.migrate_ini_rev(self.ini))  # no bbport.ini: nothing to do
+        self.ini.write_text("party_rot=1\nupscaler=dlss\n", encoding="utf-8")
+        self.assertEqual(L.migrate_ini_rev(self.ini), {"settings_rev": "1", "party_rot": "0"})
+        ini = L.read_ini(self.ini)
+        self.assertEqual((ini["party_rot"], ini["settings_rev"], ini["upscaler"]), ("0", "1", "dlss"))
+        L.update_ini(self.ini, {"party_rot": "1"})  # turned on again by the player
+        self.assertIsNone(L.migrate_ini_rev(self.ini))
+        self.assertEqual(L.read_ini(self.ini)["party_rot"], "1")
+        # the game did it first (settings_rev=1 written): the launcher leaves it
+        self.ini.write_text("party_rot=1\nsettings_rev=1\n", encoding="utf-8")
+        self.assertIsNone(L.migrate_ini_rev(self.ini))
+        # a bbport.ini the launcher creates starts at the current revision
+        self.ini.unlink()
+        L.update_ini(self.ini, {"party_rot": "1"})
+        self.assertIsNone(L.migrate_ini_rev(self.ini))
+        self.assertEqual(L.read_ini(self.ini)["party_rot"], "1")
+
     def test_party_switches_migrate_once(self):
         L = self.L
         self.ini.write_text("party_items=1\nupscaler=dlss\n", encoding="utf-8")

@@ -2657,11 +2657,11 @@ void PartyHud() {
             ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
             ImGui::PushFont(game_font, 14.0f);
             const float x0 = ImGui::GetCursorPosX();
-            // While a boss bar is up only "Rot N/5": the full line can wrap to three lines and the
-            // taller panel would cover the boss's name and the left end of its bar.
+            // While a boss bar is up one short line ("Rot 2/5: HP, rally"): the full line can wrap to
+            // three lines and the taller panel would cover the boss's name and the left end of its bar.
             const bool compact = coop::BossBarShown();
             ImGui::TextColored(ImVec4(0.74f, 0.52f, 0.40f, 0.95f), "%s",
-                               compact ? head.substr(0, head.find(':')).c_str() : head.c_str());
+                               compact ? coop::balance::DescribeRotShort(kind, ru).c_str() : head.c_str());
             bool first = true;
             for (int k = 0; k < party::status::kRotKinds && !compact; ++k) {
                 const std::string e = coop::balance::DescribeRotEffect(k, kind[k], ru);

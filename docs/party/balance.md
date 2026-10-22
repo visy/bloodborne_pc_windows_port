@@ -158,8 +158,10 @@ stamina cost, rally and item discovery (see the table).
 - Kept in `<user>/party_rot.txt` across restarts. Party mode only; host and guests alike; the
   host's on/off is the party's. Setting: System > Rot > "Rot on death" (0.7.2: its own page; before on Deaths & revives) (and the overlay's Party tab, the
   launcher's Party Rules & Sync). Off by default since 0.7.2 (user decision 2026-10-22; on 0.6.0 - 0.7.1): an unset
-  `party_rot` is off, a saved value stays. Caveat: the game's settings save (`BbSettings::Save`) writes every key, so
-  a 0.7.1 player who changed any setting in the game has `party_rot=1` written and keeps rot on.
+  `party_rot` is off. The game's settings save (`BbSettings::Save`) wrote every key, so 0.6.0 - 0.7.1 left
+  `party_rot=1` in most bbport.ini files unchosen: bbport.ini `settings_rev` 1 (`kSettingsRev`, launcher
+  `INI_SETTINGS_REV`) sets `party_rot=0` once, in the game's settings load or the launcher's start, whichever comes
+  first (coordinator decision 2026-10-22); a later explicit 1 stays.
 - 0.7.2, what else cleanses it (`party_rot_rules.h`, unit test `party-rot-test`; three host rules on by default, rows
   under "Rot on death" on System > Rot, ini `party_rot_cleanse_boss` / `_killer` / `_echoes`, an older host's rules: off). The
   `Ledger` keeps one entry per death that added a stack: its kind, its killer (entity id / chr / census key) and
@@ -172,6 +174,8 @@ stamina cost, rally and item discovery (see the table).
     entity id in the kill record (a party kill seen here or relayed by the host) or its own chr seen at HP 0 here
     (same census key, no load since). A host load, the kill record's new world (rest, wipe) or, without a kill
     record that follows the host, any load drops the links; a guest's own load drops only the chr.
+    An enemy without a map entity id (0 / -1) is not in the kill record: its death counts only when this
+    player's own game sees that chr die (before its next load); a kill elsewhere in the party does not reach it.
   - echoes: party_b2's own stain watch (flag 1 -> 0 and the echoes back within 5 s) or the party stain recovered
     in the host's world: the stain's death's stack, once (not if its killer's death took it first).
   - A rule off still uses up its link (the event happened); the death keeps its stack and the other cleanse can

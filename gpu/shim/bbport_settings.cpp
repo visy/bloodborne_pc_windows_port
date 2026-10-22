@@ -208,6 +208,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_guest_lamps = i != 0;
     } else if (key == "party_rot") {
         v.party_rot = i != 0;
+    } else if (key == "settings_rev") {
+        v.settings_rev = i;
     } else if (key == "party_boss_hp") {
         v.party_boss_hp = std::clamp(i, 0, 400);
     } else if (key == "party_boss_damage") {
@@ -334,7 +336,10 @@ void Load() {
                               ? MenuLanguage::Russian
                               : MenuLanguage::English;
     }
+    v.settings_rev = 0;
+    bool have_file = false;
     if (FILE* file = std::fopen(Path(), "r")) {
+        have_file = true;
         char line[256];
         while (std::fgets(line, sizeof(line), file)) {
             std::string text{line};
@@ -347,6 +352,19 @@ void Load() {
         }
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
+    }
+    // One-time changes of saved settings (kSettingsRev; the launcher does the same when it starts
+    // first). A new bbport.ini starts at the current revision.
+    if (!have_file) {
+        v.settings_rev = kSettingsRev;
+    } else if (v.settings_rev < kSettingsRev) {
+        const int was = v.settings_rev.load();
+        if (was < 1) v.party_rot = false;  // rev 1 (0.7.2): rot off by default, the old saved 1 was the old default
+        v.settings_rev = kSettingsRev;
+        WriteBindingLines({{"party_rot", std::string(v.party_rot ? "1" : "0")},
+                           {"settings_rev", std::to_string(kSettingsRev)}});
+        std::printf("Settings: bbport.ini settings_rev %d -> %d (rot off by default: party_rot=0 once)\n", was,
+                    kSettingsRev);
     }
     NoteFileTime();
     // Environment overrides (scripts, A/B tests).
@@ -706,6 +724,7 @@ void Save() {
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));
     put("party_guest_lamps", flag(v.party_guest_lamps));
     put("party_rot", flag(v.party_rot));
+    put("settings_rev", std::to_string(v.settings_rev.load()));
     put("party_boss_hp", std::to_string(v.party_boss_hp.load()));
     put("party_boss_damage", std::to_string(v.party_boss_damage.load()));
     put("party_boss_poise", std::to_string(v.party_boss_poise.load()));

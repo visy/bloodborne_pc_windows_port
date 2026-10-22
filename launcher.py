@@ -703,6 +703,7 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
         data = {}
     # run.bat without the launcher after an update: the old launcher values move to bbport.ini once.
     try:
+        migrate_ini_rev(bbport_ini_path())
         if migrate_settings_to_ini(data, bbport_ini_path()) is not None:
             settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except OSError:
@@ -876,6 +877,8 @@ def update_ini(path: Path, values: dict):
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         lines = ["# bbport settings (in-game menu: Insert; L3+R3 with BB_OVERLAY_PAD=1)"]
+        values = dict(values)
+        values.setdefault("settings_rev", str(INI_SETTINGS_REV))  # a new file: nothing to migrate
     written = set()
     out = []
     for line in lines:
@@ -1000,6 +1003,31 @@ def effect_patches_ini(names) -> dict:
     values = {key: (on if name in names else ("1" if on == "0" else "0"))
               for name, (key, on) in EFFECT_PATCHES.items()}
     values["model_lod"] = next((v for n, v in MODEL_LOD_PATCHES.items() if n in names), "0")
+    return values
+
+
+# bbport.ini settings_rev: one-time changes of saved game settings, shared with the game
+# (bbport_settings.h kSettingsRev; whichever starts first does them, once).
+#   1 (0.7.2): party_rot = 0 once (rot became off by default; 0.6.0 - 0.7.1 games wrote their default
+#              party_rot=1 at every settings save, chosen or not). A later explicit 1 stays.
+INI_SETTINGS_REV = 1
+
+
+def migrate_ini_rev(ini_path: Path):
+    """bbport.ini's one-time changes (settings_rev). Returns the values written, None when none."""
+    if not ini_path.exists():
+        return None  # a new bbport.ini starts at the current revision (update_ini, the game)
+    ini = read_ini(ini_path)
+    try:
+        rev = int(str(ini.get("settings_rev", "0")).strip() or 0)
+    except ValueError:
+        rev = 0
+    if rev >= INI_SETTINGS_REV:
+        return None
+    values = {"settings_rev": str(INI_SETTINGS_REV)}
+    if rev < 1:
+        values["party_rot"] = "0"
+    update_ini(ini_path, values)
     return values
 
 
@@ -1601,6 +1629,7 @@ class BloodborneLauncher(tk.Tk):
         self.log_queue = queue.Queue()
         self.settings = self.load_settings()
         try:  # the game settings of an older launcher_settings.json move to bbport.ini once
+            migrate_ini_rev(bbport_ini_path())  # bbport.ini's one-time changes (rot off, 0.7.2)
             moved = migrate_settings_to_ini(self.settings, bbport_ini_path())
             if moved is not None:
                 SETTINGS_FILE.write_text(json.dumps(self.settings, indent=2), encoding="utf-8")
@@ -3063,13 +3092,28 @@ class BloodborneLauncher(tk.Tk):
         """Party rules & sync: the PARTY_SWITCHES, start mode, guest Insight and save backups."""
         dlg = tk.Toplevel(self)
         dlg.title("Party Rules & Sync")
-        dlg.geometry("720x800")
-        dlg.minsize(640, 700)
+        dlg.geometry("720x700")
+        dlg.minsize(640, 480)
         dlg.transient(self)
         dlg.grab_set()
         dlg.configure(bg="#1a1a1a")
-        body = ttk.Frame(dlg, style="Card.TFrame", padding=(14, 10, 14, 12))
-        body.pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        # The sections scroll (0.7.2: with the Rot section they are taller than the 700-pixel window,
+        # which has to fit a 1366x768 screen); the button bar below always shows.
+        bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
+        bar.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        holder = ttk.Frame(dlg, style="Card.TFrame")
+        holder.pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        canvas = tk.Canvas(holder, bg="#252526", highlightthickness=0, height=300)
+        vscroll = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        vscroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = ttk.Frame(canvas, style="Card.TFrame", padding=(14, 10, 14, 12))
+        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(body_window, width=e.width))
+        dlg.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        dlg.party_rules_parts = (body, bar)  # tests/test_launcher_rules_layout.py
         body.columnconfigure(0, weight=1, uniform="sections")
         body.columnconfigure(1, weight=1, uniform="sections")
         ttk.Label(body, text="Hover over an option for details. Changes apply at the next launch. "
@@ -3283,8 +3327,6 @@ class BloodborneLauncher(tk.Tk):
             update_rot()
             self.save_party_rules()
 
-        bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
-        bar.pack(fill="x", padx=10, pady=(0, 10))
         defaults_btn = ttk.Button(bar, text="Defaults", style="Secondary.TButton", command=on_defaults)
         defaults_btn.pack(side="left", ipady=4)
         Tooltip(defaults_btn, "Puts every option in this window back to its default.")

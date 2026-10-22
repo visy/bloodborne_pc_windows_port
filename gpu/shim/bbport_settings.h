@@ -178,6 +178,9 @@ struct Values {
     /// cleanses it (ini party_rot; env BB_PARTY_ROT=0/1 overrides at start). Off by default (user
     /// decision 2026-10-22; on 0.6.0 - 0.7.1): only an unset key is off, a saved value stays.
     std::atomic<bool> party_rot{false};
+    /// bbport.ini settings_rev: the one-time changes of saved settings done so far (kSettingsRev),
+    /// shared with the launcher (launcher.py migrate_ini_rev; whichever starts first does them).
+    std::atomic<int> settings_rev{0};
     /// D7: enemy scaling per extra hunter (coop::balance::Rules): HP / poise in % of Bloodborne's
     /// boss step (100 = vanilla), damage + % (ini party_boss_hp ... party_enemy_poise).
     std::atomic<int> party_boss_hp{150}, party_boss_damage{10}, party_boss_poise{100};
@@ -324,6 +327,11 @@ struct PartySwitch {
     bool env_export = true;
 };
 extern const PartySwitch PartySwitches[];
+/// bbport.ini settings_rev (the launcher's INI_SETTINGS_REV is the same number):
+///   1 (0.7.2): party_rot = 0 once. Rot became off by default, and 0.6.0 - 0.7.1 games wrote their
+///              default party_rot=1 at every settings save, chosen or not (coordinator decision
+///              2026-10-22: turn it off once; a later explicit 1 stays).
+constexpr int kSettingsRev = 1;
 extern const int PartySwitchCount;
 /// party_guest_insight's ini / env values by index (parity, full, 0).
 const char* GuestInsightName(int mode);

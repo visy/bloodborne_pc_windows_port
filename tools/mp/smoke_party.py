@@ -346,7 +346,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
                    "party_kill_record", "party_gather",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
-                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes"]
+                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -383,6 +383,8 @@ def phase_rules(only):
         ienv=[],
         files={"menu0.txt": "joined 8 %s\n-\n-\n" % host, "menu1.txt": "joined 30 %s\n-\n-\n" % guest},
         ini_reset=RULES_INI_RESET,
+        # a 0.7.1 bbport.ini: party_rot=1 saved, no settings_rev: the game turns rot off once (0.7.2)
+        ini_preset={"party_rot": "1"},
         watch=watch,
         crash=[],
         until=GROUP_UNTIL["rules"],
@@ -1266,9 +1268,14 @@ def run_phase(a, ph, out: Path):
     hold = str(held[0].getsockname()[1]) if held else ""
     for i in range(ph.get("count", 3)):
         ini = root / f"inst{i}" / "bbport.ini"
-        if ph.get("ini_reset") and ini.exists():
+        if ph.get("ini_preset") and not ini.exists():
+            ini.parent.mkdir(parents=True, exist_ok=True)
+            ini.write_text("".join("%s=%s\n" % kv for kv in ph["ini_preset"].items()), encoding="utf-8")
+        elif ph.get("ini_reset") and ini.exists():
             keep = [l for l in ini.read_text(encoding="utf-8", errors="replace").splitlines()
                     if l.partition("=")[0].strip() not in ph["ini_reset"]]
+            # ini_preset: values an older version left (rules: 0.7.1's party_rot=1, its migration)
+            keep += ["%s=%s" % kv for kv in ph.get("ini_preset", {}).items()]
             ini.write_text("\n".join(keep) + "\n", encoding="utf-8")
     starts = {}
     for i in range(3):
@@ -1693,6 +1700,13 @@ def check_rules(v, L):
     v.step("rules guest: sees the host's Shared world rules (read-only)",
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1],
            sw[1][:200] if sw else "no Shared world rows line on the guest")
+    # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, "rules %s: 0.7.1 bbport.ini migrated (rot off once)" % who, i,
+             r"Settings: bbport.ini settings_rev 0 -> 1 \(rot off by default")
+    rot_rows = L.find(0, r"Game menu: page \d+ rows \(\d+\): Rot on death=")
+    v.step("rules host: Rot page shows rot off after the migration", bool(rot_rows) and "Rot on death=Off" in rot_rows[1],
+           rot_rows[1][:200] if rot_rows else "no Rot rows line on the host")
     none_of(v, L, "rules: no menu walk stuck", r"STUCK", insts=(0, 1))
     check_common(v, L, "rules")
 

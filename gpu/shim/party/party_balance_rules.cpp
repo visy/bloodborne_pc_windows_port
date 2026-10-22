@@ -326,6 +326,17 @@ std::string DescribeRotHead(const int kind[kRotFileKinds], bool russian) {
     return head;
 }
 
+std::string DescribeRotShort(const int kind[kRotFileKinds], bool russian) {
+    static const char* const kEn[kRotFileKinds] = {"HP", "stamina", "costs", "rally", "finds"};
+    static const char* const kRu[kRotFileKinds] = {"здор.", "выносл.", "траты", "отыгрыш", "находки"};
+    std::string head = DescribeRotHead(kind, russian);
+    if (head.empty()) return head;
+    std::string what;
+    for (int k = 0; k < kRotFileKinds; ++k)
+        if (kind[k] > 0) what += (what.empty() ? "" : ", ") + std::string(russian ? kRu[k] : kEn[k]);
+    return head + what;
+}
+
 std::string DescribeRot(const int kind[kRotFileKinds], bool russian) {
     std::string what;
     for (int k = 0; k < kRotFileKinds; ++k) {

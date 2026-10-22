@@ -192,6 +192,9 @@ std::string DescribeRot(const int kind[kRotFileKinds], bool russian);
 /// and one effect ("max HP -20 %"; empty when that kind has no stacks).
 std::string DescribeRotHead(const int kind[kRotFileKinds], bool russian);
 std::string DescribeRotEffect(int k, int stacks, bool russian);
+/// The one-line short form for the party HUD while a boss bar is up ("Rot 2/5: HP, rally"; empty
+/// without rot): the full line can wrap to three lines and cover the boss's name.
+std::string DescribeRotShort(const int kind[kRotFileKinds], bool russian);
 
 /// Short value texts for the menu (help line): "150 % (+75 % HP per extra hunter)".
 std::string DescribeHp(int percent, bool russian);
