@@ -1495,7 +1495,9 @@ def phase_sm(only):
     ])
     g1 = ",".join([
         "god",
-        "guest_move=%s@10%%m24_01?near=%s:4" % (SM_GUEST_RACE, RT_LAMP),  # the party at the lamp: beside the trigger
+        # 8 s after the party's lamp travel brings it to m24_01 (no ?near: a condition's 45 s timeout
+        # counts from the join, before that travel)
+        "guest_move=%s@8%%m24_01" % SM_GUEST_RACE,                       # beside the intro's trigger
         "guest_obj=2401210:4.2:180@1%%m24_01?near=%s:2" % door,           # 3 m behind the host at the door
         "guest_move=27.4:-9.2:97.1@4%m24_01~",                           # after the scene: through the door (m24_00)
     ])
