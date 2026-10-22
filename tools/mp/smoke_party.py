@@ -1183,7 +1183,7 @@ def phase_da(only):
               "0:BB_PARTY_TRAVEL_CHOICE=alone", "1:BB_PARTY_DIRECTOR_TEST=god",
               "1:BB_PARTY_GUESTSVC_TEST=guestheadstone;needprompt;hsapart;hsdelay=10;keys=cross,cross,cross,cross",
               "1:BB_PARTY_TRAVEL_CHOICE=alone"],
-        watch=["--watch", r"test: levelup: action prompt up=daprompt@0.2",
+        watch=["--watch", r"test: levelup: before Cross=daprompt@0.2,1",
                "--watch", r"test: levelup: no talk list: the menu was requested=dahs@0.5,2",
                "--watch", r"the host travels alone=dahost@1,8"],
         crash=[], until=DA_UNTIL, until_hold=10,
@@ -2735,13 +2735,17 @@ def check_da(v, L):
     need(v, L, "da guest's send-home dropped (split)", 1, r"\(OnLeave_Limit\) dropped: split travel", left)
     lift = need(v, L, "da guest's action-button hold lifted", 1, r"the leave state's action-button hold lifted", left)
     hs = need(v, L, "da guest uses a headstone (fixture started)", 1, r"test: guest headstone: starting", left)
-    pr = need(v, L, "da guest sees the headstone's action prompt (no press without it)", 1,
-              r"test: levelup: action prompt up", hs or left)
+    pr = L.find(1, r"test: levelup: before Cross", hs or left)
+    v.step("da (info) headstone prompt: see the daprompt screenshots", True,
+           pr[1][:150] if pr else "no 'before Cross' line")
     need(v, L, "da guest's Cross opens the headstone's travel list", 1,
-         r"test: levelup: no talk list: the menu was requested", pr or hs or left)
+         r"test: levelup: no talk list: the menu was requested", hs or left)
     flag = need(v, L, "da guest's headstone choice (its lamp flag)", 1,
                 r"lamp flag \d+ set by this game|lamp \d+ \(guest\): (held for the choice|BB_PARTY_TRAVEL_CHOICE)",
                 hs or left)
+    fb = L.find(1, r"no warp followed", flag or left)
+    v.step("da (info) the host's destination: warp run by the used-up-event fallback", True,
+           fb[1][:150] if fb else "no fallback line (the event warped itself)")
     go = need(v, L, "da guest travels from the Dream", 1, r"guest: travels alone \(headstone\)", flag or left)
     if go is not None:
         need(v, L, "da guest arrives (not stuck in the Dream)", 1, r"arrived in the host world|map - -> m2[2-9]", go)

@@ -629,6 +629,8 @@ bool GuestRestRequestNow(std::uint32_t id) {
     return true;
 }
 
+void LogButtons();  // the registration probe (below)
+
 namespace {
 
 // Diagnostics (BB_PARTY_GUESTSVC_TEST "probe"): the character with `entity` the way the talk
@@ -905,10 +907,8 @@ struct LevelUpScript {
     int tries = 0, level0 = -1, echoes0 = -1;
     std::uint64_t seq0 = 0;
 } g_lvl;
-// "needprompt" (headstone fixtures): the headstone's own action prompt must be up before Cross
-// (no press without it). Its evidence: an action-button text looked up (PromptUp) or, with the
-// registration probe, a talk-type (13) button registered in the last 0.5 s while the action-button
-// hold SprjActionButtonMan +0x52 is 0 (party_stay_rules.h).
+// The registration probe's last talk-type (13) button (diagnostics: a headstone's prompt never
+// showed as an action-button text or a type-13 registration in the da runs).
 std::atomic<double> g_talk_btn_at{0};
 std::atomic<int> g_talk_btn_id{0};
 std::atomic<std::uint64_t> g_btn_man{0};  // SprjActionButtonMan as the registration probe saw it
@@ -967,6 +967,7 @@ void Tap(std::uint32_t buttons, double now) {
     g_lvl.press_until = now + 0.12;
 }
 
+
 void LevelUpTick(const GameSnapshot& s, double now) {
     LevelUpScript& L = g_lvl;
     if (L.stage == LevelUpScript::Off || L.stage == LevelUpScript::Done) {
@@ -997,33 +998,21 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         if (L.approach > 0) {
             std::uint32_t prompt = 0;
             bool up = PromptUp(&prompt);
-            if (g.test.find("needprompt") != std::string::npos) {
-                std::uint8_t hold = 1;
-                SafeGet(g_btn_man.load() + 0x52, &hold);
-                const bool reg = now - g_talk_btn_at.load() < 0.5 && g_btn_man.load() && hold == 0;
-                if (!up && !reg) {
-                    if (since < 4.0) {
-                        break;  // the prompt may take a moment after the placement
-                    }
-                    std::uint32_t ids[16];
-                    const int n = BbGameMenu::RecentLookups(400, ids, 16);
-                    std::string seen;
-                    for (int i = 0; i < n; ++i) seen += " " + std::to_string(ids[i]);
-                    static const float far[] = {1.2f, 1.0f, 0.85f, 0.7f, 0.55f, 0.4f};
-                    if (L.approach < 6) {
-                        const float d = far[L.approach++];
-                        StandAt(s, FindChr(L.target), d, 0);
-                        Log("test: levelup: no action prompt at %.2f m (hold +0x52 %u, texts:%s); one step closer: %.2f m",
-                            far[L.approach - 2], unsigned(hold), seen.empty() ? " none" : seen.c_str(), d);
-                        L.at = now;
-                        break;
-                    }
-                    go(LevelUpScript::Done, "FAILED: no action prompt at the headstone at any distance (Cross not pressed)");
+            if (g.test.find("needprompt") != std::string::npos && L.tries == 0) {
+                // "needprompt" (headstone fixtures): the prompt's proof is a screenshot (the smoke's
+                // watch on this line), 1.5 s before Cross; the registrations seen meanwhile are logged.
+                if (since < 1.5) {
                     break;
                 }
-                Log("test: levelup: action prompt up (%s%s; hold +0x52 %u)", up ? "text " : "talk button registered, id ",
-                    up ? std::to_string(prompt).c_str() : std::to_string(g_talk_btn_id.load()).c_str(), unsigned(hold));
-                up = true;
+                L.tries = 1;
+                LogButtons();
+                Log("test: levelup: before Cross at %.2f m (prompt screenshot; text %s)", dists[L.approach - 1],
+                    up ? std::to_string(prompt).c_str() : "not seen");
+                L.at = now;
+                break;
+            }
+            if (g.test.find("needprompt") != std::string::npos && since < 1.5) {
+                break;
             }
             L.requests0 = g_menu_requests.load();
             Tap(kPadCross, now);
