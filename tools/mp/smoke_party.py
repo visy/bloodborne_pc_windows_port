@@ -1184,6 +1184,9 @@ def phase_rt(only):
     host = ",".join([
         "god",
         "host_warp=2412953@20",                                     # the Tomb of Oedon lamp (party travel)
+        # 1's neighbours 2410249 / 2410250 off first (full smoke 0.7.2: they killed the frail guest instead
+        # of 2410247 / 2410202, then again at each stain the stain test warped it back onto: a death loop)
+        "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01",
         "host_press=0@8%m24_01!", "host_press=0@8%m24_01!",         # the guest leaves the lamp
         "host_kill=2410247@3%%m24_01?near=%s:2" % RT_SIGNAL,          # 1: its killer, once it is up again
         "host_kill=2410202@1%m24_01",
@@ -1209,7 +1212,9 @@ def phase_rt(only):
          "guest_die@10%m24_01",                                       # 4 (its stain 3 picked up first)
          "guest_press=0@8%m24_01!",
          "guest_move=%s@6%%m24_01" % RT_SIGNAL,                       # ready: the host's boss fight
-         "guest_die@14%m24_01?12411800=1"])                           # 6: after Gascoigne's defeat
+         "guest_die@14%m24_01?12411800=1",                            # 6: after Gascoigne's defeat
+         "guest_move=%s@3%%m24_01" % RT_LAMP])                        # up: the stain test put it on its stain
+                                                                      # (RT_SIGNAL); the host waits at the lamp
     return dict(
         name="rt", seconds=600, count=2, headless=0,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + "," + CLERIC_CLEAR, "BB_PARTY_ROT=1",
