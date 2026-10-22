@@ -45,6 +45,7 @@ const PartySwitch PartySwitches[] = {
     {"party_kill_record", "BB_PARTY_KILL_RECORD", &Values::party_kill_record, false},
     {"party_npc_mirror", "BB_PARTY_NPC_MIRROR", &Values::party_npc_mirror, false},
     {"party_gather", "BB_PARTY_GATHER", &Values::party_gather, false},
+    {"party_npc_fights", "BB_PARTY_NPC_FIGHTS", &Values::party_npc_fights, false},  // 0.7.3, D11
     {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
     {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
     // 0.7.2: the rot cleanses (party_balance reads them live; host's rules).

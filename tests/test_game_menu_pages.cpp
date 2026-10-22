@@ -485,7 +485,7 @@ static void RulesPages() {
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
     const V chalice = {u"Stay in Chalice Dungeons"};
-    const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world"};
+    const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"NPC hunters fight all"};
     const V rewards = {u"Full rewards for guests", u"Host's item rewards", u"Give the bells", u"Own key items as guest",
                        u"Key items at once", u"Insight for bosses"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings", u"Show party through walls", u"Bloodstain marker",
@@ -576,6 +576,7 @@ static void RulesPages() {
                      &BbSettings::Values::party_rot_cleanse_echoes},
           std::tuple{u"Shared world", u"Host can gather", "party_gather", &BbSettings::Values::party_gather},
           std::tuple{u"Shared world", u"NPCs as in host's world", "party_npc_mirror", &BbSettings::Values::party_npc_mirror},
+          std::tuple{u"Shared world", u"NPC hunters fight all", "party_npc_fights", &BbSettings::Values::party_npc_fights},
           std::tuple{u"Party rewards", u"Own key items as guest", "party_key_view", &BbSettings::Values::party_key_view},
           std::tuple{u"Party rewards", u"Key items at once", "party_key_items_summoned",
                      &BbSettings::Values::party_key_items_summoned}}) {

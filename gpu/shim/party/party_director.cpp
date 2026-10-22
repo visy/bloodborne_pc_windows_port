@@ -11,6 +11,7 @@
 #include "party_ids.h"
 #include "party_stick_args.h"
 #include "party_balance.h"
+#include "party_npcfight.h"
 #include "party_async_io.h"
 
 #include "coop_hooks.h"
@@ -4317,6 +4318,7 @@ void PartyDirector::Tick() {
     }
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
     if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
+    if (role != PartyRole::None) npcfight::Tick(s, role == PartyRole::Host);  // D11: the assassins on a guest
     // I1 friendly fire / PvP (party_pvp.h): the party rule on this game's team tables.
     if (role != PartyRole::None) pvp::Tick(s, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
@@ -5003,6 +5005,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     worldact::Init();       // guest world actions, instanced treasure pickups (byte-verified)
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     balance::Init();        // C4 rot hook, D7 scaling (party_balance.h)
+    npcfight::Init();       // D11: NPC hunter fights with the whole party (party_npcfight.h)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

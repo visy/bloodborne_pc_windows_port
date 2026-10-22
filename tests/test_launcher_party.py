@@ -372,7 +372,8 @@ class PartyRules071Settings(unittest.TestCase):
     """0.7.1: the switches that had only an env variable got rows (System > Shared world / Party
     rewards) and Party Rules & Sync checkboxes: bbport.ini keys, on by default, no variable set."""
     KEYS = {"party_kill_record": "BB_PARTY_KILL_RECORD", "party_gather": "BB_PARTY_GATHER",
-            "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_key_view": "BB_PARTY_KEY_VIEW",
+            "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_npc_fights": "BB_PARTY_NPC_FIGHTS",
+            "party_key_view": "BB_PARTY_KEY_VIEW",
             "party_key_items_summoned": "BB_PARTY_KEY_ITEMS_SUMMONED"}
 
     @classmethod

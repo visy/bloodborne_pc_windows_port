@@ -1291,7 +1291,7 @@ void DefineAll() {
         "No co-op walls on area borders: the party walks anywhere. Keep it the same for everyone. Next start",
         "Без стен совместной игры на границах зон: группа ходит везде. Одинаково у всех. Со следующего запуска");
 
-    // ---- Shared world (0.7.1: party_kill_record, party_npc_mirror, party_gather): the host's ----
+    // ---- Shared world (0.7.1: party_kill_record, party_npc_mirror, party_gather; 0.7.3 party_npc_fights): the host's ----
     AddPage("Shared world", "Общий мир", "Enemies stay dead, gathering the party, NPCs as in the host's world (bbport)",
             "Враги не оживают, сбор группы, NPC как в мире хоста (bbport)");
     host_rule(&Values::party_kill_record, "Enemies stay dead", "Враги не оживают",
@@ -1318,6 +1318,15 @@ void DefineAll() {
                "Правило хоста: NPC, которого нет в мире хоста, нет и у вас"},
               {"The host decides; off: you may see NPCs the host's world no longer has",
                "Решает хост; выкл.: вы можете видеть NPC, которых нет в мире хоста"});
+    // 0.7.3 (D11, party_npcfight_rules.h): a scripted NPC hunter fight is the whole party's.
+    host_rule(&Values::party_npc_fights, "NPC hunters fight all", "Охотники-NPC против всех",
+              AddText("A hunter NPC turning hostile does so for the guests too: all can fight it. Party rule",
+                      "Охотник-NPC становится врагом и у гостей: сражаться могут все. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::NpcFights); },
+              {"The host's rule: NPC hunters (Alfred, Eileen, Valtr, Brador ...) fight you too",
+               "Правило хоста: охотники-NPC (Альфред, Эйлин, Валтор, Брадор ...) сражаются и с вами"},
+              {"The host decides; off: a hunter that turns on the host may stay friendly here",
+               "Решает хост; выкл.: охотник, напавший на хоста, может остаться у вас мирным"});
 
     // ---- Story & dialogue (party_npctalk, party_progress, party_story) ----
     AddPage("Story & dialogue", "Сюжет и диалоги", "Shared NPC dialogue, story progress, NPC quests, cutscenes (bbport)",

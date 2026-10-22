@@ -274,6 +274,7 @@ struct Values {
     std::atomic<bool> party_kill_record{true};  ///< enemies stay dead for the party (party_kill_record.h)
     std::atomic<bool> party_npc_mirror{true};   ///< an NPC gone from the host's world is gone on guests
     std::atomic<bool> party_gather{true};       ///< I5: the host may gather the party (party_gather.h)
+    std::atomic<bool> party_npc_fights{true};   ///< D11 (0.7.3): NPC hunters fight the whole party (party_npcfight_rules.h)
     /// Each player's own (while it is a guest; party_items):
     std::atomic<bool> party_key_view{true};     ///< the own key items while summoned (next start)
     std::atomic<bool> party_key_items_summoned{true}; ///< a host-world key item given at once (needs key_view)

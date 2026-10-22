@@ -152,6 +152,8 @@ PARTY_INI_SWITCHES = [
     ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
     ("party_gather", "BB_PARTY_GATHER", True),
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
+    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Shared world)
+    ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -3283,6 +3285,12 @@ class BloodborneLauncher(tk.Tk):
                     "An NPC that is gone from the host's world (moved on by a story event, such as the one "
                     "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
                     "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
+        self._check(sec, "NPC hunters fight the whole party", var["party_npc_fights"],
+                    "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
+                    "DLC hunters) turns on the guests too, and Brador shows up on every guest's screen: "
+                    "everyone sees and fights the same hunter, and its death counts for all. The host's "
+                    "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
+                    "System > Shared world).", command=save)
 
         # 0.7.2: rot, the host's rules (System > Rot)
         sec = section(4, 0, "Rot on death (host)")

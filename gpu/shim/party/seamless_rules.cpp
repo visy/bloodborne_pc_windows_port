@@ -546,6 +546,7 @@ void TraceInstruction(u64 event, i32 event_id, i32 bank, i32 id, u64 instr, bool
 }
 
 std::atomic<EmevdSkipPredicate> g_skip_pred{nullptr};
+std::atomic<EmevdSkipPredicate> g_skip_pred2{nullptr};  // party_npcfight (D11)
 // B2: a guest may go through a boss fog before the host (party_worldact.h BossGate);
 // BB_PARTY_GUEST_FOG_FIRST=0 turns it off.
 bool g_fog_first = false;
@@ -625,6 +626,11 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     }
     if (!skip && instr) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
+            skip = pred(event_id, bank, id, event, instr);
+        }
+    }
+    if (!skip && instr) {
+        if (const EmevdSkipPredicate pred = g_skip_pred2.load(std::memory_order_relaxed)) {
             skip = pred(event_id, bank, id, event, instr);
         }
     }
@@ -816,6 +822,10 @@ void SeamlessRulesInit() {
 
 void SetEmevdSkipPredicate(EmevdSkipPredicate fn) {
     g_skip_pred = fn;
+}
+
+void SetEmevdSkipPredicate2(EmevdSkipPredicate fn) {
+    g_skip_pred2 = fn;
 }
 
 void SetEmevdRewriter(EmevdRewriter fn) {
