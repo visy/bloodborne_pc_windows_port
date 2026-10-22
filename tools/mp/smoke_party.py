@@ -55,6 +55,8 @@ Phase fd (~3 min, 2 players, group `fall_deep`): guest 1, its own last lamp the 
   on, not the kill plane of fl). It must get up at that far lamp with no loading screen, the fall-death
   camera released, the render camera on its chr and the chr drawn where it stands (fallcam: the
   "perpetual spectate" report), and walk away from the lamp.
+Phase fdj (~4 min, 2 players, group `fall_deep`): the same at the report's own spot, the shaft beside
+  Djura's tower in Old Yharnam (guest 1 walks off the ledge; the host's lamp ~150 m away).
 Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
   lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
@@ -851,6 +853,36 @@ def phase_fd(only):
     )
 
 
+# Phase fdj (fallcam, ~4 min, 2 players, group `fall_deep`): the report's own spot. The host travels to
+# the Old Yharnam lamp 2302950 (126.4, -65.2, 36.0); guest 1 is put on the floor beside Djura's tower
+# where the player stood (3.7, -53.8, -63.2) and walks 4 m out in one direction after another (-x,
+# +x, +z, -z; back on the spot before each) until one leads over the edge into the shaft (the
+# player: HP 0 in the air at -72.2 after an 18 m drop, the body at -78.8, the game's fall-death state
+# 04..40 / 8800 and its fall-death camera on). It must get up at the host's lamp ~150 m away with no
+# load, the fall-death camera released and the camera on its chr.
+FDJ_UNTIL = r"1:travel step (\d+)/\1: guest_press"
+FDJ_TOP = "3.7:-53.3:-63.2"
+
+
+def phase_fdj(only):
+    host = ",".join(["log_pos", "echoes=3000", "host_warp=2302950@15"])
+    g1 = ["log_pos=0.5", "echoes=4000"]
+    first = True
+    for tx, tz in ((-0.3, -63.2), (7.7, -63.2), (3.7, -59.2), (3.7, -67.2)):
+        # back on the floor (alive: after a fall's revive at the lamp too), then 4 m out
+        g1 += ["guest_press=0@%d%%m23_00!" % (8 if first else 2), "guest_move=%s@1%%m23_00" % FDJ_TOP,
+               "guest_stick=%.1f:%.1f:0.5:8@2%%m23_00!" % (tx, tz), "guest_press=0@3%m23_00!"]
+        first = False
+    g1 += ["guest_press=0@5%m23_00!"]
+    return dict(
+        name="fdj", seconds=420, count=2, headless=0, pads=(0, 1),
+        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
+        watch=["--watch", "guest: died from a fall=fallrevive@0.5,3", "--watch", r"revive view \(guest=view@0.2,3",
+               "--watch", "local death: HP 0=hp0@0.5"],
+        crash=[], until=[FDJ_UNTIL], until_hold=8,
+    )
+
+
 # Phase mk (boldmark, ~6 min, 3 players): a guest's Hunter's Mark and Bold Hunter's Mark (a player's
 # report: the Bold Mark crashed the host's game right after the guests were back). The party travels to
 # the Cathedral Ward lamp 2402950 (m24_00); guest 1 (rendered) has that lamp as its own last lamp and
@@ -1190,12 +1222,12 @@ def phase_rt(only):
     )
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
           "rot": "rt"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
@@ -1240,7 +1272,6 @@ GROUP_UNTIL = {
     "lifts": [LF_UNTIL],
     "ladder": [r"1:travel step (\d+)/\1: guest_press"],
     "fall": [FL_UNTIL, FL_HOST_UNTIL],
-    "fall_deep": [FD_UNTIL],
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
     "cainhurst_lift": CH_UNTIL,
@@ -1261,7 +1292,7 @@ NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the cras
 
 def narrow_phase(ph, only):
     """--only: end the phase on the chosen groups' lines; drop the s2 crash plan nobody asked for."""
-    mine = [g for g in only if GROUPS[g] == ph["name"]]
+    mine = [g for g in only if ph["name"] in GROUPS[g].split(",")]
     if not mine or NEEDS_CRASH & set(mine):
         return ph
     ph = dict(ph, until=[u for g in mine for u in GROUP_UNTIL.get(g, [])] or ph["until"], crash=[])
@@ -2078,42 +2109,63 @@ def check_revive_view(v, L, tag, i, what, after):
            "%.2f m off the physics position (chr %s)" % (drawn, m.group("chr")))
 
 
-def check_fd(v, L):
+def check_fall_deep(v, L, tag, hp0_rx, walk):
+    """fd / fdj: a guest's real fall death, up at a far lamp of the loaded map with no load. The
+    fall-death camera rows are real checks only when the game had its fall-death camera on at the
+    revive (the safe-spot fields line: WorldChrMan +0x68 1); a fall the game took as plain landing
+    damage (fd run r2) never sets it: then they are info rows."""
     xyz = r"\(([-\d.]+), ([-\d.]+), ([-\d.]+)\)"
-    need(v, L, "fd join: 2 players", 0, r"cooperators 0 -> 1")
-    hp0 = need(v, L, "fd guest died from the landing (a real fall, not the kill plane)", 1,
-               r"local death: HP 0 at \([-\d.]+, -[1-4]\d\.\d, [-\d.]+\), dropped (1[5-9]|[2-9]\d)\.")
+    need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
+    hp0 = need(v, L, tag + " guest died from a fall (not the kill plane)", 1, hp0_rx)
     if hp0 is None:
-        check_common(v, L, "fd")
+        check_common(v, L, tag)
         return
-    up = need(v, L, "fd guest up at a lamp of the loaded map, no load", 1,
+    up = need(v, L, tag + " guest up at a lamp of the loaded map, no load", 1,
               r"guest: died from a fall .*up at (its own|the host's) last lamp", hp0)
     if up is not None:
         line = L.find(1, r"guest: died from a fall", hp0)[1]
         at = re.search(r"HP 0 at " + xyz, line)
         lamp = re.search(r"last lamp \d+ " + xyz, line)
         d = sum((float(a) - float(b)) ** 2 for a, b in zip(at.groups(), lamp.groups())) ** 0.5 if at and lamp else -1.0
-        v.step("fd the lamp is far from the fall (at least 40 m)", d >= 40.0, "%.1f m: %s" % (d, line[:140]))
+        v.step(tag + " the lamp is far from the fall (at least 40 m)", d >= 40.0, "%.1f m: %s" % (d, line[:140]))
         fields = L.find(1, r"guest revive: the game's safe-spot revive fields: WorldChrMan \+0x68 (\d)", up, up + 5)
         on = bool(fields) and re.search(r"\+0x68 (\d)", fields[1]).group(1) == "1"
-        v.step("fd the game's fall-death camera was on at the revive (the report's case)", on,
-               fields[1][:150] if fields else "no safe-spot fields line")
-        need(v, L, "fd fall-death camera released by the revive", 1,
-             r"guest revive: the game's fall-death camera released \(WorldChrMan \+0x68 1 -> 0\)", up, up + 5)
-        check_revive_view(v, L, "fd guest", 1, "guest revive", up)
-        again = L.find(1, r"local death: HP 0", up + 0.5, up + 30)
-        v.step("fd guest alive after it (no second death)", not again, again[1][:100] if again else "none")
-        none_of(v, L, "fd no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
-        none_of(v, L, "fd guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
+        rel = L.find(1, r"guest revive: the game's fall-death camera released \(WorldChrMan \+0x68 1 -> 0\)", up, up + 5)
+        if on:
+            v.step(tag + " the game's fall-death camera was on at the revive (the report's case)", True, fields[1][:150])
+            v.step(tag + " fall-death camera released by the revive", bool(rel),
+                   ("+%.1f s: %s" % (rel[0], rel[1][:120])) if rel else "no release line after the +0x68 1 revive")
+        else:
+            v.step(tag + " the game's fall-death camera at the revive (info: not on, the case not reproduced)", True,
+                   fields[1][:150] if fields else "no safe-spot fields line")
+            v.step(tag + " fall-death camera release (info: nothing to release)", True,
+                   "released" if rel else "no release line (the camera was not on)")
+        check_revive_view(v, L, tag + " guest", 1, "guest revive", up)
+        again = L.find(1, r"local death: HP 0", up + 0.5, up + 8)
+        v.step(tag + " guest alive after it (no second death within 8 s)", not again, again[1][:100] if again else "none")
+        none_of(v, L, tag + " no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
+        none_of(v, L, tag + " guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
                 up + 20, (1,))
-        none_of(v, L, "fd never the Hunter's Dream", r"map - -> m21_", hp0, up + 30, (1,))
-        # the walk off the lamp: the player's stick moves it (camera-relative controls)
-        st = L.find(1, r"travel step \d+/\d+: guest_stick", up)
-        ps = [tuple(float(x) for x in POS_RX.search(l).groups()) for _, l in L.all(1, POS_RX.pattern, st[0], st[0] + 20)] if st else []
-        moved = max((sum((a - b) ** 2 for a, b in zip(q, ps[0])) ** 0.5 for q in ps), default=0.0) if ps else 0.0
-        v.step("fd guest walks off the lamp after the revive (at least 2 m)", moved >= 2.0,
-               "%.1f m in %d samples" % (moved, len(ps)) if st else "no guest_stick step after the revive")
-    check_common(v, L, "fd")
+        none_of(v, L, tag + " never the Hunter's Dream", r"map - -> m21_", hp0, up + 30, (1,))
+        if walk:
+            # the walk off the lamp: the player's stick moves it (camera-relative controls)
+            st = L.find(1, r"travel step \d+/\d+: guest_stick", up)
+            ps = [tuple(float(x) for x in POS_RX.search(l).groups()) for _, l in L.all(1, POS_RX.pattern, st[0], st[0] + 20)] if st else []
+            moved = max((sum((a - b) ** 2 for a, b in zip(q, ps[0])) ** 0.5 for q in ps), default=0.0) if ps else 0.0
+            v.step(tag + " guest walks off the lamp after the revive (at least 2 m)", moved >= 2.0,
+                   "%.1f m in %d samples" % (moved, len(ps)) if st else "no guest_stick step after the revive")
+    check_common(v, L, tag)
+
+
+def check_fd(v, L):
+    check_fall_deep(v, L, "fd", r"local death: HP 0 at \([-\d.]+, -[1-4]\d\.\d, [-\d.]+\), dropped (1[5-9]|[2-9]\d)\.",
+                    True)
+
+
+def check_fdj(v, L):
+    # the report's shaft beside Djura's tower (m23_00): HP 0 in the shaft after a drop of 10 m or more
+    check_fall_deep(v, L, "fdj", r"local death: HP 0 at \([-\d.]+, -[5-9]\d\.\d, -6\d\.\d\), dropped ([1-9]\d)\.",
+                    False)
 
 
 WALL = re.compile(r"\[(\d\d):(\d\d):(\d\d(?:\.\d+)?)\] ")
@@ -2793,7 +2845,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
-          "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L),
+          "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp,
           "rt": lambda v, L, d: check_rt(v, L)}
 
@@ -2804,7 +2856,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,cl,bf,lp")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,fdj,cl,bf,lp")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2819,9 +2871,9 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "cl", "el", "lt", "bf", "ch",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cl", "el", "lt", "bf", "ch",
                                      "lp", "rt")
-                           if p in {GROUPS[g] for g in only})
+                           if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
