@@ -1956,6 +1956,21 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
                                k == TravelStep::HostLastLamp || k == TravelStep::GuestLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
                              t.steps[t.next_step].alive;
+        const bool die_step = k == TravelStep::HostDie || k == TravelStep::GuestDie;
+        const bool prev_die = t.ran && (t.last_kind == TravelStep::HostDie || t.last_kind == TravelStep::GuestDie);
+        if (deathrules::TestDieStepLatches(die_step, b2::LocalHp() > 0, s.world_up && !s.loading, b2::RejoinRunning(),
+                                           prev_die)) {
+            // Killed first (an enemy, the boss): the death this step asks for happened.
+            t.step_waiting = false;
+            t.next_step++;
+            t.armed = false;
+            t.step_at = now;
+            t.ran = true;
+            t.last_kind = k;
+            Log("test: travel step %zu/%zu: %s: the own chr is at HP 0 already (killed first): taken as done",
+                t.next_step, t.steps.size(), TravelStepName(k));
+            return;
+        }
         if (deathrules::TestStepWaits(own_chr, b2::LocalHp() > 0, s.world_up && !s.loading, b2::RejoinRunning())) {
             if (!t.step_waiting) {
                 Log("test: travel step %zu (%s) waits: %s", t.next_step + 1, TravelStepName(k),

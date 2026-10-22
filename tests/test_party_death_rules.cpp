@@ -499,6 +499,13 @@ int main() {
     CHECK(TestStepWaits(true, false, true, false));                  // guest_obj while dead
     CHECK(!TestStepWaits(true, true, true, false));
     CHECK(!TestStepWaits(false, false, true, false));                // a press may run while dead
+    // a die step whose chr was killed first (the boss): done, the chain goes on after the respawn
+    CHECK(TestDieStepLatches(true, false, true, false, false));
+    CHECK(!TestDieStepLatches(true, true, true, false, false));      // alive: the step kills it
+    CHECK(!TestDieStepLatches(false, false, true, false, false));    // not a die step: waits
+    CHECK(!TestDieStepLatches(true, false, true, true, false));      // in a re-join / load
+    CHECK(!TestDieStepLatches(true, false, false, false, false));
+    CHECK(!TestDieStepLatches(true, false, true, false, true));      // the previous die step's own death
     CHECK(TestStepWaits(false, true, true, true));                   // inside the last wipe's re-join
     CHECK(TestStepWaits(false, true, false, false));                 // not in the world
 

@@ -42,6 +42,9 @@ Phase el (~4 min, 2 players, group `elevator`): the Nightmare of Mensis' 60 m li
   it down together, up together (both out at the arrival), the host alone, the guest alone; after
   every ride both games show the same flag and the car at that end, nobody drops faster than a lift
   or leaves the car mid-ride, nobody is moved by the fall recovery, nobody dies.
+Phase bf (~3 min, 3 players, group `fight_load`): while the host fights Father Gascoigne, guest 1
+  takes a Hunter's Mark to the same lamp (a re-join load with the host's snapshot): the fight still
+  runs for it, and its walk through the fog joins it; guest 2 dies outside the fog (its limbo).
 Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from the Great Bridge (its
   fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
   with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
@@ -937,13 +940,44 @@ def phase_cl(only):
     )
 
 
+# Phase bf (wipeboss, ~3 min, 3 players, group `fight_load`): loads into the host's world while the
+# host's boss fight goes on. The host walks into Father Gascoigne's first-fight region (intro, then
+# the fight; invincible, it fights on). Guest 1 at the Tomb of Oedon lamp uses a Hunter's Mark (an
+# alone trip to its last lamp, the same lamp: a re-join with the host's snapshot, no rest) - the
+# only load path into a running fight (a rest resets it, a summon waits for it, a death in it is a
+# limbo); after it the fight must still run for it (its host-entered flag 1, its own guest flag 0,
+# the host's fight not reset), and its walk through the fog must join the fight. Guest 2 dies
+# outside the fog meanwhile: with the fight on it lies in its limbo (no load of its own).
+BF_UNTIL = [r"1:guest_use goods=100[\s\S]*went through boss fog", r"0:boss fog: slot 1 went in",
+            r"2:guest: dead in a boss fight|travels alone \(death\)"]
+
+
+def phase_bf(only):
+    host = ",".join(["host_warp=2412953@8^2",                               # the party to the Tomb of Oedon
+                     "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER])         # the host starts the fight (intro)
+    g1 = ",".join(["guest_lastlamp=2412953@4%m24_01~",                      # 4 s after the intro: its last lamp here
+                   "guest_use=100@3%m24_01",                                # Hunter's Mark: the re-join load
+                   "guest_press=0x0@5%m24_01!",                             # back, alive (HP logged)
+                   "guest_obj=2411810@3%m24_01",                            # at the fog
+                   "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!"])  # through it
+    g2 = "guest_die@8%m24_01~"                                               # outside the fog, the fight on
+    return dict(
+        name="bf", seconds=300, until_hold=8,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
+              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        crash=[],
+        until=BF_UNTIL,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt"}
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -951,7 +985,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt "}
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -994,6 +1028,7 @@ GROUP_UNTIL = {
     "story_warp": [KW_UNTIL],
     # the host back in the dungeon from the Dream, ~40 s after (guest 1 summoned back in)
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
+    "fight_load": BF_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -2161,13 +2196,50 @@ def check_cl(v, L):
     check_common(v, L, "cl")
 
 
+def check_bf(v, L):
+    """Loads into the host's world while its boss fight goes on (phase bf)."""
+    need(v, L, "bf join: 3 players", 0, r"cooperators [01] -> 2")
+    hm = need(v, L, "bf host walks into the fight's region", 0, r"travel step \d+/\d+: host_move")
+    on = need(v, L, "bf the host's fight is on (bar)", 0, r"boss health bar shown", hm or 0)
+    if on is None:
+        return
+    mark = need(v, L, "bf guest 1 uses a Hunter's Mark in the fight", 1, r"guest_use goods=100", on)
+    if mark is not None:
+        need(v, L, "bf guest 1: a re-join with the host's snapshot", 1,
+             r"travels alone \(hunters_mark\) to .*a re-join with the host's snapshot", mark - 1)
+        need(v, L, "bf host re-sends the snapshot (fight on)", 0, r"slot 1 travels alone into this area", mark - 1)
+        arr = need(v, L, "bf guest 1 back in the host's world", 1, r"arrived in the host world \(flow 4\)", mark)
+        if arr is not None:
+            need(v, L, "bf guest 1 sees the fight running (host-entered 1, its own fog flag 0)", 1,
+                 r"boss fogs of this block: .*\[12414811: read 1 intro 1 host 1 dead 0", arr - 15, arr + 10)
+            none_of(v, L, "bf guest 1: no stale fog flag", r"already 1 when this stay began", arr - 15, insts=(1,))
+            bar = L.find(1, r"boss health bar shown", arr - 15)
+            v.step("bf guest 1's boss bar after its load (shown for every member in the map while the fight runs)",
+                   True, ("+%.1f s (back +%.1f s)" % (bar[0], arr)) if bar else "not shown before its walk-in")
+            walk = L.find(1, r"travel step \d+/\d+: guest_obj", arr)
+            went = need(v, L, "bf guest 1 walks through the fog", 1, r"guest: went through boss fog", walk[0] if walk else arr)
+            if went is not None:
+                none_of(v, L, "bf guest 1 did not report before its walk", r"guest: went through boss fog", arr - 15,
+                        walk[0] if walk else went - 0.1, insts=(1,))
+                need(v, L, "bf the host: guest 1 joins the running fight (nothing to open)", 0,
+                     r"boss fog: slot 1 went in \(flag 12414801\); nothing to open \(host in 1", went - 0.5)
+                need(v, L, "bf guest 1 in the fight (bar)", 1, r"boss health bar shown", arr - 15)
+        none_of(v, L, "bf the host's fight is never reset", r"boss health bar: reset|host: rest load|a wipe; the",
+                on, insts=(0,))
+    d2 = need(v, L, "bf guest 2 dies outside the fog", 2, r"travel step \d+/\d+: guest_die", on)
+    if d2 is not None:
+        need(v, L, "bf guest 2: its limbo (the fight is on: no load of its own)", 2, r"guest: dead in a boss fight", d2)
+        none_of(v, L, "bf guest 2: no respawn load in the fight", r"travels alone \(death\)|loading screen up", d2, insts=(2,))
+    check_common(v, L, "bf")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L),
-          "cl": lambda v, L, d: check_cl(v, L)}
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L)}
 
 
 def main():
@@ -2176,7 +2248,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2191,7 +2263,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
