@@ -178,6 +178,10 @@ void PrintEntry(const Stream& stream, u64 id, const char* label) {
         if (ReadGuest(c.address, now, sizeof(now)) == sizeof(now)) {
             Out(" (guest memory now %u %u %u %u %u)", now[0], now[1], now[2], now[3], now[4]);
         }
+        if (c.args_slot < ArgSlots) {
+            const volatile u32* read = args + c.args_slot * 4;
+            Out(" (the first command the GPU read: %u %u %u)", read[0], read[1], read[2]);
+        }
         break;
     }
     case Kind::Dispatch:
@@ -298,7 +302,7 @@ u32 Note(u32 stream_index, const Crumb& crumb) {
     Entry& entry = stream.ring[id & (RingSize - 1)];
     entry.crumb = crumb;
     entry.id = id;
-    if (crumb.args_slot < ArgSlots) {
+    if (crumb.args_slot < ArgSlots && crumb.kind == Kind::DispatchIndirect) {
         args_notes[crumb.args_slot] = {id, stream_index, crumb.hash[0]};
     }
     return u32(id);

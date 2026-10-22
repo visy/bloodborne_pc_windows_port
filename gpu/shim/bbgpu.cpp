@@ -414,6 +414,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     if (coop::PartyRequested()) {
         coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
     }
+    coop::MarkImageHooksDone();  // the party version check hashes the installed hooks after this
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {

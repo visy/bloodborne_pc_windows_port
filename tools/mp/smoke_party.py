@@ -162,7 +162,9 @@ WIPE_UNTIL = "0:" + WIPE_RX
 
 def phase_s1(only):
     host = ",".join([
-        "host_warp=2412953@70",             # party lamp travel: the Tomb of Oedon (after the leave/rejoin and death)
+        "host_warp=2412953@30^2*2",         # party lamp travel: the Tomb of Oedon, 30 s after guest 1's Rejoin
+                                            # (cooperators up to 2 the second time; its death and respawn ~19 s
+                                            # after it; was @70 from the join: ~25 s idle after the respawn)
         "host_die@6%m24_01~",               # in the fight: 6 s after the boss intro (the guest went in first)
     ])
     g1 = ",".join([
@@ -1430,7 +1432,9 @@ def phase_bf(only):
 # Phase rt (rotrules, 0.7.2, ~6 min, 2 players, group `rot`): rot on (BB_PARTY_ROT=1) and what else
 # cleanses it (party_rot_rules.h). Guest 1 is frail (BB_PARTY_ROT_TEST_FRAIL: any hit leaves 1 HP, so
 # the next enemy hit kills it: a death with a killer, the game's own death path) and picks its stains
-# up by itself (BB_PARTY_STAIN_TEST).
+# up by itself (BB_PARTY_STAIN_TEST). BB_PARTY_TEST_GUARD: from each revive until its next die / chr step
+# the guest is invincible (rel2 0.7.2: revived onto its stain, 2410202 killed it a second time before
+# the host's kill step; every later death was one off).
 #   1  echoes rule off: killed by one of the enemies 2410247 / 2410202 (Central Yharnam, m24_01; run 1:
 #      2410202 struck first), its stain picked up (no change), up at RT_SIGNAL; the host kills both
 #      (the kill record relays them): -1 "your killer is dead"
@@ -1494,7 +1498,7 @@ def phase_rt(only):
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + "," + CLERIC_CLEAR, "BB_PARTY_ROT=1",
              "BB_PARTY_ROT_CLEANSE_BOSS=1", "BB_PARTY_ROT_CLEANSE_KILLER=1", "BB_PARTY_ROT_CLEANSE_ECHOES=0"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
-              "1:BB_PARTY_ROT_TEST_FRAIL=1", "1:BB_PARTY_STAIN_TEST=2", "1:BB_PARTY_ROT_KIND=0,1,3,0,1,3"],
+              "1:BB_PARTY_ROT_TEST_FRAIL=1", "1:BB_PARTY_TEST_GUARD=1", "1:BB_PARTY_STAIN_TEST=2", "1:BB_PARTY_ROT_KIND=0,1,3,0,1,3"],
         watch=["--watch", "notice: Rot=rotnotice@0.5,2", "--watch", "rot: .*notice: Rot=rotclean@0.5,2",
                "--watch", "rot: .*nothing off=rotkept@0.5"],
         crash=[], until=[RT_UNTIL], until_hold=4,
@@ -1960,7 +1964,9 @@ def run_phase(a, ph, out: Path):
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
         cmd += ["--until", u]
-    env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"))
+    # BB_MP_PARENT_PID: this harness; instances.py (and the reaper, by the slot's "parent") end the
+    # games once it is gone (a killed smoke left its phase's games running to their cap).
+    env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"), BB_MP_PARENT_PID=str(os.getpid()))
     shots = out / "shots"
     shots.mkdir(exist_ok=True)
     print("[smoke] %s: %s" % (ph["name"], " ".join(cmd)), flush=True)

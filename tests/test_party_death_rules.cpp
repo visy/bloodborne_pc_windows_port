@@ -530,6 +530,24 @@ int main() {
     CHECK(!TestDieStepLatches(true, false, true, false, true));      // the previous die step's own death
     CHECK(TestStepWaits(false, true, true, true));                   // inside the last wipe's re-join
     CHECK(TestStepWaits(false, true, false, false));                 // not in the world
+    // BB_PARTY_TEST_GUARD: invincible from the revive after a death until the next die / chr step
+    {
+        TestGuard g;
+        CHECK(!TestGuardTick(g, 600, true));                         // never died: no guard
+        CHECK(!TestGuardTick(g, 0, true));                           // killed by the enemy
+        CHECK(!TestGuardTick(g, -1, false));                         // the respawn load
+        CHECK(TestGuardTick(g, 600, true));                          // up again: invincible
+        CHECK(TestGuardTick(g, 600, true));
+        CHECK(!TestGuardStepRan(g, false));                          // a press / move: stays on
+        CHECK(TestGuardTick(g, 600, true));
+        CHECK(TestGuardStepRan(g, true));                            // the scripted death: off (clear)
+        CHECK(!TestGuardTick(g, 600, true));
+        CHECK(!TestGuardTick(g, 0, true));                           // that death
+        CHECK(TestGuardTick(g, 600, true));                          // up again: on until the next one
+        CHECK(TestGuardStepRan(g, true));                            // guest_chr: be killed again
+        CHECK(!TestGuardStepRan(g, true));                           // nothing to clear twice
+        CHECK(!TestGuardTick(g, 600, true));
+    }
 
     // Own bloodstain record changes (bug 13 logging).
     CHECK(PlanStainChange(0, -1, 1, 4843) == StainChange::Recorded);

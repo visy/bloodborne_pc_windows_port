@@ -25,7 +25,7 @@ struct Crumb {
     u64 program[2]{};           ///< their code in guest memory
     u64 address = 0;            ///< indirect arguments
     u32 count[3]{};             ///< indices or vertices and instances, or groups
-    u32 args_slot = ~0u;        ///< indirect dispatches: where the GPU copies its arguments
+    u32 args_slot = ~0u;        ///< indirect dispatches and draws: where the GPU copies its arguments
 };
 
 /// A stream for a new scheduler (`name` a string literal); the first call creates the buffer.

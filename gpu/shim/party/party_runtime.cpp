@@ -2679,6 +2679,15 @@ void startup_main() {
     cfg.build_id = bbport_build_id();
     cfg.check_build = !(env("BB_PARTY_CHECK_BUILD") && !env_on("BB_PARTY_CHECK_BUILD"));
     cfg.params_sha256 = params_hash();
+    // The hook set only once the image's hooks are in (a fast boot started the link 0.1 s before).
+    {
+        const auto w0 = std::chrono::steady_clock::now();
+        const bool done = coop::WaitImageHooksDone(30000);
+        const double waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
+        if (!done || waited > 0.05)
+            plog("version check: %s the game's hooks for %.2f s", done ? "waited for" : "NOT done after waiting for",
+                 waited);
+    }
     hook_identity(cfg);
     plog("%s %s, port %u, up to %d players; version check: eboot %s..., patches %s..., mods %s... (%s)%s",
          host ? "host" : "guest", cfg.name.c_str(), cfg.port, cfg.max_players, hex_prefix(cfg.eboot_sha256).c_str(),
