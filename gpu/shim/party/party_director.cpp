@@ -11,6 +11,7 @@
 #include "party_ids.h"
 #include "party_stick_args.h"
 #include "party_balance.h"
+#include "party_npcfight.h"
 #include "party_async_io.h"
 
 #include "coop_hooks.h"
@@ -1580,10 +1581,11 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
     int alive = 0;
     for (const auto& e : list) alive += e.alive ? 1 : 0;
     const int k = have_me || want ? PickEnemyKillTarget(list, want, me, 500.0f) : -1;
-    if (k < 0 && want && EnemyIsBossEntity(want) && hp_only) {
+    if (k < 0 && want && hp_only) {
         // ':hp' on a boss outside the census: its chr by entity id (0x13C97A0, as the boss clear
         // bonus 0x1335400 finds it) and HP 0 only: the game's own death and defeat path (a "real
-        // kill" without ForceDead; statsaudit finding 4).
+        // kill" without ForceDead; statsaudit finding 4). The same for an NPC hunter (D11: not team
+        // 23, so not in the census: Henryk, Eileen, the DLC hunters).
         const std::uint64_t chr =
             reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint64_t, std::uint64_t)>(Guest(0x13c97a0))(
                 std::int32_t(want), 0, 0);
@@ -1591,9 +1593,9 @@ void KillLoadedEnemyForTest(const char* what, std::uint32_t want, bool by_id, bo
         const int hp0 = chr ? balance::EnemyHp(chr) : -1;
         const int zero = 0;
         if (chr && SafeGet(chr + 0x3b0, &ins) && ins && SafeGet(ins + 0x20, &d) && d) SafeWrite(d + 0xf8, &zero, 4);
-        Log("test: %s: boss entity %u (chr %#llx, not in the census list): HP %d -> %d (HP 0 only: the game's own death "
+        Log("test: %s: %s entity %u (chr %#llx, not in the census list): HP %d -> %d (HP 0 only: the game's own death "
             "follows)",
-            what, want, static_cast<unsigned long long>(chr), hp0, chr ? balance::EnemyHp(chr) : -1);
+            what, EnemyIsBossEntity(want) ? "boss" : "NPC", want, static_cast<unsigned long long>(chr), hp0, chr ? balance::EnemyHp(chr) : -1);
         return;
     }
     if (k < 0 && want && by_id && EnemyIsBossEntity(want)) {
@@ -4332,6 +4334,7 @@ void PartyDirector::Tick() {
     }
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
     if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
+    if (role != PartyRole::None) npcfight::Tick(s, role == PartyRole::Host);  // D11: the assassins on a guest
     // I1 friendly fire / PvP (party_pvp.h): the party rule on this game's team tables.
     if (role != PartyRole::None) pvp::Tick(s, role == PartyRole::Host);
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
@@ -5019,6 +5022,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     worldact::Init();       // guest world actions, instanced treasure pickups (byte-verified)
     GuestServicesInit();    // guest Doll / shops / workshop in the host's Dream (byte-verified)
     balance::Init();        // C4 rot hook, D7 scaling (party_balance.h)
+    npcfight::Init();       // D11: NPC hunter fights with the whole party (party_npcfight.h)
     g_tick_installed = HookPrologue(kFlipperUpdate,
                                     {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48,
                                      0x83, 0xec, 0x38},

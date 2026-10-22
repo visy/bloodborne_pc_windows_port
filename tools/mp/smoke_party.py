@@ -1643,6 +1643,61 @@ def phase_da(only):
     )
 
 
+# Phase nf (npcfights, ~5 min, 2 players, group `npc_fights`; ERSC parity D11): scripted NPC
+# hunter fights with the whole party (user decision 2026-10-22: the NPC is there for everyone,
+# anyone can hurt it, its death and the quest step count for all, like a boss).
+#   1  Tomb of Oedon (m24_01), Eileen's quest: her state 1363 (she waits there, hidden) with Henryk
+#      (2410901) on the graves. The host stands at Henryk (his fight brings Eileen in as the
+#      player's ally: 12410811, team 28, quest state 1365); the guest in front of him hits him (R1:
+#      his HP falls on the host's game) and deals the killing blow on its own game (guest_kill: HP 0
+#      there only); the host's game sees him die and sets the quest flags (12410804: 1367;
+#      12410810's own flag), which reach the guest's own save (read at the next load).
+#   2  Cainhurst (m25, its first lamp 2502950; Logarius dead), Alfred hostile (state
+#      1349): his init event (12500050) re-teams him (27) on the host's game only (1003[6] "end if
+#      client"). A: the host's rule party_npc_fights OFF: the guest's copy keeps him friendly (26,
+#      the "before"). B: the rule ON and a party round trip to the Tomb and back: the guest's copy
+#      runs as the host's, team 27 on both games. Read from the chr dumps (400 m): the party stays at
+#      the lamp, about 290 m from him (the Queen's Chamber lamp 2502951 put both players into an
+#      undrawn void in this save, Alfred falling through it, so there is no fight with him here).
+NF_HENRYK, NF_EILEEN, NF_ALFRED = 2410901, 2410900, 2500790
+NF_FLAGS = "1349/1363/1365/1366/1367/12410810"
+NF_LOGARIUS_DEAD = "12501800,12501802,12501803"  # Logarius dead: the queen's chamber (Alfred) is open
+# the host's last step (its load after the Cainhurst checks) and its world up
+NF_UNTIL = r"0:test: travel step 8/8: host_warp[\s\S]*test read \(load mode 0"
+
+
+def phase_nf(only):
+    host = ",".join([
+        "god", "log_flag=" + NF_FLAGS,
+        "host_warp=2412953@8^1",                          # 1: the party at the Tomb of Oedon lamp
+        "host_chr=%d:4@8%%m24_01" % NF_HENRYK,            # in front of Henryk: his fight starts
+        "host_rule=party_npc_fights:0@2%m24_01",          # 2A: the rule off (the "before")
+        "host_warp=2502950@8%m24_01?12410810=1",          # Henryk dead: the party to Cainhurst
+        "host_rule=party_npc_fights:1@15%m25",            # 2B: the rule on
+        "host_warp=2412953@2%m25",                        # a round trip: the guest's init runs again
+        "host_warp=2502950@8%m24_01",
+        "host_warp=2412953@15%m25",                       # the last load
+    ])
+    g1 = ",".join(["god", "log_flag=" + NF_FLAGS,
+                   "guest_chr=%d:1.6@14%%m24_01" % NF_HENRYK,        # 1: in front of Henryk
+                   "guest_press=0x4@1%m24_01!", "guest_press=0x4:lock@1%m24_01!"]
+                  + ["guest_press=0x800@1.2%m24_01!"] * 8          # R1: the guest's hits
+                  + ["guest_kill=%d:hp@2%%m24_01" % NF_HENRYK])     # its killing blow (HP 0 on its game)
+    clear = ("1340,1341,1342,1343,1344,1345,1346,1347,1348,1350,1351,1352,1353,1354,1355,1356,1357,1358,1359,"
+             "1360,1361,1362,1364,1365,1366,1367,1368,1369,1700,1701,1702,1703,1704,1705,12410810,5912")
+    return dict(
+        name="nf", seconds=480, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=1363,1349," + NF_LOGARIUS_DEAD,
+             "BB_PARTY_PROGRESS_TEST_READ=1349,1363,1365,1367,12410810", "BB_PARTY_CHR_DUMP=400",
+             "BB_PARTY_TEST_COND_TIMEOUT=100"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: host_chr=nfhost@1,4", "--watch", r"test: guest_chr=nfguest@1,4",
+               "--watch", r"guest_press 0x800=nfhit@0.5", "--watch", r"test: guest_kill=nfkill@1,4",
+               "--watch", r"guest copy of event 12500050 runs=nfrule@1,6"],
+        crash=[], until=[NF_UNTIL], until_hold=12,
+    )
+
+
 # Phase cv (covenants, 0.7.3, ~3 min, 2 players, groups `covenant` / `valtr_rune`; user decision
 # 2026-10-22: covenant outcomes are per player). The host's save: Alfred killed Queen Annalise (1042
 # the flesh, Alfred 1348 in the castle, 72500328 her revival flag) and Valtr is dead (1790). The
@@ -1680,14 +1735,14 @@ def phase_cv(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "travel_vote": "tv"}
+          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1698,7 +1753,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nf "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1749,6 +1804,7 @@ GROUP_UNTIL = {
     "boss_rooms": BR_UNTIL,
     "scene_mirror": [SM_UNTIL],
     "dream_apart": DA_UNTIL,
+    "npc_fights": [NF_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
     "travel_vote": TV_UNTIL,
@@ -3641,6 +3697,59 @@ def check_da(v, L):
     check_common(v, L, "da")
 
 
+def nf_hp(L, i, entity, after=0.0, before=1e9):
+    """[(t, hp, team)] of `entity` in instance i's chr dumps."""
+    out = []
+    for t, line in L.all(i, r"chr dump: entity %d " % entity, after, before):
+        m = re.search(r"team (-?\d+) .*HP (-?\d+)/", line)
+        if m:
+            out.append((t, int(m.group(2)), int(m.group(1))))
+    return out
+
+
+def check_nf(v, L):
+    need(v, L, "nf join: 2 players", 0, r"cooperators 0 -> 1")
+    # 1  Henryk and Eileen at the Tomb of Oedon
+    at = need(v, L, "nf host at Henryk (his fight)", 0, r"test: host_chr %d" % NF_HENRYK, 0)
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, "nf %s's game shows Henryk" % who, i, r"chr dump: entity %d .*HP [1-9]" % NF_HENRYK, at or 0)
+    need(v, L, "nf Eileen joins the fight (her ally state 1365, host)", 0, r"test: flags .*1365=1", 0)
+    hit = L.find(1, r"test: guest_press 0x800", at or 0)
+    kill = L.find(1, r"test: guest_kill: NPC entity %d" % NF_HENRYK, at or 0)
+    if hit and kill:
+        hp = [h for t, h, _ in nf_hp(L, 0, NF_HENRYK, hit[0] - 1, kill[0])]
+        v.step("nf the guest's R1s hurt Henryk on the host's game", bool(hp) and min(hp) < 1716 and min(hp) > 0,
+               "host HP %s" % hp[:8])
+        need(v, L, "nf Henryk dies on the host after the guest's killing blow", 0,
+             r"test: flags .*12410810=1", kill[0] - 1, kill[0] + 30)
+        need(v, L, "nf Henryk's quest step on the host (1367)", 0, r"test: flags .*1367=1", kill[0] - 1)
+        need(v, L, "nf the quest step in the guest's own save (next load)", 1,
+             r"test read \(load mode 1, own save / visible\):[^\n]*1367=1/1", kill[0])
+    else:
+        v.step("nf the guest hits and kills Henryk", False, "no guest R1 / kill step")
+    # 2  Alfred in Cainhurst: the rule off (A), then on (B, after a round trip)
+    off = L.find(0, r"test: host_rule: party_npc_fights 1 -> 0", 0)
+    on = L.find(0, r"test: host_rule: party_npc_fights 0 -> 1", off[0] if off else 0)
+    if not off or not on:
+        v.step("nf the host's rule off, then on", False, "%s / %s" % (bool(off), bool(on)))
+        check_common(v, L, "nf")
+        return
+    host_a = nf_hp(L, 0, NF_ALFRED, off[0], on[0])
+    guest_a = nf_hp(L, 1, NF_ALFRED, off[0], on[0])
+    v.step("nf (rule off) Alfred hostile on the host's game (team 27)", any(tm == 27 for _, _, tm in host_a),
+           "teams %s" % sorted({tm for _, _, tm in host_a}))
+    v.step("nf (rule off, the vanilla gap) Alfred friendly on the guest's game", bool(guest_a) and
+           all(tm != 27 for _, _, tm in guest_a), "teams %s" % sorted({tm for _, _, tm in guest_a}))
+    rule = need(v, L, "nf (rule on) the guest's copy of Alfred's init runs as the host's", 1,
+                r"guest copy of event 12500050 runs as the host's", on[0])
+    guest_b = nf_hp(L, 1, NF_ALFRED, rule or on[0])
+    v.step("nf (rule on) Alfred hostile on the guest's game too (team 27)", any(tm == 27 for _, _, tm in guest_b),
+           "teams %s" % sorted({tm for _, _, tm in guest_b}))
+    none_of(v, L, "nf no flag write from a guest copy reaches the host as a world action",
+            r"world action sent to the host[^\n]*\b(134[0-9]|1350)\b", 0, insts=(1,))
+    check_common(v, L, "nf")
+
+
 def check_cv(v, L, d: Path):
     """Phase cv: covenant outcomes per player; Valtr's rune for a guest (0.7.3)."""
     j = need(v, L, "cv join: the guest is in", 0, r"cooperators 0 -> 1")
@@ -3701,7 +3810,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv,
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L)}
 
 
@@ -3727,7 +3836,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv")
+                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

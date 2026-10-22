@@ -813,6 +813,11 @@ endif()
 add_executable(party-npc-mirror-test EXCLUDE_FROM_ALL ../tests/test_party_npc_mirror.cpp)
 target_compile_options(party-npc-mirror-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-npc-mirror-test PRIVATE shim)
+# NPC hunter fights with the whole party (shim/party/party_npcfight_rules.h, header only, D11):
+# the guest copies of the host-only transitions, assassins, slots. --target party-npcfight-test
+add_executable(party-npcfight-test EXCLUDE_FROM_ALL ../tests/test_party_npcfight.cpp)
+target_compile_options(party-npcfight-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-npcfight-test PRIVATE shim)
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp

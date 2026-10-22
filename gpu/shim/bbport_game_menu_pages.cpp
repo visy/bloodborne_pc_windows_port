@@ -1296,10 +1296,10 @@ void DefineAll() {
         "Без стен совместной игры на границах зон: группа ходит везде. Одинаково у всех. Со следующего запуска");
 
     // ---- Shared world (0.7.1: party_kill_record, party_npc_mirror, party_gather; 0.7.3: covenants,
-    // party_travel_vote): the host's ----
+    // party_travel_vote, party_npc_fights): the host's ----
     AddPage("Shared world", "Общий мир",
-            "Enemies stay dead, gathering, NPCs as in the host's world, covenants, travel votes (bbport)",
-            "Враги не оживают, сбор группы, NPC как в мире хоста, ковенанты, голосование (bbport)");
+            "Enemies stay dead, gathering, NPCs as in the host's world, covenants, travel votes, NPC hunters (bbport)",
+            "Враги не оживают, сбор группы, NPC как в мире хоста, ковенанты, голосование, охотники-NPC (bbport)");
     host_rule(&Values::party_kill_record, "Enemies stay dead", "Враги не оживают",
               AddText("A party kill is dead for everyone, also as maps stream in again, until a rest. Party rule",
                       "Убитый группой враг мёртв у всех, и при новой подгрузке карты, до отдыха. Правило группы"),
@@ -1342,6 +1342,15 @@ void DefineAll() {
                "Правило хоста: группа идёт, только если все проголосовали ДА"},
               {"The host decides; off: the one who travels takes the party along",
                "Решает хост; выкл.: кто путешествует, ведёт за собой группу"});
+    // 0.7.3 (D11, party_npcfight_rules.h): a scripted NPC hunter fight is the whole party's.
+    host_rule(&Values::party_npc_fights, "NPC hunters fight all", "Охотники-NPC против всех",
+              AddText("A hunter NPC turning hostile does so for the guests too: all can fight it. Party rule",
+                      "Охотник-NPC становится врагом и у гостей: сражаться могут все. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::NpcFights); },
+              {"The host's rule: NPC hunters (Alfred, Eileen, Valtr, Brador ...) fight you too",
+               "Правило хоста: охотники-NPC (Альфред, Эйлин, Валтор, Брадор ...) сражаются и с вами"},
+              {"The host decides; off: a hunter that turns on the host may stay friendly here",
+               "Решает хост; выкл.: охотник, напавший на хоста, может остаться у вас мирным"});
 
     // ---- Story & dialogue (party_npctalk, party_progress, party_story) ----
     AddPage("Story & dialogue", "Сюжет и диалоги", "Shared NPC dialogue, story progress, NPC quests, cutscenes (bbport)",

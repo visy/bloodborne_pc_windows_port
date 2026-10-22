@@ -76,6 +76,9 @@ struct Rules {
     /// 0.7.3 lamp travel voting (party_vote.h): every member votes on a party travel. The host's;
     /// off by default (a host from before it sends none: off).
     bool travel_vote = false;
+    /// D11 (0.7.3, party_npcfight_rules.h): NPC hunters fight the whole party (a guest's copy of the
+    /// host-only NPC transitions runs). The host's; on by default (a host from before it sends none: on).
+    bool npc_fights = true;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };

@@ -154,6 +154,8 @@ PARTY_INI_SWITCHES = [
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
     # 0.7.3: covenant outcomes per player (the host's rule; System > Shared world)
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
+    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Shared world)
+    ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -3300,6 +3302,12 @@ class BloodborneLauncher(tk.Tk):
                     "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
                     "and everyone is told who said no or did not answer. The host's setting; guests see it. "
                     "Default: off (bbport.ini party_travel_vote; in the game: System > Shared world).", command=save)
+        self._check(sec, "NPC hunters fight the whole party", var["party_npc_fights"],
+                    "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
+                    "DLC hunters) turns on the guests too, and Brador is shown on every guest's screen: "
+                    "everyone sees and fights the same hunter, and its death counts for all. The host's "
+                    "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
+                    "System > Shared world).", command=save)
 
         # 0.7.2: rot, the host's rules (System > Rot)
         sec = section(4, 0, "Rot on death (host)")

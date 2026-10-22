@@ -69,7 +69,7 @@ int main() {
     {
         Rules old;
         assert(FromJson("{\"rot\":true,\"host_revive\":false}", &old) && old.kill_record && old.npc_mirror &&
-               old.gather && !old.host_revive);
+               old.gather && !old.host_revive && old.npc_fights);
         assert(old.covenant_per_player);  // 0.7.3: a host from before it sends none: on
     }
     // 0.7.3: covenant outcomes per player go with the rules, on by default.
@@ -80,6 +80,12 @@ int main() {
         Rules cb;
         assert(FromJson(ToJson(c), &cb) && cb == c && !cb.covenant_per_player && cb != Rules{});
         assert(ToJson(c).find("\"covenant_per_player\":false") != std::string::npos);
+    }
+    // 0.7.3 (D11): NPC hunters fight the whole party goes with the rules, on by default.
+    {
+        Rules f;
+        f.npc_fights = false;
+        assert(FromJson(ToJson(f), &back) && !back.npc_fights && back == f && back != Rules{});
     }
     // 0.7.2: Guests bring their lamps goes with the rules, off by default; a host from before it: off.
     {
