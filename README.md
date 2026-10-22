@@ -329,6 +329,9 @@ before anyone is in the game):
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
   Both are your own switches on *System → Party rewards* (*Own key items as guest*, *Key items at once*).
   Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
+- **Early items for every player.** Each player picks its own starting weapons from the Dream's
+  messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
+  Hunter Bell go to every player, whoever got them first.
 - **Gestures are shared.** A gesture anyone in the party learns (from Gehrman, the Messengers, an
   NPC's talk) is learned by every player at once, with the game's "item acquired" notice, and kept
   in each player's own save, also when it was learned in someone else's world.
