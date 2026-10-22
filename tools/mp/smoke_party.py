@@ -864,7 +864,7 @@ def phase_rh(only):
           "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
     return dict(
         name="rh", seconds=360, count=2, headless=0, fps=60,
-        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=45", "BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
@@ -888,7 +888,7 @@ def phase_rs(only):
             "host_press=0@4%m35!"]
     return dict(
         name="rs", seconds=200, count=1, headless=0, fps=int(os.environ.get("BB_RS_FPS", "60")),
-        env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=45", "BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
@@ -3285,15 +3285,17 @@ def check_rt(v, L):
         need(v, L, "rt 1 a stack (health)", 1, r"death 1; rot on, 1 stack\(s\) \(this one: health\)", d1 - 1)
         k1 = need(v, L, "rt 1 the host kills it", 0, r"travel step \d+/\d+: host_kill entity %s" % ent, d1)
         c1 = need(v, L, "rt 1 killer dead: -1 (notice)", 1,
-                  r"rot: an enemy died \(entity %s, .*\): 1 stack\(s\) off, \d+ left; notice: Rot -1: your killer is dead"
+                  # [1-5]: the stain test can put the frail guest back onto its stain beside the living
+                  # killer, a second death by it (release smoke 0.7.2: "Rot -2: your killer is dead")
+                  r"rot: an enemy died \(entity %s, .*\): [1-5] stack\(s\) off, \d+ left; notice: Rot -[1-5]: your killer is dead"
                   % ent, d1)
         if c1 is not None and k1 is not None:
             v.step("rt 1 the cleanse came from the host's kill", c1 >= k1 - 1 and c1 - k1 < 15,
                    "+%.1f s after the host's kill" % (c1 - k1))
     d2 = need(v, L, "rt 2 a scripted death (no killer), a stain", 1,
-              r"death 2: killed by nobody", k1 or 0)
+              r"death \d+: killed by nobody", k1 or 0)
     if d2 is not None:
-        need(v, L, "rt 2 stack +1", 1, r"death 2; rot on, 1 stack\(s\)", d2 - 1)
+        need(v, L, "rt 2 stack +1", 1, r"death \d+; rot on, 1 stack\(s\)", d2 - 1)
         need(v, L, "rt 2 bloodstain picked up", 1, r"party stain: recovered \d+ Blood Echoes|own bloodstain taken and its Blood Echoes back", d2)
         need(v, L, "rt 2 echoes back: -1 (notice)", 1,
              r"rot: the bloodstain was picked up .*: 1 stack\(s\) off, 0 left; notice: Rot -1: Blood Echoes retrieved", d2)
