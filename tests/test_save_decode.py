@@ -56,3 +56,33 @@ def test_host_log_compare(tmp_path):
                    "Party progress: host flag 72100100 = 0 (npc_quest) seq 3\n", encoding="utf-8")
     last = sd.host_flags([log])
     assert last[12411800][0] == 1 and last[72100100][0] == 0 and last[72100100][3] == 3
+
+
+def world_save(blocks=(0x24, 0x2e, 0x14)):
+    """A 0x140000-byte character save with the writer's layout around the world-state section (header
+    +0x34..+0x50): the flag store, the CHR / OBJ / DECL blocks of the given sizes (0: empty), the position."""
+    d = bytearray(0x140000)
+    struct.pack_into("<III", d, 0, 0x41, 0x15000000, 1000)
+    pool = 0x1000
+    a = pool + sd.POOL_BYTES + 1
+    struct.pack_into("<II", d, 0x34, pool, sd.POOL_BYTES + 1)
+    at = a
+    for magic, n in zip(sd.Save.WORLD_MAGIC, blocks):
+        struct.pack_into("<I", d, at, n)
+        at += 4
+        if n:
+            d[at:at + 4] = magic
+            at += n
+    an = at - a
+    struct.pack_into("<6I", d, 0x3c, a, an, at, an + 0x50, at + 0x50, 0x200)
+    return bytes(d)
+
+
+def test_world_state():
+    s = sd.Save(world_save())
+    assert s.world()["blocks"] == [0x24, 0x2e, 0x14] and s.world_empty() is False
+    empty = sd.Save(world_save((0, 0, 0)))  # written in the host's world before the 0.7.3 fix
+    assert empty.world()["size"] == 12 and empty.world_empty() is True
+    broken = bytearray(world_save())
+    broken[0x40] ^= 1  # the header no longer lines up
+    assert sd.Save(bytes(broken)).world() is None and sd.Save(bytes(broken)).world_empty() is None

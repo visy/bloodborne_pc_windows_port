@@ -95,3 +95,49 @@ games ended), per instance:
 * `undo`: both folders **byte-identical** to the snapshot afterwards (15 files each); the
   before-undo snapshot equals the post-session state; a second undo brought the post-session
   state back byte for byte.
+
+## 5. A guest's save written in the host's world (0.7.3, agent guestsave)
+
+Player report: save editors crashed on a character save last written while the player was a guest in
+another world; hosting the own world and saving again made it readable.
+
+**The differing field.** The save writer `0x156AA50` writes after the event flags a world-state section
+(header +0x3C offset, +0x40 size): three blocks `{u32 size, data}` "CHR " (WorldChrMan, magic
+`0x1509170043485220`), "OBJ " and "DECL" (WorldDecalMan, the bytes `4C 43 45 44` = "LCED" that save
+editors search for), then the position block (+0x44; +0x48 is its end counted from +0x3C), the FrpgNetMan
+block (+0x4C / +0x50, 0x20004 bytes), a `{u16, u16, u32 size, data}` block (`0x175A4E0`, 0x1000 bytes) and 27
+bytes; the rest of the 0x140000-byte file is the game's uninitialized buffer (`0x1569740` allocates it and
+writes all of it). At home (GSM +0x1592 = 1) the writer serializes the live managers. In another world
+(+0x1592 = 0) it writes the **snapshot of the own world** at GSM +0x1690/+0x1698 (CHR), +0x16B0/+0x16B8 (OBJ),
++0x16D0/+0x16D8 (DECL): `{u32 size}` and, when the pointer is set, the data. Vanilla fills them at the summon
+(the SummonedMapReload serializer `0x131E5C0`, the same encoding); the party's B2 joins (direct summon, title
+join, seamless travel) never run it, so they are 0 (`Party B2: ... blobs ... (own: 0 / 0 / 0)` in every guest
+log) and every save written in the host's world got three empty blocks: section size 12 instead of ~0x72 or
+more, no "LCED". Confirmed on the agent saves: `agents/lamprule/mptest/inst2` (the guest, saved by "shared
+lamps from the host's world" in load mode 1) has a 12-byte section, its session-start snapshot 0x72 bytes;
+the other sections differ only by what the session changed. Of 195 harness character saves it is the only
+one: most harness guests are killed before a save in the host's world.
+
+**What it broke.** The own world's state (dead enemies, objects, decals) was gone after going home, and
+editors that locate data by these blocks failed. The open-source Noxde/Bloodborne-save-editor (Rust,
+commit d8d0365, read only, not run) anchors the position on "LCED": without it it scans from byte 0 and takes
+an empty inventory entry for the position (y = NaN; editing the position then writes into the inventory).
+A Python port of its parse path (Offsets / Pos) read all other 1950 harness saves correctly; which editor
+the player used is not known, so the crash itself is inferred, not reproduced.
+
+**The fix** (`runtime_savepolicy_world_fix`, called by `runtime_file.c`'s commit of a party session's
+`userdata0000..0009`): when the game's new save has three empty blocks and the file it replaces (or the
+`backupNNNN` beside it) has them, for the same character (name, play time not newer), the old blocks go into
+the new save, the rest of its data moves behind them and the header's +0x40/+0x44/+0x48/+0x4C follow. The
+own world's state is the one of the last save made at home, as vanilla's summon snapshot would hold; it
+stays through further saves in the host's world (each copies it from the one before). Nothing in the game's
+memory is changed. Log: `Saves: userdata0000 was written in another player's world without the own world's
+state ...: the N bytes of userdata0000 kept in it`. Off: `BB_SAVE_GUEST_WORLD_FIX=0`.
+
+Not changed: the position block of such a save holds the spot in the host's world (+0x15B0) while the header
+map is the own forced placement (+0x14F0); the Continue uses the forced placement (`PinOwnSpotTick`,
+`BB_PARTY_GUEST_PIN_SAVE_POS`). Editors show that host-world spot as the position.
+
+Checks: `save-policy-test` "a guest's save written in the host's world keeps the own world's state";
+`tools/party/save_decode.py --check-world` (exit 1 for an empty section) and `save_check.py`'s `saves` rule
+(EMPTY per guest character save), pytest `tests/test_save_decode.py`, `tests/test_save_check.py`.

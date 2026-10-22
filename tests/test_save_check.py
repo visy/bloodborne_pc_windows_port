@@ -78,5 +78,21 @@ class SaveCheckTests(unittest.TestCase):
         self.assertEqual(r["drops"][0][:2], (96, 48))
 
 
+    def test_guest_save_world_state(self):
+        sys.path.insert(0, str(ROOT / "tests"))
+        from test_save_decode import world_save  # noqa: E402
+        g = self.folder("inst1")
+        slot = g / "user/savedata_party/1/CUSA00207/SPRJ0005"
+        slot.mkdir(parents=True)
+        (slot / "userdata0001").write_bytes(bytes(0x1000))  # an empty slot: not counted
+        (slot / "userdata0000").write_bytes(world_save())  # a guest's save written in the host's world, fixed
+        r = sc.check_saves(g)
+        self.assertEqual((r["status"], r["checked"], r["empty"]), ("ok", 1, []))
+        (slot / "userdata0000").write_bytes(world_save((0, 0, 0)))  # the same before the fix
+        r = sc.check_saves(g)
+        self.assertEqual((r["status"], r["empty"]), ("EMPTY", ["userdata0000"]))
+        self.assertEqual(sc.check_saves(self.folder("inst2"))["status"], "no saves")
+
+
 if __name__ == "__main__":
     unittest.main()
