@@ -4208,7 +4208,7 @@ bool GuestArenaRevive(const GameSnapshot& s, double held_for);
 bool GuestArenaRuleOn();
 bool LivingMemberHere(u64 me);
 bool GuestChaliceRevive(const GameSnapshot& s);
-bool GuestFallSafeRevive(const GameSnapshot& s);
+bool GuestFallSafeRevive(const GameSnapshot& s, bool boss);
 /// C3: the host's wipe load that waited for this guest's death (OnHostTravel) is followed now: a
 /// dead follow (the host's respawn records, one load to its lamp with the party) once the death is
 /// taken, or as before when the guest is up again. The host has re-synced after its own load by
@@ -4389,7 +4389,7 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         SpectateEnd();  // also one begun at the hold, when the boss died in the grace
     }
     g_death_held_at = 0;
-    if (GuestFallSafeRevive(s)) {
+    if (GuestFallSafeRevive(s, limbo_logged == at)) {
         return;
     }
     // Design decisions (ERSC_PARITY.md): outside a boss fight a dead player respawns at its OWN last
@@ -5911,7 +5911,7 @@ bool GuestChaliceRevive(const GameSnapshot& s) {
 /// the destination was the lamp's map at the load's start, the arrival m21); with neither lamp in
 /// the loaded map, its last safe floor. False: no fall, or the in-place revive is off (System >
 /// Deaths & revives): the respawn as before.
-bool GuestFallSafeRevive(const GameSnapshot& s) {
+bool GuestFallSafeRevive(const GameSnapshot& s, bool boss) {
     if (!s.player) {
         return false;
     }
@@ -5919,19 +5919,36 @@ bool GuestFallSafeRevive(const GameSnapshot& s) {
     const bool known = ChrPos(s.player, at) && std::isfinite(at[1]);
     const bool fell = LocalFallDeath(s.player, known ? double(at[1]) : std::numeric_limits<double>::quiet_NaN());
     const u32 stage = Field<u32>(s.player, 0x3f8);
+    // chalicelamp: a Chalice Dungeon's lamp spots are never the table's (LampTableSpotTrusted; the
+    // report's revive at the template's spot of 2902954 put the guest 55 m above the dungeon's floor).
     auto here = [&](u32 lamp, float rs[4]) {
-        return lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs);
+        return lamp != 0 && lamp != kTravelNone && deathrules::LampTableSpotTrusted(lamp) &&
+               (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs);
     };
     const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528), host = GuestDeathRedirectLamp();
     float own_rs[4] = {}, host_rs[4] = {};
+    const bool dungeon_member = !boss && (s.map_id >> 24) == 29 && BbSettings::Get().party_chalice_rejoin.load() &&
+                                LivingMemberHere(s.player);
     const deathrules::FallRespawn f = deathrules::PlanFallRespawn(
         fell, BbSettings::Get().party_guest_revive_inplace.load(), here(own, own_rs), here(host, host_rs), g_local_safe.valid,
-        false);
+        false, dungeon_member);
     if (f == deathrules::FallRespawn::Respawn) {
         return false;
     }
+    if (f == deathrules::FallRespawn::BesideMember) {
+        Log("guest: died from a fall in the host's Chalice Dungeon (HP 0 at (%.1f, %.1f, %.1f)): no lamp spot of the "
+            "dungeon is known here; its bloodstain on its last safe floor (%.1f, %.1f, %.1f)",
+            double(g_local_corpse.pos[0]), double(g_local_corpse.pos[1]), double(g_local_corpse.pos[2]),
+            double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]));
+        if (GuestChaliceRevive(s)) {
+            return true;
+        }
+        if (!g_local_safe.valid) {
+            return false;
+        }
+    }
     LampSpot sp;
-    if (f == deathrules::FallRespawn::SafeFloor) {
+    if (f == deathrules::FallRespawn::SafeFloor || f == deathrules::FallRespawn::BesideMember) {
         SafeFloorSpot(&sp, s.map_id, "guest revive on its last safe floor (a fall, no lamp in the loaded map)");
     } else {
         const float* rs = f == deathrules::FallRespawn::OwnLamp ? own_rs : host_rs;

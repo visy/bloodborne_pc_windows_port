@@ -165,6 +165,16 @@ int main() {
         assert(!EmevdSkipMatches(rules[0], 7200, 1003, 6, 1));
         assert(!EmevdSkipMatches(rules[0], 7300, 1003, 6, 0));
     }
+    {
+        // chalicelamp: a guest's dungeon lamp "Return to the Hunter's Dream" (m29 12907020's client end).
+        const std::vector<EmevdSkipRule> rules = ChaliceLampSkipRules();
+        assert(rules.size() == 1);
+        assert(EmevdSkipMatches(rules[0], 12907020, 1003, 6, 0));
+        assert(!EmevdSkipMatches(rules[0], 12907020, 2003, 49, 8));   // the warp itself runs
+        assert(!EmevdSkipMatches(rules[0], 12907020, 1003, 1, 7));    // the slot tests stay
+        assert(!EmevdSkipMatches(rules[0], 12907010, 1003, 6, 0));    // the lamp's lighting event: as is
+        assert(!rules[0].client_only && !rules[0].needs_travel);      // the host never ends there anyway
+    }
 
     // Doll placement: client-only skips of the re-roll in 12100110.
     {
