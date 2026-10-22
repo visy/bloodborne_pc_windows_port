@@ -162,10 +162,11 @@ std::vector<Spot> LampSpots() {
 
 /// The lamp the player stands at (its return point; 0 unknown).
 u32 HereLamp(const GameSnapshot& s) {
-    float me[3];
-    if (!PlayerPos(s.player, me)) return 0;
+    float drawn[3], phys[3];
+    const bool phys_ok = s.player && balance::ChrPosition(s.player, phys);
+    if (!PlayerPos(s.player, drawn) && !phys_ok) return 0;
     static const std::vector<Spot> spots = LampSpots();
-    return NearestLamp(spots, s.map_id, me, 15.0f);
+    return NearestLamp(spots, s.map_id, StandingPos(phys_ok, phys, drawn), 15.0f);
 }
 
 bool Flag(u32 id) {
