@@ -78,19 +78,18 @@ class SaveCheckTests(unittest.TestCase):
         self.assertEqual(r["drops"][0][:2], (96, 48))
 
 
-    def test_guest_save_world_state(self):
+    def test_guest_save_reads_in_a_save_editor_after_the_export(self):
         sys.path.insert(0, str(ROOT / "tests"))
-        from test_save_decode import world_save  # noqa: E402
+        from test_save_editor import make_save  # noqa: E402
         g = self.folder("inst1")
         slot = g / "user/savedata_party/1/CUSA00207/SPRJ0005"
         slot.mkdir(parents=True)
         (slot / "userdata0001").write_bytes(bytes(0x1000))  # an empty slot: not counted
-        (slot / "userdata0000").write_bytes(world_save())  # a guest's save written in the host's world, fixed
+        (slot / "userdata0000").write_bytes(make_save(guest=True))  # written in the host's world
         r = sc.check_saves(g)
-        self.assertEqual((r["status"], r["checked"], r["empty"]), ("ok", 1, []))
-        (slot / "userdata0000").write_bytes(world_save((0, 0, 0)))  # the same before the fix
-        r = sc.check_saves(g)
-        self.assertEqual((r["status"], r["empty"]), ("EMPTY", ["userdata0000"]))
+        self.assertEqual((r["status"], r["checked"], r["guest_written"], r["bad"]), ("ok", 1, ["userdata0000"], []))
+        (slot / "userdata0000").write_bytes(make_save()[:0x100000])  # a damaged save: the export cannot help
+        self.assertEqual(sc.check_saves(g)["status"], "EDITOR")
         self.assertEqual(sc.check_saves(self.folder("inst2"))["status"], "no saves")
 
 

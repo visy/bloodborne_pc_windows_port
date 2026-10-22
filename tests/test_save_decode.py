@@ -81,7 +81,7 @@ def world_save(blocks=(0x24, 0x2e, 0x14)):
 def test_world_state():
     s = sd.Save(world_save())
     assert s.world()["blocks"] == [0x24, 0x2e, 0x14] and s.world_empty() is False
-    empty = sd.Save(world_save((0, 0, 0)))  # written in the host's world before the 0.7.3 fix
+    empty = sd.Save(world_save((0, 0, 0)))  # written in the host's world
     assert empty.world()["size"] == 12 and empty.world_empty() is True
     broken = bytearray(world_save())
     broken[0x40] ^= 1  # the header no longer lines up

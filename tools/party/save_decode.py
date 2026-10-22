@@ -30,9 +30,10 @@ docs/party/event_flags.md):
   World state (the writer 0x156AA50): header +0x3C offset / +0x40 size of the own world's state, the blocks
   "CHR " (WorldChrMan), "OBJ ", "DECL" (WorldDecalMan; its "LCED" bytes are what save editors look for), each
   {u32 size, data}; +0x44 the position block, +0x48 its end counted from +0x3C, +0x4C / +0x50 the next block.
-  A save written in another player's world takes the blocks from the game's summon snapshot; one with three
-  empty blocks (12 zero bytes) lost the own world's state and broke save editors (fixed in 0.7.3 by
-  runtime_savepolicy_world_fix): --check-world exits 1 for it.
+  A save written in another player's world takes the blocks from the game's summon snapshot, which a party
+  join never fills: three empty blocks (12 zero bytes), no "LCED", and save editors that look for it read
+  the wrong bytes (docs/party/save_safety.md 5; the launcher's Export for save editor, scripts/save_editor.py,
+  makes an editor-readable copy). --check-world exits 1 for such a save.
 """
 import argparse, re, struct, sys
 from pathlib import Path
@@ -234,7 +235,7 @@ def main():
     ap.add_argument("--dump", action="store_true")
     ap.add_argument("--check-dup", action="store_true", help="exit 1 when a key item has two stacks")
     ap.add_argument("--check-world", action="store_true",
-                    help="exit 1 when the save has no world state (written in another player's world, before 0.7.3)")
+                    help="exit 1 when the save has no world state (written in another player's world)")
     ap.add_argument("--inc", default=str(Path(__file__).resolve().parents[2] / "gpu/shim/party/party_flags.inc"))
     ap.add_argument("--host-log", action="append", default=[])
     a = ap.parse_args()
@@ -246,8 +247,8 @@ def main():
     if w is None:
         print("world state: layout unknown")
     elif not any(w["blocks"]):
-        print("world state: EMPTY (written in another player's world without the own world's state; some save editors "
-              "cannot read it)")
+        print("world state: EMPTY (written in another player's world; save editors need the launcher's Export for "
+              "save editor)")
     else:
         print("world state: " + ", ".join(f"{m.decode()[::-1].strip()} {n} bytes" for m, n in zip(s.WORLD_MAGIC, w["blocks"])))
     keys = [(i, n) for _, i, n in s.goods() if 4000 <= i < 5000]

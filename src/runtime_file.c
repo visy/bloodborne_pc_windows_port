@@ -5,7 +5,6 @@
  * Paths containing ".." components are rejected rather than normalized. */
 #define _GNU_SOURCE
 #include "runtime.h"
-#include "save_policy.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -439,8 +438,6 @@ static int commit_file(const File *f) {
     if (!f->dirty) { close(f->host); unlink(f->temp); return 0; } /* opened for writing, not written */
     int e=fsync(f->host) ? errno : 0;
     close(f->host);
-    /* A party guest's character save written in the host's world keeps the own world's state. */
-    if (!e) runtime_savepolicy_world_fix_file(f->temp,f->commit);
     if (!e && rename(f->temp,f->commit)) e=errno;
     if (e) {
         fprintf(stderr,"Runtime: save file %s not replaced (%s); the old one is kept\n",f->path,strerror(e));

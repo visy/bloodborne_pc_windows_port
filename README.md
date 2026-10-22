@@ -410,6 +410,11 @@ before anyone is in the game):
   The launcher's *Party* tab has **Undo last party session** (itself undoable). After a session the
   launcher also checks the party save (characters load, no boss kill or lamp lost, level and play
   time never go down) and offers the undo if something looks wrong.
+- **Save editors.** A save the game made while you were a guest in someone else's world cannot be read
+  by save editors (the game leaves out your own world's state there). The launcher's *Party* tab has
+  **Export for save editor** (any single-player or party save, any slot: a copy the editor can open,
+  your save is not touched) and **Import from save editor** (the edited copy back into its slot, your
+  saves backed up first, put back the way the game wrote them so party progress stays).
 
 ### Deaths
 
@@ -564,6 +569,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
 | vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); Chalice Dungeon entry with a party (PR #8); co-op bug reports |
 | zackcage6 | Testing and bug reports |
+| Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) (GPL-3.0): its save parsing, ported in `tools/party/editor_check.py` to check that exported saves open in it |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
 included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license

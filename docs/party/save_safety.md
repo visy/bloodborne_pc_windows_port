@@ -118,26 +118,38 @@ lamps from the host's world" in load mode 1) has a 12-byte section, its session-
 the other sections differ only by what the session changed. Of 195 harness character saves it is the only
 one: most harness guests are killed before a save in the host's world.
 
-**What it broke.** The own world's state (dead enemies, objects, decals) was gone after going home, and
-editors that locate data by these blocks failed. The open-source Noxde/Bloodborne-save-editor (Rust,
-commit d8d0365, read only, not run) anchors the position on "LCED": without it it scans from byte 0 and takes
-an empty inventory entry for the position (y = NaN; editing the position then writes into the inventory).
-A Python port of its parse path (Offsets / Pos) read all other 1950 harness saves correctly; which editor
-the player used is not known, so the crash itself is inferred, not reproduced.
+**What it breaks.** Editors that locate data by these blocks. Noxde/Bloodborne-save-editor (Rust/Tauri,
+GPL-3, commit d8d0365; read, not built: no Rust toolchain here and no installers) finds everything by
+searching (`offsets.rs`, `position.rs`): "FACE" from 0xF000, the name 469 + 34028 bytes before it, "LCED"
+after "FACE", and the position after the first `FF FF FF FF 00*8` from "LCED" on
+(`Coordinates::new(..).unwrap()`, a panic when none). Without "LCED" it searches from byte 0 and takes
+the first empty inventory entry `{0, -1, 0, 0}` for the position: on the lamprule guest save at 0xA28C,
+(0, NaN, 0); its position edit writes there, into the inventory. `tools/party/editor_check.py` is a port
+of that parse path (exit 1 on such a save): all other harness saves read correctly, the guest save does
+not. No panic on that file by this reading (the empty inventory entry is always there), so the crash the
+player saw is not reproduced: which editor or version it was is not known.
 
-**The fix** (`runtime_savepolicy_world_fix`, called by `runtime_file.c`'s commit of a party session's
-`userdata0000..0009`): when the game's new save has three empty blocks and the file it replaces (or the
-`backupNNNN` beside it) has them, for the same character (name, play time not newer), the old blocks go into
-the new save, the rest of its data moves behind them and the header's +0x40/+0x44/+0x48/+0x4C follow. The
-own world's state is the one of the last save made at home, as vanilla's summon snapshot would hold; it
-stays through further saves in the host's world (each copies it from the one before). Nothing in the game's
-memory is changed. Log: `Saves: userdata0000 was written in another player's world without the own world's
-state ...: the N bytes of userdata0000 kept in it`. Off: `BB_SAVE_GUEST_WORLD_FIX=0`.
+**Not changed** (user decision 2026-10-22): the save format and what the game writes. A runtime fix that
+copied the blocks into the save at its commit was built and worked (run lp3: 5 guest saves in the host's
+world kept their 114 bytes, the lamps group 22/22) and was taken out again.
 
-Not changed: the position block of such a save holds the spot in the host's world (+0x15B0) while the header
-map is the own forced placement (+0x14F0); the Continue uses the forced placement (`PinOwnSpotTick`,
-`BB_PARTY_GUEST_PIN_SAVE_POS`). Editors show that host-world spot as the position.
+**Export for save editor / Import from save editor** (launcher, Party tab; `scripts/save_editor.py`):
+* export: any character save (`savedata` or `savedata_party`, slot 0..9) is copied to a folder the player
+  picks. A save with three empty blocks gets minimal blocks in the copy (each `{u32 20}` + magic and
+  version + the empty list's end `FF FF FF FF 00*8`, what the writer emits for a world with nothing
+  saved), the data behind them moves by 48 bytes and the header's +0x40/+0x44/+0x48/+0x4C follow (the
+  end of the data: the next block + 8 + its size + 27; the rest of the file is the game's uninitialized
+  buffer, `0x1569740` writes all 0x140000 bytes). `bbport_export.json` beside it: kind, slot, source and
+  export SHA-256, the character, what was changed (original bytes and the 48 tail bytes); for a party
+  save the party side files (`party_files\`).
+* import: the edited file must have the manifest beside it and parse (size, version 0x41, the header
+  lines up); asks first when the live slot changed since the export or the name changed; backs the folder
+  up to `user\save_backups\<folder>\<time>-before-editor-import`; takes the minimal blocks out again when
+  the editor left them as exported (an unedited export comes back byte for byte); writes through a temp
+  file; for a party save updates the slot's `party_characters.txt` line (name hash, play time) so the
+  game does not drop the slot's party state for an edited name.
 
-Checks: `save-policy-test` "a guest's save written in the host's world keeps the own world's state";
-`tools/party/save_decode.py --check-world` (exit 1 for an empty section) and `save_check.py`'s `saves` rule
-(EMPTY per guest character save), pytest `tests/test_save_decode.py`, `tests/test_save_check.py`.
+Checks: `tests/test_save_editor.py` (round trip on synthetic saves and on the test fixture: the guest-like
+save fails `editor_check`, its export passes, the import gives it back with only the edit), `save_check.py`'s
+`saves` rule (every guest character save: the export reads in the editor and comes back unchanged, else
+EDITOR), `save_decode.py --check-world`.
