@@ -1099,14 +1099,16 @@ void UpscalerTab() {
 
 void EffectsTab() {
     auto& s = BbSettings::Get();
+    // No "Lowest (2)": the game then draws nothing for models without a third detail level
+    // (the Lecture Building's floor).
     const char* lods[] = {T("Highest (-2)", "Максимальная (-2)"), T("Game default", "Как в игре"),
-                          T("Lower (1)", "Ниже (1)"), T("Lowest (2)", "Минимальная (2)")};
-    static constexpr int lod_values[] = {-2, 0, 1, 2};
+                          T("Lower (1)", "Ниже (1)")};
+    static constexpr int lod_values[] = {-2, 0, 1};
     int lod_index = 1;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 3; ++i) {
         if (lod_values[i] == s.model_lod) lod_index = i;
     }
-    Choice("lod", T("Model detail", "Детализация моделей"), lod_index, 4, [&](int i) { return lods[i]; },
+    Choice("lod", T("Model detail", "Детализация моделей"), lod_index, 3, [&](int i) { return lods[i]; },
            [](int) { return true; },
            T("Level of detail of models (game patch). Applies after restarting the game.",
              "Детализация моделей (патч игры). Применяется после перезапуска игры."),

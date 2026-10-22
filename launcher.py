@@ -180,7 +180,7 @@ def load_xml_patches(xml_path: Path = PATCHES_XML):
         for meta in tree.getroot().iter("Metadata"):
             if meta.get("AppVer") == "01.09" and meta.get("AppElf", "eboot.bin") == "eboot.bin":
                 name = meta.get("Name", "").strip()
-                if not name:
+                if not name or name in WITHHELD_PATCHES:
                     continue
                 author = meta.get("Author", "").strip() or "Unknown"
                 note = meta.get("Note", "").strip()
@@ -972,13 +972,18 @@ EFFECT_PATCHES = {
     "Restore Debug Camera": ("debug_camera", "1"),
     "Restore Debug Menu (READ NOTES)": ("debug_menu", "1"),
 }
-MODEL_LOD_PATCHES = {"Model LOD -2 (Highest)": "-2", "Model LOD 1 (Lower)": "1", "Model LOD 2 (Lowest)": "2"}
+# "Model LOD 2 (Lowest)" is not offered (WITHHELD_PATCHES): the game then draws nothing for a model
+# without a third level of detail, and some map floors have none (the Lecture Building's floor
+# showed the background through it). An older settings file that has it gets the Lower patch.
+MODEL_LOD_PATCHES = {"Model LOD -2 (Highest)": "-2", "Model LOD 1 (Lower)": "1", "Model LOD 2 (Lowest)": "1"}
+WITHHELD_PATCHES = {"Model LOD 2 (Lowest)"}
 
 
 def effect_patches_from_ini(ini: dict) -> set:
     names = {name for name, (key, on) in EFFECT_PATCHES.items() if str(ini.get(key, "")).strip() == on}
     lod = str(ini.get("model_lod", "0")).strip()
-    names |= {name for name, value in MODEL_LOD_PATCHES.items() if value == lod}
+    names |= {name for name, value in MODEL_LOD_PATCHES.items()
+              if value == lod and name not in WITHHELD_PATCHES}
     return names
 
 

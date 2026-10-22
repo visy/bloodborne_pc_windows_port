@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <string>
@@ -45,11 +46,27 @@ public:
     static void Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size);
     static void Note(const char* text);
 
+    /// BB_DRAW_SKIP_FILE (diagnostic, off by default): draws whose vertex or pixel shader hash
+    /// is listed in the file (hex, whitespace-separated; re-read at a flip when it changes) are
+    /// not recorded. Finds which draw puts a surface on screen, inside one game session.
+    static bool SkipDraw(u64 vs_hash, u64 ps_hash) {
+        const u32 count = skip_count.load(std::memory_order_acquire);
+        for (u32 i = 0; i < count; ++i) {
+            const u64 h = skip_hashes[i].load(std::memory_order_relaxed);
+            if (h == vs_hash || h == ps_hash) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 private:
     enum : u32 { Idle, Armed, Recording };
     static inline std::atomic<u32> state{Idle};
     static inline std::atomic<u64> flips{0};
     static inline std::atomic<VAddr> last_presented{0};
+    static inline std::array<std::atomic<u64>, 64> skip_hashes{};
+    static inline std::atomic<u32> skip_count{0};
 };
 
 } // namespace Vulkan

@@ -270,7 +270,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.volumetric_res = value == "full" ? 2 : value == "2x" || value == "double" ? 1
                          : value == "game" || value == "off" ? 0 : std::clamp(i, 0, 2);
     } else if (key == "model_lod") {
-        v.model_lod = std::clamp(i, -2, 2);
+        // 2 (the community patch "Model LOD 2 (Lowest)") is read as 1: the game draws nothing
+        // for a model without a third detail level, and some floors have none (the Lecture
+        // Building's floor showed the background through it).
+        v.model_lod = std::clamp(i, -2, 1);
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {

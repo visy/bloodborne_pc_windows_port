@@ -83,7 +83,13 @@ class IniSync(unittest.TestCase):
         for name, (key, on) in self.L.EFFECT_PATCHES.items():
             off_patch, on_patch = patches.EFFECTS[key]
             self.assertEqual(on_patch if on == "1" else off_patch, name)
-        self.assertEqual({v: k for k, v in self.L.MODEL_LOD_PATCHES.items()}, patches.MODEL_LOD)
+        # Each ini value applies the patch the launcher names for it; the withheld "Lowest" patch
+        # (it drops map floors) is written as Lower and patches.py applies Lower for an old 2.
+        shown = {v: k for k, v in self.L.MODEL_LOD_PATCHES.items() if k not in self.L.WITHHELD_PATCHES}
+        self.assertEqual(shown, {v: k for v, k in patches.MODEL_LOD.items() if v != "2"})
+        self.assertEqual(self.L.MODEL_LOD_PATCHES["Model LOD 2 (Lowest)"], "1")
+        self.assertEqual(patches.MODEL_LOD["2"], "Model LOD 1 (Lower)")
+        self.assertNotIn("Model LOD 2 (Lowest)", {p["name"] for p in self.L.load_xml_patches()})
 
     # ---- launch environment
     def test_no_game_setting_env(self):
