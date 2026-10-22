@@ -192,6 +192,8 @@ struct TravelStep {
     float yaw = 0;        // HostMove / GuestMove: rotation about Y (radians) when has_yaw
     bool has_yaw = false;
     int warp = 0;         // HostMove / GuestMove: 0 the bare chr warp +0x5F8, 1 ":native" the game's own player warp
+    double pin = 0;       // HostMove / GuestMove ":pin=S" (liftfix): held at the spot for S s (the bare chr warp every
+                          // frame) while the floor's collision streams in after a long warp (else the chr falls through)
     std::uint32_t buttons = 0;  // HostPress / GuestPress: pad buttons tapped (0.15 s)
     std::string map;      // HostMove / GuestMove "%NAME": only while the current map name contains it
     std::string args;     // HostStage / HostWalk / HostHeadstone
@@ -337,6 +339,8 @@ struct Test {
     Clock::time_point flag_since{};  // the next step's "?FLAG=V" condition met (its clock)
     Clock::time_point near_since{};  // the next step's "?near=X:Y:Z:R" condition met (its clock)
     Clock::time_point obj_since{};   // the next step's "?obj=ENTITY:ANIM" condition met (its clock)
+    Clock::time_point pin_until{};   // a move step's ":pin=S": the chr held at pin_pos until then
+    alignas(16) float pin_pos[4] = {0, 0, 0, 1}, pin_rot[4] = {0, 0, 0, 0};
     std::size_t near_step = ~std::size_t(0), obj_step = ~std::size_t(0);  // the step those two were met for:
                                      // latched (an arrival's stopped animation lasts a few frames only)
     int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
@@ -1705,6 +1709,18 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
     TargetAnimTick(t, now);
+    if (t.pin_until != Clock::time_point{}) {
+        // ":pin=S": the chr kept at the move's spot every frame until the floor's collision is in.
+        const std::uint64_t player = LocalPlayer();
+        std::uint64_t vt = 0, fn = 0;
+        if (now >= t.pin_until || !s.world_up || s.loading) {
+            t.pin_until = {};
+            Log("test: pin at (%.2f, %.2f, %.2f) released", double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]));
+        } else if (player && SafeGet(player, &vt) && vt && SafeGet(vt + 0x5f8, &fn) && fn) {
+            reinterpret_cast<void(BB_COOP_SYSV*)(std::uint64_t, const float*, const float*, std::uint32_t)>(fn)(
+                player, t.pin_pos, t.pin_rot, 1);
+        }
+    }
     // BB_PARTY_DIRECTOR_TEST_SOLO=1: the host steps without a cooperator, "joined" from the first
     // steady world on: in single player (no BB_PARTY) or as a party host alone (vanilla comparisons,
     // e.g. streamsync: does a neighbour map's kill stay dead when that map streams out and in).
@@ -2063,9 +2079,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                     player, pos, rot, 1);
             }
             if (TestInvincibleRequested()) SetTestInvincible(true);
-            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f (%s)%s", TravelStepName(step.kind), double(pos[0]),
+            if (step.pin > 0) {
+                std::memcpy(t.pin_pos, pos, sizeof pos);
+                std::memcpy(t.pin_rot, rot, sizeof rot);
+                t.pin_until = now + std::chrono::milliseconds(static_cast<int>(step.pin * 1000));
+            }
+            Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f (%s)%s%s", TravelStepName(step.kind), double(pos[0]),
                 double(pos[1]), double(pos[2]), double(rot[1]), native ? "the game's own player warp" : "bare chr warp",
-                TestInvincibleRequested() ? ", invincible" : "");
+                TestInvincibleRequested() ? ", invincible" : "", step.pin > 0 ? ", held there while the floor loads" : "");
         } else {
             Log("test: %s: no player / transform", TravelStepName(step.kind));
         }
@@ -3696,6 +3717,9 @@ void PartyDirector::ConfigureFromEnv() {
                     // X:Y:Z[:YAW]:native: the game's own in-world player warp (0x154B110) instead
                     // of the bare chr warp (the bug 7 A/B).
                     step.warp = item.find(":native") != std::string::npos ? 1 : 0;
+                    if (const std::size_t pn = item.find(":pin="); pn != std::string::npos) {
+                        step.pin = std::min(10.0, std::max(0.0, std::atof(item.c_str() + pn + 5)));
+                    }
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                         step.map = item.substr(pc + 1);
                     }
