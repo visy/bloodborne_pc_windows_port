@@ -361,7 +361,7 @@ struct TestState {
     u32 start = 0;         // start=ID: first a plain lamp warp there when the save is in another map
     bool started = false;
     enum Stage { Title, Settle, Walk, Press, Choose, Wait, Done } stage = Title;
-    double at = 0, steady_since = 0, release_at = 0, members_at = 0;
+    double at = 0, steady_since = 0, release_at = 0, members_at = 0, members_wait = 12.0;
     int presses = 0, downs = 0, want_downs = -1, confirms = 0;
     u32 target = 0;
 } g_t;
@@ -470,13 +470,17 @@ void TestTick(const GameSnapshot& s, double now) {
         if (g_t.members) {
             if (now - g_t.at >= 1.0) {
                 g_t.at = now;
-                const int coop = ReadGameState(true).cooperators;
-                if (coop >= 1 && g_t.members_at == 0) {
+                const GameSnapshot full = ReadGameState(true);
+                const int coop = full.cooperators;
+                // A summoned guest (lamprule smoke): in the host's world counts as members too.
+                const bool summoned = full.session_role == RoleClient;
+                if ((coop >= 1 || summoned) && g_t.members_at == 0) {
                     g_t.members_at = now;
-                    Log("test: %d cooperator(s) in the world", coop);
+                    g_t.members_wait = summoned ? 4.0 : 12.0;  // summoned: the world is the host's already
+                    Log("test: %d cooperator(s) in the world%s", coop, summoned ? " (summoned: in the host's world)" : "");
                 }
             }
-            if (g_t.members_at == 0 || now - g_t.members_at < 12.0) return;
+            if (g_t.members_at == 0 || now - g_t.members_at < g_t.members_wait) return;
         } else if (now - g_t.steady_since < 5.0) {
             return;
         }
