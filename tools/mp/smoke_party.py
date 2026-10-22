@@ -57,9 +57,9 @@ Phase fd (~3 min, 2 players, group `fall_deep`): guest 1, its own last lamp the 
   "perpetual spectate" report), and walk away from the lamp.
 Phase fdj (~4 min, 2 players, group `fall_deep`): the same at the report's own spot, the shaft beside
   Djura's tower in Old Yharnam (guest 1 walks off the ledge; the host's lamp ~150 m away).
-Phase ld (~4 min, 2 players, group `ladder`): host and guest each die on Central Yharnam's first ladder
-  and are revived in place at the lamp; the ladder state must be gone and a stick walk must reach four
-  points around the lamp (not only forward).
+Phase ld (~4 min, 2 players, group `ladder`): host and guest each take Cathedral Ward's ladder 2401024
+  from its foot and die on it (only once the ladder state is set), are revived in place at the lamp;
+  the ladder state must be gone and a stick walk must reach four points around the lamp.
 Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
   lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
@@ -887,43 +887,41 @@ def phase_fdj(only):
 
 
 # Phase ld (fallcam 3, ~4 min, 2 players, group `ladder`): a death on a ladder (a player's report: "dying
-# on a ladder makes it so you can only walk forward"). At Central Yharnam's first lamp 2412953 the host
-# pulls the lever 2411316 (the ladder 2411204 comes down; fixture 12410285 cleared), steps onto the
-# ladder from one side and dies on it (the die step); later guest 1 does the same from the other side.
-# Each is revived in place at the lamp (no load); its ladder state must be gone (ChrCtrl +0x38 +0x60
-# back to -1) and a stick walk to four points 3 m around the lamp (east, north, west, south) must move
-# it toward each one, sideways and backwards too, not only forward.
-LD_LAMP = (-36.85, 84.3)
+# on a ladder makes it so you can only walk forward"). The party travels to the Cathedral Ward lamp
+# 2402950; the host stands at the foot of the ladder 2401024 (its "Ascend Ladder" prompt: dlast), takes
+# it with Cross and dies on it: the die step `host_die:ladder` fires only once the chr's ladder state is
+# set (it waits up to 15 s, else no death). Later guest 1 does the same. Each is revived in place at the
+# lamp (~75 m away, no load); its ladder state must be gone and a stick walk to four points 3 m around
+# the lamp (east, north, west, south) must move it toward each one, sideways and backwards too.
+LD_LAMP = (17.58, 102.65)
 LD_WALK = [(3.0, 0.0), (0.0, 3.0), (-3.0, 0.0), (0.0, -3.0)]   # east, north, west, south of the lamp
 LD_UNTIL = [r"0:travel step (\d+)/\1: host_stick", r"1:travel step (\d+)/\1: guest_stick"]
 
 
 def ld_walks(who):
-    return ["%s_stick=%.2f:%.2f:0.5:10@%d%%m24_01!" % (who, LD_LAMP[0] + dx, LD_LAMP[1] + dz, 3 if k == 0 else 1)
+    return ["%s_stick=%.2f:%.2f:0.5:10@%d%%m24_00!" % (who, LD_LAMP[0] + dx, LD_LAMP[1] + dz, 3 if k == 0 else 1)
             for k, (dx, dz) in enumerate(LD_WALK)]
 
 
+def ld_climb(who, first):
+    return ["%s_obj=2401024:1.0:180@%d%%m24_00" % (who, first),  # the ladder's foot ("Ascend Ladder")
+            "%s_press=0x4000@1%%m24_00!" % who,                     # Cross: onto the ladder
+            "%s_die:ladder@2%%m24_00" % who,                        # dies on it (only while on it)
+            "%s_press=0@3%%m24_00!" % who]                          # up again at the lamp
+
+
 def phase_ld(only):
-    host = ",".join(["log_pos=0.5",
-                     "host_obj=2411316:1.0:0@15%m24_01",        # the ladder's lever
-                     "host_press=0x4000@4%m24_01!",             # pull: the ladder comes down
-                     "host_obj=2411204:0.8:0@8%m24_01",         # in front of the ladder
-                     "host_press=0x4000@2%m24_01!",             # onto it
-                     "host_die@3%m24_01",                       # dies on it
-                     "host_press=0@3%m24_01!"] + ld_walks("host"))
-    g1 = ",".join(["log_pos=0.5",
-                   "guest_press=0@10%m24_01!", "guest_press=0@10%m24_01!", "guest_press=0@10%m24_01!",
-                   "guest_press=0@10%m24_01!",                  # the host's turn first
-                   "guest_obj=2411204:0.8:180@2%m24_01",        # the ladder's other side
-                   "guest_press=0x4000@2%m24_01!",
-                   "guest_die@3%m24_01",
-                   "guest_press=0@3%m24_01!"] + ld_walks("guest"))
+    common = "log_pos=0.5,watch_text=Ladder"
+    host = ",".join([common, "host_warp=2402950@15"] + ld_climb("host", 10) + ld_walks("host"))
+    g1 = ",".join([common, "guest_press=0@10%m24_00!", "guest_press=0@10%m24_00!", "guest_press=0@10%m24_00!",
+                   "guest_press=0@10%m24_00!"]                  # the host's turn first
+                  + ld_climb("guest", 2) + ld_walks("guest"))
     return dict(
         name="ld", seconds=420, count=2, headless=0, pads=(0, 1),
-        env=["BB_PARTY_TEST_START_LAMP=2412953", "BB_PARTY_PROGRESS_TEST_CLEAR=12410285",
-             "BB_PARTY_B2_REVIVE_DIFF=1"],
+        env=["BB_PARTY_B2_REVIVE_DIFF=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
-        watch=["--watch", "local death: HP 0=hp0@0.5", "--watch", r"revive view \(=view@0.2,3"],
+        watch=["--watch", r"die:ladder: on the ladder=onladder@0.1", "--watch", "local death: HP 0=hp0@0.5",
+               "--watch", r"revive view \(=view@0.2,3"],
         crash=[], until=LD_UNTIL, until_hold=4,
     )
 
@@ -2224,9 +2222,12 @@ def check_ld(v, L):
     walks to four points around the lamp each move the chr toward its point (deathrules WalkedToward)."""
     need(v, L, "ld join: 2 players", 0, r"cooperators 0 -> 1")
     for i, who in ((0, "host"), (1, "guest")):
+        on = L.find(i, r"%s_die:ladder: on the ladder \(ladder state (\d+)\)" % who)
+        v.step("ld %s on the ladder before the die step (its ladder state set)" % who, bool(on),
+               on[1][:120] if on else (L.find(i, r"%s_die:ladder: NOT on a ladder" % who) or (0, "no ladder line"))[1][:120])
         d = L.find(i, r"travel step \d+/\d+: %s_die" % who)
-        if not d:
-            v.step("ld %s died (the die step)" % who, False, "no die step")
+        if not on or not d:
+            v.step("ld %s died on the ladder (the die step)" % who, False, "not on the ladder: no death taken")
             continue
         hp0 = L.find(i, r"local death: HP 0 .*ladder state (-?\d+)", d[0] - 1)
         st = int(re.search(r"ladder state (-?\d+)", hp0[1]).group(1)) if hp0 else None
