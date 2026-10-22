@@ -1000,7 +1000,7 @@ def phase_cl(only):
 # limbo); after it the fight must still run for it (its host-entered flag 1, its own guest flag 0,
 # the host's fight not reset), and its walk through the fog must join the fight. Guest 2 dies
 # outside the fog meanwhile: with the fight on it lies in its limbo (no load of its own).
-BF_UNTIL = [r"1:guest_use goods=100[\s\S]*went through boss fog", r"0:boss fog: slot 1 went in",
+BF_UNTIL = [r"1:guest_use goods 100[\s\S]*went through boss fog", r"0:boss fog: slot 1 went in",
             r"2:guest: dead in a boss fight|travels alone \(death\)"]
 
 
@@ -2336,7 +2336,7 @@ def check_bf(v, L):
     on = need(v, L, "bf the host's fight is on (bar)", 0, r"boss health bar shown", hm or 0)
     if on is None:
         return
-    mark = need(v, L, "bf guest 1 uses a Hunter's Mark in the fight", 1, r"guest_use goods=100", on)
+    mark = need(v, L, "bf guest 1 uses a Hunter's Mark in the fight", 1, r"guest_use goods 100", on)
     if mark is not None:
         need(v, L, "bf guest 1: a re-join with the host's snapshot", 1,
              r"travels alone \(hunters_mark\) to .*a re-join with the host's snapshot", mark - 1)
@@ -2344,19 +2344,19 @@ def check_bf(v, L):
         arr = need(v, L, "bf guest 1 back in the host's world", 1, r"arrived in the host world \(flow 4\)", mark)
         if arr is not None:
             need(v, L, "bf guest 1 sees the fight running (host-entered 1, its own fog flag 0)", 1,
-                 r"boss fogs of this block: .*\[12414811: read 1 intro 1 host 1 dead 0", arr - 15, arr + 10)
-            none_of(v, L, "bf guest 1: no stale fog flag", r"already 1 when this stay began", arr - 15, insts=(1,))
-            bar = L.find(1, r"boss health bar shown", arr - 15)
+                 r"boss fogs of this block: .*\[12414811: read 1 intro 1 host 1 dead 0", arr - 0.5, arr + 10)
+            none_of(v, L, "bf guest 1: no stale fog flag", r"already 1 when this stay began", mark, insts=(1,))
+            bar = L.find(1, r"boss health bar shown", mark + 0.5)  # after the load's reset
             v.step("bf guest 1's boss bar after its load (shown for every member in the map while the fight runs)",
                    True, ("+%.1f s (back +%.1f s)" % (bar[0], arr)) if bar else "not shown before its walk-in")
             walk = L.find(1, r"travel step \d+/\d+: guest_obj", arr)
             went = need(v, L, "bf guest 1 walks through the fog", 1, r"guest: went through boss fog", walk[0] if walk else arr)
             if went is not None:
-                none_of(v, L, "bf guest 1 did not report before its walk", r"guest: went through boss fog", arr - 15,
+                none_of(v, L, "bf guest 1 did not report before its walk", r"guest: went through boss fog", mark,
                         walk[0] if walk else went - 0.1, insts=(1,))
                 need(v, L, "bf the host: guest 1 joins the running fight (nothing to open)", 0,
                      r"boss fog: slot 1 went in \(flag 12414801\); nothing to open \(host in 1", went - 0.5)
-                need(v, L, "bf guest 1 in the fight (bar)", 1, r"boss health bar shown", arr - 15)
+                need(v, L, "bf guest 1 in the fight (bar)", 1, r"boss health bar shown", mark + 0.5)
         none_of(v, L, "bf the host's fight is never reset", r"boss health bar: reset|host: rest load|a wipe; the",
                 on, insts=(0,))
     d2 = need(v, L, "bf guest 2 dies outside the fog", 2, r"travel step \d+/\d+: guest_die", on)
