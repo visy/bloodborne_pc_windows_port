@@ -154,7 +154,7 @@ inline std::string HostRefusalText(Refusal r, int wait_s) {
     case Refusal::NotStanding: return "Gather the party: not on a ladder or in the air";
     case Refusal::NoGuests: return "Gather the party: no guests connected";
     case Refusal::NotHost: return "Gather the party: only the host gathers";
-    case Refusal::Off: return "Gather the party is off (System > Shared world)";
+    case Refusal::Off: return "Gather the party is off (System > Party rules: World)";
     default: return std::string("Gather the party: ") + RefusalReason(r);
     }
 }

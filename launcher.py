@@ -80,7 +80,7 @@ PARTY_LAN_CODE_EXAMPLE = "BBP3-PAJY-EAMH-7TD"
 PARTY_HOSTPORT_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+):(\d{1,5})$")
 MP_INSTANCES = APP_DIR / "tools" / "mp" / "instances.py"
 PARTY_GUIDE = APP_DIR / "docs" / "PARTY.md"
-# Party rules & sync dialog. Combos: (label, env value); the first entry is the game's default.
+# The Party Rules / My Party tabs' combos: (label, env value); the first entry is the game's default.
 PARTY_START_CHOICES = [("After the prologue (recommended)", "prologue_solo"), ("Right away", "immediate")]
 PARTY_INSIGHT_CHOICES = [("Same as the host (default)", "parity"), ("Full bonus", "full"),
                          ("Game's own (+1 only)", "0")]
@@ -152,9 +152,9 @@ PARTY_INI_SWITCHES = [
     ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
     ("party_gather", "BB_PARTY_GATHER", True),
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
-    # 0.7.3: covenant outcomes per player (the host's rule; System > Shared world)
+    # 0.7.3: covenant outcomes per player (the host's rule; System > Party rules: World)
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
-    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Shared world)
+    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Party rules: World)
     ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
     # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
     # System > Deaths & revives)
@@ -162,13 +162,299 @@ PARTY_INI_SWITCHES = [
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
-    # stays) and what else cleanses it (the host's rules; System > Deaths & revives)
+    # stays) and what else cleanses it (the host's rules; System > Party rules: Rot)
     ("party_rot", "BB_PARTY_ROT", False),
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
-    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Shared world)
+    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party rules: World)
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
+]
+# Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
+# other game settings; written one key at a time): (key, the game's default).
+PARTY_INI_FLAGS = [
+    ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
+    ("party_pings", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
+    # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
+    ("party_toasts", True), ("party_guest_lamps", True),
+]
+
+# ---- The party settings tabs (0.7.3, user request): the Party tab holds hosting / joining /
+# connection; these two hold the party's settings, one table entry per row (build_party_settings_tab).
+#  - PARTY_RULES_TAB ("Party Rules", the game's System > Party rules: ... pages): what the HOST decides
+#    for the whole party - the party_balance Rules sent to every guest (party_status HostRule,
+#    friendly fire, shared lamps); a guest sees the host's values read-only in the game.
+#  - MY_PARTY_TAB ("My Party", System > My party: ...): what each player chooses for itself (its
+#    screen, notices, what it gets as a guest, story sync, saves).
+# A section: (column, row, title, rows). A row:
+#   ("check", key, label, tooltip)            a checkbox: a PARTY_SWITCHES / PARTY_INI_SWITCHES key
+#   ("check", key, label, tooltip, needs)     (saved with the party rules) or a PARTY_INI_FLAGS key
+#                                             (its own bbport.ini key); `needs`: greyed while the
+#                                             checkbox of that key is off
+#   ("combo", var attribute, label, choices, tooltip, width)   a combobox, saved with the party rules
+# New rows: add the key to PARTY_INI_SWITCHES (or PARTY_INI_FLAGS) and one row here.
+PARTY_RULES_TAB_TITLE = "Party Rules"
+PARTY_RULES_TAB_INTRO = ("The host's rules for the whole party: they apply when you host. When you join a party, "
+                         "the host's settings count and yours are kept for when you host (in the game a guest "
+                         "sees the host's read-only, System > Party rules). Enemy scaling: in the game, "
+                         "System > Party rules: Enemies.")
+PARTY_RULES_TAB = [
+    (0, 1, "World", [
+        ("check", "party_kill_record", "Enemies stay dead",
+         "An enemy the party killed is dead on every player's game: a kill across an area border "
+         "reaches the others, and an enemy that comes back alive when its area loads again as you "
+         "walk is put down again. Only a rest or a party wipe brings enemies back. The host's "
+         "setting; guests follow it. Off: a kill another player did not see can leave the enemy "
+         "standing on their game. Default: on (bbport.ini party_kill_record; in the game: System > Party rules: World)."),
+        ("check", "party_gather", "Host can gather the party",
+         "Lets the host bring every guest to it with System > Party > Gather the party (each guest "
+         "is asked first and may say no). The host's setting. Off: the row says gathering is off. "
+         "Default: on (bbport.ini party_gather; in the game: System > Party rules: World)."),
+        ("check", "party_npc_mirror", "NPCs as in the host's world",
+         "An NPC that is gone from the host's world (moved on by a story event, such as the one "
+         "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
+         "Default: on (bbport.ini party_npc_mirror; in the game: System > Party rules: World)."),
+        ("check", "party_covenant_per_player", "Covenant outcomes per player",
+         "How the covenant quests end stays in each player's own world and save: Alfred killing "
+         "Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates. While "
+         "you are summoned the host's world shows the host's state; nothing of it reaches your "
+         "save, and nothing of yours reaches the host's. Lamps, bosses, doors and other quests "
+         "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
+         "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
+         "System > Party rules: World)."),
+        ("check", "party_travel_vote", "Party votes on travel",
+         "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
+         "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
+         "and everyone is told who said no or did not answer. The host's setting; guests see it. "
+         "Default: off (bbport.ini party_travel_vote; in the game: System > Party rules: World)."),
+        ("check", "party_npc_fights", "NPC hunters fight the whole party",
+         "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
+         "DLC hunters) turns on the guests too (Brador should show for guests too; not tried yet): "
+         "everyone sees and fights the same hunter, and its death counts for all. The host's "
+         "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
+         "System > Party rules: World)."),
+    ]),
+    (0, 2, "Deaths", [
+        ("check", "party_host_limbo_revive", "Get up after a boss kill",
+         "When you die in a boss fight and the others kill the boss, you get up right there in "
+         "the arena (where you fell, or beside a living hunter), with no loading screen; your "
+         "Blood Echoes stay in your bloodstain. Host and guests alike; the host's setting. Off: a host's death "
+         "takes the whole party's respawn loading screen at the host's lamp, a guest gets up "
+         "at the host's lamp. "
+         "Default: on (bbport.ini party_host_limbo_revive; in the game: System > Party rules: Deaths)."),
+        ("check", "party_host_revive", "Host gets up without a loading screen",
+         "When the host dies, it gets up at its lamp in the loaded area with no loading screen for "
+         "anyone (a lamp in another area: the host loads alone). Off: the whole party gets the "
+         "respawn loading screen. Host's setting. Default: on (bbport.ini party_host_revive; in "
+         "the game: System > Party rules: Deaths)."),
+        ("check", "party_any_kidnap", "Anyone can be abducted",
+         "When a Snatcher grabs a guest in the host's world, the whole party is taken to the "
+         "Hypogean Gaol in Yahar'gul, just as when the host is grabbed: one loading screen for "
+         "everyone, all of you wake up in the cell together. Only the first kidnap of the host's "
+         "world does this, as in the game. The host's setting; guests follow it. Off: only a "
+         "grabbed host takes the party there, a grabbed guest just dies. The waking scene plays "
+         "for everyone either way. Default: on (bbport.ini party_any_kidnap; in the game: "
+         "System > Party rules: Deaths)."),
+    ]),
+    (1, 1, "PvP & lamps", [
+        ("check", "party_friendly_fire", "Friendly fire / PvP",
+         "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
+         "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
+         "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
+         "when you switch it. Also in the game: System > Party rules: PvP & lamps (live). Default: off "
+         "(bbport.ini party_friendly_fire)."),
+        ("check", "party_share_lamps", "Shared lamps",
+         "Host only: a lamp any party member lights in your world is lit for everyone, in "
+         "each member's own save too, and your lamps reach the guests' saves. Your setting "
+         "is the party's rule. Also in the game: System > Party rules: PvP & lamps (Shared lamps). "
+         "Default: on (bbport.ini party_share_lamps)."),
+        ("check", "party_guests_bring_lamps", "Guests bring their lamps",
+         "Host only: a joining guest's lamps from its own world light up in yours too "
+         "(needs Shared lamps). Off: your world keeps its own lamps; any lamp a party "
+         "member lights in it is saved for everyone. Your setting is the party's rule. "
+         "Also in the game: System > Party rules: PvP & lamps. Default: off (bbport.ini "
+         "party_guests_bring_lamps)."),
+    ]),
+    (1, 2, "Rot", [
+        ("check", "party_rot", "Rot on death",
+         "Each death stacks one penalty, picked at random, up to 5: max HP -10 %, max stamina -10 %, "
+         "stamina costs +10 %, rally -15 % or item discovery -10. Resting at a lamp (even just "
+         "opening its travel menu) or levelling up cleanses it. The host's setting counts for the "
+         "whole party. Default: off (bbport.ini party_rot; in the game: System > Party rules: Rot)."),
+        ("check", "party_rot_cleanse_boss", "    A boss kill cleanses it",
+         "When a boss dies, every party member in the host's world loses all their rot, "
+         "alive or dead in that fight. Needs Rot on death. Default: on (bbport.ini "
+         "party_rot_cleanse_boss; in the game: System > Party rules: Rot).", "party_rot"),
+        ("check", "party_rot_cleanse_killer", "    Killing your killer cleanses it",
+         "When the enemy that killed you dies (anyone in the party may kill it), you lose "
+         "the rot of that death. A fall or a trap has no killer; a rest brings the killer "
+         "back. Needs Rot on death. Default: on (bbport.ini party_rot_cleanse_killer; in "
+         "the game: System > Party rules: Rot).", "party_rot"),
+        ("check", "party_rot_cleanse_echoes", "    Retrieving your Blood Echoes cleanses it",
+         "Picking up your bloodstain removes the rot of the death that dropped it (not a "
+         "second time if your killer already died). Needs Rot on death. Default: on "
+         "(bbport.ini party_rot_cleanse_echoes; in the game: System > Party rules: Rot).", "party_rot"),
+    ]),
+]
+MY_PARTY_TAB_TITLE = "My Party"
+MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what you get as a guest, story sync "
+                      "and saves. Each player chooses them for itself (in the game: System > My party).")
+MY_PARTY_TAB = [
+    (0, 1, "Display", [
+        ("check", "party_hud", "Party HUD",
+         "Your companions' names and health in the bottom left corner of the game, "
+         "greyed while they are not in your world; on the same map their distance, a "
+         "direction arrow and a name tag above them. Never shown in single-player. Also "
+         "in the game: System > My party: Display > Party HUD. Default: on (bbport.ini "
+         "party_hud)."),
+        ("check", "party_name_tags", "Party name tags",
+         "On: in a party our name plate (name and a thin health bar) above each "
+         "companion replaces the game's own phantom plate, which hides behind any "
+         "tree or corner. Off: the game's own plate, as in the original game. Also in "
+         "the game: System > My party: Display > Party name tags. Default: on (bbport.ini "
+         "party_name_tags)."),
+        ("check", "party_pings", "Pings",
+         "Hold the touchpad (keyboard Tab) and press R3 (Q), or press V: a marker on the "
+         "spot you look at. Every party member sees it through walls with its distance "
+         "in metres, in your colour, for 10 seconds. Also in the game: System > My party: Display. "
+         "Default: on (bbport.ini party_pings)."),
+        ("check", "party_through_walls", "Show party through walls",
+         "A small diamond with the distance on every companion on your map, drawn over "
+         "walls and trees in the companion's colour. Also in the game: System > My party: Display. "
+         "Default: off (bbport.ini party_through_walls)."),
+        ("check", "party_stain_marker", "Bloodstain marker",
+         "A red drop with \"Blood Echoes\" and the distance on the bloodstain of your lost "
+         "echoes in the host's world, drawn over walls. The bloodstain is there either "
+         "way. Also in the game: System > My party: Display. Default: off (bbport.ini "
+         "party_stain_marker)."),
+    ]),
+    (0, 2, "Look & notices", [
+        ("check", "party_glow_off", "Companions without glow",
+         "On: the other hunters of the party look like normal hunters on your screen, "
+         "without the game's blue, glowing phantom look. Off: that look, as in the "
+         "original game. Only how you see them: they stay cooperators. Also in the game: "
+         "System > My party: Look & notices. Default: on (bbport.ini party_glow_off)."),
+        ("check", "party_toasts", "Join/leave notices",
+         "A short notice in a top corner when a hunter joins or leaves the party. Also in the game: "
+         "System > My party: Look & notices. Default: on (bbport.ini party_toasts)."),
+    ]),
+    (0, 4, "Start & saves", [
+        ("combo", "party_start_var", "Party starts:", [c[0] for c in PARTY_START_CHOICES],
+         "When a player counts as ready to be summoned. After the prologue (recommended): once the "
+         "player has seen the opening, reached the Hunter's Dream for the first time and taken a "
+         "weapon; until then the others see '(prologue)' next to the name. Right away: as soon as "
+         "the opening cutscene is over (summons inside the clinic, before anyone has a weapon - "
+         "experimental). Each player's own setting; keep it the same for everyone. "
+         "Default: After the prologue (BB_PARTY_START=prologue_solo|immediate).", 26),
+        ("combo", "party_backup_minutes_var", "Back up every (min):", PARTY_BACKUP_MINUTES_CHOICES,
+         "During a party session the game copies the save folder to user\\save_backups at the start "
+         "and then every N minutes (0 = only at the start). README.txt there explains restoring. "
+         "Default: 10 (BB_SAVE_BACKUP_MINUTES).", 6),
+        ("combo", "party_backup_keep_var", "Backups to keep:", PARTY_BACKUP_KEEP_CHOICES,
+         "How many backups are kept; the oldest are deleted. Backups that fail the save check are "
+         "kept separately, so a broken save never pushes good backups out. "
+         "Default: 10 (BB_SAVE_BACKUP_KEEP).", 6),
+        ("check", "party_restart", "Restart the game after a crash",
+         "If the game crashes during a party session it starts again by itself, continues the "
+         "save and rejoins the party (the host keeps your place for 60 s). At most 5 restarts "
+         "in 10 minutes. Default: on (BB_PARTY_RESTART)."),
+    ]),
+    (0, 3, "Story", [
+        ("check", "party_npc_talk", "Share NPC dialogue",
+         "When a companion near you talks to an NPC you get the conversation too: "
+         "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
+         "no menu opens). Range: in the game, System > My party: Story > NPC dialogue "
+         "range (default 25 m). Default: on (bbport.ini party_npc_talk)."),
+        ("check", "party_progress", "Share story progress",
+         "The host's progress - bosses killed, lamps lit, shortcuts and doors opened, key "
+         "events - is copied into each guest's own save, so the guests' worlds keep up with "
+         "the host's. Needs to be on for the host and for each guest. "
+         "Default: on (bbport.ini party_progress; in the game: System > My party: Story)."),
+        ("check", "party_progress_npc", "    Also NPC quests",
+         "NPC quest choices are shared: the first choice anyone makes (Eileen, Alfred, "
+         "Djura ...) applies to the host's world and every player's save. Guest's setting. "
+         "Default: on (bbport.ini party_progress_npc; in the game: System > My party: Story).", "party_progress"),
+        ("check", "party_story", "Share cutscenes and endings",
+         "Every guest also sees the cutscenes the host triggers (shown again in the guest's own "
+         "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
+         "the ending the host gets plays for everyone. Needs to be on for the host and for "
+         "each guest. Default: on (bbport.ini party_story; in the game: System > My party: Story)."),
+        ("check", "party_story_mirror", "    Play them live with the host",
+         "A guest in the host's world watches the cutscene at the same time as the "
+         "host. Off: the guest sees it later, back in their own world. Guest's "
+         "setting. Default: on (bbport.ini party_story_mirror; in the game: System > My party: Story).",
+         "party_story"),
+    ]),
+    (1, 1, "Deaths", [
+        ("check", "party_guest_revive_inplace", "Get up without a loading screen",
+         "A guest who dies gets up at the host's lamp right away, with no loading screen (after a "
+         "fall: the respawn load). Off: every death takes the respawn loading screen. Applies to "
+         "you while you are a guest. Default: on (bbport.ini party_guest_revive_inplace; in the "
+         "game: System > My party: Deaths)."),
+        ("check", "party_guest_respawn", "Respawn at the host's lamp",
+         "A guest who dies comes back at the host's last lamp and is summoned again, instead of "
+         "being sent home to their own world. Applies to you while you are a guest. "
+         "Default: on (bbport.ini party_guest_respawn; in the game: System > My party: Deaths)."),
+        ("check", "party_guest_refill", "Refill vials and bullets",
+         "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
+         "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
+         "guest. Default: on (bbport.ini party_guest_refill; in the game: System > My party: Deaths)."),
+    ]),
+    (1, 2, "World", [
+        ("check", "party_guest_lamps", "Guests use lamps",
+         "Guests may use lamps and the Dream's headstones; the host leads and the whole party "
+         "travels. After a restart. Default: on (bbport.ini party_guest_lamps; in the game: "
+         "System > My party: World)."),
+        ("check", "party_guest_mark", "Guests can use Hunter's Mark",
+         "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
+         "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
+         "Off: guests cannot use it, as in the normal game. Default: on (bbport.ini party_guest_mark; "
+         "in the game: System > My party: World)."),
+        ("check", "party_open_world", "Open world (no co-op area walls)",
+         "Removes the walls the game puts on area borders while a helper is in your world, "
+         "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
+         "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > My party: World)."),
+        ("check", "party_chalice_rejoin", "Stay in the host's Chalice Dungeon",
+         "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
+         "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
+         "could not follow) goes back to their own world and is summoned into the dungeon again "
+         "automatically. A guest who chose to leave (\"alone\" at a lamp, their own Hunter's Mark) "
+         "stays out until they press Party > Rejoin. Applies to you while you are a guest. Default: on "
+         "(bbport.ini party_chalice_rejoin; in the game: System > My party: World)."),
+    ]),
+    (1, 3, "Rewards", [
+        ("check", "party_full_rewards", "Full rewards for guests",
+         "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
+         "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
+         "to you while you are a guest. Default: on (bbport.ini party_full_rewards; in the game: "
+         "System > My party: Rewards)."),
+        ("check", "party_items", "Share the host's item rewards",
+         "Boss drops, key items and gifts the host receives (which guests never get in the "
+         "normal game) are given to each guest too, in their own world, once each. "
+         "Default: on (bbport.ini party_items; in the game: System > My party: Rewards)."),
+        ("check", "party_grant_bells", "Give the bells",
+         "Gives each player the Beckoning Bell and the Small Resonant Bell once the prologue is "
+         "done, so nobody has to buy or find them. Automatic summoning does not need them; they "
+         "are for ringing by hand. Default: on (bbport.ini party_grant_bells; in the game: "
+         "System > My party: Rewards)."),
+        ("check", "party_key_view", "Own key items as a guest",
+         "While you are a guest in the host's world, your Key Items tab shows your own keys, "
+         "badges and tools. Off: the game's view for a visiting hunter (an empty list; your save "
+         "keeps them). Applies to you while you are a guest; at the next start. "
+         "Default: on (bbport.ini party_key_view; in the game: System > My party: Rewards)."),
+        ("check", "party_key_items_summoned", "    Key items at once",
+         "A key item the host's world gives you (Oedon Tomb Key, a badge) is yours "
+         "right away, while you are still in the host's world. Off: it waits until "
+         "you are back in your own world. Needs Own key items. Default: on "
+         "(bbport.ini party_key_items_summoned; in the game: System > My party: Rewards).", "party_key_view"),
+        ("combo", "party_insight_var", "Insight for bosses:", [c[0] for c in PARTY_INSIGHT_CHOICES],
+         "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
+         "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "
+         "+1. Game's own: only the +1 the game gives a helper. "
+         "Default: Same as the host (bbport.ini party_guest_insight=parity|full|0; in the game: "
+         "System > My party: Rewards).", 24),
+    ]),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -529,7 +815,7 @@ PARTY_RENDEZVOUS_TIP = (
     "your party can compute, so the host finds you and punches through both routers without a guest code. "
     "DHT nodes can see your IP, like with any torrent client. Both the host and the guest must turn it on. "
     "Off: the guest sends the host its guest code (the host uses Add a guest code), or use port forwarding "
-    "or a VPN. Also in the game: System > Party members. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
+    "or a VPN. Also in the game: System > Party network. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
 
 
 PARTY_MEMBER_RELAY_TIP = (
@@ -589,7 +875,7 @@ def party_env(s: dict) -> dict:
     # Always the party saves (user\savedata_party): co-op sync never touches a single-player save
     # (docs/party/ingame_flow.md); the old "shared" choice is gone.
     env["BB_PARTY_SAVE"] = "separate"
-    # Party rules & sync dialog (defaults = the game's defaults, docs/PARTY.md)
+    # The My Party tab's launch options (defaults = the game's defaults, docs/PARTY.md)
     start = str(s.get("party_start", "") or "")
     env["BB_PARTY_START"] = start if start in dict(PARTY_START_CHOICES).values() else PARTY_START_CHOICES[0][1]
     minutes = str(s.get("party_backup_minutes", "10"))
@@ -962,7 +1248,7 @@ def ini_flag_value(ini: dict, key: str, default: bool) -> bool:
 
 
 def party_insight_label(ini: dict) -> str:
-    """bbport.ini party_guest_insight (parity / full / 0) as the Party Rules & Sync combo's label."""
+    """bbport.ini party_guest_insight (parity / full / 0) as the My Party tab's combo label."""
     value = str(ini.get("party_guest_insight", "")).strip().lower()
     value = "0" if value == "off" else value
     return next((label for label, v in PARTY_INSIGHT_CHOICES if v == value), PARTY_INSIGHT_CHOICES[0][0])
@@ -1708,7 +1994,7 @@ class BloodborneLauncher(tk.Tk):
         # Settings notebook: dark tabs, the selected one joins the card below it
         style.configure("TNotebook", background=bg_dark, borderwidth=0, tabmargins=(0, 0, 0, 0),
                         bordercolor="#3e3e42", lightcolor=bg_card, darkcolor=bg_card)
-        style.configure("TNotebook.Tab", background="#2a2a2c", foreground="#9a9a9a", padding=(12, 5),
+        style.configure("TNotebook.Tab", background="#2a2a2c", foreground="#9a9a9a", padding=(8, 5),
                         font=("Segoe UI", 9), bordercolor="#3e3e42", lightcolor="#2a2a2c",
                         darkcolor="#2a2a2c", focuscolor=bg_card)
         style.map("TNotebook.Tab",
@@ -1937,6 +2223,11 @@ class BloodborneLauncher(tk.Tk):
         # 0.7.2: a joining guest's own lamps in the host's world, a host rule (party_guests_bring_lamps, off).
         self.party_guests_bring_lamps = tk.BooleanVar(
             value=ini_flag(bbport_ini_path(), "party_guests_bring_lamps", False))
+        # 0.7.3: join/leave notices and guests using lamps (game settings, also in the game's menus)
+        self.party_toasts = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_toasts"))
+        self.party_guest_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_guest_lamps"))
+        # The Party Rules / My Party checkboxes that are one bbport.ini key each (PARTY_INI_FLAGS)
+        self.party_flag_vars = {key: getattr(self, key) for key, _ in PARTY_INI_FLAGS}
         self.party_separate_save = tk.BooleanVar(value=self.settings.get("party_separate_save", True))
         self.party_port_var = tk.StringVar(value=str(self.settings.get("party_port", PARTY_DEFAULT_PORT)))
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
@@ -1952,7 +2243,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_lan_code_var = tk.StringVar(value=_lan)
         self.party_status_var = tk.StringVar()
         self.party_test_running = False
-        # Party rules & sync dialog (PARTY_SWITCHES, start mode, guest Insight, backups)
+        # The Party Rules / My Party tabs (PARTY_SWITCHES, start mode, guest Insight, backups)
         self.party_switch_vars = {key: tk.BooleanVar(value=bool(self.settings.get(key, default)))
                                   for key, _, default in PARTY_SWITCHES}
         # The party gameplay switches and the guest Insight: game settings (bbport.ini), also on the
@@ -2304,6 +2595,8 @@ class BloodborneLauncher(tk.Tk):
 
         # 6. Party (co-op over the Internet / LAN, BB_PARTY_*)
         self.build_party_tab()
+        self.build_party_settings_tab(PARTY_RULES_TAB_TITLE, PARTY_RULES_TAB_INTRO, PARTY_RULES_TAB)
+        self.build_party_settings_tab(MY_PARTY_TAB_TITLE, MY_PARTY_TAB_INTRO, MY_PARTY_TAB)
 
         # 7. Advanced / Debug
         tab = self._tab("Advanced / Debug")
@@ -2555,76 +2848,13 @@ class BloodborneLauncher(tk.Tk):
                                  "summon starts within seconds instead of waiting for bell signs (the bell "
                                  "signs stay as the fallback). Default: on (BB_PARTY_DIRECT_SUMMON).",
                                  command=self.save_settings)
-        hud_cb = self._check(sec, "Party HUD", self.party_hud,
-                             "Your companions' names and health in the bottom left corner of the game, "
-                             "greyed while they are not in your world; on the same map their distance, a "
-                             "direction arrow and a name tag above them. Never shown in single-player. Also "
-                             "in the game: System > Party display > Party HUD. Default: on (bbport.ini "
-                             "party_hud).",
-                             command=self.save_party_hud)
-        tags_cb = self._check(sec, "Party name tags", self.party_name_tags,
-                              "On: in a party our name plate (name and a thin health bar) above each "
-                              "companion replaces the game's own phantom plate, which hides behind any "
-                              "tree or corner. Off: the game's own plate, as in the original game. Also in "
-                              "the game: System > Party display > Party name tags. Default: on (bbport.ini "
-                              "party_name_tags).",
-                              command=self.save_party_name_tags)
-        glow_cb = self._check(sec, "Companions without glow", self.party_glow_off,
-                              "On: the other hunters of the party look like normal hunters on your screen, "
-                              "without the game's blue, glowing phantom look. Off: that look, as in the "
-                              "original game. Only how you see them: they stay cooperators. Also in the game: "
-                              "System > Party look. Default: on (bbport.ini party_glow_off).",
-                              command=self.save_party_glow_off)
-        npc_talk_cb = self._check(sec, "Share NPC dialogue", self.party_npc_talk,
-                                  "When a companion near you talks to an NPC you get the conversation too: "
-                                  "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
-                                  "no menu opens). Range: in the game, System > Story & dialogue > NPC dialogue "
-                                  "range (default 25 m). Default: on (bbport.ini party_npc_talk).",
-                                  command=self.save_party_npc_talk)
-        pings_cb = self._check(sec, "Pings", self.party_pings,
-                               "Hold the touchpad (keyboard Tab) and press R3 (Q), or press V: a marker on the "
-                               "spot you look at. Every party member sees it through walls with its distance "
-                               "in metres, in your colour, for 10 seconds. Also in the game: System > Party display. "
-                               "Default: on (bbport.ini party_pings).",
-                               command=self.save_party_pings)
-        walls_cb = self._check(sec, "Show party through walls", self.party_through_walls,
-                               "A small diamond with the distance on every companion on your map, drawn over "
-                               "walls and trees in the companion's colour. Also in the game: System > Party display. "
-                               "Default: off (bbport.ini party_through_walls).",
-                               command=self.save_party_through_walls)
-        stain_cb = self._check(sec, "Bloodstain marker", self.party_stain_marker,
-                               "A red drop with \"Blood Echoes\" and the distance on the bloodstain of your lost "
-                               "echoes in the host's world, drawn over walls. The bloodstain is there either "
-                               "way. Also in the game: System > Party display. Default: off (bbport.ini "
-                               "party_stain_marker).",
-                               command=self.save_party_stain_marker)
-        ff_cb = self._check(sec, "Friendly fire / PvP (when you host)", self.party_friendly_fire,
-                            "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
-                            "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
-                            "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
-                            "when you switch it. Also in the game: System > World & PvP (live). Default: off "
-                            "(bbport.ini party_friendly_fire).",
-                            command=self.save_party_friendly_fire)
-        lamps_cb = self._check(sec, "Shared lamps (when you host)", self.party_share_lamps,
-                               "Host only: a lamp any party member lights in your world is lit for everyone, in "
-                               "each member's own save too, and your lamps reach the guests' saves. Your setting "
-                               "is the party's rule. Also in the game: System > World & PvP (Shared lamps). "
-                               "Default: on (bbport.ini party_share_lamps).",
-                               command=self.save_party_share_lamps)
-        bring_cb = self._check(sec, "Guests bring their lamps (when you host)", self.party_guests_bring_lamps,
-                               "Host only: a joining guest's lamps from its own world light up in yours too "
-                               "(needs Shared lamps). Off: your world keeps its own lamps; any lamp a party "
-                               "member lights in it is saved for everyone. Your setting is the party's rule. "
-                               "Also in the game: System > World & PvP. Default: off (bbport.ini "
-                               "party_guests_bring_lamps).",
-                               command=self.save_party_guests_bring_lamps)
         self.party_separate_save.set(True)
         save_cb = self._check(sec, "Separate party saves (always)", self.party_separate_save,
                               "Party play always uses its own save folder (user\\savedata_party), so your "
                               "single-player save (user\\savedata) is never touched by a party session. "
                               "The first time, the launcher offers to copy your single-player save. The "
                               "game backs up the party save at every party start and every 10 minutes "
-                              "(user\\save_backups, newest 10 kept, both changeable in Rules & sync; "
+                              "(user\\save_backups, newest 10 kept, both changeable in the My Party tab; "
                               "README.txt there explains restoring). Party games can also be started in "
                               "the game: System > Party on the title screen (or Party after New Game).",
                               command=self.save_settings)
@@ -2662,19 +2892,14 @@ class BloodborneLauncher(tk.Tk):
         Tooltip(import_btn, "Puts an edited export back into the save slot it came from. Your current "
                             "saves are backed up to user\\save_backups first, and what the export fixed "
                             "up for the editor is put back as the game wrote it, so party progress stays.")
-        # Rules & sync dialog, the party guide and (developer checkout) the local test in one row
+        # The party guide and (developer checkout) the local test in one row (the party's settings:
+        # the Party Rules and My Party tabs)
         tools_row = ttk.Frame(sec, style="Card.TFrame")
         tools_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(6, 2))
         sec.next_row += 1
-        rules_btn = ttk.Button(tools_row, text="Rules & sync...", style="Secondary.TButton",
-                               command=self.open_party_rules_dialog)
-        rules_btn.pack(side="left")
-        Tooltip(rules_btn, "More party options, with their defaults: how the party starts, bells, the "
-                           "open world, what happens when a guest dies, rewards for guests, progress / "
-                           "story / cutscene sync, save backups and the automatic restart after a crash.")
         help_btn = ttk.Button(tools_row, text="Party help", style="Secondary.TButton",
                               command=self.show_party_help)
-        help_btn.pack(side="left", padx=(6, 0))
+        help_btn.pack(side="left")
         Tooltip(help_btn, PARTY_HELP_SHORT)
         self.party_test_btn = None
         if MP_INSTANCES.is_file():
@@ -2767,12 +2992,14 @@ class BloodborneLauncher(tk.Tk):
         sec.next_row += 1
 
         # Fields enabled in each mode: on (host or join), host only, join only
+        # (the Party Rules and My Party tabs stay editable in every mode: a party can also be started
+        # in the game)
         self.party_widgets_on = [name_lbl, self.party_name_entry, self.party_max_combo, auto_cb, seamless_cb,
-                                 dsummon_cb, hud_cb, tags_cb, glow_cb, npc_talk_cb, pings_cb, walls_cb, stain_cb, save_cb,
+                                 dsummon_cb, save_cb,
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, relay_cb, ipv6_cb, stun_lbl,
                                  self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [ff_cb, lamps_cb, bring_cb, public_lbl, self.party_public_entry,
+        self.party_widgets_host = [public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
@@ -2780,6 +3007,64 @@ class BloodborneLauncher(tk.Tk):
                     self.feat_tracing):
             var.trace_add("write", lambda *a: self.update_party_hints())
         self.after(2000, self.party_code_tick)
+
+    def build_party_settings_tab(self, title: str, intro: str, sections: list) -> ttk.Frame:
+        """A party settings tab from its table (PARTY_RULES_TAB / MY_PARTY_TAB): the intro line, then
+        each column's sections top to bottom. Every change is saved at once: a PARTY_SWITCHES /
+        PARTY_INI_SWITCHES key or a combo with the party rules (save_party_rules), a PARTY_INI_FLAGS
+        key on its own (save_party_flag)."""
+        tab = self._tab(title)
+        ttk.Label(tab, text=intro, style="Hint.TLabel", wraplength=700, justify="left").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        holders = {}
+        dependents = {}  # key -> the checkboxes greyed while that key's checkbox is off
+        checks = {}
+
+        def save_rules():
+            self.save_settings()
+            self.save_party_rules()
+
+        def changed(key):
+            self.update_party_dependents()
+            if key in self.party_flag_vars:
+                self.save_party_flag(key)
+            else:
+                save_rules()
+
+        for column, _, section_title, rows in sorted(sections, key=lambda s: (s[0], s[1])):
+            holder = holders.get(column)
+            if holder is None:
+                holder = holders[column] = ttk.Frame(tab, style="Card.TFrame")
+                holder.grid(row=1, column=column, sticky="nw", padx=(0, 16) if column == 0 else 0)
+                holder.count = 0
+            sec = self._section(holder, 0, section_title, row=holder.count)
+            sec.grid_configure(padx=0)
+            holder.count += 1
+            for row in rows:
+                if row[0] == "combo":
+                    _, attr, label, choices, tip, width = row
+                    combo = self._combo(sec, label, getattr(self, attr), choices, tip, width=width)
+                    combo.bind("<<ComboboxSelected>>", lambda e: save_rules())
+                    continue
+                _, key, label, tip, *needs = row
+                var = self.party_flag_vars.get(key) or self.party_switch_vars[key]
+                cb = self._check(sec, label, var, tip, command=lambda k=key: changed(k))
+                checks[key] = (cb, var)
+                if needs:
+                    dependents.setdefault(needs[0], []).append(cb)
+        self.party_dependents = getattr(self, "party_dependents", []) + [
+            (key, cb) for key, cbs in dependents.items() for cb in cbs]
+        self.update_party_dependents()
+        tab.party_checks = checks  # tests/test_launcher_party_tabs.py
+        self.party_settings_tabs = getattr(self, "party_settings_tabs", {})
+        self.party_settings_tabs[title] = tab
+        return tab
+
+    def update_party_dependents(self):
+        """Greys a party checkbox whose `needs` checkbox is off (Also NPC quests, the rot cleanses ...)."""
+        for key, cb in getattr(self, "party_dependents", []):
+            var = self.party_flag_vars.get(key) or self.party_switch_vars[key]
+            cb.state(["!disabled"] if var.get() else ["disabled"])
 
     def party_mode(self) -> str:
         return dict(PARTY_MODES).get(self.party_mode_var.get(), "")
@@ -2852,18 +3137,12 @@ class BloodborneLauncher(tk.Tk):
         self.hdr_var.set(str(ini.get("hdr", "0")).strip() not in ("", "0"))
         self.hdr_peak_var.set(hdr_peak_label(ini))
         self.hdr_paper_var.set(hdr_paper_white_label(ini))
-        for key, var, default in (("party_hud", self.party_hud, True), ("party_name_tags", self.party_name_tags, True),
-                                  ("party_glow_off", self.party_glow_off, True),
-                                  ("party_npc_talk", self.party_npc_talk, True), ("party_pings", self.party_pings, True),
-                                  ("party_through_walls", self.party_through_walls, False),
-                                  ("party_stain_marker", self.party_stain_marker, False),
-                                  ("party_friendly_fire", self.party_friendly_fire, False),
-                                  ("party_share_lamps", self.party_share_lamps, True),
-                                  ("party_guests_bring_lamps", self.party_guests_bring_lamps, False)):
-            var.set(ini_flag_value(ini, key, default))
+        for key, default in PARTY_INI_FLAGS:
+            self.party_flag_vars[key].set(ini_flag_value(ini, key, default))
         for key, _, default in PARTY_INI_SWITCHES:
             self.party_switch_vars[key].set(ini_flag_value(ini, key, default))
         self.party_insight_var.set(party_insight_label(ini))
+        self.update_party_dependents()
 
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
@@ -2891,93 +3170,25 @@ class BloodborneLauncher(tk.Tk):
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the HDR setting to bbport.ini: {ex}")
 
-    def save_party_hud(self):
-        """The Party HUD checkbox: bbport.ini party_hud (a running game picks it up on its next start;
-        in game: System > Party members)."""
+    def save_party_flag(self, key: str):
+        """A Party Rules / My Party checkbox that is one bbport.ini key (PARTY_INI_FLAGS): written at
+        once (the game's menus show the same key; a running game reads it at its next start, some
+        live)."""
         try:
-            update_ini(bbport_ini_path(), {"party_hud": "1" if self.party_hud.get() else "0"})
+            update_ini(bbport_ini_path(), {key: "1" if self.party_flag_vars[key].get() else "0"})
         except OSError as ex:
-            self.log(f"[PARTY] Could not save the Party HUD setting to bbport.ini: {ex}")
-
-    def save_party_name_tags(self):
-        """The Party name tags checkbox: bbport.ini party_name_tags (a running game picks it up on its
-        next start; in game: System > Party members)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_name_tags": "1" if self.party_name_tags.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Party name tags setting to bbport.ini: {ex}")
-
-    def save_party_glow_off(self):
-        """The Companions without glow checkbox: bbport.ini party_glow_off (a running game picks it up
-        on its next start; in game: System > Party look, live)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_glow_off": "1" if self.party_glow_off.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Companions without glow setting to bbport.ini: {ex}")
-
-    def save_party_npc_talk(self):
-        """The Share NPC dialogue checkbox: bbport.ini party_npc_talk (a running game picks it up on its
-        next start; in game: System > Party members)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_npc_talk": "1" if self.party_npc_talk.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Share NPC dialogue setting to bbport.ini: {ex}")
+            self.log(f"[PARTY] Could not save {key} to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
 
     def save_party_rules(self):
-        """The Party Rules & Sync switches and Insight combo: bbport.ini (the game's party rules
-        pages show the same keys; a running game reads them at its next start)."""
+        """The Party Rules / My Party switches and the Insight combo: bbport.ini (the game's System >
+        Party rules / My party pages show the same keys; a running game reads them at its next start)."""
         try:
             update_ini(bbport_ini_path(), party_rules_ini({k: v.get() for k, v in self.party_switch_vars.items()},
                                                           self.party_insight_var.get()))
         except OSError as ex:
             self.log(f"[PARTY] Could not save the party rules to bbport.ini: {ex}")
         self._ini_stamp = self.ini_stamp()
-
-    def save_party_friendly_fire(self):
-        """The Friendly fire / PvP checkbox (host): bbport.ini party_friendly_fire (in game: System >
-        Friendly fire)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_friendly_fire": "1" if self.party_friendly_fire.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Friendly fire setting to bbport.ini: {ex}")
-
-    def save_party_share_lamps(self):
-        """The Shared lamps checkbox (host): bbport.ini party_share_lamps (in game: System > World &
-        PvP)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_share_lamps": "1" if self.party_share_lamps.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Shared lamps setting to bbport.ini: {ex}")
-
-    def save_party_guests_bring_lamps(self):
-        """The Guests bring their lamps checkbox (host): bbport.ini party_guests_bring_lamps (in game:
-        System > World & PvP)."""
-        try:
-            update_ini(bbport_ini_path(),
-                       {"party_guests_bring_lamps": "1" if self.party_guests_bring_lamps.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Guests bring their lamps setting to bbport.ini: {ex}")
-
-    def save_party_pings(self):
-        """The Pings checkbox: bbport.ini party_pings (in game: System > Party display)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_pings": "1" if self.party_pings.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Pings setting to bbport.ini: {ex}")
-
-    def save_party_through_walls(self):
-        """The Show party through walls checkbox: bbport.ini party_through_walls (in game: System > Party display)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_through_walls": "1" if self.party_through_walls.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Show party through walls setting to bbport.ini: {ex}")
-
-    def save_party_stain_marker(self):
-        """The Bloodstain marker checkbox: bbport.ini party_stain_marker (in game: System > Party display)."""
-        try:
-            update_ini(bbport_ini_path(), {"party_stain_marker": "1" if self.party_stain_marker.get() else "0"})
-        except OSError as ex:
-            self.log(f"[PARTY] Could not save the Bloodstain marker setting to bbport.ini: {ex}")
 
     def on_party_change(self):
         self.update_party_state()
@@ -3141,287 +3352,6 @@ class BloodborneLauncher(tk.Tk):
             os.startfile(str(PARTY_GUIDE))  # type: ignore[attr-defined]
         except (OSError, AttributeError) as ex:
             messagebox.showinfo("Party guide", f"Open this file in a text editor:\n{PARTY_GUIDE}\n\n({ex})")
-
-    def open_party_rules_dialog(self):
-        """Party rules & sync: the PARTY_SWITCHES, start mode, guest Insight and save backups."""
-        dlg = tk.Toplevel(self)
-        dlg.title("Party Rules & Sync")
-        dlg.geometry("720x700")
-        dlg.minsize(640, 480)
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.configure(bg="#1a1a1a")
-        # The sections scroll (0.7.2: with the Rot section they are taller than the 700-pixel window,
-        # which has to fit a 1366x768 screen); the button bar below always shows.
-        bar = ttk.Frame(dlg, style="Card.TFrame", padding=10)
-        bar.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
-        holder = ttk.Frame(dlg, style="Card.TFrame")
-        holder.pack(fill="both", expand=True, padx=10, pady=(10, 6))
-        canvas = tk.Canvas(holder, bg="#252526", highlightthickness=0, height=300)
-        vscroll = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vscroll.set)
-        vscroll.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-        body = ttk.Frame(canvas, style="Card.TFrame", padding=(14, 10, 14, 12))
-        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
-        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(body_window, width=e.width))
-        dlg.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
-        dlg.party_rules_parts = (body, bar)  # tests/test_launcher_rules_layout.py
-        body.columnconfigure(0, weight=1, uniform="sections")
-        body.columnconfigure(1, weight=1, uniform="sections")
-        ttk.Label(body, text="Hover over an option for details. Changes apply at the next launch. "
-                             "Defaults are the recommended settings.\n"
-                             "Options marked (when you host) are the host's party rules: when you join a "
-                             "party, the host's settings count and yours are kept for when you host.",
-                  style="Hint.TLabel", wraplength=660, justify="left").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        var = self.party_switch_vars
-
-        def save():
-            self.save_settings()
-            self.save_party_rules()
-
-        def section(row, column, title):
-            sec = self._section(body, column, title)
-            sec.grid_configure(row=row, pady=(0, 12))
-            return sec
-
-        sec = section(1, 0, "Start & world")
-        start_combo = self._combo(
-            sec, "Party starts:", self.party_start_var, [c[0] for c in PARTY_START_CHOICES],
-            "When a player counts as ready to be summoned. After the prologue (recommended): once the "
-            "player has seen the opening, reached the Hunter's Dream for the first time and taken a "
-            "weapon; until then the others see '(prologue)' next to the name. Right away: as soon as "
-            "the opening cutscene is over (summons inside the clinic, before anyone has a weapon - "
-            "experimental). Each player's own setting; keep it the same for everyone. "
-            "Default: After the prologue (BB_PARTY_START=prologue_solo|immediate).", width=26)
-        start_combo.bind("<<ComboboxSelected>>", lambda e: save())
-        self._check(sec, "Give the bells", var["party_grant_bells"],
-                    "Gives each player the Beckoning Bell and the Small Resonant Bell once the prologue is "
-                    "done, so nobody has to buy or find them. Automatic summoning does not need them; they "
-                    "are for ringing by hand. Default: on (bbport.ini party_grant_bells; in the game: System > Party rewards).", command=save)
-        self._check(sec, "Open world (no co-op area walls)", var["party_open_world"],
-                    "Removes the walls the game puts on area borders while a helper is in your world, "
-                    "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
-                    "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > World & PvP).", command=save)
-        self._check(sec, "Up after a boss kill (when you host)", var["party_host_limbo_revive"],
-                    "When you die in a boss fight and the others kill the boss, you get up right there in "
-                    "the arena (where you fell, or beside a living hunter), with no loading screen; your "
-                    "Blood Echoes stay in your bloodstain. Host and guests alike; the host's setting. Off: a host's death "
-                    "takes the whole party's respawn loading screen at the host's lamp, a guest gets up "
-                    "at the host's lamp. "
-                    "Default: on (bbport.ini party_host_limbo_revive; in the game: System > Deaths & revives).", command=save)
-        self._check(sec, "Host gets up, no load (when you host)", var["party_host_revive"],
-                    "When the host dies, it gets up at its lamp in the loaded area with no loading screen for "
-                    "anyone (a lamp in another area: the host loads alone). Off: the whole party gets the "
-                    "respawn loading screen. Host's setting. Default: on (bbport.ini party_host_revive; in "
-                    "the game: System > Deaths & revives).", command=save)
-        self._check(sec, "Anyone can be abducted", var["party_any_kidnap"],
-                    "When a Snatcher grabs a guest in the host's world, the whole party is taken to the "
-                    "Hypogean Gaol in Yahar'gul, just as when the host is grabbed: one loading screen for "
-                    "everyone, all of you wake up in the cell together. Only the first kidnap of the host's "
-                    "world does this, as in the game. The host's setting; guests follow it. Off: only a "
-                    "grabbed host takes the party there, a grabbed guest just dies. The waking scene plays "
-                    "for everyone either way. Default: on (bbport.ini party_any_kidnap; in the game: "
-                    "System > Deaths & revives).", command=save)
-
-        sec = section(1, 1, "Guests")
-        self._check(sec, "Get up without a loading screen", var["party_guest_revive_inplace"],
-                    "A guest who dies gets up at the host's lamp right away, with no loading screen (after a "
-                    "fall: the respawn load). Off: every death takes the respawn loading screen. Applies to "
-                    "you while you are a guest. Default: on (bbport.ini party_guest_revive_inplace; in the "
-                    "game: System > Deaths & revives).", command=save)
-        self._check(sec, "Respawn at the host's lamp", var["party_guest_respawn"],
-                    "A guest who dies comes back at the host's last lamp and is summoned again, instead of "
-                    "being sent home to their own world. Applies to you while you are a guest. "
-                    "Default: on (bbport.ini party_guest_respawn; in the game: System > Deaths & revives).", command=save)
-        self._check(sec, "Refill vials and bullets", var["party_guest_refill"],
-                    "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
-                    "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
-                    "guest. Default: on (bbport.ini party_guest_refill; in the game: System > Deaths & revives).", command=save)
-        self._check(sec, "Stay in the host's Chalice Dungeon", var["party_chalice_rejoin"],
-                    "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
-                    "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
-                    "could not follow) goes back to their own world and is summoned into the dungeon again "
-                    "automatically. A guest who chose to leave (\"alone\" at a lamp, their own Hunter's Mark) "
-                    "stays out until they press Party > Rejoin. Applies to you while you are a guest. Default: on "
-                    "(bbport.ini party_chalice_rejoin; in the game: System > Chalice Dungeons).", command=save)
-        self._check(sec, "Guests can use Hunter's Mark", var["party_guest_mark"],
-                    "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
-                    "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
-                    "Off: guests cannot use it, as in the normal game. Default: on (bbport.ini party_guest_mark; in the game: System > World & PvP).",
-                    command=save)
-        self._check(sec, "Full rewards for guests", var["party_full_rewards"],
-                    "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
-                    "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
-                    "to you while you are a guest. Default: on (bbport.ini party_full_rewards; in the game: System > Party rewards).", command=save)
-        self._check(sec, "Share the host's item rewards", var["party_items"],
-                    "Boss drops, key items and gifts the host receives (which guests never get in the "
-                    "normal game) are given to each guest too, in their own world, once each. "
-                    "Default: on (bbport.ini party_items; in the game: System > Party rewards).", command=save)
-        insight_combo = self._combo(
-            sec, "Insight for bosses:", self.party_insight_var, [c[0] for c in PARTY_INSIGHT_CHOICES],
-            "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
-            "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "
-            "+1. Game's own: only the +1 the game gives a helper. "
-            "Default: Same as the host (bbport.ini party_guest_insight=parity|full|0; in the game: System > Party rewards).", width=24)
-        insight_combo.bind("<<ComboboxSelected>>", lambda e: save())
-
-        sec = section(2, 0, "Progress & story")
-        npc_cb = mirror_cb = None
-
-        def update_dependents():
-            npc_cb.state(["!disabled"] if var["party_progress"].get() else ["disabled"])
-            mirror_cb.state(["!disabled"] if var["party_story"].get() else ["disabled"])
-            save()
-        self._check(sec, "Share story progress", var["party_progress"],
-                    "The host's progress - bosses killed, lamps lit, shortcuts and doors opened, key "
-                    "events - is copied into each guest's own save, so the guests' worlds keep up with "
-                    "the host's. Needs to be on for the host and for each guest. "
-                    "Default: on (bbport.ini party_progress; in the game: System > Story & dialogue).", command=update_dependents)
-        npc_cb = self._check(sec, "    Also NPC quests", var["party_progress_npc"],
-                             "NPC quest choices are shared: the first choice anyone makes (Eileen, Alfred, "
-                             "Djura ...) applies to the host's world and every player's save. Guest's setting. "
-                             "Default: on (bbport.ini party_progress_npc; in the game: System > Story & dialogue).", command=save)
-        self._check(sec, "Share cutscenes and endings", var["party_story"],
-                    "Every guest also sees the cutscenes the host triggers (shown again in the guest's own "
-                    "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
-                    "the ending the host gets plays for everyone. Needs to be on for the host and for "
-                    "each guest. Default: on (bbport.ini party_story; in the game: System > Story & dialogue).", command=update_dependents)
-        mirror_cb = self._check(sec, "    Play them live with the host", var["party_story_mirror"],
-                                "A guest in the host's world watches the cutscene at the same time as the "
-                                "host. Off: the guest sees it later, back in their own world. Guest's "
-                                "setting. Default: on (bbport.ini party_story_mirror; in the game: System > Story & dialogue).", command=save)
-
-        sec = section(2, 1, "Saves & crashes")
-        minutes_combo = self._combo(
-            sec, "Back up every (min):", self.party_backup_minutes_var, PARTY_BACKUP_MINUTES_CHOICES,
-            "During a party session the game copies the save folder to user\\save_backups at the start "
-            "and then every N minutes (0 = only at the start). README.txt there explains restoring. "
-            "Default: 10 (BB_SAVE_BACKUP_MINUTES).", width=6)
-        minutes_combo.bind("<<ComboboxSelected>>", lambda e: save())
-        keep_combo = self._combo(
-            sec, "Backups to keep:", self.party_backup_keep_var, PARTY_BACKUP_KEEP_CHOICES,
-            "How many backups are kept; the oldest are deleted. Backups that fail the save check are "
-            "kept separately, so a broken save never pushes good backups out. "
-            "Default: 10 (BB_SAVE_BACKUP_KEEP).", width=6)
-        keep_combo.bind("<<ComboboxSelected>>", lambda e: save())
-        self._check(sec, "Restart the game after a crash", var["party_restart"],
-                    "If the game crashes during a party session it starts again by itself, continues the "
-                    "save and rejoins the party (the host keeps your place for 60 s). At most 5 restarts "
-                    "in 10 minutes. Default: on (BB_PARTY_RESTART).", command=save)
-
-        # 0.7.1: the host's world rules (System > Shared world) and the guest's key items (Party rewards)
-        sec = section(3, 0, "Shared world (when you host)")
-        self._check(sec, "Enemies stay dead", var["party_kill_record"],
-                    "An enemy the party killed is dead on every player's game: a kill across an area border "
-                    "reaches the others, and an enemy that comes back alive when its area loads again as you "
-                    "walk is put down again. Only a rest or a party wipe brings enemies back. The host's "
-                    "setting; guests follow it. Off: a kill another player did not see can leave the enemy "
-                    "standing on their game. Default: on (bbport.ini party_kill_record; in the game: System > Shared world).", command=save)
-        self._check(sec, "Host can gather the party", var["party_gather"],
-                    "Lets the host bring every guest to it with System > Party > Gather the party (each guest "
-                    "is asked first and may say no). The host's setting. Off: the row says gathering is off. "
-                    "Default: on (bbport.ini party_gather; in the game: System > Shared world).", command=save)
-        self._check(sec, "NPCs as in the host's world", var["party_npc_mirror"],
-                    "An NPC that is gone from the host's world (moved on by a story event, such as the one "
-                    "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
-                    "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
-        self._check(sec, "Covenant outcomes per player", var["party_covenant_per_player"],
-                    "How the covenant quests end stays in each player's own world and save: Alfred killing "
-                    "Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates. While "
-                    "you are summoned the host's world shows the host's state; nothing of it reaches your "
-                    "save, and nothing of yours reaches the host's. Lamps, bosses, doors and other quests "
-                    "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
-                    "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
-                    "System > Shared world).", command=save)
-        self._check(sec, "Party votes on travel", var["party_travel_vote"],
-                    "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
-                    "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
-                    "and everyone is told who said no or did not answer. The host's setting; guests see it. "
-                    "Default: off (bbport.ini party_travel_vote; in the game: System > Shared world).", command=save)
-        self._check(sec, "NPC hunters fight the whole party", var["party_npc_fights"],
-                    "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
-                    "DLC hunters) turns on the guests too (Brador should show for guests too; not tried yet): "
-                    "everyone sees and fights the same hunter, and its death counts for all. The host's "
-                    "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
-                    "System > Shared world).", command=save)
-
-        # 0.7.2: rot, the host's rules (System > Rot)
-        sec = section(4, 0, "Rot on death (when you host)")
-        rot_cbs = []
-
-        def update_rot():
-            for cb in rot_cbs:
-                cb.state(["!disabled"] if var["party_rot"].get() else ["disabled"])
-            save()
-        self._check(sec, "Rot on death", var["party_rot"],
-                    "Each death stacks one penalty, picked at random, up to 5: max HP -10 %, max stamina -10 %, "
-                    "stamina costs +10 %, rally -15 % or item discovery -10. Resting at a lamp (even just "
-                    "opening its travel menu) or levelling up cleanses it. The host's setting counts for the "
-                    "whole party. Default: off (bbport.ini party_rot; in the game: System > Rot).",
-                    command=update_rot)
-        rot_cbs.append(self._check(sec, "    A boss kill cleanses it", var["party_rot_cleanse_boss"],
-                                   "When a boss dies, every party member in the host's world loses all their rot, "
-                                   "alive or dead in that fight. Needs Rot on death. Default: on (bbport.ini "
-                                   "party_rot_cleanse_boss; in the game: System > Rot).", command=save))
-        rot_cbs.append(self._check(sec, "    Killing your killer cleanses it", var["party_rot_cleanse_killer"],
-                                   "When the enemy that killed you dies (anyone in the party may kill it), you lose "
-                                   "the rot of that death. A fall or a trap has no killer; a rest brings the killer "
-                                   "back. Needs Rot on death. Default: on (bbport.ini party_rot_cleanse_killer; in "
-                                   "the game: System > Rot).", command=save))
-        rot_cbs.append(self._check(sec, "    Retrieving your Blood Echoes cleanses it", var["party_rot_cleanse_echoes"],
-                                   "Picking up your bloodstain removes the rot of the death that dropped it (not a "
-                                   "second time if your killer already died). Needs Rot on death. Default: on "
-                                   "(bbport.ini party_rot_cleanse_echoes; in the game: System > Rot).",
-                                   command=save))
-
-        sec = section(3, 1, "Key items (guest)")
-        keys_now_cb = None
-
-        def update_keys():
-            keys_now_cb.state(["!disabled"] if var["party_key_view"].get() else ["disabled"])
-            save()
-        self._check(sec, "Own key items as a guest", var["party_key_view"],
-                    "While you are a guest in the host's world, your Key Items tab shows your own keys, "
-                    "badges and tools. Off: the game's view for a visiting hunter (an empty list; your save "
-                    "keeps them). Applies to you while you are a guest; at the next start. "
-                    "Default: on (bbport.ini party_key_view; in the game: System > Party rewards).", command=update_keys)
-        keys_now_cb = self._check(sec, "    Key items at once", var["party_key_items_summoned"],
-                                  "A key item the host's world gives you (Oedon Tomb Key, a badge) is yours "
-                                  "right away, while you are still in the host's world. Off: it waits until "
-                                  "you are back in your own world. Needs Own key items. Default: on "
-                                  "(bbport.ini party_key_items_summoned; in the game: System > Party rewards).",
-                                  command=save)
-
-        update_dependents()
-        update_keys()
-        update_rot()
-
-        def on_defaults():
-            for key, _, default in PARTY_SWITCHES + PARTY_INI_SWITCHES:
-                var[key].set(default)
-            self.party_start_var.set(PARTY_START_CHOICES[0][0])
-            self.party_insight_var.set(PARTY_INSIGHT_CHOICES[0][0])
-            self.party_backup_minutes_var.set("10")
-            self.party_backup_keep_var.set("10")
-            update_dependents()
-            update_keys()
-            update_rot()
-            self.save_party_rules()
-
-        defaults_btn = ttk.Button(bar, text="Defaults", style="Secondary.TButton", command=on_defaults)
-        defaults_btn.pack(side="left", ipady=4)
-        Tooltip(defaults_btn, "Puts every option in this window back to its default.")
-        help_btn = ttk.Button(bar, text="Party help", style="Secondary.TButton", command=self.show_party_help)
-        help_btn.pack(side="left", padx=(6, 0), ipady=4)
-
-        def on_close():
-            save()
-            dlg.destroy()
-        ttk.Button(bar, text="Close", style="Secondary.TButton", command=on_close).pack(side="right", ipady=4)
-        dlg.protocol("WM_DELETE_WINDOW", on_close)
 
     def copy_solo_save_to_party(self, ask=True) -> bool:
         """Explicit copy of the single-player save into the party save folder (party_saves.py)."""

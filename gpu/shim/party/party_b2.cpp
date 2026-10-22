@@ -4743,15 +4743,15 @@ bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
 /// a lamp in another map: the host loads it alone. On by default since 0.7.0 (user decision): the
 /// reasons it was opt-in since playtest 1 are fixed - the guests' HostDead locks (K12, hostdead),
 /// the revived chr's hit bodies (the "hitbody" recipe step), pickups / prompts / lock-on / rally
-/// checked live (revivecheck). Off (bbport.ini party_host_revive=0, System > Deaths & revives;
+/// checked live (revivecheck). Off (bbport.ini party_host_revive=0, System > Party rules: Deaths;
 /// BB_PARTY_B2_HOST_REVIVE=0): the vanilla respawn load for the whole party. Live.
 bool HostReviveOn() {
     return BbSettings::Get().party_host_revive.load();
 }
 
 /// The guests killed the boss while the host lay dead in the fight: the host gets up in the arena,
-/// nobody loads (default on; bbport.ini party_host_limbo_revive, System > Deaths & revives, the
-/// launcher's Party rules & sync; BB_PARTY_HOST_LIMBO_REVIVE). Off: the party's respawn load. Live.
+/// nobody loads (default on; bbport.ini party_host_limbo_revive, System > Party rules: Deaths, the
+/// launcher's Party Rules tab; BB_PARTY_HOST_LIMBO_REVIVE). Off: the party's respawn load. Live.
 bool HostLimboReviveOn() {
     return BbSettings::Get().party_host_limbo_revive.load();
 }
@@ -5797,7 +5797,7 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3). On by default
         // again since revivecheck (2026-10-21 live, after the revive: hits taken, lock-on, rally,
         // Blood Vial, menu, lamp prompt and its menu, a treasure pickup with its item box, a party
-        // lamp travel). Off (bbport.ini party_guest_revive_inplace=0, System > Deaths & revives;
+        // lamp travel). Off (bbport.ini party_guest_revive_inplace=0, System > My party: Deaths;
         // BB_PARTY_GUEST_REVIVE_INPLACE=0): every death takes the respawn load. Live.
         const bool inplace = BbSettings::Get().party_guest_revive_inplace.load();
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
