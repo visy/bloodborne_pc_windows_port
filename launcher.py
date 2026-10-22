@@ -192,9 +192,10 @@ PARTY_INI_FLAGS = [
 #   ("combo", var attribute, label, choices, tooltip, width)   a combobox, saved with the party rules
 # New rows: add the key to PARTY_INI_SWITCHES (or PARTY_INI_FLAGS) and one row here.
 PARTY_RULES_TAB_TITLE = "Party Rules"
-PARTY_RULES_TAB_INTRO = ("The host's rules for the whole party: they apply when you host, and guests follow the "
-                         "host's (in the game a guest sees them read-only, System > Party rules). "
-                         "Enemy scaling: in the game, System > Party rules: Enemies.")
+PARTY_RULES_TAB_INTRO = ("The host's rules for the whole party: they apply when you host. When you join a party, "
+                         "the host's settings count and yours are kept for when you host (in the game a guest "
+                         "sees the host's read-only, System > Party rules). Enemy scaling: in the game, "
+                         "System > Party rules: Enemies.")
 PARTY_RULES_TAB = [
     (0, 1, "World", [
         ("check", "party_kill_record", "Enemies stay dead",
