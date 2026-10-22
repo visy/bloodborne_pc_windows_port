@@ -950,6 +950,15 @@ inline bool TestStepWaits(bool acts_with_own_chr, bool own_alive, bool world_up,
     return acts_with_own_chr && !own_alive;
 }
 
+/// A die step (host_die / guest_die) whose own chr is at HP 0 already, from something else (an
+/// enemy, the boss) after the previous step: the death the step asks for happened - the step is
+/// taken as done, so the chain goes on after the respawn (it waited for life forever and stalled
+/// every later step: wipe_late when Gascoigne killed guest 1 first). Not after a die step (a second
+/// die step must not be taken by the first one's death) and not during a load / re-join.
+inline bool TestDieStepLatches(bool die_step, bool own_alive, bool world_up, bool rejoin_running, bool prev_was_die) {
+    return die_step && !own_alive && world_up && !rejoin_running && !prev_was_die;
+}
+
 // ---- Own bloodstain record (GameDataMan +0x28 flag, +0x30 record +0x38 echoes) ----
 enum class StainChange { None, Recorded, Taken, Replaced };
 inline const char* StainChangeName(StainChange c);
