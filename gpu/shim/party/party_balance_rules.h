@@ -45,6 +45,11 @@ struct Rules {
     /// Statsaudit finding 5 (user decision 2026-10-15): lamps are shared by the whole party - a lamp
     /// any member lit is lit for everyone (each member's own save too). On by default; the host's.
     bool share_lamps = true;
+    /// 0.7.2 (user decision 2026-10-21: "host state saves lamps, anybody can light them"): a guest's
+    /// lamps from its own save also light up in the host's world (with share_lamps; the 2026-10-15
+    /// union). Off by default: the host's world keeps its own lamps, anyone may light more there
+    /// (party_guestvals_rules.h lampshare::Decide). A host from before it sends none: off.
+    bool guests_bring_lamps = false;
     /// The host's deaths (party_b2; user decision 2026-10-21: in the game's menus): the host gets
     /// up at its lamp without a load, and in the arena after the guests kill the boss. The host's
     /// own settings; sent so a guest's menu shows them. On by default.

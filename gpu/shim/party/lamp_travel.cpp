@@ -44,7 +44,7 @@ constexpr u32 kMenuMask = 0xeffffb33u;
 constexpr u64 kLampWarp = 0x13cdf30;      // void (u32 ReturnPointParam id): lamp / headstone warp
 constexpr u64 kFlipperUpdate = 0x2034770; // main-thread tick (as party_director)
 constexpr u64 kMapObject = 0x13c9af0;     // (entity, u32* index) -> map object record (+0x240 3x4 rows)
-constexpr u32 kPadCross = 0x4000, kPadDown = 0x40, kPadRight = 0x20, kPadLeft = 0x80;
+constexpr u32 kPadCross = 0x4000, kPadDown = 0x40, kPadRight = 0x20, kPadLeft = 0x80, kPadCircle = 0x2000;
 
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -352,6 +352,8 @@ struct TestState {
     bool dream = false;
     u32 walked = 0;        // the lamp walked to
     int rewalks = 0;
+    bool list_only = false;   // listonly: once the warp menu is up, log its entries and close it (Circle)
+    bool listed = false;
     bool setup_only = false;  // setuponly: done after continue / start= (no lamp walk, no warp menu)
     bool start_any = false;  // startany: the start= warp also when the save is in that map  // dream: Cross, Left (YES), Cross at the lamp; done when a load starts (#22)  // titleany: also in a party process whose host never answers (#22)
     u32 lamp = 0;          // lamp=ID (0: the nearest lit one)
@@ -384,6 +386,7 @@ void TestParse() {
         else if (item == "dream") g_t.dream = true;
         else if (item == "startany") g_t.start_any = true;
         else if (item == "setuponly") g_t.setup_only = true;
+        else if (item == "listonly") g_t.list_only = true;
         else if (item == "members") g_t.members = true;
         else if (item.rfind("lamp=", 0) == 0) g_t.lamp = static_cast<u32>(std::strtoul(item.c_str() + 5, nullptr, 10));
         else if (item.rfind("start=", 0) == 0) g_t.start = static_cast<u32>(std::strtoul(item.c_str() + 6, nullptr, 10));
@@ -556,6 +559,20 @@ void TestTick(const GameSnapshot& s, double now) {
             open = g_p.open;
             list = g_p.list;
         }
+        if (open && g_t.list_only) {
+            if (!g_t.listed) {
+                std::string rps;
+                for (const Entry& e : list) rps += " " + std::to_string(e.return_point);
+                Log("test: warp menu up (listonly): %zu entries:%s; closing it in 3 s", list.size(), rps.c_str());
+                g_t.listed = true;
+                g_t.at = now + 3.0;  // on screen for the screenshots
+                return;
+            }
+            Log("test: listonly: warp menu closed (Circle)");
+            Press(kPadCircle, now);
+            g_t.stage = TestState::Done;
+            return;
+        }
         if (open) {
             u32 target = g_t.to;
             if (!target) {
@@ -583,8 +600,9 @@ void TestTick(const GameSnapshot& s, double now) {
             Log("test: warp menu up; choosing lamp %u (entry %d of %zu)", target, pos + 1, list.size());
             return;
         }
-        if (++g_t.presses > 6) {
-            Log("test: FAILED: no warp menu after 6 Cross presses at the lamp");
+        // listonly at an unlit lamp: the first Cross lights it (its animation), a later one opens the menu.
+        if (++g_t.presses > (g_t.list_only ? 9 : 6)) {
+            Log("test: FAILED: no warp menu after %d Cross presses at the lamp", g_t.presses - 1);
             g_t.stage = TestState::Done;
             return;
         }

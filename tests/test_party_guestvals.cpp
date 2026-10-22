@@ -182,6 +182,36 @@ static void TestLampShare() {
     CHECK(!HeldForBoss(1, false, false));  // nobody beat it: the lamp is not past it
 }
 
+// 0.7.2 (user decision 2026-10-21): "host state saves lamps, anybody can light them".
+static void TestLampRule() {
+    using namespace coop::lampshare;
+    const Rule now{true, false};    // the defaults: Shared lamps on, Guests bring their lamps off
+    const Rule bring{true, true};   // the 2026-10-15 union
+    const Rule off{false, false};   // Shared lamps off
+    const Rule off_bring{false, true};
+    CHECK(!Rule{}.guests_bring && Rule{}.share);
+    // A guest's old lamp (its own save): stays out of the host's world unless the host lets guests
+    // bring them (and shares lamps at all).
+    CHECK(!Decide(Origin::GuestOwnSave, now).host_world && !Decide(Origin::GuestOwnSave, now).member_saves);
+    CHECK(!SendOwnLamps(now) && !HostTakes(true, now));
+    CHECK(Decide(Origin::GuestOwnSave, bring).host_world && Decide(Origin::GuestOwnSave, bring).member_saves);
+    CHECK(SendOwnLamps(bring) && HostTakes(true, bring));
+    CHECK(!SendOwnLamps(off) && !HostTakes(true, off));
+    CHECK(!SendOwnLamps(off_bring) && !HostTakes(true, off_bring));  // Shared lamps off wins
+    // A lamp a guest lit in the host's world: the host's world keeps it; every save gets it while shared.
+    for (const Rule& r : {now, bring}) {
+        CHECK(HostTakes(false, r));
+        CHECK(Decide(Origin::GuestInHostWorld, r).host_world && Decide(Origin::GuestInHostWorld, r).member_saves);
+    }
+    // Shared lamps off: still lit in the host's world (the world it was lit in), no member's save.
+    CHECK(HostTakes(false, off) && !Decide(Origin::GuestInHostWorld, off).member_saves);
+    CHECK(HostTakes(false, off_bring) && !Decide(Origin::GuestInHostWorld, off_bring).member_saves);
+    // A lamp lit by the host: into every guest's save while shared, the toggle does not matter.
+    CHECK(IntoOwnSave(now) && IntoOwnSave(bring));
+    CHECK(Decide(Origin::HostWorld, now).host_world);
+    CHECK(!IntoOwnSave(off) && !IntoOwnSave(off_bring));
+}
+
 static void TestBossFall() {
     using namespace coop::bossfall;
     Seen none, both;
@@ -217,6 +247,7 @@ int main() {
     TestNgGuard();
     TestStain();
     TestLampShare();
+    TestLampRule();
     TestBossFall();
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
