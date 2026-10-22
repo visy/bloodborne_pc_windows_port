@@ -1178,39 +1178,53 @@ BR_LUDWIG_CLEAR = "13401800,13401801,13404800,13404801,13404802,13404808,1340480
 BR_SIGNAL = "-434.55:1535.71:-264.25"   # region 3402856 (the scene's warp spot, inside the cathedral)
 BR_LUDWIG = "-407.93:1503.5:-721.36"     # region 3402805 origin + 0.5 m (Ludwig's first fight)
 BR_WALK = "1.0:150"                      # arrive within 1 m, up to 150 stick steps
-BR_UNTIL = [r"1:\?9471=1[\s\S]*travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)",
-            r"0:boss defeat, event 13401800[\s\S]*travel step (\d+)/\1: host_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)"]
+BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)",
+            r"0:travel step (\d+)/\1: host_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)"]
 
 
 def phase_br(only):
+    # The reward item box after each kill holds the stick (run 1: both screens showed Beast's Embrace
+    # + Guidance with an OK row through the walks): Cross twice closes it. R3 (0x4) after each
+    # `_obj` step turns the camera behind the player, so the walk's screenshots face the doorway.
+    # The steps at Ludwig's back wall carry no map condition: it stands on the m34 / m35 border, and
+    # the walk itself changes the map (run 1: the host's next step waited for m34_00 for good).
     host = ",".join([
         "god", "goods=4014:0",                                       # no Laurence's Skull yet
         "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,              # the guest walked out and in: the skull
         "host_kill=3400850@8%m34_00~",                               # Laurence, 8 s after his scene
-        "host_warp=3402952@12%m34_00",                               # the party to Ludwig's lamp
+        "host_press=0x4000@8%m34_00!", "host_press=0x4000@2%m34_00!",  # OK on the reward box
+        "host_warp=3402952@6%m34_00",                                # the party to Ludwig's lamp
         "host_move=%s@8%%m34_00" % BR_LUDWIG,                         # his first fight (two parts, scene)
         "host_kill=3400800@8%m34_00~",
-        "host_obj=3401801@12%m34_00",                                 # the wall behind Ludwig's arena
-        "host_stick=obj:3401801:4:180:%s@2%%m34_00" % BR_WALK,        # through it
-        "host_stick=obj:3401801:4:0:%s@2%%m34_00" % BR_WALK,          # and back
+        "host_press=0x4000@8!", "host_press=0x4000@2!",              # OK on the reward box
+        "host_obj=3401801@6!",                                       # the wall behind Ludwig's arena
+        "host_press=0x4@1!", "host_press=0@1!",                      # R3: the camera behind the player
+        "host_stick=obj:3401801:4:180:%s@2!" % BR_WALK,              # through it
+        "host_stick=obj:3401801:4:0:%s@2!" % BR_WALK,                # and back
     ])
     g1 = ",".join([
         "god",
         "guest_obj=3401850@10%m34_00",                               # at Laurence's fog (inside, by the lamp)
+        "guest_press=0x4@1%m34_00!", "guest_press=0@1%m34_00!",       # R3
         "guest_stick=obj:3401850:4:180:%s@2%%m34_00" % BR_WALK,       # through it
         "guest_stick=obj:3401850:4:0:%s@2%%m34_00" % BR_WALK,         # and back
         "guest_move=%s@2%%m34_00" % BR_SIGNAL,                        # inside: the host's skull now
-        "guest_obj=3401801@14%m34_00?9471=1",                        # Ludwig dead: at the wall behind him
-        "guest_stick=obj:3401801:4:180:%s@2%%m34_00" % BR_WALK,
-        "guest_stick=obj:3401801:4:0:%s@2%%m34_00" % BR_WALK,
+        "guest_press=0x4000@10%m34_00?13401850=1", "guest_press=0x4000@2%m34_00!",  # Laurence's reward box
+        "guest_press=0x4000@10?9471=1", "guest_press=0x4000@2!",      # Ludwig's
+        "guest_obj=3401801@4!",                                      # at the wall behind him
+        "guest_press=0x4@1!", "guest_press=0@1!",                    # R3
+        "guest_stick=obj:3401801:4:180:%s@2!" % BR_WALK,
+        "guest_stick=obj:3401801:4:0:%s@2!" % BR_WALK,
     ])
     return dict(
-        name="br", seconds=720, count=2, headless=0,
+        name="br", seconds=720, count=2, headless=0, pads=(0, 1),
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: (?:host|guest)_stick: object 340(?:1850|1801) found=brdoor@0.5,4"],
         crash=[], until=BR_UNTIL, until_hold=6,
     )
+
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
           "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br}
