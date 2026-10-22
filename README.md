@@ -265,8 +265,9 @@ before anyone is in the game):
 - **Guests can use the Hunter's Mark** (on by default; launcher switch "Guests can use Hunter's
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
-  refill. A guest who rests and travels alone gives the host a short loading screen so its world
-  resets too. Resting while the host is in a boss fight takes everyone out of the boss room.
+  refill. A guest who rests at a lamp and travels alone gives the host a short loading screen so its
+  world resets too; a guest leaving the Hunter's Dream alone by a headstone is just a trip (no reset).
+  Resting while the host is in a boss fight takes everyone out of the boss room.
 - **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
   Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
@@ -304,6 +305,11 @@ before anyone is in the game):
 
 - **Progress counts for everyone.** Bosses, items, doors, shortcuts, lamps, story and endings go
   into every player's own save; a guest who is behind catches up, including the Blood Moon.
+- **Covenants are your own.** How the covenant quests end stays in the world it happened in:
+  Alfred killing Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates
+  never reach another player's save (in the host's world you see the host's state). A covenant
+  rune an NPC hands you (Valtr's Impurity, for example) is yours, in your own save. A host setting,
+  on by default (*Covenants per player* on *System → Shared world*).
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
   open for everyone, in the host's world and in each guest's own save; a lift ridden or a ladder
   lowered by anyone is in the same place for everyone, also for a player who was far away. Guests open gates with their
@@ -333,11 +339,12 @@ before anyone is in the game):
   (armour sets, the Insight shop's attire) bought by one player stay in stock for the others.
 - **Talk to NPCs.** Guests can talk to NPCs in the host's world, Gehrman in the Hunter's Dream too
   (his last offer, the ending choice, stays the host's); quest steps are shared by the whole
-  party, and NPCs look solid for guests. When a companion near you talks to an NPC you see the
+  party (the covenant quests of Annalise, Alfred and Valtr stay each player's own), and NPCs look
+  solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
   Story & dialogue → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
   headstones show no caption. One-time NPC gifts go to every party member;
-  repeatable ones (Blood of Arianna, Iosefka's vials, ...) to whoever asked.
+  repeatable ones (Blood of Arianna, Iosefka's vials, ...) and Valtr's League gifts to whoever asked.
 - **Change your appearance at the Dream's mirror.** The workshop mirror opens the appearance editor
   (a feature the game left unfinished, restored as in bbhost), in single player and for every party
   member; the others see your new look at once. Launcher switch "Hunter's Dream mirror", on by

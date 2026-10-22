@@ -77,7 +77,14 @@ Phase br (~6 min, 2 players, group `boss_rooms`, the DLC of the default save): t
 Phase da (~3 min, 2 players, group `dream_apart`): host and guest in the host's Hunter's Dream; the
   host leaves alone by a headstone; the guest left behind must get its action buttons back (the
   leave state's hold lifted) and use a headstone itself: its menu opens, it travels and arrives
-  (party_stay_rules.h, a player's report: the guest was stuck in the Dream).
+  (party_stay_rules.h, a player's report: the guest was stuck in the Dream). 0.7.3: the guest's trip
+  out of the Dream is a plain travel: no rest request, no loading screen for the host.
+Phase cv (~3 min, 2 players, groups `covenant` / `valtr_rune`): covenant outcomes per player (0.7.3).
+  The host's save has Alfred's kill of Queen Annalise and Valtr dead, the guest's save Annalise
+  alive; in the host's world the guest sees the host's state, its own save keeps Annalise alive
+  after the session while the shared progress (a boss kill) still reaches it. Valtr's Impurity rune:
+  the guest's League talk trigger gives the guest the rune in its own inventory and save, never the
+  host. Both saves are read from copies after the run.
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -350,7 +357,8 @@ RULES_PAGES = [
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
     # 0.7.1: the host's world rules (switches that had only an env variable before)
-    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Party votes on travel"],
+    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
+                      "Party votes on travel"],
      ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
       '"kill_record":false')),
     ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
@@ -369,7 +377,7 @@ RULES_PAGES = [
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
 RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fire", "party_npc_talk", "party_full_rewards",
                    "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
-                   "party_kill_record", "party_gather", "party_travel_vote",
+                   "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "settings_rev"]
 
@@ -1613,19 +1621,58 @@ def phase_da(only):
               "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         watch=["--watch", r"test: levelup: before Cross=daprompt@0.2,1",
                "--watch", r"test: levelup: no talk list: the menu was requested=dahs@0.5,2",
-               "--watch", r"the host travels alone=dahost@1,8"],
+               "--watch", r"the host travels alone=dahost@1,8",
+               # 0.7.3: the host's screen while the guest leaves the Dream alone (no loading screen there)
+               "--watch", r"guest: travels alone \(headstone\)=daleave@1,4,8"],
         crash=[], until=DA_UNTIL, until_hold=10,
     )
 
 
+# Phase cv (covenants, 0.7.3, ~3 min, 2 players, groups `covenant` / `valtr_rune`; user decision
+# 2026-10-22: covenant outcomes are per player). The host's save: Alfred killed Queen Annalise (1042
+# the flesh, Alfred 1348 in the castle, 72500328 her revival flag) and Valtr is dead (1790). The
+# guest's save: Annalise on her throne (1040), Alfred at the chapel (1344), Valtr alive (1800), and
+# the Cleric Beast not killed (12411700: the shared-progress control, the host's kill must reach it).
+# After the join the guest's game sets Valtr's rune trigger 72700321 as his League talk does (the
+# talk itself is not driven), then leaves (Party > Leave): at home its own world's values are logged
+# (BB_PARTY_PROGRESS_TEST_READ) and both saves are read from copies after the run.
+CV_HOST_SET = ["1042", "1348", "1790", "72500328"]
+CV_GUEST_SET = ["1040", "1344", "1800"]
+CV_CONTROL = "12411700"
+CV_RUNE_TRIGGER, CV_RUNE_LOT, CV_RUNE_FLAG = "72700321", "43120", "6676"
+CV_READ = CV_HOST_SET + CV_GUEST_SET + [CV_CONTROL, CV_RUNE_FLAG]
+CV_UNTIL = [r"1:guest_leave: Party > Leave pressed[\s\S]*test read \(load mode 0"]
+
+
+def phase_cv(only):
+    return dict(
+        name="cv", seconds=240, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_READ=" + ",".join(CV_READ), "BB_PARTY_TEST_COND_TIMEOUT=90"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=god",
+              "0:BB_PARTY_PROGRESS_TEST_SET=" + ",".join(CV_HOST_SET),
+              "0:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(CV_GUEST_SET + [CV_RUNE_FLAG]),
+              "1:BB_PARTY_DIRECTOR_TEST=" + ",".join([
+                  "god",
+                  "guest_flag=%s@8" % CV_RUNE_TRIGGER,   # what joining the League sets (Valtr's talk)
+                  "guest_leave@12"]),                    # home: the own world's values, the rune at home
+              "1:BB_PARTY_PROGRESS_TEST_SET=" + ",".join(CV_GUEST_SET),
+              "1:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(CV_HOST_SET + [CV_CONTROL, CV_RUNE_FLAG])],
+        watch=["--watch", r"covenant outcomes per player: \d+ covenant flag=cvjoin@2,6",
+               "--watch", r"own talk gift trigger %s=cvrune@1,4" % CV_RUNE_TRIGGER,
+               "--watch", r"guest_leave: Party > Leave pressed=cvleave@4,10"],
+        crash=[], until=CV_UNTIL, until_hold=8,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "tv": phase_tv}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
-          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "travel_vote": "tv"}
+          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
+          "valtr_rune": "cv", "travel_vote": "tv"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1634,7 +1681,9 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
-              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ", "travel_vote": r"^tv "}
+              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
+              "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
+              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1685,6 +1734,8 @@ GROUP_UNTIL = {
     "boss_rooms": BR_UNTIL,
     "scene_mirror": [SM_UNTIL],
     "dream_apart": DA_UNTIL,
+    "covenant": CV_UNTIL,
+    "valtr_rune": CV_UNTIL,
     "travel_vote": TV_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
@@ -2173,7 +2224,7 @@ def check_rules(v, L):
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
     v.step("rules guest: sees the host's Shared world rules (read-only)",
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
-           and "Party votes on travel=Off" in sw[1],  # 0.7.3: off by default
+           and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
            sw[1][:250] if sw else "no Shared world rows line on the guest")
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
     for i, who in ((0, "host"), (1, "guest")):
@@ -3542,9 +3593,74 @@ def check_da(v, L):
     go = need(v, L, "da guest travels from the Dream", 1, r"guest: travels alone \(headstone\)", flag or left)
     if go is not None:
         need(v, L, "da guest arrives (not stuck in the Dream)", 1, r"arrived in the host world|map - -> m2[2-9]", go)
+    # 0.7.3 (user decision 2026-10-22: only the host's own rest resets the world): the guest's trip
+    # out of the Dream is a plain travel - no rest request, no rest load or loading screen for the host.
+    need(v, L, "da guest's trip from the Dream is no rest", 1,
+         r"leaves the Hunter's Dream alone: a plain travel, no rest load", flag or left)
+    none_of(v, L, "da guest sends no rest request", r"the host's world gets a rest load|rest rides|\"rest\":",
+            flag or left, insts=(1,))
+    none_of(v, L, "da host: no rest load for the guest's trip",
+            r"rested at lamp|a rest load for this world|re-join waits for the rest load|rest load could not start",
+            flag or left, insts=(0,))
+    none_of(v, L, "da host: no loading screen while the guest leaves", r"map (m\d\d_\d\d_\d\d_\d\d|-) -> m",
+            flag or left, insts=(0,))
     if lift is not None and hs is not None:
         v.step("da hold lifted before the guest's headstone use", lift <= hs, "lift +%.1f s, use +%.1f s" % (lift, hs))
     check_common(v, L, "da")
+
+
+def check_cv(v, L, d: Path):
+    """Phase cv: covenant outcomes per player; Valtr's rune for a guest (0.7.3)."""
+    j = need(v, L, "cv join: the guest is in", 0, r"cooperators 0 -> 1")
+    need(v, L, "cv host's fixture: Annalise dead by Alfred, Valtr dead (host's save)", 0,
+         r"test: set in the own save .*1042", 0)
+    need(v, L, "cv rule on (host's setting)", 0, r"covenant outcomes per player: on")
+    need(v, L, "cv rule on (guest: the host's rule)", 1, r"covenant outcomes per player: on")
+    snap = need(v, L, "cv covenant: the host's covenant flags not copied into the guest's save", 1,
+                r"covenant outcomes per player: \d+ covenant flag\(s\) set in the host's world not copied.*\b1042\b")
+    # In the host's world: the guest sees the host's state (visible), its own save its own.
+    rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", j or 0)
+    vals = dict(re.findall(r"\b(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
+    v.step("cv covenant: in the host's world the guest sees the host's state (1042 visible)",
+           vals.get("1042", "").endswith("/1") and vals.get("1040", "").endswith("/0"),
+           rd[1][:220] if rd else "no load mode 1 test read on the guest")
+    none_of(v, L, "cv covenant: no covenant flag sent up as a world action",
+            r"world action sent to the host.*\b(10[45]\d|13[45]\d|179\d|180\d|725003\d\d|727003\d\d)\b", j or 0)
+    lv = need(v, L, "cv covenant: the guest leaves (Party > Leave)", 1, r"guest_leave: Party > Leave pressed", j or 0)
+    home = L.find(1, r"test read \(load mode 0, own save / visible\): ", lv or 1e9)
+    hv = dict(re.findall(r"\b(\d+)=([0-9?])/", home[1])) if home else {}
+    v.step("cv covenant: at home the guest's world has Annalise alive, its Alfred and Valtr as before",
+           bool(hv) and hv.get("1040") == "1" and hv.get("1042") == "0" and hv.get("1344") == "1" and
+           hv.get("1348") == "0" and hv.get("1800") == "1" and hv.get("1790") == "0",
+           home[1][:220] if home else "no load mode 0 test read after the Leave")
+    v.step("cv shared: the host's boss kill reached the guest's own world", bool(hv) and hv.get(CV_CONTROL) == "1",
+           "%s=%s" % (CV_CONTROL, hv.get(CV_CONTROL, "?")))
+    ids = CV_HOST_SET + CV_GUEST_SET + [CV_CONTROL, CV_RUNE_FLAG]
+    host = lp_save_flags(d, 0, ids)
+    guest = lp_save_flags(d, 1, ids)
+    fmt = lambda m: " ".join("%s=%d" % (k, m[k]) for k in m) if m else "no save"
+    v.step("cv host's save: its own covenant outcomes kept", host is not None and all(host[f] for f in CV_HOST_SET),
+           fmt(host))
+    v.step("cv guest's save: Annalise alive, its Alfred and Valtr unchanged (per player)",
+           guest is not None and all(guest[f] for f in CV_GUEST_SET) and not any(guest[f] for f in CV_HOST_SET),
+           fmt(guest))
+    v.step("cv shared: the guest's save has the host's boss kill (the sync ran and was saved)",
+           guest is not None and guest[CV_CONTROL], fmt(guest))
+    # Valtr's Impurity rune
+    tr = need(v, L, "cv rune: the guest's League talk trigger set (test step)", 1,
+              r"test: guest_flag %s: \d -> 1" % CV_RUNE_TRIGGER, j or 0)
+    need(v, L, "cv rune: given to the guest itself (own grant)", 1,
+         r"own talk gift trigger %s .*lot %s .*given to this guest" % (CV_RUNE_TRIGGER, CV_RUNE_LOT), tr or j or 0)
+    need(v, L, "cv rune: given into the guest's inventory", 1,
+         r"gave #\d+ lot %s \(flag %s, own\).*flag %s is set" % (CV_RUNE_LOT, CV_RUNE_FLAG, CV_RUNE_FLAG),
+         tr or j or 0)
+    none_of(v, L, "cv rune: the trigger never goes to the host", r"world action sent to the host.*%s" % CV_RUNE_TRIGGER, insts=(0, 1))
+    none_of(v, L, "cv rune: the host gets no rune", r"award lot %s\b" % CV_RUNE_LOT, insts=(0,))
+    v.step("cv rune: in the guest's save (its own flag %s), not the host's" % CV_RUNE_FLAG,
+           guest is not None and host is not None and guest[CV_RUNE_FLAG] and not host[CV_RUNE_FLAG],
+           "guest %s host %s" % (fmt(guest and {CV_RUNE_FLAG: guest[CV_RUNE_FLAG]}),
+                                 fmt(host and {CV_RUNE_FLAG: host[CV_RUNE_FLAG]})))
+    check_common(v, L, "cv")
 
 
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
@@ -3553,7 +3669,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv,
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L)}
 
 
@@ -3563,7 +3679,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,tv")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,cv,tv")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -3579,7 +3695,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "rh", "rs", "tv")
+                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

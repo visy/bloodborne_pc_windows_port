@@ -45,6 +45,7 @@ const PartySwitch PartySwitches[] = {
     {"party_kill_record", "BB_PARTY_KILL_RECORD", &Values::party_kill_record, false},
     {"party_npc_mirror", "BB_PARTY_NPC_MIRROR", &Values::party_npc_mirror, false},
     {"party_gather", "BB_PARTY_GATHER", &Values::party_gather, false},
+    {"party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", &Values::party_covenant_per_player, false},
     // 0.7.3: lamp travel voting (party_vote.h reads it live; the host's rule, off by default).
     {"party_travel_vote", "BB_PARTY_TRAVEL_VOTE", &Values::party_travel_vote, false},
     {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},

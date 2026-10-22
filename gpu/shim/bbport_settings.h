@@ -274,6 +274,9 @@ struct Values {
     std::atomic<bool> party_kill_record{true};  ///< enemies stay dead for the party (party_kill_record.h)
     std::atomic<bool> party_npc_mirror{true};   ///< an NPC gone from the host's world is gone on guests
     std::atomic<bool> party_gather{true};       ///< I5: the host may gather the party (party_gather.h)
+    /// 0.7.3 (user decision 2026-10-22): covenant outcomes (Annalise, Alfred, Valtr) stay in each
+    /// player's own save (party_progress Category::covenant_outcome). The host's; on by default.
+    std::atomic<bool> party_covenant_per_player{true};
     /// 0.7.3: a party travel by lamp, headstone or Hunter's Mark runs only once every member voted
     /// YES (party_vote.h). The host's rule; OFF by default.
     std::atomic<bool> party_travel_vote{false};

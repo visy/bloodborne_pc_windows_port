@@ -455,6 +455,17 @@ Note (splittravel): in the vis2-vis4 runs the host's copy did get position updat
   `HeadstoneWarpTick` in split `Tick` (`stayrules::HeadstoneFlagLamp`, `HeadstoneWarpFallback`): a
   guest's own headstone flag with no warp for 8 s runs the warp itself (the travel question follows).
 
+## 2026-10-22 (covenants, 0.7.3): a guest's trip out of the Dream is no rest
+
+* User decision: "only the host's own rest resets the world". A guest that leaves the Hunter's Dream
+  alone (a headstone, NO) used to send the host a rest request (`GuestAloneRestsHostWorld`): the
+  dreamstone `da` run showed the host's rest load for it. `deathrules::GuestAloneRestsHostWorld(alone,
+  same_map_solo, from_dream)` is false when the guest's game stands in the Dream (split `Carry`, the
+  last steady map), so its trip is a plain travel (`lamp N (guest): leaves the Hunter's Dream alone: a
+  plain travel, no rest load for the host's world`). A guest's rest at a world lamp (NO, to the Dream)
+  still rests the host's world as before. Smoke `da`: no rest request on the guest, no rest load and
+  no map load on the host after the guest's headstone choice.
+
 ## 2026-10-22 (lampvote, 0.7.3): travel voting
 
 With the host's rule *Party votes on travel* (bbport.ini `party_travel_vote`, off by default;
