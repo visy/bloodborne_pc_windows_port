@@ -347,7 +347,7 @@ struct Test {
     alignas(16) float pin_pos[4] = {0, 0, 0, 1}, pin_rot[4] = {0, 0, 0, 0};
     std::size_t obj_seen_step = ~std::size_t(0);  // "?obj=": the step whose ANIM was seen playing
     // liftfix: a step's "?FLAG=V" / "?near=" / "?obj=" condition that never comes true: after
-    // kCondTimeout s the chain jumps to its last step (conditions skipped), so the run ends on its
+    // kCondTimeout s (BB_PARTY_TEST_COND_TIMEOUT, default 240) the chain jumps to its last step (conditions skipped), so the run ends on its
     // marker instead of idling; logged "condition timed out".
     std::size_t cond_step = ~std::size_t(0);
     Clock::time_point cond_since{};
@@ -1989,7 +1989,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     if (t.next_step < t.steps.size() &&
         (t.steps[t.next_step].wait_flag || t.steps[t.next_step].wait_near || t.steps[t.next_step].wait_obj) &&
         !t.cond_skip) {
-        constexpr double kCondTimeout = 45.0;
+        // BB_PARTY_TEST_COND_TIMEOUT (s, default 240: above every smoke phase's longest wait, e.g. a
+        // boss scene and fight; liftfix's rh / rs set 45).
+        static const double kCondTimeout = [] {
+            const char* e = std::getenv("BB_PARTY_TEST_COND_TIMEOUT");
+            const double v = e ? std::atof(e) : 0.0;
+            return v > 0.0 ? v : 240.0;
+        }();
         if (t.cond_step != t.next_step) {
             t.cond_step = t.next_step;
             t.cond_since = now;
