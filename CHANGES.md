@@ -6,6 +6,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 ## Unreleased
 
 - **Fixed: the camera follows you again after a deadly fall in a party**: when you died from a fall in a party (for example off a ledge in Old Yharnam) and got up again at a lamp without a loading screen, the camera could stay behind at the fall: it pointed at the sky and you never saw your own hunter again, even after the host died. Getting up after a fall now turns the game's falling-death camera off and puts the camera back behind you, as after the normal death loading screen. The same goes for the host, and for the rescue that puts a falling hunter back on safe ground.
+- **Fixed: Laurence's arena no longer starts a boss fight too early or shuts a guest in**: before Laurence's fight, which only starts when the host brings Laurence's Skull to the altar, a guest going through his fog counted as starting the fight and was then stuck behind the fog until using a Hunter's Mark. Now his room is open to the whole party until the fight really starts, as it is for the host. Ebrietas's and Lady Maria's rooms, whose fights also start with something the host does there, work the same way. A guest at such a fog is told what starts the fight.
+- **Fixed: the fog at the back of Ludwig's arena goes away when he dies**: with a guest in the world, the fog wall at the far door of Ludwig's arena stayed after his death, blocking the way on into the DLC until the guest left or the game was restarted. It is now gone in a party (and with *Open world* on it never comes up).
 
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 

@@ -188,9 +188,12 @@ bool BossGateInBlock(const BossGate& g, std::uint32_t map);
 /// distance condition next to its flag and chr-type checks (EMEVD data, quest_audit.md P5). A
 /// guest may go through such a fog before the host's first fight; the host's game then runs the
 /// first-fight event as if the host had walked in, so its intro scene plays for the whole party
-/// (live mirror) and the boss starts. DLC (pard2): Ludwig, Laurence and the Orphan of Kos (a
-/// two-part first fight: a first event waits for the host in the region, the scene event for that
-/// event AND the host still in the region) and the Living Failures (one region) too. Host-first:
+/// (live mirror) and the boss starts. DLC (pard2): Ludwig and the Orphan of Kos (a two-part first
+/// fight: a first event waits for the host in the region, the scene event for that event AND the
+/// host still in the region) and the Living Failures (one region) too. Host-first (an action in
+/// the room starts them, bossfog::FirstFights): Laurence (the host holding Laurence's Skull at the
+/// altar, 3[4] goods 4014 + 3[2] 3402855; player report 2026-10-22: a guest's walk through his fog
+/// was taken for the fight's start and shut it in),
 /// Ebrietas (her first-fight event waits for the HOST's own hit on her, 3[23] attacker 10000),
 /// Lady Maria (her first fight follows the host's examining her in her chair, 13500948), the
 /// Celestial Emissary (no first-fight event); Rom has no fog gate (anyone's hit starts her fight,

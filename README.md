@@ -275,8 +275,10 @@ before anyone is in the game):
 
 - **Anyone can go through a boss fog first**, a first fight included: the fight starts for
   everyone and the others follow through the fog. A guest's first fight plays the intro cutscene on
-  every screen. The DLC bosses work the same way; Ebrietas and Lady Maria still start with the host
-  (a guest at that fog is told so), and Rom starts with anyone's hit.
+  every screen. The DLC bosses work the same way. Ebrietas, Lady Maria and Laurence start only with
+  what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
+  until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
+  starts with anyone's hit.
 - **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
   where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
   the guest is taken to the host with one loading screen.

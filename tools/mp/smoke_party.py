@@ -62,6 +62,12 @@ Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring t
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
   travel list shows only the host's world's lamps (both saves read from copies after the run).
 
+Phase br (~6 min, 2 players, group `boss_rooms`, the DLC of the default save): the party at the
+  Nightmare Grand Cathedral lamp (inside Laurence's room) without his skull: the guest walks out
+  through his fog and back in, no fight starts; the skull given to the host there starts it
+  (scene, bar on both), Laurence killed; then Ludwig killed and host and guest each walk through
+  the wall at the back of his arena and back (party_bossfog_rules.h, 2026-10-22 reports).
+
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
 BB_PARTY_PROGRESS_TEST_CLEAR (boss fixtures), BB_PARTY_TEST_INVINCIBLE (players moved into a fight
@@ -1226,14 +1232,79 @@ def phase_rt(only):
         crash=[], until=[RT_UNTIL], until_hold=4,
     )
 
+
+# Phase br (laurence, ~6 min, 2 players, group `boss_rooms`): boss rooms open until the real fight
+# start, and the co-op wall behind Ludwig (party_bossfog_rules.h FirstFights / ConfinementWalls;
+# player reports 2026-10-22). Default test save (owns the DLC; Laurence and Ludwig alive; their
+# fixture flags cleared). The party travels to the Nightmare Grand Cathedral lamp 3402953, which
+# stands in Laurence's altar region 3402855: without Laurence's Skull nothing starts. The guest walks
+# out through his fog 3401850 and back in (a real walk by the stick: a closed fog blocks it), then
+# stands inside (BR_SIGNAL, the scene's own warp spot 3402856); the host is given the skull there:
+# the first fight starts (scene 34000010, the bar on both), the host kills Laurence. The party
+# travels to Ludwig's lamp 3402952, the host walks into his first-fight region (scene 34000020) and
+# kills him; then host and guest each walk through the wall 3401801 at the back of his arena and
+# back (13400010: it stayed up after his death with a guest in the world).
+BR_LAURENCE_CLEAR = "13401850,13401851,13401853,13404850,13404851,13404852,13404858,13404859,13404860,13404861"
+BR_LUDWIG_CLEAR = "13401800,13401801,13404800,13404801,13404802,13404808,13404809,13404810,13404811,9471,13400010"
+BR_SIGNAL = "-434.55:1535.71:-264.25"   # region 3402856 (the scene's warp spot, inside the cathedral)
+BR_LUDWIG = "-407.93:1503.5:-721.36"     # region 3402805 origin + 0.5 m (Ludwig's first fight)
+BR_WALK = "1.0:150"                      # arrive within 1 m, up to 150 stick steps
+BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)",
+            r"0:travel step (\d+)/\1: host_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)"]
+
+
+def phase_br(only):
+    # The reward item box after each kill holds the stick (run 1: both screens showed Beast's Embrace
+    # + Guidance with an OK row through the walks): Cross twice closes it. R3 (0x4) after each
+    # `_obj` step turns the camera behind the player, so the walk's screenshots face the doorway.
+    # The steps at Ludwig's back wall carry no map condition: it stands on the m34 / m35 border, and
+    # the walk itself changes the map (run 1: the host's next step waited for m34_00 for good).
+    host = ",".join([
+        "god", "goods=4014:0",                                       # no Laurence's Skull yet
+        "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
+        "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,              # the guest walked out and in: the skull
+        "host_kill=3400850@8%m34_00~",                               # Laurence, 8 s after his scene
+        "host_press=0x4000@8%m34_00!", "host_press=0x4000@2%m34_00!",  # OK on the reward box
+        "host_warp=3402952@6%m34_00",                                # the party to Ludwig's lamp
+        "host_move=%s@8%%m34_00" % BR_LUDWIG,                         # his first fight (two parts, scene)
+        "host_kill=3400800@8%m34_00~",
+        "host_press=0x4000@8!", "host_press=0x4000@2!",              # OK on the reward box
+        "host_obj=3401801@6!",                                       # the wall behind Ludwig's arena
+        "host_press=0x4@1!", "host_press=0@1!",                      # R3: the camera behind the player
+        "host_stick=obj:3401801:4:180:%s@2!" % BR_WALK,              # through it
+        "host_stick=obj:3401801:4:0:%s@2!" % BR_WALK,                # and back
+    ])
+    g1 = ",".join([
+        "god",
+        "guest_obj=3401850@10%m34_00",                               # at Laurence's fog (inside, by the lamp)
+        "guest_press=0x4@1%m34_00!", "guest_press=0@1%m34_00!",       # R3
+        "guest_stick=obj:3401850:4:180:%s@2%%m34_00" % BR_WALK,       # through it
+        "guest_stick=obj:3401850:4:0:%s@2%%m34_00" % BR_WALK,         # and back
+        "guest_move=%s@2%%m34_00" % BR_SIGNAL,                        # inside: the host's skull now
+        "guest_press=0x4000@10%m34_00?13401850=1", "guest_press=0x4000@2%m34_00!",  # Laurence's reward box
+        "guest_press=0x4000@10?9471=1", "guest_press=0x4000@2!",      # Ludwig's
+        "guest_obj=3401801@4!",                                      # at the wall behind him
+        "guest_press=0x4@1!", "guest_press=0@1!",                    # R3
+        "guest_stick=obj:3401801:4:180:%s@2!" % BR_WALK,
+        "guest_stick=obj:3401801:4:0:%s@2!" % BR_WALK,
+    ])
+    return dict(
+        name="br", seconds=720, count=2, headless=0, pads=(0, 1),
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: (?:host|guest)_stick: object 340(?:1850|1801) found=brdoor@0.5,4"],
+        crash=[], until=BR_UNTIL, until_hold=6,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
-          "rot": "rt"}
+          "rot": "rt", "boss_rooms": "br"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1242,7 +1313,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
-              "rot": r"^rt "}
+              "rot": r"^rt ", "boss_rooms": r"^br "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1289,6 +1360,7 @@ GROUP_UNTIL = {
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
     "fight_load": BF_UNTIL,
     "rot": [RT_UNTIL],
+    "boss_rooms": BR_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -2847,13 +2919,69 @@ def check_rt(v, L):
     check_common(v, L, "rt")
 
 
+
+def _br_walks(L, i, kind, after, before=1e9):
+    """The (start, result) of each `kind` (guest_stick / host_stick) walk started in [after, before)."""
+    out = []
+    for t, _line in L.all(i, r"travel step \d+/\d+: " + kind, after, before):
+        out.append((t, L.find(i, r"test: approach: (arrived|BLOCKED|GAVE UP)", t)))
+    return out
+
+
+def _br_walk_rows(v, L, i, who, kind, whats, after, before=1e9):
+    ws = _br_walks(L, i, kind, after, before)
+    for k, what in enumerate(whats):
+        w = ws[k] if k < len(ws) else None
+        ok = bool(w and w[1] and "arrived" in w[1][1])
+        v.step("br %s walks %s" % (who, what), ok,
+               ("+%.1f s: %s" % (w[1][0], w[1][1][:120])) if w and w[1] else "walk %d not run / no result" % (k + 1))
+
+
+def check_br(v, L):
+    """Phase br: Laurence's room open until the skull starts his fight; the wall behind Ludwig gone."""
+    need(v, L, "br join: 2 players", 0, r"cooperators 0 -> 1")
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, "br %s: the boss-room rule (Laurence's room open on a client)" % who, i,
+             r"EMEVD rule \(built in, boss rooms\): skip 13404850:1003:5@2 \(on a client\)")
+        need(v, L, "br %s: the wall rule behind Ludwig" % who, i, r"skip 13400010:2005:3@7")
+        need(v, L, "br %s: Ludwig's wall goes at his death" % who, i,
+             r"EMEVD rule \(built in, boss rooms\): skip 13400010:0:0@11")
+    arr = need(v, L, "br guest in the Nightmare (m34_00)", 1, r"map .*-> m34_00")
+    if arr is None:
+        return check_common(v, L, "br")
+    skull = L.find(0, r"travel step \d+/\d+: host_use", arr)
+    t_skull = skull[0] if skull else 1e9
+    _br_walk_rows(v, L, 1, "guest", "guest_stick", ("out through Laurence's fog (no fight yet)",
+                                                     "back in through it (no fight yet)"), arr, t_skull)
+    none_of(v, L, "br no fight before the skull (no fog report, no host visit, no bar)",
+            r"went through boss fog \(event 13404851|boss fog: slot \d+ went in|first fight \(guest event 13404851|"
+            r"Boss fight started|boss health bar shown", arr, t_skull, insts=(0, 1))
+    if skull is None:
+        v.step("br the host is given Laurence's Skull", False, "host_use not run")
+        return check_common(v, L, "br")
+    sc = need(v, L, "br the skull at the altar starts the fight (scene 34000010)", 0, r"cutscene 34000010", t_skull)
+    if sc is not None:
+        for i, who in ((0, "host"), (1, "guest")):
+            need(v, L, "br Laurence's bar on the %s" % who, i, r"boss health bar shown", sc)
+    kill = need(v, L, "br Laurence killed", 0, r"boss defeat, event 13401850", t_skull)
+    lud = L.find(0, r"travel step \d+/\d+: host_move", kill or t_skull)
+    if lud is None:
+        v.step("br the host walks into Ludwig's fight", False, "host_move not run")
+        return check_common(v, L, "br")
+    need(v, L, "br Ludwig's fight (bar)", 0, r"boss health bar shown: .*event 13404802", lud[0])
+    dead = need(v, L, "br Ludwig killed (9471)", 0, r"boss defeat, event 13401800", lud[0])
+    if dead is not None:
+        for i, who, kind in ((0, "host", "host_stick"), (1, "guest", "guest_stick")):
+            _br_walk_rows(v, L, i, who, kind, ("through the wall behind Ludwig", "back through it"), dead)
+    check_common(v, L, "br")
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp,
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L),
           "rt": lambda v, L, d: check_rt(v, L)}
 
 
@@ -2863,7 +2991,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,fdj,cl,bf,lp")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,fdj,cl,bf,lp,br")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
