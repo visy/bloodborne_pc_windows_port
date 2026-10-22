@@ -129,9 +129,22 @@ of that parse path (exit 1 on such a save): all other harness saves read correct
 not. No panic on that file by this reading (the empty inventory entry is always there), so the crash the
 player saw is not reproduced: which editor or version it was is not known.
 
-**Not changed** (user decision 2026-10-22): the save format and what the game writes. A runtime fix that
-copied the blocks into the save at its commit was built and worked (run lp3: 5 guest saves in the host's
-world kept their 114 bytes, the lamps group 22/22) and was taken out again.
+**The runtime fix** (user decision 2026-10-22, re-added after a first take-out; `runtime_savepolicy_world_fix`,
+called by `runtime_file.c`'s commit of a party session's `userdata0000..0009`): when the game's new save has
+three empty blocks and the file it replaces (the game renames it to `backupNNNN` first: BB_SAVE_TRACE shows
+`rename(userdata0000, backup0000)` then the write) has them, for the same character (name, play time not
+newer), the old blocks go into the new save, the rest of its data (to the data's end: the next block + 8 +
+its size + 27) moves behind them and the header's +0x40/+0x44/+0x48/+0x4C follow. Nothing in the game's
+memory changes. Log: `Saves: userdata0000 was written in another player's world without the own world's
+state ...: the N bytes of backup0000 kept in it`. Off: `BB_SAVE_GUEST_WORLD_FIX=0`. Run lp3 (lamps group
+22/22): 5 guest saves in the host's world kept their 114 bytes; editor_check and save_check pass on them.
+
+Limits: the in-memory snapshot GSM +0x1690.. stays empty, so a go-home inside the session (B2 leave, the
+own world loaded from that snapshot) is not helped; a quit and Continue is (the blocks come from the file).
+The live check of a guest's own-world kill surviving a go-home (run side2) did not get there: the guest's
+home load went to the Dream, not its fixture's Cathedral Ward, and the kill step never ran. Saves the guest
+writes during a title join's load are written in own-world mode (+0x1592 = 1) and carry the live world,
+i.e. the host's map state (seen as LCED map lists of the host's map in guest saves); not changed here.
 
 **Export for save editor / Import from save editor** (launcher, Party tab; `scripts/save_editor.py`):
 * export: any character save (`savedata` or `savedata_party`, slot 0..9) is copied to a folder the player
