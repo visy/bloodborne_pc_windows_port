@@ -432,8 +432,6 @@ private:
     }
 
     void GarbageCollectImages();
-    /// bbport (test aid, BB_GC_AB_FILE): the 0.7.2 collector, for an A/B within one session.
-    void GarbageCollectImagesLegacy();
     void GarbageCollectSamplers();
 
 private:
@@ -465,7 +463,6 @@ private:
     u64 gc_measured_tick = 0;
     u64 gc_kept_gpu = 0, gc_freed_bytes = 0; ///< pressure report
     std::atomic<u64> gc_pending_free_bytes{0};
-    u64 gc_ab_budget = 0; ///< bbport test aid: BB_GC_AB_FILE's budget (0: none)
     u64 trigger_gc_memory = 0;
     u64 pressure_gc_memory = 0;
     u64 critical_gc_memory = 0;

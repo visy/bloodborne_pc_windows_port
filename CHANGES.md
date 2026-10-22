@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: no more flicker and FPS drop when entering big rooms** (player report): walking into the Research Hall's main hall, or stepping out of a lift, could flicker and drop the frame rate for about half a second, mostly on cards with 8 GB or less and with larger graphics heaps. The game threw out hundreds of textures at once well before video memory was actually full, and had to load them all again in the next frames; it could also lose the picture of some effects it had drawn itself. Textures now only make room when video memory is really getting full (measured from what the graphics driver says is free for the game), go a few at a time, oldest first, never ones used in the last moments, and effects the game drew are kept. In our test with the same tight memory limit, the main-hall and lift moments went from several 50 ms frames to none.
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: the Research Hall lifts no longer leave without you**: on the two lifts inside the Research Hall (Old Hunters DLC), the car could leave again the moment you stepped off it, with you still at its edge or about to step back in, and you fell into the pit under it and died. The car now waits until its ride is fully over, as every other lift does.
