@@ -148,7 +148,16 @@ def phase_s1(only):
             "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
             "guest_die@46%m24_01~",               # 40 s after the host's death: the last one down
         ])
-        g2 = "guest_die@16%m24_01~"
+        # wipeboss (0.7.2 known issue 2): guest 2 (its scripted death always runs; guest 1's waits
+        # forever when Gascoigne kills it first), back at the host's lamp after the respawn load:
+        # 30 s near Gascoigne's fog with nobody going in (HP logged every 10 s: no boss, no hits),
+        # then a real walk through the fog: the fight must open for everyone from that alone.
+        g2 = ",".join([
+            "guest_die@16%m24_01~",
+            "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!",
+            "guest_obj=2411810@2%m24_01",
+            "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
+        ])
     return dict(
         name="s1", seconds=420,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -1008,7 +1017,10 @@ GROUP_UNTIL = {
     "host_death": ["0:spectating: following", "1:Party HUD: slot 0 spectating"],
     "wipe": [WIPE_UNTIL],
     # guest 1 back from the late wipe's respawn load (then the hold: no revive of its own after it)
-    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)"],
+    # and guest 2's walk through Gascoigne's fog 30 s later: the fight opens on the host
+    "wipe_late": [r"1:own chr at HP 0: told the host[\s\S]*arrived in the host world \(flow 4\)",
+                  r"2:own chr at HP 0: told the host[\s\S]*went through boss fog",
+                  r"0:a wipe; the[\s\S]*boss fog: slot \d+ went in first"],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
     "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
@@ -1037,7 +1049,7 @@ GROUP_UNTIL = {
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
-GROUP_HOLD = {"host_death": 10, "wipe_late": 15}  # wipe_late: a held death's grace + the game's death state  # the spectate on every screen (the guests' panels: "Spectating")
+GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
 NEEDS_CRASH = {"c6", "host_crash", "host_leave"}  # s2 groups that need the crash plan and its full chain
 
 
@@ -1300,6 +1312,36 @@ def check_wipe_late(v, L, hd):
     none_of(v, L, "s1 late wipe: no revive of its own after the load", r"died alone: revived|revived at its own last lamp|"
             r"died alone \(no host travel|guest death redirect runs|own death in the host's world held", arr, arr + 15, insts=(1,))
     need(v, L, "s1 late wipe: host re-join done", 0, r"host: re-join done", arr - 2)
+    check_wipe_boss(v, L, w, arr)
+
+
+# A boss fight's start on any game (the health bar, the host opening it for a guest, a guest's walk-in)
+BOSS_START = (r"boss health bar shown|host: boss fog: slot \d+ went in|guest: went through boss fog|"
+              r"host's first-fight event \d+ starts now")
+
+
+def check_wipe_boss(v, L, w, arr):
+    """wipeboss (0.7.2 known issue 2): after the wipe's respawn load every game has the boss as the
+    host's load reset it - no fight at the lamp for 30 s while nobody goes in - and a real walk
+    through the fog afterwards still opens the fight for everyone."""
+    back = L.find(0, r"loading screen gone", w)
+    t0 = back[0] if back else arr
+    for i in (0, 1, 2):
+        need(v, L, "s1 late wipe boss: boss reset by the load on inst%d" % i, i, r"boss health bar: reset \(a load\)", w - 1)
+    walk = L.find(2, r"travel step \d+/\d+: guest_obj", arr)  # guest 2 (headless) walks in
+    t1 = walk[0] if walk else 1e9
+    v.step("s1 late wipe boss: 30 s at the lamp before the walk-in", walk is not None and t1 - arr >= 30,
+           "walk +%.1f s, guest 1 back +%.1f s" % (t1, arr) if walk else "no guest_obj step after +%.1f s" % arr)
+    none_of(v, L, "s1 late wipe boss: no fight starts at the lamp (bar, fog, intro)", BOSS_START, t0, t1)
+    none_of(v, L, "s1 late wipe boss: no stale fog flag held back", r"already 1 when this stay began", arr - 15, t1, insts=(1, 2))
+    if walk is None:
+        return
+    went = need(v, L, "s1 late wipe boss: guest 2 walks through the fog", 2, r"guest: went through boss fog", t1)
+    if went is None:
+        return
+    need(v, L, "s1 late wipe boss: the host opens the fight from it", 0, r"boss fog: slot \d+ went in first", went - 0.5)
+    for i in (0, 1, 2):
+        need(v, L, "s1 late wipe boss: the fight is on for inst%d (bar)" % i, i, r"boss health bar shown", went - 0.5)
 
 def check_arena(v, L, k):
     """Guest 2 dead in the fight when the boss dies: up in the arena, no load (arenaguest 2026-10-21)."""
