@@ -18,7 +18,25 @@ static int g_failures = 0;
         }                                                                        \
     } while (0)
 
+static void TestFallBackAndBeside() {
+    using namespace coop::deathrules;
+    // lamprule run 7: placed, never stood still, no safe spot: back beside the host.
+    CHECK(FallBackTarget(false, false, true) == FallBack::Host);
+    CHECK(FallBackTarget(false, false, false) == FallBack::None);
+    CHECK(FallBackTarget(true, true, true) == FallBack::GameSafe);
+    CHECK(FallBackTarget(false, true, true) == FallBack::Stable);
+    CHECK(FallBackTarget(true, false, true) == FallBack::GameSafe);
+    // The title join's move beside the host: not when already there; else only on loaded ground.
+    CHECK(PlanBesideMove(1.6f, false, false, 0.0) == BesideMove::Skip);  // run 7: 1.6 m from the target
+    CHECK(PlanBesideMove(20.0f, false, false, 0.5) == BesideMove::Wait);  // map "-": wait
+    CHECK(PlanBesideMove(20.0f, true, false, 2.0) == BesideMove::Wait);   // no ground under it yet
+    CHECK(PlanBesideMove(20.0f, true, true, 2.0) == BesideMove::Warp);
+    CHECK(PlanBesideMove(20.0f, false, false, 12.0) == BesideMove::Skip); // gave up: the game's placement
+    CHECK(PlanBesideMove(-1.0f, true, true, 1.0) == BesideMove::Warp);    // position unknown: on ground only
+}
+
 int main() {
+    TestFallBackAndBeside();
     // C5: the spectator's notice.
     CHECK(SpectateNotice("Hunter0", 1) == "Spectating Hunter0");
     CHECK(SpectateNotice("Hunter2", 2) == "Spectating Hunter2  -  Cross: next hunter");

@@ -3197,25 +3197,39 @@ void HostWorldFallTick(const GameSnapshot& s, double now) {
         return;
     }
     peak_rate = std::max(peak_rate, double(dy) / dt);
-    if (!deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1], peak_rate) || !have_stable) {
+    if (!deathrules::FallRecoveryDue(now - falling_since, double(from_y) - p[1], peak_rate)) {
+        return;
+    }
+    // fallsafe: the game's own last safe ground spot (where it would put the bloodstain) when it has
+    // one near; the spot this tick saw it stand still on otherwise; lamprule run 7: a guest that never
+    // stood still (placed before the floor's collision loaded) goes back beside the host.
+    alignas(16) float safe[4], safe_rot[4];
+    const float none[3] = {std::numeric_limits<float>::quiet_NaN(), 0.0f, std::numeric_limits<float>::quiet_NaN()};
+    const bool game = deathrules::SafeSpotUsable(GameSafeSpot(s.player, safe, safe_rot), safe,
+                                                 have_stable ? stable : none);
+    const Where* hw = WhereOf(0);
+    const bool host_here = hw && hw->has_pos && Role() == RoleClient && (HostMap() >> 16) == (s.map_id >> 16);
+    const deathrules::FallBack fb = deathrules::FallBackTarget(game, have_stable, host_here);
+    if (fb == deathrules::FallBack::None) {
         return;
     }
     falling_since = 0;
     alignas(16) float to[4] = {stable[0], stable[1] + 0.3f, stable[2], 1.0f};
     alignas(16) float rot[4] = {0, 0, 0, 0};
     SafeRead(pm + 0x1d0, rot, 16);
-    // fallsafe: the game's own last safe ground spot (where it would put the bloodstain) when it has
-    // one near; the spot this tick saw it stand still on otherwise.
-    alignas(16) float safe[4], safe_rot[4];
-    const bool game = deathrules::SafeSpotUsable(GameSafeSpot(s.player, safe, safe_rot), safe, stable);
-    if (game) {
+    if (fb == deathrules::FallBack::GameSafe) {
         std::memcpy(to, safe, sizeof to);
         std::memcpy(rot, safe_rot, sizeof rot);
+    } else if (fb == deathrules::FallBack::Host) {
+        to[0] = hw->pos[0] + 1.5f, to[1] = hw->pos[1] + 0.3f, to[2] = hw->pos[2], to[3] = 1.0f;
     }
     using Warp = void(BB_COOP_SYSV*)(u64, const float*, const float*, u32);
     reinterpret_cast<Warp>(Field<u64>(Field<u64>(s.player, 0), 0x5f8))(s.player, to, rot, 1);
     Log("recovery: falling for 6 s in the host's world at (%.1f, %.1f, %.1f); back to (%.1f, %.1f, %.1f) %s",
-        p[0], p[1], p[2], to[0], to[1], to[2], game ? "on the game's last safe ground spot" : "where it last stood");
+        p[0], p[1], p[2], to[0], to[1], to[2],
+        fb == deathrules::FallBack::GameSafe ? "on the game's last safe ground spot"
+        : fb == deathrules::FallBack::Host   ? "beside the host (no safe spot yet)"
+                                             : "where it last stood");
 }
 
 /// Test aid BB_PARTY_FALL_RECOVERY=0 (fallsafe): both recovery nets off, so a fall out of the world
@@ -8500,6 +8514,10 @@ struct TitleJoin {
     u32 own_map = 0;
     float own_pos[4] = {}, own_rot[4] = {};
     std::vector<u8> room;  // the host's reply: head + descriptor
+    bool beside_pending = false;  // TitleBesideTick: the move beside the host after the load
+    float beside_pos[4] = {};
+    float beside_yaw = 0;
+    double beside_at = 0;
     u32 stage = 0;
     float pos[4] = {}, rot[4] = {};
     int last_role = -2, last_state = -2;
@@ -9540,9 +9558,52 @@ void TitleFlowUpdate(double now) {
 }
 
 /// Guest, after Continue: the host-world load of a title join, then its arrival (flow 4).
+/// The title join's move beside the host after its load (deathrules::PlanBesideMove).
+void TitleBesideTick(const GameSnapshot& s, double now) {
+    TitleJoin& t = TJ();
+    float pos[4];
+    float yaw = 0;
+    double at = 0;
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        if (!t.beside_pending) {
+            return;
+        }
+        std::memcpy(pos, t.beside_pos, sizeof pos);
+        yaw = t.beside_yaw;
+        at = t.beside_at;
+    }
+    if (!s.world_up || s.loading || !s.player) {
+        return;
+    }
+    float p[3] = {0, 0, 0};
+    const bool have = ChrPos(s.player, p);
+    const float dist = have ? std::sqrt((p[0] - pos[0]) * (p[0] - pos[0]) + (p[1] - pos[1]) * (p[1] - pos[1]) +
+                                        (p[2] - pos[2]) * (p[2] - pos[2]))
+                            : -1.0f;
+    alignas(16) float safe[4], safe_rot[4];
+    const bool grounded = have && deathrules::SafeSpotUsable(GameSafeSpot(s.player, safe, safe_rot), safe, p) &&
+                          std::fabs(safe[1] - p[1]) < 2.0f;
+    const deathrules::BesideMove m = deathrules::PlanBesideMove(dist, s.map_id != 0xffffffffu, grounded, now - at);
+    if (m == deathrules::BesideMove::Wait) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(t.mu);
+        t.beside_pending = false;
+    }
+    if (m == deathrules::BesideMove::Warp) {
+        WarpLocal(pos, yaw, "title join: beside the host (on loaded ground)");
+    } else {
+        Log("title join: no move beside the host (%.1f m from it, map %s, %s, %.1f s after the load)", double(dist),
+            MapName(s.map_id).c_str(), grounded ? "on ground" : "no ground known", now - at);
+    }
+}
+
 void TitleJoinGuestTick(const GameSnapshot& s, double now) {
     TitleJoin& t = TJ();
     TitlePhase phase;
+    TitleBesideTick(s, now);
     {
         std::lock_guard<std::mutex> lk(t.mu);
         phase = t.phase;
@@ -9799,7 +9860,14 @@ void TitleJoinGuestTick(const GameSnapshot& s, double now) {
             }
             if (Field<u32>(s.player, 0x3f8) == stage) {
                 BesideHost(pos, rot, g_local_slot.load() > 0 ? g_local_slot.load() : 1);
-                WarpLocal(pos, rot[1], "title join: beside the host");
+                // lamprule run 7: no warp at once (the map still "-", the floor's collision not loaded:
+                // the guest fell through it); TitleBesideTick moves it once it stands on loaded ground,
+                // or not at all when the game's placement already put it there.
+                std::lock_guard<std::mutex> lk(t.mu);
+                std::memcpy(t.beside_pos, pos, sizeof pos);
+                t.beside_yaw = rot[1];
+                t.beside_at = now;
+                t.beside_pending = true;
             }
         }
         Log("title join: in the world after %.1f s: map %s, flow %d, GSM+0x1592 %u, role %d, cooperators %d",

@@ -1048,7 +1048,7 @@ LP_UNTIL = [r"1:test: listonly: warp menu closed", r"0:host death taken: .*reviv
 def phase_lp(only):
     read = ",".join(LP_OLD[1] + LP_NEW[1])
     return dict(
-        name="lp", seconds=300, count=2, headless=0,
+        name="lp", seconds=300, count=3, headless=1,
         env=["BB_PARTY_PROGRESS_TEST_READ=" + read, "BB_PARTY_GUESTS_BRING_LAMPS=0", "BB_PARTY_SHARE_LAMPS=1"],
         ienv=["0:BB_PARTY_TEST_START_LAMP=" + LP_HOST_LAMP, "0:BB_PARTY_DIRECTOR_TEST_SOLO=1",
               "0:BB_PARTY_TEST_INVINCIBLE=1",
@@ -1057,11 +1057,13 @@ def phase_lp(only):
                   "host_die@6%%m24_01?%s=1" % LP_NEW[1][2]]),       # once the guest lit it
               "0:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_OLD[1] + LP_NEW[1]),
               "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1]),
-              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0]],
+              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0],
+              # guest 2 (headless): Continue into its own world, then the A5 cross-map join
+              "2:BB_PARTY_TITLE_JOIN=0", "2:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1])],
         watch=["--watch", r"lamps: the own save's lamps the host's world lacks stay out=lpjoin@3",
                "--watch", r"lamp: slot \d+ lit a lamp in the host's world=lplit@1,5",
                "--watch", r"test: warp menu up \(listonly\)=lplist@1"],
-        start_when=[r"1/0:travel step \d+/\d+: host_move"],
+        start_when=[r"1/0:travel step \d+/\d+: host_move", r"2/0:travel step \d+/\d+: host_move"],
         crash=[], until=LP_UNTIL, until_hold=8,
     )
 
@@ -2571,10 +2573,13 @@ def check_lp(v, L, d: Path):
     none_of(v, L, "lp host takes none of the guest's own lamps",
             r"own save has lamps this world lacked|lamps: \d+ flag\(s\) of lamps lit in the own save", insts=(0, 1))
     # The arrival: a lamp lit in the host's world (its last lamp), never the unlit one beside it.
-    arr = L.find(1, r"arrival lamp in m24_01_00_00: (\d+)")
+    arr = L.find(2, r"arrival lamp in m24_01_00_00: (\d+)")
     v.step("lp guest's arrival: a lamp lit in the host's world", bool(arr) and ("arrival lamp in m24_01_00_00: %s " % LP_HOST_LAMP) in arr[1] + " ",
            arr[1][:200] if arr else "no A5 arrival line (joined without a cross-map load?)")
     press = L.find(1, r"test: Cross at the lamp #1")
+    # lamprule run 7: the title-joined guest fell through the map (placed before the floor loaded).
+    none_of(v, L, "lp no guest falls out of the world after its join", r"local death: HP 0 at", 0,
+            press[0] if press else 1e9, insts=(1, 2))
     none_of(v, L, "lp nothing lit for the guest before its own lamp use",
             r"lamp: slot \d+ lit a lamp in the host's world", 0, press[0] if press else 1e9, insts=(0,))
     lit = need(v, L, "lp guest lights a lamp in the host's world", 1,
