@@ -140,6 +140,8 @@ private:
     /// frame (menu polling, dumps). `deadline` (steady clock ns, 0: none): presented no earlier.
     bool PresentOne(Frame* frame, vk::Image image, vk::ImageView view, bool real,
                     std::int64_t deadline = 0);
+    /// bbport: Swapchain::Present under Scheduler::submit_mutex (a recreation after it locks itself).
+    bool PresentLocked();
     /// bbport: native HDR output (I4): the swapchain image drawn whole by the HDR compose pass
     /// from `view` (the SDR frame in General, or null: `background` only) and the overlay.
     void RecordHdrPresent(vk::CommandBuffer cmdbuf, Frame* frame, vk::Image image,

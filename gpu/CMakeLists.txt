@@ -349,6 +349,10 @@ target_link_libraries(reflex-cpu-test PRIVATE Vulkan::Headers fmt::fmt)
 if (WIN32)
     target_compile_definitions(reflex-cpu-test PRIVATE VK_USE_PLATFORM_WIN32_KHR)
 endif()
+# Swapchain acquire / recreation rules (vk_swapchain_rules.h): suboptimal acquires, frame index.
+add_executable(swapchain-rules-test EXCLUDE_FROM_ALL ../tests/test_swapchain_rules.cpp)
+target_compile_options(swapchain-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(swapchain-rules-test PRIVATE ..)
 # Native HDR output (shim/bbport_hdr.h, I4): PQ, Rec.2020, the inverse tone curve, settings.
 add_executable(hdr-test EXCLUDE_FROM_ALL ../tests/test_hdr.cpp shim/bbport_settings.cpp)
 target_compile_options(hdr-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
