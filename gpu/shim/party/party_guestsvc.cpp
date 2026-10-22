@@ -257,7 +257,13 @@ bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int typ
 }
 
 bool PerPlayerMessengerEvent(std::uint32_t event_id) {
-    return event_id == 12105040;
+    // 0.7.3: the Dream's gift messengers too - right / left starting weapons 12101020 / 12101021,
+    // Notebook 12101022, Beckoning Bell 12101024, Old Hunter Bell 12101026, Eye 12101028. Each
+    // ends on each player's own pick / personal flag; another game's end of its copy reached this
+    // game's copy (live r4: the guest's copy ended, 57 ms later the host's set 12101020 with none of
+    // the host's own stock flags: its messengers sank before it picked).
+    return event_id == 12105040 || event_id == 12101020 || event_id == 12101021 || event_id == 12101022 ||
+           event_id == 12101024 || event_id == 12101026 || event_id == 12101028;
 }
 
 bool GuestLampsEnabledFromEnv(const char* v, bool fallback) {
@@ -1379,8 +1385,8 @@ BB_COOP_SYSV u64 EventSyncRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
         }
         // Main thread (the EMEVD update); the next packet, if any, is read in the same call.
         if (g_messenger_drops.fetch_add(1) < 8) {
-            Log("Bath Messengers: event %d's state from another player not applied (their talk flag is per "
-                "player: each game animates its messengers from its own player's shop use)", event);
+            Log("Messengers: event %d's state from another player not applied (per player: each game runs its "
+                "messengers from its own player's talk, pick and flags)", event);
         }
     }
 }

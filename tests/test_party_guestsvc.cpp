@@ -23,6 +23,10 @@ static GuestServicesInput Guest(std::uint32_t map) {
 int main() {
     // The lower bath messengers' animation event: per player (its 0x31 sync dropped), nothing else.
     assert(PerPlayerMessengerEvent(12105040u));
+    // 0.7.3: the gift messengers' events (starting weapons, Notebook, bells, Eye) are per player too.
+    for (std::uint32_t e : {12101020u, 12101021u, 12101022u, 12101024u, 12101026u, 12101028u}) assert(PerPlayerMessengerEvent(e));
+    assert(!PerPlayerMessengerEvent(12101027u)); // the Old Hunter Bell talk flag, not an event
+    assert(!PerPlayerMessengerEvent(12101800u)); // a boss event
     assert(!PerPlayerMessengerEvent(12105043u)); // Insight messenger: the host's copy drives it (ends on a client)
     assert(!PerPlayerMessengerEvent(12105041u)); // the talk flag, not an event
     assert(!PerPlayerMessengerEvent(12105064u)); // dress-up messenger: ends in multiplayer itself
