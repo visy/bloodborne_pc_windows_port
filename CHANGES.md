@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: the party notices and the party panel no longer cover the boss's health bar**: in a boss fight, the notice in the bottom left corner ("Spectating Hunter1 - Cross: next hunter", "Joiners wait: you are in a boss fight" and the like) and the party panel with your companions' names and health could sit on top of the boss's name and health bar. While a boss bar is up, a notice that would touch it now shows just above it, and the party panel moves up above it when it would cover it (in a small window, on a 16:10 screen or with three companions). The space above the bar is kept free for every bar when a fight has several bosses. On a 21:9 screen the panel keeps its corner: the boss bar is in the middle there.
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: the Research Hall lifts no longer leave without you**: on the two lifts inside the Research Hall (Old Hunters DLC), the car could leave again the moment you stepped off it, with you still at its edge or about to step back in, and you fell into the pit under it and died. The car now waits until its ride is fully over, as every other lift does.
