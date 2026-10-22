@@ -1183,7 +1183,8 @@ def phase_sm(only):
         "host_kill=2410810@6%m24_01~",                                   # Gascoigne dead after it
         "host_move=33.2:-10.0:93.7:pin=3@10%m24_01",                     # 2: up at the door (m24_01 side)
         "host_obj=2401210:1.2:180@4%m24_01",
-        "host_press=0x4000@4%m24_01!",                                   # opens it: scene 24000020
+        "host_press=0x4000@4%m24_01!",                                   # OK on Gascoigne's key notice (run 1)
+        "host_press=0x4000@3%m24_01!",                                   # "Open Door": scene 24000020
     ])
     g1 = ",".join([
         "god",
@@ -2764,7 +2765,8 @@ def check_sm(v, L):
         none_of(v, L, "sm intro: no own copy after a wait", r"held own boss intro|this player triggered and watched it itself",
                 hm, end1, insts=(1,))
     # 2: the Cathedral Ward door
-    pr = L.find(0, r"travel step \d+/\d+: host_press", end1 if end1 < 1e9 else 0)
+    presses = L.all(0, r"travel step \d+/\d+: host_press", end1 if end1 < 1e9 else 0)
+    pr = presses[-1] if presses else None  # the last one opens the door (the first closes the key notice)
     v.step("sm door: host opens the door (m24_01 side)", pr, ("+%.1f s" % pr[0]) if pr else "no press")
     if pr:
         hs = need(v, L, "sm door: host plays 24000020", 0, r"host #\d+ cutscene 24000020", pr[0] - 1)
