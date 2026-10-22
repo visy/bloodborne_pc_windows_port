@@ -527,6 +527,11 @@ died was sent to the Hunter's Dream and could not get back in until the host res
     `kChaliceLiftEvents`), cleared at every load; the on-a-moving-car test takes a learned car within 4 m
     and 3 m of height, and `liftrules::CarRiderTick` (the chr's height against the car object's, no ride
     bit needed) puts a rider that drops through a moving car back on it.
+  - **Smoke `clg`** (`--only chalice_guest`, host `chalice_pthumeru_inside`, guest `chalice_hintertomb_ritual`;
+    r3 16/16): the guest's 31 m fall in the boss room -> up beside the host (no second death); both ride lift
+    2901004 down, the guest's game learns the car, no fall; the guest lights lamp 2901953 (the host's last lamp
+    follows), uses it -> 72900103, the warp request 2102955 -> both in the Dream together. Not reproduced live:
+    a drop through a dungeon car (the rider guard is unit-tested only) and the report's own lift death.
 * **A boss paid once (0.7.1, cl9)**: cl6 / cl8 showed every re-summon into the cleared dungeon paying the
   layer boss again (`boss clear on this game (BlockClear2): boss 2900100, clear bonus 1995`, Insight 6 -> 7).
   Cause (verified): `ChaliceLeaveSession` used a bare BeginLeave, so an apart guest stayed in its
