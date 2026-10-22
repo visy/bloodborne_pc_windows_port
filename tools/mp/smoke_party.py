@@ -3470,8 +3470,13 @@ def check_kd(v, L):
         mi = need(v, L, "kd guest %d in the Gaol (m28_00)" % i, i, r"map .*-> m28_00", hd)
         if mi is not None:
             need(v, L, "kd guest %d beside the host" % i, i, r"placed beside the host", mi)
-            # kidnapall: the waking scene for every member (user decision 2026-10-22)
-            need(v, L, "kd guest %d: the waking scene in the cell" % i, i, r"remo 2800[01]010 mode", mi)
+            # kidnapall: the waking scene for every member (user decision 2026-10-22); a guest that saw
+            # it at guest 1's grab earlier in this run keeps only its flags now (seen once, as in the game)
+            if L.find(i, r"remo 2800[01]010 mode", 0, hd) is None:
+                need(v, L, "kd guest %d: the waking scene in the cell" % i, i, r"remo 2800[01]010 mode", mi)
+            else:
+                v.step("kd guest %d: the waking scene seen at the guest grab (not again)" % i,
+                       L.find(i, r"remo 2800[01]010 mode", mi) is None, "")
         # a live mirror of the waking scene on a guest not (yet) in m28 is the report's broken scene
         none_of(v, L, "kd guest %d: no live mirror of 28000010 outside m28" % i,
                 r"live mirror: remo 2800(0|1)010", hd, mi if mi is not None else 1e9, insts=(i,))
