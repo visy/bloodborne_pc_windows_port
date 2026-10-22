@@ -814,7 +814,7 @@ def phase_rh(only):
     host = [common,
             "host_move=%s@4%%m35^1" % RH_TOP_OUT,                                  # at the top landing
             "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) alone down
-            "host_move=%s@0.3%%m35%s" % (RH_BOT_OUT, arrived(2)),                   # out at the arrival
+            "host_move=%s@2%%m35%s" % (RH_BOT_OUT, arrived(2)),                     # 2 s in the car, then out
             "host_move=%s@1%%m35?near=%s:1.0" % (RH_BOT_IN, xyz(RH_BOT_BESIDE)),   # (B) with the guest, up
             "host_move=%s@0.3%%m35%s" % (RH_TOP_OUT, arrived(6)),
             "host_move=%s@1%%m35?near=%s:1.0" % (RH_TOP_IN, xyz(RH_TOP_BESIDE)),   # (C) with the guest, down
@@ -822,7 +822,9 @@ def phase_rh(only):
             "host_press=0@4%%m35!?%s=0" % RH_BUSY]
     g1 = [common,
           "guest_move=%s@6%%m35" % RH_LAMP,                                         # at the lamp, 40 m away
-          "guest_move=%s@3%%m35?%s=0" % (RH_BOT_BESIDE, RH_POS),                   # (B) on the car beside
+          # (B) on the car beside once the host is out at the bottom (run 10: its own copy of (A) ended at
+          # once 40 m away, so its flag said "bottom" while the host still rode down)
+          "guest_move=%s@2%%m35?near=%s:3.0" % (RH_BOT_BESIDE, xyz(RH_BOT_OUT)),
           "guest_move=%s@0.3%%m35%s" % (RH_TOP_OUT2, arrived(6)),                  # out at the arrival
           "guest_move=%s@3%%m35?%s=1" % (RH_TOP_BESIDE, RH_POS),                   # (C) on the car beside
           "guest_move=%s@0.3%%m35%s" % (RH_LAMP, arrived(2)),

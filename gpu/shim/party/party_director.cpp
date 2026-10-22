@@ -344,6 +344,7 @@ struct Test {
     Clock::time_point obj_since{};   // the next step's "?obj=ENTITY:ANIM" condition met (its clock)
     Clock::time_point pin_until{};   // a move step's ":pin=S": the chr held at pin_pos until then
     alignas(16) float pin_pos[4] = {0, 0, 0, 1}, pin_rot[4] = {0, 0, 0, 0};
+    std::size_t obj_seen_step = ~std::size_t(0);  // "?obj=": the step whose ANIM was seen playing
     std::size_t near_step = ~std::size_t(0), obj_step = ~std::size_t(0);  // the step those two were met for:
                                      // latched (an arrival's stopped animation lasts a few frames only)
     int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
@@ -2017,7 +2018,15 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         !(t.obj_since != Clock::time_point{} && t.obj_step == t.next_step)) {
         const TravelStep& os = t.steps[t.next_step];
         worldact::ObjAnimState a;
-        if (!worldact::ReadObjAnim(os.wait_obj, &a) || a.anim != os.wait_obj_anim || a.playing) {
+        // liftfix: also once ANIM was seen playing and the object went on to another animation (a lift
+        // whose end animation starts in the frame its ride stops: run 10 waited for good on anim 6)
+        const bool have = worldact::ReadObjAnim(os.wait_obj, &a);
+        if (have && a.anim == os.wait_obj_anim && a.playing) {
+            t.obj_seen_step = t.next_step;
+        }
+        const bool stopped = have && a.anim == os.wait_obj_anim && !a.playing;
+        const bool moved_on = have && a.anim != os.wait_obj_anim && t.obj_seen_step == t.next_step;
+        if (!stopped && !moved_on) {
             t.obj_since = {};
             return;
         }
