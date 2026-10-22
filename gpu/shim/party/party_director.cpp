@@ -345,6 +345,12 @@ struct Test {
     Clock::time_point pin_until{};   // a move step's ":pin=S": the chr held at pin_pos until then
     alignas(16) float pin_pos[4] = {0, 0, 0, 1}, pin_rot[4] = {0, 0, 0, 0};
     std::size_t obj_seen_step = ~std::size_t(0);  // "?obj=": the step whose ANIM was seen playing
+    // liftfix: a step's "?FLAG=V" / "?near=" / "?obj=" condition that never comes true: after
+    // kCondTimeout s the chain jumps to its last step (conditions skipped), so the run ends on its
+    // marker instead of idling; logged "condition timed out".
+    std::size_t cond_step = ~std::size_t(0);
+    Clock::time_point cond_since{};
+    bool cond_skip = false;
     std::size_t near_step = ~std::size_t(0), obj_step = ~std::size_t(0);  // the step those two were met for:
                                      // latched (an arrival's stopped animation lasts a few frames only)
     int last_coop = 0;               // the host's cooperators at the previous tick ("^N*K")
@@ -1978,8 +1984,25 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else {
         t.coop_since = {};
     }
+    // liftfix: the conditions' timeout (see cond_step).
+    if (t.next_step < t.steps.size() &&
+        (t.steps[t.next_step].wait_flag || t.steps[t.next_step].wait_near || t.steps[t.next_step].wait_obj) &&
+        !t.cond_skip) {
+        constexpr double kCondTimeout = 45.0;
+        if (t.cond_step != t.next_step) {
+            t.cond_step = t.next_step;
+            t.cond_since = now;
+        } else if (Seconds(t.cond_since, now) > kCondTimeout) {
+            Log("test: travel step %zu (%s): condition timed out after %.0f s; to the last step %zu (conditions "
+                "skipped)", t.next_step + 1, TravelStepName(t.steps[t.next_step].kind), kCondTimeout, t.steps.size());
+            t.next_step = t.steps.size() - 1;
+            t.cond_skip = true;
+            t.step_at = now;
+        }
+    }
+    const bool cond_skip = t.cond_skip;
     // "?FLAG=V": the same, on an event flag of this game (a lift's position flag at the ride's end).
-    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_flag) {
+    if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].wait_flag) {
         const TravelStep& fs = t.steps[t.next_step];
         bool v = false;
         if (!progress::ReadFlag(fs.wait_flag, &v) || v != fs.wait_value) {
@@ -1995,7 +2018,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.flag_since = {};
     }
     // "?near=X:Y:Z:R": the same, on another party member's position (the party link's vitals).
-    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_near &&
+    if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].wait_near &&
         !(t.near_since != Clock::time_point{} && t.near_step == t.next_step)) {
         const TravelStep& ns = t.steps[t.next_step];
         float d = 0;
@@ -2014,7 +2037,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         t.near_since = {};
     }
     // "?obj=ENTITY:ANIM": the same, on a map object's animation (stopped).
-    if (t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj &&
+    if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj &&
         !(t.obj_since != Clock::time_point{} && t.obj_step == t.next_step)) {
         const TravelStep& os = t.steps[t.next_step];
         worldact::ObjAnimState a;

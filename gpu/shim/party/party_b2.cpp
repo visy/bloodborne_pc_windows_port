@@ -3118,10 +3118,17 @@ bool LocalRiding(u64 chr, const float p[3]) {
     }
     static double at = -1;  // the car scan at most every 0.25 s (the death-height tick runs every frame)
     static bool on_car = false;
+    static float last_y = 0;
     const double now = Now();
     if (now - at >= 0.25) {
+        // liftfix: no ride bit and dropping faster than any lift since the last scan: a fall down the
+        // shaft beside a moving car, not a ride (run 11, the report: a fall into the Research Hall lift's
+        // empty pit counted "on a moving object", its 37 m drop taken for 0.2 m)
+        const double dt = at < 0 ? 0.0 : now - at;
+        const bool falling = dt > 0.0 && dt < 1.0 && (double(last_y) - p[1]) / dt >= deathrules::kLiftMaxRate;
         at = now;
-        on_car = worldact::OnMovingLiftCar(p);
+        last_y = p[1];
+        on_car = !falling && worldact::OnMovingLiftCar(p);
     }
     return on_car;
 }

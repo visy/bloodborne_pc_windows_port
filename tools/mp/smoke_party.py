@@ -814,7 +814,8 @@ def phase_rh(only):
     host = [common,
             "host_move=%s@4%%m35^1" % RH_TOP_OUT,                                  # at the top landing
             "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) alone down
-            "host_move=%s@2%%m35%s" % (RH_BOT_OUT, arrived(2)),                     # 2 s in the car, then out
+            "host_move=-342.9:1557.9:-792.8:0:native@2%%m35%s" % arrived(2),         # 2 s in, a step out (1.7 m)
+            "host_move=%s@4%%m35" % RH_BOT_OUT,                                      # (stays out 4 s)
             "host_move=%s@1%%m35?near=%s:1.0" % (RH_BOT_IN, xyz(RH_BOT_BESIDE)),   # (B) with the guest, up
             "host_move=%s@0.3%%m35%s" % (RH_TOP_OUT, arrived(6)),
             "host_move=%s@1%%m35?near=%s:1.0" % (RH_TOP_IN, xyz(RH_TOP_BESIDE)),   # (C) with the guest, down
@@ -832,7 +833,8 @@ def phase_rh(only):
     return dict(
         name="rh", seconds=300, count=2, headless=0, fps=60,
         env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
-             "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY],
+             "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1",
+             "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
         watch=["--watch", r"object %s stopped at anim [26] now=arrive@0.3,2" % RH_CAR] + RIDE_BURST(RH_CAR, "[15]", "[37]"),
         crash=[], until=RH_UNTIL,
@@ -2480,6 +2482,7 @@ def check_rh(v, L):
         g = L.all(i, r"lift ride: the local chr dropped through the moving car")
         v.step("rh %s: rider guard put-backs (a drop through the car, logged)" % who, True,
                ("%d: " % len(g)) + "; ".join(l[:140] for _t, l in g[:3]) if g else "none needed")
+    none_of(v, L, "rh no step condition timed out", r"condition timed out", 0, 1e9, (0, 1))
     none_of(v, L, "rh nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     none_of(v, L, "rh no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
     check_common(v, L, "rh")
