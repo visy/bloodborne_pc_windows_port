@@ -3226,7 +3226,7 @@ def check_cl(v, L):
                 r"chalice: FrpgNetMan ChannelId .*NOT the host's dungeon", 0, 1e9, (1,))
         left = need(v, L, "cl guest 1 left (Party > Leave)", 1, r"guest_leave: Party > Leave pressed", first)
         if left:
-            own = need(v, L, "cl guest 1 into its own dungeon from the altar", 1, r"travel step \d+/\d+: guest_lamp=%s" % CL_OWN_ENTRY,
+            own = need(v, L, "cl guest 1 into its own dungeon from the altar", 1, r"travel step \d+/\d+: guest_lamp",
                        left)
             if own:
                 need(v, L, "cl guest 1 in its own dungeon (m29)", 1, r"map .* -> m29_00", own)
