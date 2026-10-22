@@ -1135,6 +1135,57 @@ inline StainChange PlanStainChange(int flag_was, int echoes_was, int flag_now, i
     return StainChange::None;
 }
 
+// ---- Blood Echoes an enemy took (echodup, player report for 0.7.3) ----
+// Vanilla: the stain object (SprjEventMan +0x80 [+8]) is given to a living enemy near it while the
+// player is away (0x18686D0, every few s and at each load: enemy vfunc 0x18E75A0 sets the stain
+// object's +0xC0 "held", the chr's +0x1E5 bit 0x20 and SpEffect 5100, the glowing eyes; the live
+// stain goes). That enemy's death (0x18C59D0 from the death path 0x18BD9D0) clears the hold and the
+// record's flag (GameDataMan +0x28) and pays the record (0x130AB80: +0x38 into the echoes, then
+// +0x38 = -1). The party stain (a guest's stain in the host's world, the marker) copies the record,
+// and the game builds that stain on the guest's game too, so the enemy took it there: the kill paid
+// the echoes and the party stain paid them again. One recovery only:
+enum class StainHold { Free, Held, Void };
+/// `record_is_stain`: the game's record holds this party stain's echoes; `hold_flag`: the
+/// stain object's +0xC0; `holder_alive`: a living loaded enemy with the holder bit;
+/// `holder_gone_for`: seconds since one was last seen (the hold may outlive it for a moment while
+/// its death runs). Held: the enemy has the echoes (no marker on the ground, no pickup there: kill
+/// it). Void: the hold outlived its enemy (unloaded, or a death the game did not pay): the party
+/// stain is recoverable again, once.
+inline StainHold PlanStainHold(bool record_is_stain, int hold_flag, bool holder_alive, double holder_gone_for,
+                               double grace = 10.0) {
+    if (!record_is_stain || hold_flag == 0) {
+        return StainHold::Free;
+    }
+    if (holder_alive || holder_gone_for < grace) {
+        return StainHold::Held;
+    }
+    return StainHold::Void;
+}
+/// The game paid the record (an enemy's kill, or its own stain picked up; both 0x130AB80, which
+/// leaves the record's echoes -1): the record held this stain's echoes the last frame
+/// (`was_stain`), now other echoes, and the echoes came back (`gain` within a few s, at least half).
+/// The record's flag is not used: a summoned load drops it (pard2 c10) while the hold and its kill
+/// payment go on. The party stain then goes: no second payment.
+inline bool StainTakenByGame(bool was_stain, int record_echoes_now, int stain_echoes, int gain) {
+    if (!was_stain || stain_echoes <= 0) {
+        return false;
+    }
+    return record_echoes_now != stain_echoes && gain >= std::max(1, stain_echoes / 2);
+}
+/// The stain object's hold reads 0 (live eh2: 2 s after the take; the stain stood on the ground
+/// again) while a living enemy still has the holder bit and the glowing eyes (its kill pays the
+/// record): the hold is put back, so the echoes have one place again (that enemy), as in vanilla.
+inline bool RestoreHold(bool record_is_stain, int hold_flag, bool holder_alive) {
+    return record_is_stain && hold_flag == 0 && holder_alive;
+}
+/// A new death's record while an enemy still holds the old echoes (a no-load revive keeps that
+/// enemy alive): the old hold is released first (vanilla: the old echoes are lost, and the death's
+/// load brings that enemy back without them); else the new stain is never built (0x1868A50 builds
+/// none while held) and the old holder's kill would pay the new echoes.
+inline bool ReleaseHoldAtDeath(bool death_record, int hold_flag) {
+    return death_record && hold_flag != 0;
+}
+
 /// Verification replay (playtest 1, 2026-10-14): a guest's own body comes out of a B2 host-world
 /// load (host death / wipe respawn, rest follow) and of a title join with PlayerIns +0x78 (chr type)
 /// 0, an own-world body, instead of 1 (white phantom, what a direct summon leaves). The death
