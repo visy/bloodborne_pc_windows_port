@@ -87,6 +87,14 @@ int main() {
         f.npc_fights = false;
         assert(FromJson(ToJson(f), &back) && !back.npc_fights && back == f && back != Rules{});
     }
+    // 0.7.3 (kidnapall): Anyone can be abducted goes with the rules, on by default; a host from before it: on.
+    {
+        Rules k;
+        k.any_kidnap = false;
+        assert(FromJson(ToJson(k), &back) && !back.any_kidnap && back == k && back != Rules{});
+        Rules old;
+        assert(FromJson("{\"rot\":false}", &old) && old.any_kidnap);
+    }
     // 0.7.2: Guests bring their lamps goes with the rules, off by default; a host from before it: off.
     {
         Rules g;

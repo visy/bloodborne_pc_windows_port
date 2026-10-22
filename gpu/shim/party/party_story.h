@@ -108,9 +108,11 @@ std::vector<std::uint32_t> StoryFlagsForRemo(std::uint32_t remo_id);
 /// The scene changes the guest's world or is a story scene it must see even if it missed the
 /// live mirror (boss intros etc. are mirror-only).
 bool ReplayWorthy(const StoryIntent& s);
-/// A scene a guest's replay skips while keeping its flags / time of day: the kidnapped host's
-/// Gaol waking scene 28000010 (the guests were not kidnapped).
-bool GuestSkipsScene(std::uint32_t remo_id);
+/// A summoned replay that does not wait for `calm` (no HP lost lately): the Gaol waking scene
+/// 28000010 (kidnapall): a grabbed guest arrives in the cell from its own death (its HP back on
+/// the load), and the cell holds no enemy; it plays as soon as the guest stands there (live run 1:
+/// the calm wait left the grabbed guest 9 s in the cell before its scene).
+bool ReplayIgnoresCalm(std::uint32_t remo_id);
 /// A remo id the game has: remo/sAA_BB_NNNN.remobnd.dcx or an EMEVD 2002 play (party_ids.h,
 /// generated from the game data by tools/party/ids_tool.py). Anything else would make the
 /// guest's game look for a file that is not there.

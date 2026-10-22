@@ -152,7 +152,7 @@ class IniSync(unittest.TestCase):
         keys = [k for k, _, _ in L.PARTY_INI_SWITCHES]
         for key in ("party_host_revive", "party_host_limbo_revive", "party_guest_revive_inplace", "party_items",
                     "party_kill_record", "party_gather", "party_npc_mirror", "party_key_view",
-                    "party_key_items_summoned", "party_covenant_per_player", "party_npc_fights"):
+                    "party_key_items_summoned", "party_covenant_per_player", "party_npc_fights", "party_any_kidnap"):
             self.assertIn(key, keys)
         env = L.party_env({"party_mode": "host", "party_host_limbo_revive": False})
         for _, name, _ in L.PARTY_INI_SWITCHES:

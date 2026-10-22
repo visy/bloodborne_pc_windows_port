@@ -364,7 +364,7 @@ RULES_PAGES = [
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
-    ("Party rules: Deaths", ["Host gets up, no load", "Up after boss kill"],
+    ("Party rules: Deaths", ["Host gets up, no load", "Up after boss kill", "Anyone can be abducted"],
      ("Host gets up, no load", "", "left", "Off", "right", "party_host_revive=0", "party_host_revive=1",
       '"host_revive":false')),
     # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
@@ -396,7 +396,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -1259,20 +1259,36 @@ def phase_mk(only):
 # game in m28_00, the guests beside the host, the waking scene 28000010 on the host and never as a
 # live mirror on a guest that is not in m28 (the player report: the host taken alone, the guests
 # shown the host's cutscene in the Cathedral Ward).
+# kidnapall (0.7.3, "Anyone can be abducted", on by default): before the host's grab, guest 1 is
+# grabbed (guest_die:kidnap: what the guest's copy of 12400780 does at the grab, then its death):
+# the host's 9420 and the PARTY's travel to the Gaol (one load each), guest 1 follows once its death
+# is taken; the waking scene 28000010 then plays on every game (the guests' after their arrival in
+# the cell) and every game gets its +1 Insight; guest 1's own save never holds 9420. The host then
+# clears 9421 / 9423 (the kidnap undone for the regression), the party goes back to the Ward and the
+# host's own grab follows as before (its waking scene on every game too).
 KD_LAMP = "2402950"
 KD_UNTIL = r"0:travel step (\d+)/\1: "  # the host's last step (awake in the cell, ~20 s after the load)
+KD_READ = "9420,9421,9423"
 
 
 def phase_kd(only):
     host = ",".join(["host_warp=%s@15" % KD_LAMP,
-                     "host_flag=9420@40%m24_00",          # the grab-death's trigger (after guest 1's death)
+                     # in the cell after guest 1's grab, every scene over: the kidnap undone (test) for the
+                     # host's grab next (a flag step keeps the chain armed; a press would wait for a join)
+                     "host_flag=9423:0@45%m28_00",
+                     "host_flag=9421:0@1",
+                     "host_warp=%s@3" % KD_LAMP,          # the party back to the Cathedral Ward
+                     "host_flag=9420@30%m24_00",          # the grab-death's trigger
                      "host_die@1%m24_00",
                      "host_press=0@25%m28_00!"])          # awake in the cell: the end
-    g1 = ",".join(["guest_flag=9420@12%m24_00", "guest_die@1%m24_00"])
+    g1 = ",".join(["guest_flag=9420@12%m24_00", "guest_die@1%m24_00",  # 9420 on a guest: a plain death
+                   "guest_die:kidnap@40%m24_00"])                      # a Snatcher's grab of guest 1
     return dict(
-        name="kd", seconds=360,
-        env=[],
-        watch=["--watch", r"cutscene 28000010=wake@1,4,8"],
+        name="kd", seconds=600,
+        env=["BB_PARTY_PROGRESS_TEST_READ=" + KD_READ],
+        watch=["--watch", r"cutscene 28000010=wake@1,4,8", "--watch", r"remo 2800[01]010 mode=gwake@1,4,8,14",
+               "--watch", r"kidnap: a Snatcher grabbed this guest=grab@0.5,3", "--watch",
+               r"kidnap: the host's respawn point is the Gaol=gaol@0.5,3"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god"],
         crash=[],
         until=[KD_UNTIL],
@@ -3518,9 +3534,40 @@ def check_kd(v, L):
     if gd is not None:
         need(v, L, "kd guest 1: a normal party death (revived)", 1,
              r"guest: respawned at the host's lamp|guest: died alone: revived|revived at", gd)
-    hd = need(v, L, "kd host grab-death", 0, HOST_DIED)
-    if gd is not None and hd is not None:
-        none_of(v, L, "kd guest 1's death: nobody to the Gaol", r"map .*-> m28_00", gd, hd)
+    # kidnapall: guest 1's grab takes the party to the Gaol (Anyone can be abducted, on by default)
+    ga = need(v, L, "kd guest 1 grabbed (scripted)", 1, r"kidnap: a Snatcher grabbed this guest", gd or 0)
+    if gd is not None and ga is not None:
+        none_of(v, L, "kd guest 1's plain death: nobody to the Gaol", r"map .*-> m28_00", gd, ga)
+    hd = need(v, L, "kd host grab-death", 0, HOST_DIED, ga or 0)
+    if ga is not None:
+        gs = need(v, L, "kd host: guest 1's grab starts the party's kidnap", 0,
+                  r"kidnap: slot \d+ was grabbed by a Snatcher .*: start", ga - 5)
+        gt = need(v, L, "kd host: 9421 moved the respawn point, the party's travel", 0,
+                  r"kidnap: the host's respawn point is the Gaol", gs if gs is not None else ga - 5)
+        need(v, L, "kd guest 1: follows once its death is taken", 1,
+             r"the party's kidnap travel to the Gaol .*follows once its death is taken", ga)
+        end = hd if hd is not None else 1e9
+        g28 = {}
+        for i in (0, 1, 2):
+            g28[i] = need(v, L, "kd (guest grab) inst %d in the Gaol (m28_00)" % i, i, r"map .*-> m28_00", ga, end)
+        none_of(v, L, "kd (guest grab): no host death / revive", r"host death taken|host death: ", ga, end - 1,
+                insts=(0,))
+        need(v, L, "kd (guest grab) host: the waking scene 28000010", 0, r"remo 2800[01]010|cutscene 28000010",
+             g28[0] if g28[0] is not None else ga, end)
+        need(v, L, "kd (guest grab) host: +1 Insight from 9422", 0, r"event 9422 gave the host 1 Insight", ga, end)
+        for i in (1, 2):
+            if g28[i] is not None:
+                need(v, L, "kd (guest grab) guest %d: the waking scene in the cell" % i, i, r"remo 2800[01]010 mode",
+                     g28[i], end)
+                need(v, L, "kd (guest grab) guest %d: +1 Insight (9422)" % i, i,
+                     r"event 9422, 1 Insight\): \+1 here", ga, end)
+        need(v, L, "kd guest 1's own save: no kidnap trigger after the grab", 1,
+             r"test read \(load mode \d, own save / visible\): 9420=0/", ga)
+        none_of(v, L, "kd the guests' own saves never hold 9420",
+                r"test read \(load mode \d, own save / visible\): 9420=1/", insts=(1, 2))
+        if gt is None:
+            check_common(v, L, "kd")
+            return
     if hd is None:
         check_common(v, L, "kd")
         return
@@ -3533,6 +3580,13 @@ def check_kd(v, L):
         mi = need(v, L, "kd guest %d in the Gaol (m28_00)" % i, i, r"map .*-> m28_00", hd)
         if mi is not None:
             need(v, L, "kd guest %d beside the host" % i, i, r"placed beside the host", mi)
+            # kidnapall: the waking scene for every member (user decision 2026-10-22); a guest that saw
+            # it at guest 1's grab earlier in this run keeps only its flags now (seen once, as in the game)
+            if L.find(i, r"remo 2800[01]010 mode", 0, hd) is None:
+                need(v, L, "kd guest %d: the waking scene in the cell" % i, i, r"remo 2800[01]010 mode", mi)
+            else:
+                v.step("kd guest %d: the waking scene seen at the guest grab (not again)" % i,
+                       L.find(i, r"remo 2800[01]010 mode", mi) is None, "")
         # a live mirror of the waking scene on a guest not (yet) in m28 is the report's broken scene
         none_of(v, L, "kd guest %d: no live mirror of 28000010 outside m28" % i,
                 r"live mirror: remo 2800(0|1)010", hd, mi if mi is not None else 1e9, insts=(i,))

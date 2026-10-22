@@ -479,7 +479,7 @@ static void RulesPages() {
     };
     using V = std::vector<std::u16string>;
     // 0.7.3: the host's rules (Party rules: ...) and each player's own (My party: ...) apart.
-    const V deaths = {u"Host gets up, no load", u"Up after boss kill"};
+    const V deaths = {u"Host gets up, no load", u"Up after boss kill", u"Anyone can be abducted"};
     const V my_deaths = {u"Guest gets up, no load", u"Respawn at host's lamp", u"Refill vials, bullets"};
     // 0.7.2: rot and what else cleanses it, the host's rules, on a page of their own.
     const V rot = {u"Rot on death", u"Rot: boss kill cleanses", u"Rot: kill your killer", u"Rot: echoes back"};
@@ -632,6 +632,8 @@ static void RulesPages() {
           std::tuple{u"Party rules: World", u"NPCs as in host's world", "party_npc_mirror", &BbSettings::Values::party_npc_mirror},
           std::tuple{u"Party rules: World", u"Party votes on travel", "party_travel_vote", &BbSettings::Values::party_travel_vote},
           std::tuple{u"Party rules: World", u"NPC hunters fight all", "party_npc_fights", &BbSettings::Values::party_npc_fights},
+          std::tuple{u"Party rules: Deaths", u"Anyone can be abducted", "party_any_kidnap",
+                     &BbSettings::Values::party_any_kidnap},
           std::tuple{u"My party: Rewards", u"Own key items as guest", "party_key_view", &BbSettings::Values::party_key_view},
           std::tuple{u"My party: Rewards", u"Key items at once", "party_key_items_summoned",
                      &BbSettings::Values::party_key_items_summoned}}) {

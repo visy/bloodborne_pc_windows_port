@@ -1300,6 +1300,15 @@ void DefineAll() {
                "Погибли в бою, а другие убили босса: вы встаёте на арене без загрузки (решает хост)"},
               {"The host decides; off: a boss kill after a death brings the respawn load / the host's lamp",
                "Решает хост; выкл.: после победы над боссом - загрузка возрождения / фонарь хоста"});
+    // 0.7.3 (kidnapall, party_kidnap_rules.h): a Snatcher's grab of a guest takes the party to the Gaol.
+    host_rule(&Values::party_any_kidnap, "Anyone can be abducted", "Похитить могут любого",
+              AddText("A Snatcher grabbing a guest takes the whole party to the Hypogean Gaol, as the host. Party rule",
+                      "Похититель, схвативший гостя, уносит всю группу в Подземную тюрьму, как хоста. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::AnyKidnap); },
+              {"The host's rule: a Snatcher grabbing you takes the whole party to the Hypogean Gaol",
+               "Правило хоста: если вас схватит похититель, вся группа окажется в Подземной тюрьме"},
+              {"The host decides; off: only the host's grab takes the party there, a grabbed guest just dies",
+               "Решает хост; выкл.: группу уносит только схваченный хост, схваченный гость просто гибнет"});
 
     // ---- Party rules: Rot (party_balance, party_rot_rules.h): the death debuff and what else cleanses it ----
     AddPage("Party rules: Rot", "Правила: гниль",

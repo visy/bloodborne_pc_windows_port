@@ -165,9 +165,7 @@ std::vector<std::uint32_t> StoryFlagsForRemo(std::uint32_t remo_id) {
     return out;
 }
 
-bool GuestSkipsScene(std::uint32_t remo_id) {
-    // The Gaol waking scene (common 9422) is the kidnapped host's own; a guest that arrives in the
-    // cell with the party keeps its flags (9423) but not the scene (user decision 2026-10-21).
+bool ReplayIgnoresCalm(std::uint32_t remo_id) {
     return BaseRemo(remo_id) == 28000010;
 }
 
@@ -546,7 +544,10 @@ void GuestStory::Build(const StoryIntent& s, bool mirror, bool summoned) {
     }
     switch (s.kind) {
     case StoryKind::Cutscene: {
-        if ((!Seen(s.id) && !GuestSkipsScene(s.id)) || s.force) {
+        // The Gaol waking scene 28000010 too (user decision 2026-10-22, kidnapall: every member sees
+        // it, whoever was grabbed; it replaced 0.7.2's "guests skip it"): the guest's loading screen
+        // holds through the host's copy, then it plays here in the cell.
+        if (!Seen(s.id) || s.force) {
             // Summoned: the phantom path (mode 2) the live mirror uses; no warp variant.
             push({Op::Play, s.id, summoned ? 2u : 0u});
             push({Op::WaitRemoStart});
@@ -885,10 +886,16 @@ std::optional<StoryAction> GuestStory::Step(const StoryState& st, double now) {
     // leaves the host's world by the lamp warp to its own Hunter's Dream (a client's warp loads
     // its own world, as every B1 travel follow does) and the ending program runs there - the
     // native ending step, staff roll, NG+. The director rings no bell while it runs (Busy).
-    if (!queue_.empty() && summoned_replay && !st.own_world && stable_mirror_ >= kStableTicks && st.calm &&
-        !st.remo_playing) {
+    const bool waking_queued = std::any_of(queue_.begin(), queue_.end(), [](const StoryIntent& q) {
+        return q.kind == StoryKind::Cutscene && ReplayIgnoresCalm(q.id);
+    });
+    if (!queue_.empty() && summoned_replay && !st.own_world && stable_mirror_ >= kStableTicks &&
+        (st.calm || waking_queued) && !st.remo_playing) {
         for (auto it = queue_.begin(); it != queue_.end(); ++it) {
             if (it->kind == StoryKind::Ending) {
+                continue;
+            }
+            if (!st.calm && !(it->kind == StoryKind::Cutscene && ReplayIgnoresCalm(it->id))) {
                 continue;
             }
             // A scene of another map waits (for its map, or for the own world as before): played

@@ -2692,6 +2692,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         KillLoadedEnemyForTest("host_kill", step.id, true, step.args.rfind("hp", 0) == 0,
                                std::atoi(step.args.c_str() + (step.args.rfind("hp", 0) == 0 ? 2 : 0)));
     } else {
+        if (step.kind == TravelStep::GuestDie && step.args == "kidnap") {
+            // kidnapall: what the guest's copy of 12400780 does at a Snatcher's grab (its 9420 write
+            // skipped, the host asked for the party's kidnap), then the grab's death.
+            b2::TestGuestKidnapGrab();
+        }
         DieForTest();
     }
     std::uint8_t after = 0;
@@ -3963,6 +3968,9 @@ void PartyDirector::ConfigureFromEnv() {
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) &&
                     item.find(":ladder") != std::string::npos) {
                     step.args = "ladder";  // host_die:ladder@S%MAP: only while on a ladder (fallcam 3)
+                }
+                if (step.kind == TravelStep::GuestDie && item.find(":kidnap") != std::string::npos) {
+                    step.args = "kidnap";  // guest_die:kidnap@S%MAP: a Snatcher's grab-death (kidnapall)
                 }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)
