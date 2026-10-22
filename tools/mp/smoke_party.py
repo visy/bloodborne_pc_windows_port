@@ -628,7 +628,9 @@ def phase_ga(only):
 # (A) the guest rides down alone and steps out at the arrival (the host's copy ends first: the 0.7.1
 # race, the guest's own end must stand). (B) the host rides up alone, out at the arrival (the guest's
 # copy ends first: its report must not move the host's car). (C) the guest rides down alone and stays
-# 2 s in the car (the host's flip waits on the guest until its copy is done). Each ride starts with
+# 2 s in the car (the host's flip waits on the guest until its copy is done). (D) the host rides the
+# lift's second cage (2601261, triggers 2602243 / 2602244: it runs the other way in the same event) down
+# alone. Each ride starts with
 # one step into the car's trigger region (2602242 top / 2602241 bottom); riders step out on the car's
 # arrival (`?obj=`), the next ride waits for the flag (`?FLAG=V`) or the other player's spot (`?near=`).
 # After every ride both games show the same flag and the car at that end; no rider drops faster than a
@@ -642,7 +644,9 @@ EL_LOW_OUT_G = "118.1:943.7:-16.8"     # ... (the guest)
 EL_DOWN_END, EL_UP_END = "3", "5"      # the car's ride animations that stop at the arrival (down / up)
 # both chains' last steps: the guest's last one waits for its own copy's flag at its ride's end
 EL_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
-EL_RIDERS = ("guest", "host", "guest")  # (A), (B), (C)
+EL_CAGE2_TOP = "117.73:1003.5:-18.51"  # region 2602244: in the second cage (2601261) at the top
+EL_RIDERS = ("guest", "host", "guest", "host")  # (A), (B), (C), (D)
+EL_AXES = ((119.43, -18.52),) * 3 + ((117.73, -18.51),)  # the cage each ride's rider stands in
 
 
 def phase_el(only):
@@ -654,14 +658,16 @@ def phase_el(only):
             "host_move=%s@3%%m26?%s=0" % (EL_LOW_OUT_H, EL_POS),                 # (A) over here: to the bottom
             "host_move=%s@2%%m26%s" % (EL_IN_CAR_LOW, near(EL_LOW_OUT_G)),       # (B) into the trigger: up
             "host_move=%s@0.3%%m26%s" % (EL_TOP, arrived(EL_UP_END)),            # out at the arrival
-            "host_press=0@10%%m26!?%s=0" % EL_POS]                               # (C) over here, 10 s more
+            "host_move=%s@3%%m26?%s=0" % (EL_CAGE2_TOP, EL_POS),                 # (D) (C over) the second
+            "host_move=%s@0.3%%m26?obj=2601261:3" % EL_LOW_OUT_H,                # cage down; out at arrival
+            "host_press=0@3%%m26!?%s=1" % EL_POS]                                # (D) over here
     g1 = [common,
           "guest_move=%s@6%%m26" % EL_TOP,                                       # at the top
           "guest_move=%s@3%%m26%s" % (EL_IN_CAR, near(EL_TOP)),                  # (A) into the trigger: down
           "guest_move=%s@0.3%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),     # out at the arrival
           "guest_move=%s@3%%m26?%s=1" % (EL_IN_CAR, EL_POS),                     # (C) (B over here) down
           "guest_move=%s@2%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),       # 2 s in the car, then out
-          "guest_press=0@10%%m26!?%s=0" % EL_POS]                                # (C) over here, 10 s more
+          "guest_press=0@3%%m26!?%s=1" % EL_POS]                                 # (D) over here
     return dict(
         name="el", seconds=360, count=2, headless=0,
         env=["BB_PARTY_TEST_START_LAMP=2602953", "BB_PARTY_PROGRESS_TEST_SET=12601850,%s" % EL_POS,
@@ -730,17 +736,20 @@ def phase_lt(only):
 CH_CAR, CH_POS, CH_BUSY = "2501010", "12500074", "12505074"
 CH_TOP_IN = "-22.78:64.95:-237.74"     # region 2502001 (the down ride's trigger, a 1.4 m box)
 CH_BOT_IN = "-22.78:30.9:-237.74"      # region 2502000 (the up ride's trigger)
-CH_TOP_H = "-25.3:65.1:-237.0"         # the top landing, between the car and its lever 2501011 (-27, 65, -239)
-CH_TOP_G = "-25.0:65.1:-238.5"
-CH_BOT_H = "-20.4:31.1:-237.9"         # the bottom landing, toward its lever 2501012 (-18.6, 31, -236)
-CH_BOT_G = "-20.6:31.1:-236.6"
+# The car is a wide platform: 2.1-2.4 m from its axis is still on it (run 7: both hunters rode every
+# ride from there). The landings: 1 m in front of each call lever (the operator's spot, 3.2-3.4 m out),
+# top lever 2501011 (-27, 65, -239) facing +x, bottom lever 2501012 (-18.6, 31, -236) facing -x.
+CH_TOP_H = "-26.0:65.1:-239.0:0:native:pin=2"
+CH_TOP_G = "-26.0:65.1:-237.2:0:native:pin=2"
+CH_BOT_H = "-19.6:31.1:-236.0:0:native:pin=2"
+CH_BOT_G = "-19.6:31.1:-237.8:0:native:pin=2"
 CH_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
 CH_RIDERS = ("guest", "guest", "host")
 
 
 def phase_ch(only):
     common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s" % (CH_CAR, CH_POS, CH_BUSY)
-    nat = lambda xyz: xyz + ":0:native"
+    nat = lambda xyz: xyz  # the landings carry their own warp options
     arrived = lambda anim: "?obj=%s:%s" % (CH_CAR, anim)
     host = [common,
             "host_move=%s@4%%m25^1" % nat(CH_TOP_H),                               # at the top landing
@@ -750,7 +759,7 @@ def phase_ch(only):
             "host_press=0@3%%m25!?%s=0" % CH_BUSY]                                # (C) over here
     g1 = [common,
           "guest_move=%s@6%%m25" % nat(CH_TOP_G),                                  # at the top landing
-          "guest_move=%s@3%%m25?near=%s:1.5" % (CH_TOP_IN, CH_TOP_H),  # (A) down
+          "guest_move=%s@3%%m25?near=%s:1.5" % (CH_TOP_IN, CH_TOP_H.split(":0:")[0]),  # (A) down
           "guest_move=%s@0.3%%m25%s" % (nat(CH_BOT_G), arrived(0)),               # out at the arrival
           "guest_move=%s@3%%m25?%s=0" % (CH_BOT_IN, CH_BUSY),                      # (B) up
           "guest_move=%s@2%%m25%s" % (nat(CH_TOP_G), arrived(10)),                # 2 s in the car, then out
@@ -1967,7 +1976,7 @@ def jump_steps(v, tag, L, rides_by_game, axis, names):
             if r.get("t") is None:
                 continue
             t1 = r.get("t_end") or (r["t"] + 60)
-            j = jumps(L, i, r["t"], t1, axis)
+            j = jumps(L, i, r["t"], t1, axis[k] if isinstance(axis[0], tuple) else axis)
             v.step("%s %s: no jump on the car (inst%d)" % (tag, names[k], i), not j,
                    ("; ".join("+%.1f s %.1f m" % x for x in j[:4])) if j else "no jump over 2 m while on the car")
 
@@ -2010,14 +2019,14 @@ def car_anim_at(L, i, w):
 RIDE_BIT = 0x0200000000  # PlayerIns +0x1E5 bit 0x02: the chr stands on a moving object (deathrules::kRideFlag1e1)
 
 
-def rides_with_car(L, i, t0, t1):
+def rides_with_car(L, i, t0, t1, axis=(119.43, -18.52)):
     """Instance i's chr in the car (within 0.6 m of its axis) between t0 and t1: (samples, samples with the
     ride bit off - the chr is not on the car: falling, or left behind)."""
     n = off = 0
     for _t, line in L.all(i, POS_RX.pattern, t0, t1):
         m = POS_RX.search(line)
         f = re.search(r" f ([0-9a-f]{10})", line)
-        if not f or ((float(m.group(1)) - 119.43) ** 2 + (float(m.group(3)) + 18.52) ** 2) ** 0.5 > 0.6:
+        if not f or ((float(m.group(1)) - axis[0]) ** 2 + (float(m.group(3)) - axis[1]) ** 2) ** 0.5 > 0.6:
             continue
         n += 1
         off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
@@ -2026,7 +2035,8 @@ def rides_with_car(L, i, t0, t1):
 
 def check_el(v, L):
     need(v, L, "el join: 2 players", 0, r"cooperators 0 -> 1")
-    names = ["A guest alone down", "B host alone up", "C guest alone down, 2 s in the car"]
+    names = ["A guest alone down", "B host alone up", "C guest alone down, 2 s in the car",
+             "D host alone down in the second cage"]
     rides = [el_rides(L, i) for i in (0, 1)]
     v.step("el rides: %d on each game (no ride without a step into the car)" % len(names),
            len(rides[0]) == len(names) and len(rides[1]) == len(names), "host %d, guest %d" % (len(rides[0]), len(rides[1])))
@@ -2036,7 +2046,7 @@ def check_el(v, L):
         if not rh or not rg:
             v.step("el %s: ran on both games" % name, False, "host %s, guest %s" % (bool(rh), bool(rg)))
             continue
-        want_up = k % 2 == 1
+        want_up = k % 2 == 1  # (D): the second cage down is the first cage up (anims 8, 5; end 7, pos 1)
         v.step("el %s: one ride on both games (the game's own sync)" % name,
                rh["up"] == want_up and rg["up"] == want_up and abs(rh["start"] - rg["start"]) < 1.0,
                "start host %.2f / guest %.2f, %s" % (rh["start"] % 3600, rg["start"] % 3600, "up" if rh["up"] else "down"))
@@ -2054,14 +2064,14 @@ def check_el(v, L):
                % (fh, fg, end, ah, ag, abs(rh["end"] - rg["end"])))
         i = 0 if EL_RIDERS[k] == "host" else 1
         r = rides[i][k]
-        n, off = rides_with_car(L, i, r["t"] + 0.6, r["t_end"] - 0.6) if r["t_end"] else (0, 0)
+        n, off = rides_with_car(L, i, r["t"] + 0.6, r["t_end"] - 0.6, EL_AXES[k]) if r["t_end"] else (0, 0)
         v.step("el %s: the %s rode in the car all the way" % (name, EL_RIDERS[k]), n >= 10 and off == 0,
                "%d samples in the car, %d off it" % (n, off))
     for i, who in ((0, "host"), (1, "guest")):
         f = falls(L, i)
         v.step("el %s: no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
-    jump_steps(v, "el", L, rides, (119.43, -18.52), names)
+    jump_steps(v, "el", L, rides, EL_AXES, names)
     none_of(v, L, "el no fall recovery on the lift", r"recovery: falling", 0, 1e9, (0, 1))
     none_of(v, L, "el nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     # liftfix: the library lift's ride end became the all-players check once per map load on every game
@@ -2219,12 +2229,23 @@ def check_ch(v, L):
             if f and ((float(m.group(1)) + 22.78) ** 2 + (float(m.group(3)) + 237.74) ** 2) ** 0.5 < 1.2:
                 n += 1
                 off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+        # the other player stays off the car: its height does not follow the ride, no ride bit
+        o = 1 - i
+        ro = rides[o][k]
+        ys, bits = [], 0
+        for _t, line in L.all(o, POS_RX.pattern, ro["t"] + 0.6, (ro["t_arr"] or ro["t"]) - 0.3):
+            ys.append(float(POS_RX.search(line).group(2)))
+            fo = re.search(r" f ([0-9a-f]{10})", line)
+            bits += 1 if fo and int(fo.group(1), 16) & RIDE_BIT else 0
+        v.step("ch %s: the %s stayed off the car" % (name, "host" if o == 0 else "guest"),
+               len(ys) >= 3 and max(ys) - min(ys) < 1.0 and bits == 0,
+               "%d samples, height %s, %d with the ride bit" % (len(ys), ("%.1f..%.1f" % (min(ys), max(ys))) if ys else "-", bits))
         v.step("ch %s: the %s rode in the car to the %s" % (name, CH_RIDERS[k], "top" if up else "bottom"),
                far and n >= 5 and off == 0,
                "y %s at the arrival, %d samples in the car, %d off it" % ("%.1f" % y if y is not None else "-", n, off))
     for i, who in ((0, "host"), (1, "guest")):
         # from the first warp to the lift on: the approach counts too
-        start = L.find(i, r"_move to \(-2[0-5]\.")
+        start = L.find(i, r"_move to \(-(19|2\d)\.")
         f = falls(L, i, start[0] - 0.1 if start else 0.0, rate=16.0)  # this car peaks at 12.7 m/s (run 5)
         v.step("ch %s: no fall from the approach on (vertical speed under 16 m/s)" % who, start is not None and not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else

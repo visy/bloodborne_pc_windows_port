@@ -37,6 +37,9 @@ struct Lift {
     std::int16_t car_end_on = -1, car_end_off = -1, gate_end_on = -1, gate_end_off = -1;
     std::int16_t ride_from_on[2] = {-1, -1}, ride_from_off[2] = {-1, -1};
     std::int16_t init_on = -1, init_off = -1;
+    /// liftfix: `gate` is a second car riding the other way in the same event (the library lift's
+    /// second cage): the in-car and on-a-moving-car tests look at both.
+    bool gate_rides = false;
     bool Replays() const { return car_end_on >= 0 && car_end_off >= 0; }
 };
 
@@ -70,11 +73,13 @@ inline const std::vector<Lift>& Lifts() {
         {12601255u, 12605254u, 0u, 2601290},         // roof lift
         {12601256u, 12605256u, 0u, 2601240},         // first shortcut lift (28 m, lamp 2602953)
         // the library lift (12601351 / 12601352, after Micolash: the 60 m ride down of the player's
-        // report): no busy flag; regions 2602241 / 2602242 in the car (bottom / top), 2602243 / 2602244
-        // the call spots. From the top (pos 1): car 6, 3; from the bottom: 8, 5. Its end once the rider
-        // is out: pos 1 -> gate 7 / car 9, pos 0; pos 0 -> gate 9 / car 7, pos 1. Init: pos 1 car 2,
-        // pos 0 car 4.
-        {12601253u, 0u, 0u, 2601260, 2601261, 7, 9, 9, 7, {6, 3}, {8, 5}, 2, 4},
+        // report): no busy flag; TWO cages, 1.7 m apart, riding opposite ways in one event (liftfix ride
+        // frames): 2601260 (regions 2602241 / 2602242, bottom / top) and 2601261, so far called its gate
+        // (regions 2602243 / 2602244). Pos 1: cage 1 at the top, cage 2 at the bottom. From pos 1 (a step
+        // into cage 1 at the top or cage 2 at the bottom): cage 1 6, 3, cage 2 8, 5; from pos 0: cage 1
+        // 8, 5, cage 2 6, 3. Its end once every rider is out: pos 1 -> cage 2 7 / cage 1 9, pos 0; pos 0
+        // -> cage 2 9 / cage 1 7, pos 1. Init: pos 1 cage 1 2, pos 0 cage 1 4.
+        {12601253u, 0u, 0u, 2601260, 2601261, 7, 9, 9, 7, {6, 3}, {8, 5}, 2, 4, true},
         {12700134u, 12700135u, 0u, 2701032},         // Forbidden Woods
         {12700144u, 12700145u, 0u, 2701042},         // Forbidden Woods
         {12800610u, 12804700u, 12800611u, 2801400},  // Yahar'gul

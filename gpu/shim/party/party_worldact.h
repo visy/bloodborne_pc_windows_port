@@ -94,7 +94,7 @@ void LiftReplayTick(const GameSnapshot& s);
 /// plays an animation (a ride): the fall recovery's "on a moving object" (the chr's own ride flag
 /// is not set on the local chr: live, Mensis lift 2601240).
 constexpr float kLiftCarRadius = 4.0f;
-/// The local player stands in a car (the library lift's car regions are 1.7 m from its call spots).
+/// The local player stands in a car (the library lift's two cages are 1.7 m apart).
 constexpr float kLiftInCarRadius = 1.2f;
 bool OnMovingLiftCar(const float p[3]);
 /// liftfall: a ride of lift `l` runs on this game (its car animates) or the local player stands
