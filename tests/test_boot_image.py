@@ -62,6 +62,17 @@ class BootImageTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {'BB_SKIP_GAME_CHECK': '1'}):
             self.assertEqual(self.image(out), 1)
 
+    def test_script_data_is_part_of_the_key(self):
+        # patches/redzone.json is linked into the image: a build changing only it relinks.
+        data = self.root / 'redzone.json'
+        data.write_text('{"sites": []}')
+        out = self.root / 'out'
+        with mock.patch.object(boot_image, 'DATA', (data,)):
+            self.assertEqual(self.image(out), 1)
+            self.assertEqual(self.image(out), 0)
+            data.write_text('{"sites": [[1, "00", [1]]]}')
+            self.assertEqual(self.image(out), 1)
+
     def test_shared_store_is_linked_into_other_out_folders(self):
         cache = self.root / 'cache'
         self.assertEqual(self.image(self.root / 'out0', cache), 1)

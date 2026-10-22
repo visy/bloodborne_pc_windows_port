@@ -5,6 +5,7 @@
 #include "party_director.h"
 #include "party_log_game.h"
 #include "../boot_marks.h"
+#include "../bbport_boot_watch.h"
 #include "../net/netsim.h"
 #include "party_hud.h"
 #include "party_ids.h"
@@ -86,6 +87,7 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <unistd.h>
 #endif
 
 extern "C" void runtime_pad_director_press(std::uint32_t buttons); // src/runtime_pad.c
@@ -434,6 +436,10 @@ struct State {
     Clock::time_point continue_ready{}, continue_last{};
     bool continue_waiting = false;
     bool continue_signin = false;
+    // BB_BOOT_WATCHDOG: the last press or legitimate hold (sign-in, no link, title join), and
+    // whether this quiet spell already asked for a snapshot.
+    Clock::time_point continue_moved{};
+    bool continue_watch_asked = false;
     std::string last_from_client;
     // Host session watchdog (party_watchdog.h).
     HostWatchdog watchdog;
@@ -799,6 +805,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
         if (now.world_up && first_world) {
             first_world = false;
             bb_boot_mark("world up (loading)");
+            BbBootWatchState::Done(); // BB_BOOT_WATCHDOG: the boot is over
         }
         if (!now.world_up) BossBarReset();  // A11: a load ends any boss fight
     }
@@ -1099,6 +1106,28 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     if (st.continue_done) {
         return;
     }
+    // BB_BOOT_WATCHDOG=S (diagnostics, bbport_boot_watch.h): no press for S s (3 S while a load is
+    // up) and nothing holding it -> the probe's watchdog writes a thread snapshot (once per spell).
+    static const double watch_s = BbBootWatchState::LimitSeconds();
+    auto moved = [&] {
+        st.continue_moved = now;
+        st.continue_watch_asked = false;
+    };
+    if (watch_s > 0.0) {
+        if (st.continue_moved == Clock::time_point{}) {
+            st.continue_moved = now;
+        }
+        const double quiet = Seconds(st.continue_moved, now);
+        if (!st.continue_watch_asked && quiet >= (s.loading ? 3.0 * watch_s : watch_s)) {
+            st.continue_watch_asked = true;
+            char why[320];
+            std::snprintf(why, sizeof why, "no Continue press for %.0f s after %d press(es) (%s; link %d, waiting %d)",
+                          quiet, st.continue_presses, Describe(s).c_str(),
+                          link ? static_cast<int>(link->state()) : -1, st.continue_waiting ? 1 : 0);
+            Log("auto-continue: %s: asking for a boot snapshot (BB_BOOT_WATCHDOG)", why);
+            BbBootWatchState::Request(why);
+        }
+    }
     auto release = [&] {
         if (st.continue_held) {
             runtime_pad_director_press(0);
@@ -1139,6 +1168,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     if (!link_ok) {
         release();
         st.continue_waiting = false;
+        moved();
         return;
     }
     if (!st.continue_waiting) {
@@ -1174,11 +1204,13 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
     }
     if (signing_in) {
         st.continue_last = now;
+        moved();
         return;
     }
     // Guest: join the host's session from here first, so Continue loads the host's world (one load).
     if (role == PartyRole::Guest && b2::TitleJoinHold(s)) {
         st.continue_last = now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(st.continue_every));
+        moved();
         return;
     }
     if (Seconds(st.continue_ready, now) > 40.0) {
@@ -1196,8 +1228,24 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
         if (st.continue_presses == 1) {
             bb_boot_mark("auto-continue: first Cross");
         }
+        moved();
         if (st.continue_presses <= 12 || st.continue_presses % 10 == 0) {
             Log("auto-continue: Cross #%d (%s; %s)", st.continue_presses, Describe(s).c_str(), DescribeFromClient().c_str());
+        }
+        // Test aid BB_BOOT_TEST_EXIT=N (boot loops, tools/mp): end the game at the Nth press with
+        // exit code 3, which run.bat's party crash restart turns into the next boot.
+        static const int test_exit = [] {
+            const char* e = std::getenv("BB_BOOT_TEST_EXIT");
+            return e && e[0] ? std::atoi(e) : 0;
+        }();
+        if (test_exit > 0 && st.continue_presses >= test_exit) {
+            Log("test: boot loop: ending the game at Cross #%d (BB_BOOT_TEST_EXIT)", st.continue_presses);
+            std::fflush(stdout);
+#ifdef _WIN32
+            TerminateProcess(GetCurrentProcess(), 3);
+#else
+            _exit(3);
+#endif
         }
     }
 }
@@ -3990,6 +4038,7 @@ void PartyDirector::Tick() {
         return;
     }
     ++st.ticks;
+    BbBootWatchState::Tick(); // BB_BOOT_WATCHDOG: the main loop moves
     // The cheap reads every frame; the game's cooperator count twice a second.
     const bool full = Seconds(st.last_full, now) >= 0.5;
     if (full) {
