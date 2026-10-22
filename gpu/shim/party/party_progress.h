@@ -21,6 +21,9 @@
 //              cutscene_seen, world_state
 //   state:     elevators / toggling gates (both 0 and 1 follow the host)
 //   follow:    npc_quest (shared quest choices; BB_PARTY_PROGRESS_NPC=0 turns it off)
+//   per player: covenant_outcome (0.7.3: Annalise, Alfred, Valtr) while the host's rule
+//              "Covenant outcomes per player" is on (Policy::covenant_per_player); off: its base
+//              category's mode
 //   off:       item_lot_picked (always: C3, party_items, owns item pickups - the host side hands
 //              every item-pickup flag it sees set to the SetItemFlagObserver), boss_area,
 //              session_runtime, time_of_day (C4 cutscene replay only), never_sync (incl. the area
