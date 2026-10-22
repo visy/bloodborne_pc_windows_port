@@ -2589,20 +2589,20 @@ class BloodborneLauncher(tk.Tk):
                                "way. Also in the game: System > Party display. Default: off (bbport.ini "
                                "party_stain_marker).",
                                command=self.save_party_stain_marker)
-        ff_cb = self._check(sec, "Friendly fire / PvP (host)", self.party_friendly_fire,
+        ff_cb = self._check(sec, "Friendly fire / PvP (when you host)", self.party_friendly_fire,
                             "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
                             "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
                             "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
                             "when you switch it. Also in the game: System > World & PvP (live). Default: off "
                             "(bbport.ini party_friendly_fire).",
                             command=self.save_party_friendly_fire)
-        lamps_cb = self._check(sec, "Shared lamps (host)", self.party_share_lamps,
+        lamps_cb = self._check(sec, "Shared lamps (when you host)", self.party_share_lamps,
                                "Host only: a lamp any party member lights in your world is lit for everyone, in "
                                "each member's own save too, and your lamps reach the guests' saves. Your setting "
                                "is the party's rule. Also in the game: System > World & PvP (Shared lamps). "
                                "Default: on (bbport.ini party_share_lamps).",
                                command=self.save_party_share_lamps)
-        bring_cb = self._check(sec, "Guests bring their lamps (host)", self.party_guests_bring_lamps,
+        bring_cb = self._check(sec, "Guests bring their lamps (when you host)", self.party_guests_bring_lamps,
                                "Host only: a joining guest's lamps from its own world light up in yours too "
                                "(needs Shared lamps). Off: your world keeps its own lamps; any lamp a party "
                                "member lights in it is saved for everyone. Your setting is the party's rule. "
@@ -3146,7 +3146,10 @@ class BloodborneLauncher(tk.Tk):
         body.columnconfigure(0, weight=1, uniform="sections")
         body.columnconfigure(1, weight=1, uniform="sections")
         ttk.Label(body, text="Hover over an option for details. Changes apply at the next launch. "
-                             "Defaults are the recommended settings.", style="Hint.TLabel").grid(
+                             "Defaults are the recommended settings.\n"
+                             "Options marked (when you host) are the host's party rules: when you join a "
+                             "party, the host's settings count and yours are kept for when you host.",
+                  style="Hint.TLabel", wraplength=660, justify="left").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
         var = self.party_switch_vars
 
@@ -3177,14 +3180,14 @@ class BloodborneLauncher(tk.Tk):
                     "Removes the walls the game puts on area borders while a helper is in your world, "
                     "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
                     "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > World & PvP).", command=save)
-        self._check(sec, "Get up after a boss kill", var["party_host_limbo_revive"],
+        self._check(sec, "Up after a boss kill (when you host)", var["party_host_limbo_revive"],
                     "When you die in a boss fight and the others kill the boss, you get up right there in "
                     "the arena (where you fell, or beside a living hunter), with no loading screen; your "
                     "Blood Echoes stay in your bloodstain. Host and guests alike; the host's setting. Off: a host's death "
                     "takes the whole party's respawn loading screen at the host's lamp, a guest gets up "
                     "at the host's lamp. "
                     "Default: on (bbport.ini party_host_limbo_revive; in the game: System > Deaths & revives).", command=save)
-        self._check(sec, "Host gets up without a loading screen", var["party_host_revive"],
+        self._check(sec, "Host gets up, no load (when you host)", var["party_host_revive"],
                     "When the host dies, it gets up at its lamp in the loaded area with no loading screen for "
                     "anyone (a lamp in another area: the host loads alone). Off: the whole party gets the "
                     "respawn loading screen. Host's setting. Default: on (bbport.ini party_host_revive; in "
@@ -3285,7 +3288,7 @@ class BloodborneLauncher(tk.Tk):
                     "in 10 minutes. Default: on (BB_PARTY_RESTART).", command=save)
 
         # 0.7.1: the host's world rules (System > Shared world) and the guest's key items (Party rewards)
-        sec = section(3, 0, "Shared world (host)")
+        sec = section(3, 0, "Shared world (when you host)")
         self._check(sec, "Enemies stay dead", var["party_kill_record"],
                     "An enemy the party killed is dead on every player's game: a kill across an area border "
                     "reaches the others, and an enemy that comes back alive when its area loads again as you "
@@ -3321,7 +3324,7 @@ class BloodborneLauncher(tk.Tk):
                     "System > Shared world).", command=save)
 
         # 0.7.2: rot, the host's rules (System > Rot)
-        sec = section(4, 0, "Rot on death (host)")
+        sec = section(4, 0, "Rot on death (when you host)")
         rot_cbs = []
 
         def update_rot():
