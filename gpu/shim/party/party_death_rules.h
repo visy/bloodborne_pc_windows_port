@@ -1082,6 +1082,38 @@ inline bool TestDieStepLatches(bool die_step, bool own_alive, bool world_up, boo
     return die_step && !own_alive && world_up && !rejoin_running && !prev_was_die;
 }
 
+/// Test aid BB_PARTY_TEST_GUARD=1 (smoke rt, testinfra 0.7.3): after each death of this player, once
+/// it is up again, its chr is kept invincible until the chain's next step that asks for a death (a
+/// die step, or a chr step: stand at an enemy to be killed by it). A frail guest revived next to the
+/// enemy that killed it (the stain test warps it onto its stain) was killed again by the same enemy
+/// before the host's kill step, which shifted every later death (rel2 0.7.2: death 2 by 2410202).
+struct TestGuard {
+    bool died = false;  // seen at HP 0 since the last step that asks for a death
+    bool on = false;    // up again after that death: invincible
+};
+/// One tick: hp = the own chr's HP (-1: no chr). True while the chr is to be invincible.
+inline bool TestGuardTick(TestGuard& g, int hp, bool world_up) {
+    if (!world_up || hp < 0) return false;
+    if (hp == 0) {
+        g.died = true;
+        g.on = false;
+        return false;
+    }
+    if (g.died) {
+        g.died = false;
+        g.on = true;
+    }
+    return g.on;
+}
+/// A step of the chain runs: a die / chr step ends the guard. True when it was on (clear the bit).
+inline bool TestGuardStepRan(TestGuard& g, bool death_step) {
+    if (!death_step) return false;
+    const bool was = g.on;
+    g.on = false;
+    g.died = false;
+    return was;
+}
+
 // ---- Own bloodstain record (GameDataMan +0x28 flag, +0x30 record +0x38 echoes) ----
 enum class StainChange { None, Recorded, Taken, Replaced };
 inline const char* StainChangeName(StainChange c);
