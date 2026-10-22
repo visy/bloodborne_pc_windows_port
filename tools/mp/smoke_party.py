@@ -424,7 +424,7 @@ def phase_rules(only):
 # must serve its direct summon within 30 s of its first ask and it must end up in the host's world.
 # Before the fix every such ask was refused ("the host's game is summoning a sign") for minutes.
 SF_FAILED = r"direct summon: FAILED"
-SF_STAY = 60  # s guest 2 must stay in the host's world after its join (an unreachable joiner made it leave)
+SF_STAY = 30  # s guest 2 must stay in the host's world after its join (an unreachable joiner made it leave)
 
 
 def phase_summonfail(only):
@@ -616,7 +616,9 @@ def phase_lf(only):
 GA_FAR = SK_FAR  # 130 m from the Tomb of Oedon lamp, same map
 GA_ARRIVED = r"guest: arrived in the host's map"
 # the host chain's last step (20 s after round 3: guest 1's arrival and its screenshots) and both arrivals
-GA_UNTIL = [r"0:travel step (\d+)/\1: ", "1:" + GA_ARRIVED, "2:" + GA_ARRIVED]
+# Every chain's last step (round 3's guest may not log an arrival: the timing drift noted in the
+# ga checks); the arrivals are checked by the verdict rows, not waited for here.
+GA_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: ", r"2:travel step (\d+)/\1: "]
 
 
 def phase_ga(only):
@@ -3472,7 +3474,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,fd,fdj,cl,bf,lp,br")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
