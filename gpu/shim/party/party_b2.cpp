@@ -31,6 +31,7 @@
 #include "party_spectate.h"
 #include "party_director.h"
 #include "party_death_rules.h"
+#include "party_kidnap_rules.h"
 #include "party_bossfog_rules.h"
 #include "party_hud.h"
 #include "party_status.h"
@@ -3200,7 +3201,94 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
 
 /// Safety net: a client in the host's world (GSM+0x1592 == 0) never plays the opening cutscene
 /// (event 12410000's EMEVD 2002 remo): its flags come from the host's overlay, which may lack them.
+// ---- 0.7.3 "Anyone can be abducted" (party_kidnap_rules.h; the host's rule party_any_kidnap) ----
+// Guest: when it asked the host to take the party to the Gaol (its own Snatcher grab), Now(); 0 never.
+std::atomic<double> g_kidnap_sent_at{0};
+// Host: a guest's grab waiting for the host's tick (any thread writes, the main thread takes it).
+struct KidnapRequest {
+    bool pending = false;
+    int slot = -1;
+    u32 map = 0;
+    std::int32_t event_id = 0;
+    double at = 0;
+};
+std::mutex g_kidnap_mu;
+KidnapRequest g_kidnap_req;  // under g_kidnap_mu
+void KidnapAskHost(std::int32_t event_id, const char* how);
+
+/// The dispatching thread: an instruction of a Snatcher grab event (12400780 / 12700500). A summoned
+/// guest's copy runs past its chr type gate while the host's rule is on; its 9420 write is never
+/// done (9420 must never reach a guest's flags or save: quest_audit F1) and the host is told instead.
+/// True: the instruction is skipped.
+bool KidnapInstr(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr) {
+    const bool client = g_on.load() && Role() == RoleClient && Field<u8>(Slot(kSlotGsm), 0x1592) == 0;
+    const bool rule_on = party::status::HostRuleOn(party::status::HostRule::AnyKidnap);
+    u32 size = 0;
+    const u64 args = EmevdInstructionArgs(event, instr, &size);
+    u32 flag = 0;
+    if (bank == 2003 && id == 2 && args && size >= 4) {
+        SafeGet(args, &flag);
+    }
+    const kidnap::GuestAct act = kidnap::PlanInstr(event_id, bank, id, client, rule_on, flag);
+    switch (act) {
+    case kidnap::GuestAct::None:
+        return false;
+    case kidnap::GuestAct::PassGate:
+    case kidnap::GuestAct::RestoreGate: {
+        // The gate's argument bytes are the loaded script's: every dispatch writes the value for now
+        // (the own world, the rule going off and the host see the data's 0 again; party_npcfight).
+        if (!args || size <= u32(kidnap::kChrTypeArg)) {
+            return false;
+        }
+        u8 want = 0;
+        if (act == kidnap::GuestAct::PassGate) {
+            const int mine = Field<int>(Field<u64>(Slot(kSlotWorldChrMan), 0x60), 0x78, 1);
+            want = mine >= 0 && mine < 0x7f ? u8(mine) : u8(1);
+        }
+        u8 have = 0;
+        if (!SafeGet(args + kidnap::kChrTypeArg, &have) || have == want || !SafeWrite(args + kidnap::kChrTypeArg, &want, 1)) {
+            return false;
+        }
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 16) {
+            Log("kidnap: event %d's chr type gate %u -> %u (%s)", event_id, unsigned(have), unsigned(want),
+                act == kidnap::GuestAct::PassGate ? "a guest's copy: a Snatcher's grab takes the party (Anyone can be abducted)"
+                                                  : "the game's own again");
+        }
+        return false;
+    }
+    case kidnap::GuestAct::SkipTrigger: {
+        const double now = Now();
+        const double last = g_kidnap_sent_at.load();
+        if (rule_on && kidnap::SendRequest(last > 0 ? now - last : -1.0)) {
+            KidnapAskHost(event_id, "9420 not set here");
+        } else if (!rule_on) {
+            static std::atomic<int> logged{0};
+            if (logged.fetch_add(1) < 4) {
+                Log("kidnap: event %d's 9420 on a guest skipped (the host's rule is off: a plain death)", event_id);
+            }
+        }
+        return true;
+    }
+    }
+    return false;
+}
+
+void KidnapAskHost(std::int32_t event_id, const char* how) {
+    g_kidnap_sent_at = Now();
+    const u32 map = LocalMap();
+    char b[128];
+    std::snprintf(b, sizeof b, "{\"op\":\"kidnap\",\"event\":%d,\"map\":%u}", int(event_id), map);
+    Send(0, b);
+    Log("kidnap: a Snatcher grabbed this guest (event %d, %s): %s; asked the host to take the party to the "
+        "Hypogean Gaol", int(event_id), MapName(map).c_str(), how);
+    party::status::SetLastEvent("Grabbed by a Snatcher: the party goes to the Hypogean Gaol");
+}
+
 bool ClientIntroSkip(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr) {
+    if (kidnap::KidnapEvent(event_id) && KidnapInstr(event_id, bank, id, event, instr)) {
+        return true;
+    }
     // D10: on by default (BB_PARTY_STORY_DEDUPE=0 off): the guest's own copy of a mirrored event's
     // 2002 would play the scene a second time (soak run 5f).
     static const bool dedupe = StoryDedupeEnabled(std::getenv("BB_PARTY_STORY_DEDUPE"));
@@ -10731,11 +10819,87 @@ void NoteOwnAppearanceChanged() {
     g_own_appearance_changed = true;
 }
 
+/// Host, main thread: a guest's Snatcher grab (KidnapInstr on its game) takes the party to the
+/// Hypogean Gaol as the host's own grab does: the host's 9420 (its common 9421 moves its respawn
+/// point to the Gaol and clears it), then the party's travel there (one loading screen for everyone;
+/// the grabbed guest follows once its death is taken, OnHostTravel). The waking scene 9422 then plays
+/// on the host's arrival and for every guest (party_story).
+void KidnapHostTick(const GameSnapshot& s, double now) {
+    static bool active = false;
+    static double started = 0;
+    static int slot = -1;
+    if (Role() != RoleHost) {
+        active = false;
+        return;
+    }
+    KidnapRequest r;
+    {
+        std::lock_guard<std::mutex> lk(g_kidnap_mu);
+        r = g_kidnap_req;
+        g_kidnap_req.pending = false;
+    }
+    if (active) {
+        if (s.loading || !s.world_up) {
+            active = false;  // a load came first (the host's own death, a travel)
+            Log("kidnap: a load came before the party's travel to the Gaol; dropped");
+            return;
+        }
+        const u32 record = Field<u32>(Slot(kSlotGsm), 0x1528);
+        switch (kidnap::PlanHostStep(record, now - started)) {
+        case kidnap::HostStep::Wait:
+            return;
+        case kidnap::HostStep::Travel:
+            active = false;
+            Log("kidnap: the host's respawn point is the Gaol (%u, common 9421 ran %.2f s after 9420): the party's "
+                "travel there (one loading screen for everyone; slot %d follows once its death is taken)",
+                record, now - started, slot);
+            party::status::SetLastEvent("A Snatcher took a guest: the party goes to the Hypogean Gaol");
+            RunLampWarpPartyNotRest(kidnap::kGaolReturnPoint, "the Snatcher's kidnap of a guest");
+            return;
+        case kidnap::HostStep::GiveUp:
+            active = false;
+            WriteEventFlag(kidnap::kTriggerFlag, false);
+            Log("kidnap: common 9421 did not move the respawn point within %.0f s (record %u): 9420 off again, "
+                "no travel (the guest's death stays a plain death)", kidnap::kRespawnWait, record);
+            return;
+        }
+        return;
+    }
+    if (!r.pending) {
+        return;
+    }
+    bool woke = false;
+    ReadEventFlag(kidnap::kWokeFlag, &woke);
+    kidnap::HostView v;
+    v.rule_on = BbSettings::Get().party_any_kidnap.load(std::memory_order_relaxed);
+    v.in_world = s.world_up && !s.loading;
+    v.members = MemberTaskCount();
+    v.busy = g_host_down.load() || (s.player && ChrHp(s.player) <= 0) || BossFightActive();
+    v.woke = woke;
+    v.host_map = s.map_id;
+    v.guest_map = r.map;
+    v.age_s = now - r.at;
+    const kidnap::HostPlan plan = kidnap::PlanHost(v);
+    Log("kidnap: slot %d was grabbed by a Snatcher (event %d, %s; host in %s, 9423 %d): %s", r.slot, r.event_id,
+        MapName(r.map).c_str(), MapName(s.map_id).c_str(), woke ? 1 : 0, kidnap::HostPlanName(plan));
+    if (plan != kidnap::HostPlan::Start) {
+        return;
+    }
+    if (!WriteEventFlag(kidnap::kTriggerFlag, true)) {
+        Log("kidnap: 9420 could not be set on the host; no travel");
+        return;
+    }
+    active = true;
+    started = now;
+    slot = r.slot;
+}
+
 void Tick(const GameSnapshot& s) {
     if (!g_on.load()) {
         return;
     }
     const double now = Now();
+    KidnapHostTick(s, now);
     // Test aid (batch 6, BB_PARTY_TEST_TRAVEL_ON_SERVE=<lamp>): the host warps to that lamp 1.5 s
     // after it first served a room (a host travel while a member loads in, playtest 1 H1:3630).
     {
@@ -11115,6 +11279,33 @@ bool OnHostTravel(const TravelIntent& t) {
             return true;
         }
     }
+    if (t.kind != TravelKind::HostDeath && !g_dead_follow.load()) {
+        // 0.7.3: the party's travel to the Gaol this guest's own Snatcher grab asked for (KidnapInstr):
+        // its body lies at HP 0, so the follow waits for the death as at a wipe (the bloodstain where it
+        // fell, as the host's own grab leaves one), then one dead follow to the cell with the party.
+        const double sent = g_kidnap_sent_at.load();
+        if (kidnap::FollowWaitsForDeath(sent > 0 ? Now() - sent : -1.0, t.lamp_id)) {
+            const GameSnapshot g = ReadGameState(false);
+            const bool idle = [] {
+                std::lock_guard<std::mutex> lk(S().mu);
+                return S().gphase == GuestPhase::Idle;
+            }();
+            const deathrules::WipeFollow wf =
+                g.player ? deathrules::PlanWipeFollow(true, ChrHp(g.player), g_death_held_at.load() > 0, 0.0)
+                         : deathrules::WipeFollow::Now;
+            if (idle && g.world_up && !g.loading && wf != deathrules::WipeFollow::Now) {
+                {
+                    std::lock_guard<std::mutex> lk(g_wipe_wait_mu);
+                    g_wipe_wait_t = t;
+                    g_wipe_wait_at = Now();
+                }
+                g_kidnap_sent_at = 0;
+                Log("guest: the party's kidnap travel to the Gaol (%s): this grabbed guest follows once its death is "
+                    "taken (%s), dead, with one load", DescribeTravel(t).c_str(), deathrules::WipeFollowName(wf));
+                return true;
+            }
+        }
+    }
     {
         // The host's destination is the block this guest stands in (a host death or a stage warp
         // inside the map): no load for the guest (B4 / H1), only a move beside the host.
@@ -11145,6 +11336,27 @@ bool OnHostTravel(const TravelIntent& t) {
 
 void OnLinkEvent(int from_slot, const std::string& body) {
     if (!g_on.load()) {
+        return;
+    }
+    if (body.find("\"op\":\"kidnap\"") != std::string::npos) {
+        // 0.7.3: a guest's Snatcher grab (KidnapInstr); the host's tick decides (KidnapHostTick).
+        if (Role() != RoleHost) {
+            return;
+        }
+        unsigned map = 0;
+        int ev = 0;
+        if (const char* p = std::strstr(body.c_str(), "\"map\":")) std::sscanf(p, "\"map\":%u", &map);
+        if (const char* p = std::strstr(body.c_str(), "\"event\":")) std::sscanf(p, "\"event\":%d", &ev);
+        if (!kidnap::KidnapEvent(ev)) {
+            Log("kidnap: slot %d sent a grab of event %d: not a Snatcher's; ignored", from_slot, ev);
+            return;
+        }
+        std::lock_guard<std::mutex> lk(g_kidnap_mu);
+        g_kidnap_req.pending = true;
+        g_kidnap_req.slot = from_slot;
+        g_kidnap_req.map = map;
+        g_kidnap_req.event_id = ev;
+        g_kidnap_req.at = Now();
         return;
     }
     if (body.find("\"hostng\"") != std::string::npos) {
@@ -11956,6 +12168,18 @@ std::uint32_t NearestEnemyForTest(float max_m) {
     Log("test: map chrs %d, of %s %d (%d alive); nearest within %.0f m: %u; first:%s", all, MapName(s.map_id).c_str(), ours,
         alive, double(max_m), id, sample.c_str());
     return id;
+}
+
+void TestGuestKidnapGrab() {
+    if (!g_on.load() || Role() != RoleClient) {
+        Log("test: guest_die:kidnap: not a guest in the host's world; a plain death");
+        return;
+    }
+    if (!party::status::HostRuleOn(party::status::HostRule::AnyKidnap)) {
+        Log("test: guest_die:kidnap: the host's rule Anyone can be abducted is off; a plain death");
+        return;
+    }
+    KidnapAskHost(12400780, "test aid guest_die:kidnap");
 }
 
 bool PopOutgoing(int* slot, std::string* body) {

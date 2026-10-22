@@ -477,7 +477,7 @@ static void RulesPages() {
     };
     using V = std::vector<std::u16string>;
     const V deaths = {u"Guest gets up, no load", u"Host gets up, no load", u"Up after boss kill",
-                      u"Respawn at host's lamp", u"Refill vials, bullets"};
+                      u"Respawn at host's lamp", u"Refill vials, bullets", u"Anyone can be abducted"};
     // 0.7.2: rot and what else cleanses it, the host's rules, on a page of their own.
     const V rot = {u"Rot on death", u"Rot: boss kill cleanses", u"Rot: kill your killer", u"Rot: echoes back"};
     const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests bring their lamps", u"Guests use lamps",
@@ -522,6 +522,7 @@ static void RulesPages() {
         // host revive, limbo: the host's rules; the guest's own revive and respawn: a toggle for everyone
         const P::Kind host_kind = guest ? P::Kind::Button : P::Kind::Toggle;
         assert(k[0] == P::Kind::Toggle && k[1] == host_kind && k[2] == host_kind && k[3] == P::Kind::Toggle);
+        assert(k.size() == 6 && k[5] == host_kind);  // 0.7.3: Anyone can be abducted, the host's rule
         for (const P::Kind kind : kinds(u"Rot")) assert(kind == host_kind);
         assert(kinds(u"Party rewards").back() == P::Kind::List && kinds(u"Party display").back() == P::Kind::List);
         // 0.7.1: the Shared world rows are the host's rules; the key item rows each player's own.
@@ -587,6 +588,8 @@ static void RulesPages() {
           std::tuple{u"Shared world", u"NPCs as in host's world", "party_npc_mirror", &BbSettings::Values::party_npc_mirror},
           std::tuple{u"Shared world", u"Party votes on travel", "party_travel_vote", &BbSettings::Values::party_travel_vote},
           std::tuple{u"Shared world", u"NPC hunters fight all", "party_npc_fights", &BbSettings::Values::party_npc_fights},
+          std::tuple{u"Deaths & revives", u"Anyone can be abducted", "party_any_kidnap",
+                     &BbSettings::Values::party_any_kidnap},
           std::tuple{u"Party rewards", u"Own key items as guest", "party_key_view", &BbSettings::Values::party_key_view},
           std::tuple{u"Party rewards", u"Key items at once", "party_key_items_summoned",
                      &BbSettings::Values::party_key_items_summoned}}) {

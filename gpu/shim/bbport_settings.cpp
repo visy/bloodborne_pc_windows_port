@@ -49,6 +49,7 @@ const PartySwitch PartySwitches[] = {
     // 0.7.3: lamp travel voting (party_vote.h reads it live; the host's rule, off by default).
     {"party_travel_vote", "BB_PARTY_TRAVEL_VOTE", &Values::party_travel_vote, false},
     {"party_npc_fights", "BB_PARTY_NPC_FIGHTS", &Values::party_npc_fights, false},  // 0.7.3, D11
+    {"party_any_kidnap", "BB_PARTY_ANY_KIDNAP", &Values::party_any_kidnap, false},  // 0.7.3, kidnapall
     {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
     {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
     // 0.7.2: the rot cleanses (party_balance reads them live; host's rules).

@@ -1218,6 +1218,15 @@ void DefineAll() {
     own(&Values::party_guest_refill, "Refill vials, bullets", "Пополнять склянки, пули",
         "While you are a guest: vials and bullets refill when the host rests, dies or travels. Next start",
         "Пока вы гость: склянки и пули пополняются, когда хост отдыхает, гибнет или уходит. Со след. запуска");
+    // 0.7.3 (kidnapall, party_kidnap_rules.h): a Snatcher's grab of a guest takes the party to the Gaol.
+    host_rule(&Values::party_any_kidnap, "Anyone can be abducted", "Похитить могут любого",
+              AddText("A Snatcher grabbing a guest takes the whole party to the Hypogean Gaol, as the host. Party rule",
+                      "Похититель, схвативший гостя, уносит всю группу в Подземную тюрьму, как хоста. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::AnyKidnap); },
+              {"The host's rule: a Snatcher grabbing you takes the whole party to the Hypogean Gaol",
+               "Правило хоста: если вас схватит похититель, вся группа окажется в Подземной тюрьме"},
+              {"The host decides; off: only the host's grab takes the party there, a grabbed guest just dies",
+               "Решает хост; выкл.: группу уносит только схваченный хост, схваченный гость просто гибнет"});
 
     // ---- Rot (party_balance, party_rot_rules.h; 0.7.2: its own page, the six rows of Deaths &
     // revives were full): the death debuff and what else cleanses it, the host's rules. ----

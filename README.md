@@ -268,8 +268,11 @@ before anyone is in the game):
   refill. A guest who rests at a lamp and travels alone gives the host a short loading screen so its
   world resets too; a guest leaving the Hunter's Dream alone by a headstone is just a trip (no reset).
   Resting while the host is in a boss fight takes everyone out of the boss room.
-- **Kidnapped by a Snatcher?** If the host is grabbed, the whole party wakes up together in the
-  Hypogean Gaol (Yahar'gul) after one loading screen. Guests cannot be kidnapped in the host's world.
+- **Kidnapped by a Snatcher?** Whoever is grabbed, host or guest, the whole party wakes up together
+  in the Hypogean Gaol (Yahar'gul) after one loading screen, and everyone watches the waking scene
+  (+1 Insight each). Only the first kidnap does this, as in the game. The host can turn off
+  *Anyone can be abducted* (*System > Deaths & revives*): then only a grabbed host takes the party
+  there and a grabbed guest just dies. A kidnap never follows a guest home into its own world.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared

@@ -281,6 +281,7 @@ struct Values {
     /// YES (party_vote.h). The host's rule; OFF by default.
     std::atomic<bool> party_travel_vote{false};
     std::atomic<bool> party_npc_fights{true};   ///< D11 (0.7.3): NPC hunters fight the whole party (party_npcfight_rules.h)
+    std::atomic<bool> party_any_kidnap{true};   ///< 0.7.3: a Snatcher grabbing a guest takes the party to the Gaol (party_kidnap_rules.h)
     /// Each player's own (while it is a guest; party_items):
     std::atomic<bool> party_key_view{true};     ///< the own key items while summoned (next start)
     std::atomic<bool> party_key_items_summoned{true}; ///< a host-world key item given at once (needs key_view)

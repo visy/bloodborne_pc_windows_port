@@ -79,6 +79,9 @@ struct Rules {
     /// D11 (0.7.3, party_npcfight_rules.h): NPC hunters fight the whole party (a guest's copy of the
     /// host-only NPC transitions runs). The host's; on by default (a host from before it sends none: on).
     bool npc_fights = true;
+    /// 0.7.3 (party_kidnap_rules.h): a Snatcher grabbing a guest takes the whole party to the Hypogean
+    /// Gaol, as the host's own grab. The host's; on by default (a host from before it sends none: on).
+    bool any_kidnap = true;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };

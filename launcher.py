@@ -156,6 +156,9 @@ PARTY_INI_SWITCHES = [
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
     # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Shared world)
     ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
+    # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
+    # System > Deaths & revives)
+    ("party_any_kidnap", "BB_PARTY_ANY_KIDNAP", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -3186,6 +3189,14 @@ class BloodborneLauncher(tk.Tk):
                     "anyone (a lamp in another area: the host loads alone). Off: the whole party gets the "
                     "respawn loading screen. Host's setting. Default: on (bbport.ini party_host_revive; in "
                     "the game: System > Deaths & revives).", command=save)
+        self._check(sec, "Anyone can be abducted", var["party_any_kidnap"],
+                    "When a Snatcher grabs a guest in the host's world, the whole party is taken to the "
+                    "Hypogean Gaol in Yahar'gul, just as when the host is grabbed: one loading screen for "
+                    "everyone, all of you wake up in the cell together. Only the first kidnap of the host's "
+                    "world does this, as in the game. The host's setting; guests follow it. Off: only a "
+                    "grabbed host takes the party there, a grabbed guest just dies. The waking scene plays "
+                    "for everyone either way. Default: on (bbport.ini party_any_kidnap; in the game: "
+                    "System > Deaths & revives).", command=save)
 
         sec = section(1, 1, "Guests")
         self._check(sec, "Get up without a loading screen", var["party_guest_revive_inplace"],

@@ -84,6 +84,9 @@ void DirectSummonName(int slot, const std::string& name);
 /// Host, A11: its boss fight / cutscene hold started, ended or is re-announced: the party status
 /// line on both sides ("Waiting: the host is in a boss fight") and a dsum_busy event to the guests.
 void HostBusyChanged(bool boss_bar_up, bool cutscene_playing);
+/// Test aid (guest_die:kidnap): what a guest's copy of the Snatcher's grab event does at the grab
+/// (party_kidnap_rules.h SkipTrigger: the host is asked for the party's kidnap); the death follows.
+void TestGuestKidnapGrab();
 /// An event to send (the director's tick drains it): slot -1 = to the host / broadcast.
 bool PopOutgoing(int* slot, std::string* body);
 
