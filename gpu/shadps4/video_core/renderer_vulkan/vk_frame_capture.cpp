@@ -6,6 +6,7 @@
 #include <ctime>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <mutex>
 
 #include "video_core/renderer_vulkan/vk_common.h"
@@ -29,6 +30,9 @@ struct Group {
     u32 draws{};
     u64 indices{};
     std::vector<std::pair<Target, bool>> sampled;
+    /// Draws per index count (count, draws): one model's mesh is one count at each LOD, so a
+    /// model that went missing between two captures shows up as a missing count.
+    std::vector<std::pair<u32, u32>> sizes;
 };
 
 struct Entry {
@@ -43,6 +47,8 @@ struct Entry {
     std::vector<std::string> buffers; ///< dumped constants, per draw
     std::vector<Group> groups;
 };
+
+constexpr size_t kMaxSizes = 256; ///< distinct index counts listed per group
 
 // GPU thread only.
 std::vector<Entry> entries;
@@ -97,8 +103,10 @@ void AddShader(Entry& entry, u64 hash) {
 
 void Write(VAddr presented) {
     const char* dir = std::getenv("BB_CAPTURE_DIR");
-    const std::string path =
-        std::format("{}/frame_{}.txt", dir ? dir : ".", static_cast<long long>(std::time(nullptr)));
+    // A sequence number too: two records in one second (a scripted sweep) kept apart.
+    static u32 written = 0;
+    const std::string path = std::format("{}/frame_{}_{:03}.txt", dir ? dir : ".",
+                                         static_cast<long long>(std::time(nullptr)), written++);
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) {
         std::printf("Frame capture: cannot write %s\n", path.c_str());
@@ -139,6 +147,16 @@ void Write(VAddr presented) {
                          static_cast<unsigned long long>(g.indices));
             for (const auto& [t, storage] : g.sampled) {
                 std::fprintf(f, "    %s %s\n", storage ? "writes " : "samples", Describe(t).c_str());
+            }
+            std::string sizes;
+            auto sorted = g.sizes;
+            std::ranges::sort(sorted, std::greater{});
+            for (const auto& [count, draws] : sorted) {
+                sizes += draws > 1 ? std::format(" {}x{}", count, draws) : std::format(" {}", count);
+            }
+            if (!sizes.empty()) {
+                std::fprintf(f, "    index counts%s%s\n", sizes.c_str(),
+                             g.sizes.size() >= kMaxSizes ? " ..." : "");
             }
         }
     }
@@ -279,6 +297,12 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
     }
     ++group->draws;
     group->indices += u64(num_indices) * std::max(num_instances, 1u);
+    auto size = std::ranges::find_if(group->sizes, [&](const auto& c) { return c.first == num_indices; });
+    if (size != group->sizes.end()) {
+        ++size->second;
+    } else if (group->sizes.size() < kMaxSizes) {
+        group->sizes.emplace_back(num_indices, 1u);
+    }
     AddSampled(e);
     AddBuffers(e);
 }

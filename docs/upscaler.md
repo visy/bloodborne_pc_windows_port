@@ -84,7 +84,10 @@ the next frame (boundary: the pass writing a display buffer) — passes, targets
 sampled textures, and the first 1 KiB of bound constants for small passes and first draws. Each
 pass also lists its draws by vertex/pixel shader pair (`group vs ... ps ...`: draws, indices and
 the textures the first draw sampled, with tile mode, mip and layer counts). Comparing two captures
-at the same spot shows draws that went missing (the Lecture Building floor at model LOD 2).
+at the same spot shows draws that went missing (the Lecture Building floor at model LOD 2). Under
+each group, `index counts` lists its draws by index count (`7629x2`: two draws of 7629 indices, at
+most 256 counts): one model mesh has one count per level of detail (FLVER face sets), so a model
+that went missing, or changed level, is found by its count. Records are `frame_<time>_<n>.txt`.
 `BB_DRAW_SKIP_FILE=<file>` (developer aid, off by default): draws whose vertex or pixel shader hash
 (hex, whitespace-separated) is listed in the file are not recorded; the file is re-read at a flip
 when it changes (`Draw skip: N shader(s) ...` in the log). It finds which draw puts a surface on
