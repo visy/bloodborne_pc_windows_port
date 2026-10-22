@@ -9,7 +9,8 @@
   python tools/mp/shot.py --root DIR --out DIR --burst "START => END" ...
       a ride burst (liftfix): when a line matches START (in any instance's log), every window every
       second (ride<N>_<t>s_inst<i>.png, N counting the rides from 1, t the seconds since START) until
-      2 s after a line matching END (at most 90 s); another START meanwhile is the same ride.
+      2 s after every log that matched START has matched END (at most 90 s; a far game's copy ends at
+      once); another START meanwhile is the same ride.
   python tools/mp/shot.py --root DIR --out DIR --grey [--watch ...]
       also every 2 s: a window whose 3D view (the centre, without the HUD corners) is nearly
       uniform for over 3 s while its log says the world is up (no loading screen) is a grey
@@ -235,13 +236,17 @@ def main():
                 m = re.search(r"inst(\d+)", str(p))
                 grey.note_log(int(m.group(1)) if m else -1, text)
             for srx, erx in bursts:
-                if ride["start"] is None:
-                    m = srx.search(text)
-                    if m:
-                        ride.update(n=ride["n"] + 1, start=time.time(), next=time.time(), end=None)
-                        text = text[m.end():]  # an end in the same chunk must come after the start
-                if ride["start"] is not None and ride["end"] is None and erx.search(text):
-                    ride["end"] = time.time()
+                m = srx.search(text)
+                if m and ride["start"] is None:
+                    ride.update(n=ride["n"] + 1, start=time.time(), next=time.time(), end=None, began=set(), ended=set())
+                if m and ride["start"] is not None and ride["end"] is None:
+                    ride["began"].add(p)
+                    text = text[m.end():]  # an end in the same chunk must come after the start
+                if ride["start"] is not None and ride["end"] is None and erx.search(text) and p in ride["began"]:
+                    # over once every game whose car rode has ended it (a far copy ends at once)
+                    ride["ended"].add(p)
+                    if ride["ended"] >= ride["began"]:
+                        ride["end"] = time.time()
             for rx, tag, delays in rules:
                 if tag not in fired and rx.search(text):
                     fired.add(tag)
