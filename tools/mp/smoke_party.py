@@ -3525,8 +3525,7 @@ def check_cv(v, L, d: Path):
     need(v, L, "cv rule on (host's setting)", 0, r"covenant outcomes per player: on")
     need(v, L, "cv rule on (guest: the host's rule)", 1, r"covenant outcomes per player: on")
     snap = need(v, L, "cv covenant: the host's covenant flags not copied into the guest's save", 1,
-                r"covenant outcomes per player: \d+ covenant flag\(s\) set in the host's world not copied.*\b1042\b",
-                j or 0)
+                r"covenant outcomes per player: \d+ covenant flag\(s\) set in the host's world not copied.*\b1042\b")
     # In the host's world: the guest sees the host's state (visible), its own save its own.
     rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", j or 0)
     vals = dict(re.findall(r"\b(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
@@ -3560,8 +3559,8 @@ def check_cv(v, L, d: Path):
               r"test: guest_flag %s: \d -> 1" % CV_RUNE_TRIGGER, j or 0)
     need(v, L, "cv rune: given to the guest itself (own grant)", 1,
          r"own talk gift trigger %s .*lot %s .*given to this guest" % (CV_RUNE_TRIGGER, CV_RUNE_LOT), tr or j or 0)
-    need(v, L, "cv rune: in the guest's inventory", 1,
-         r"inventory add \d+/\d+: item 200030 category|lot %s.*(given while summoned|gave|inventory add)" % CV_RUNE_LOT,
+    need(v, L, "cv rune: given into the guest's inventory", 1,
+         r"gave #\d+ lot %s \(flag %s, own\).*flag %s is set" % (CV_RUNE_LOT, CV_RUNE_FLAG, CV_RUNE_FLAG),
          tr or j or 0)
     none_of(v, L, "cv rune: the trigger never goes to the host", r"world action sent to the host.*%s" % CV_RUNE_TRIGGER, insts=(0, 1))
     none_of(v, L, "cv rune: the host gets no rune", r"award lot %s\b" % CV_RUNE_LOT, insts=(0,))

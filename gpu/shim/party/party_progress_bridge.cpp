@@ -627,7 +627,9 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link) {
         const bool on = CurrentRole() == Role::Guest
                             ? party::status::HostRuleOn(party::status::HostRule::CovenantPerPlayer)
                             : BbSettings::Get().party_covenant_per_player.load();
-        if (on != CovenantPerPlayer()) {
+        static bool logged = false;  // the first value, then every change
+        if (!logged || on != CovenantPerPlayer()) {
+            logged = true;
             BLog("covenant outcomes per player: %s (%s)", on ? "on" : "off",
                  CurrentRole() == Role::Guest ? "the host's rule" : "this game's setting");
         }
