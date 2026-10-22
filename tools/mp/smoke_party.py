@@ -854,7 +854,7 @@ def phase_rs(only):
             "host_move=%s@2%%m35?obj=%s:2" % (RH_BOT_OUT, RH_CAR),                  # out 2 s after the arrival
             "host_press=0@8%m35!"]                                                 # 8 s to see the car
     return dict(
-        name="rs", seconds=200, count=1, headless=0, fps=60,
+        name="rs", seconds=200, count=1, headless=0, fps=int(os.environ.get("BB_RS_FPS", "60")),
         env=["BB_PARTY_TEST_START_LAMP=3502950", "BB_PARTY_PROGRESS_TEST_SET=13501118,%s,13501117" % RH_POS,
              "BB_PARTY_PROGRESS_TEST_CLEAR=%s" % RH_BUSY, "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
              "BB_PARTY_EMEVD_TRACE_ALL=13501111,13501112,13501113"],
@@ -865,9 +865,11 @@ def phase_rs(only):
 
 
 def check_rs(v, L):
-    rides = rh_rides(L, 0)
-    v.step("rs one ride, the car stays down after the host left it", len(rides) == 1,
-           "%d rides: %s" % (len(rides), ", ".join("%s at +%.1f s" % ("up" if r["up"] else "down", r["t"]) for r in rides)))
+    # every ride start (anim 1 down / 5 up playing), not only the ended ones: run 15's up departure
+    # started before the down ride's end animation
+    starts = [(t, "up" if " anim 5 " in l else "down") for t, l in L.all(0, r"test: object %s anim [15] playing 1" % RH_CAR)]
+    v.step("rs one ride, the car stays down after the host left it", len(starts) == 1,
+           "%d ride starts: %s" % (len(starts), ", ".join("%s at +%.1f s" % (d, t) for t, d in starts)))
     none_of(v, L, "rs nobody died", r"local death: HP 0", 0, 1e9, (0,))
     check_common(v, L, "rs")
 
