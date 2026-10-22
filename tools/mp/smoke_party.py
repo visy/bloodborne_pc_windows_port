@@ -2889,7 +2889,9 @@ def rh_rides(L, i):
     for t, line in L.all(i, r"test: object %s anim -?\d+ playing" % RH_CAR):
         m = re.search(r"anim (-?\d+) playing (\d)", line)
         anim, playing, w = int(m.group(1)), m.group(2) == "1", wall(line)
-        if anim in (1, 5) and playing and (not rides or rides[-1]["end"] is not None):
+        # a far game's car (not active: the guest 40 m away) runs its copy's animations at once, never
+        # "playing": a ride starts with anim 1 / 5 either way
+        if anim in (1, 5) and (not rides or rides[-1]["end"] is not None):
             rides.append(dict(start=w, t=t, up=anim == 5, end=None, t_end=None, t_arr=None))
         elif anim in (2, 6) and not playing and rides and rides[-1]["end"] is None:
             rides[-1]["t_arr"] = rides[-1]["t_arr"] or t
