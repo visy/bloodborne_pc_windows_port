@@ -1540,7 +1540,7 @@ def phase_da(only):
     )
 
 
-# Phase nf (npcfights, ~6 min, 2 players, group `npc_fights`; ERSC parity D11): scripted NPC
+# Phase nf (npcfights, ~5 min, 2 players, group `npc_fights`; ERSC parity D11): scripted NPC
 # hunter fights with the whole party (user decision 2026-10-22: the NPC is there for everyone,
 # anyone can hurt it, its death and the quest step count for all, like a boss).
 #   1  Tomb of Oedon (m24_01), Eileen's quest: her state 1363 (she waits there, hidden) with Henryk
@@ -1549,16 +1549,17 @@ def phase_da(only):
 #      his HP falls on the host's game) and deals the killing blow on its own game (guest_kill: HP 0
 #      there only); the host's game sees him die and sets the quest flags (12410804: 1367;
 #      12410810's own flag), which reach the guest's own save (read at the next load).
-#   2  Cainhurst (m25), Alfred hostile (state 1349): his init event (12500050) re-teams him (27) on
-#      the host only (1003[6] "end if client"). With the host's rule party_npc_fights OFF the
-#      guest's copy keeps him friendly (the "before"); the rule ON and a party round trip to the
-#      Tomb and back: the guest's copy runs as the host's (team 27 there too), its R1s hurt him on
-#      the host's game, and its killing blow kills him for the party (12500054: 1350).
+#   2  Cainhurst (m25, the Queen's Chamber lamp 2502951; Logarius dead), Alfred hostile (state
+#      1349): his init event (12500050) re-teams him (27) on the host's game only (1003[6] "end if
+#      client"). A: the host's rule party_npc_fights OFF: the guest's copy keeps him friendly (26,
+#      the "before"). B: the rule ON and a party round trip to the Tomb and back: the guest's copy
+#      runs as the host's, team 27 on both games. (No fight with him here: in this fixture he drops
+#      through the chamber's floor after the second load, on the host's game too.)
 NF_HENRYK, NF_EILEEN, NF_ALFRED = 2410901, 2410900, 2500790
-NF_FLAGS = "1349/1350/1363/1365/1366/1367/12410810"
-NF_LOGARIUS_DEAD = "12501800,12501802,12501803"  # Alfred hostile stands on Logarius's roof: the boss dead first
-# the host's last step (its load after Alfred's death, or after the condition's timeout), its world up
-NF_UNTIL = r"0:test: travel step 10/10: host_warp[\s\S]*test read \(load mode 0"
+NF_FLAGS = "1349/1363/1365/1366/1367/12410810"
+NF_LOGARIUS_DEAD = "12501800,12501802,12501803"  # Logarius dead: the queen's chamber (Alfred) is open
+# the host's last step (its load after the Cainhurst checks) and its world up
+NF_UNTIL = r"0:test: travel step 8/8: host_warp[\s\S]*test read \(load mode 0"
 
 
 def phase_nf(only):
@@ -1567,36 +1568,28 @@ def phase_nf(only):
         "host_warp=2412953@8^1",                          # 1: the party at the Tomb of Oedon lamp
         "host_chr=%d:4@8%%m24_01" % NF_HENRYK,            # in front of Henryk: his fight starts
         "host_rule=party_npc_fights:0@2%m24_01",          # 2A: the rule off (the "before")
-        "host_warp=2502952@8%m24_01?12410810=1",          # Henryk dead: the party to Cainhurst
-        "host_chr=%d:5@10%%m25" % NF_ALFRED,              # at Alfred (hostile here)
-        "host_rule=party_npc_fights:1@24%m25",            # 2B: the rule on, after the guest's R1s
+        "host_warp=2502951@8%m24_01?12410810=1",          # Henryk dead: the party to Cainhurst
+        "host_rule=party_npc_fights:1@15%m25",            # 2B: the rule on
         "host_warp=2412953@2%m25",                        # a round trip: the guest's init runs again
-        "host_warp=2502952@8%m24_01",
-        "host_chr=%d:5@10%%m25" % NF_ALFRED,
-        "host_warp=2412953@8%m25?1350=1",                 # Alfred dead: the last load (the save read)
+        "host_warp=2502951@8%m24_01",
+        "host_warp=2412953@15%m25",                       # the last load
     ])
-    hits = lambda n: ["guest_press=0x800@1.2%m25!"] * n
     g1 = ",".join(["god", "log_flag=" + NF_FLAGS,
                    "guest_chr=%d:1.6@14%%m24_01" % NF_HENRYK,        # 1: in front of Henryk
                    "guest_press=0x4@1%m24_01!", "guest_press=0x4:lock@1%m24_01!"]
                   + ["guest_press=0x800@1.2%m24_01!"] * 8          # R1: the guest's hits
-                  + ["guest_kill=%d:hp@2%%m24_01" % NF_HENRYK]      # its killing blow (HP 0 on its game)
-                  + ["guest_chr=%d:1.6@12%%m25" % NF_ALFRED,         # 2A: Alfred, rule off
-                     "guest_press=0x4@1%m25!", "guest_press=0x4:lock@1%m25!"] + hits(4)
-                  + ["guest_press=0@1%m24_01"]                         # the round trip (a guest's joins stay 1)
-                  + ["guest_chr=%d:1.6@12%%m25" % NF_ALFRED,         # 2B: Alfred, rule on
-                     "guest_press=0x4@1%m25!", "guest_press=0x4:lock@1%m25!"] + hits(6)
-                  + ["guest_kill=%d:hp@2%%m25" % NF_ALFRED])
+                  + ["guest_kill=%d:hp@2%%m24_01" % NF_HENRYK])     # its killing blow (HP 0 on its game)
     clear = ("1340,1341,1342,1343,1344,1345,1346,1347,1348,1350,1351,1352,1353,1354,1355,1356,1357,1358,1359,"
              "1360,1361,1362,1364,1365,1366,1367,1368,1369,1700,1701,1702,1703,1704,1705,12410810,5912")
     return dict(
-        name="nf", seconds=600, count=2, headless=0,
+        name="nf", seconds=480, count=2, headless=0,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=1363,1349," + NF_LOGARIUS_DEAD,
-             "BB_PARTY_PROGRESS_TEST_READ=1349,1350,1363,1365,1367,12410810", "BB_PARTY_CHR_DUMP=30",
+             "BB_PARTY_PROGRESS_TEST_READ=1349,1363,1365,1367,12410810", "BB_PARTY_CHR_DUMP=400",
              "BB_PARTY_TEST_COND_TIMEOUT=100"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
         watch=["--watch", r"test: host_chr=nfhost@1,4", "--watch", r"test: guest_chr=nfguest@1,4",
-               "--watch", r"guest_press 0x800=nfhit@0.5", "--watch", r"test: guest_kill=nfkill@1,4"],
+               "--watch", r"guest_press 0x800=nfhit@0.5", "--watch", r"test: guest_kill=nfkill@1,4",
+               "--watch", r"guest copy of event 12500050 runs=nfrule@1,6"],
         crash=[], until=[NF_UNTIL], until_hold=12,
     )
 
@@ -3548,33 +3541,26 @@ def check_nf(v, L):
              r"test read \(load mode 1, own save / visible\):[^\n]*1367=1/1", kill[0])
     else:
         v.step("nf the guest hits and kills Henryk", False, "no guest R1 / kill step")
-    # 2  Alfred in Cainhurst: the rule off (A), then on (B)
-    a_chr = L.find(1, r"test: guest_chr %d" % NF_ALFRED, 0)
-    b_chr = L.find(1, r"test: guest_chr %d" % NF_ALFRED, a_chr[0] + 1) if a_chr else None
-    if not a_chr or not b_chr:
-        v.step("nf Alfred: the guest at him twice (rule off, rule on)", False, "%s / %s" % (bool(a_chr), bool(b_chr)))
+    # 2  Alfred in Cainhurst: the rule off (A), then on (B, after a round trip)
+    off = L.find(0, r"test: host_rule: party_npc_fights 1 -> 0", 0)
+    on = L.find(0, r"test: host_rule: party_npc_fights 0 -> 1", off[0] if off else 0)
+    if not off or not on:
+        v.step("nf the host's rule off, then on", False, "%s / %s" % (bool(off), bool(on)))
         check_common(v, L, "nf")
         return
-    host_a = nf_hp(L, 0, NF_ALFRED, a_chr[0] - 20, b_chr[0] - 30)
-    guest_a = nf_hp(L, 1, NF_ALFRED, a_chr[0] - 20, b_chr[0] - 30)
-    v.step("nf (before, rule off) Alfred hostile on the host (team 27)", any(tm == 27 for _, _, tm in host_a),
+    host_a = nf_hp(L, 0, NF_ALFRED, off[0], on[0])
+    guest_a = nf_hp(L, 1, NF_ALFRED, off[0], on[0])
+    v.step("nf (rule off) Alfred hostile on the host's game (team 27)", any(tm == 27 for _, _, tm in host_a),
            "teams %s" % sorted({tm for _, _, tm in host_a}))
-    v.step("nf (before, rule off) Alfred's team on the guest", True,
-           "teams %s, HP %s" % (sorted({tm for _, _, tm in guest_a}), [h for _, h, _ in guest_a][:6]))
-    need(v, L, "nf rule on: the guest's copy of Alfred's init runs as the host's", 1,
-         r"guest copy of event 1250005[03] runs as the host's", a_chr[0])
-    guest_b = nf_hp(L, 1, NF_ALFRED, b_chr[0] - 15)
-    v.step("nf (rule on) Alfred hostile on the guest's game (team 27)", any(tm == 27 for _, _, tm in guest_b),
+    v.step("nf (rule off, the vanilla gap) Alfred friendly on the guest's game", bool(guest_a) and
+           all(tm != 27 for _, _, tm in guest_a), "teams %s" % sorted({tm for _, _, tm in guest_a}))
+    rule = need(v, L, "nf (rule on) the guest's copy of Alfred's init runs as the host's", 1,
+                r"guest copy of event 12500050 runs as the host's", on[0])
+    guest_b = nf_hp(L, 1, NF_ALFRED, rule or on[0])
+    v.step("nf (rule on) Alfred hostile on the guest's game too (team 27)", any(tm == 27 for _, _, tm in guest_b),
            "teams %s" % sorted({tm for _, _, tm in guest_b}))
-    kill = L.find(1, r"test: guest_kill: NPC entity %d" % NF_ALFRED, b_chr[0])
-    hp = [h for t, h, _ in nf_hp(L, 0, NF_ALFRED, b_chr[0], kill[0] if kill else 1e9)]
-    v.step("nf (rule on) the guest's R1s hurt Alfred on the host's game", bool(hp) and 0 < min(hp) < max(hp),
-           "host HP %s" % hp[:8])
-    if kill:
-        need(v, L, "nf (rule on) Alfred dies on the host after the guest's killing blow (1350)", 0,
-             r"test: flags .*1350=1", kill[0] - 1, kill[0] + 30)
     none_of(v, L, "nf no flag write from a guest copy reaches the host as a world action",
-            r"world action sent to the host[^\n]*\b(1349|1350|134[0-9])\b", 0, insts=(1,))
+            r"world action sent to the host[^\n]*\b(134[0-9]|1350)\b", 0, insts=(1,))
     check_common(v, L, "nf")
 
 
