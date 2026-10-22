@@ -1747,9 +1747,9 @@ def phase_cv(only):
 #   2502951 is an undrawn void: nf runs 7/9), the arrival scene 12500000 seen (no carriage remo).
 #   1  The party at the chamber lamp; the host 1.8 m in front of Alfred, the guest 2 m beside him.
 #   2  The host's R1s once the guest stands at Alfred (?near): his counter 12500052 (3 hits by the
-#      local player) -> 12500053 on the host: team 27, 1349. A guest's counter ends on a client, so
-#      the guest's copy of 12500053 (its 1003[6] passed by the rule) waits for its other condition,
-#      Alfred's HP below 90 % (the host's HP, synced): host_kill=:hp85 sets that (a fight's damage).
+#      local player) -> 12500053 on the host: team 27, 1349. The guest's copy of 12500053 (its
+#      1003[6] passed by the rule) fires with the host's flag (run 1: 0.9 s later) and switches him
+#      to team 23 on its game (27 is no foe for a phantom: party_npcfight_rules.h).
 #   3  The guest in front of him locks on, R1s (his HP falls on both games), HP 0 on its game
 #      (guest_kill :hp); the host's 12500054 sees him die: 1350 on the host. Alfred's states
 #      1340-1359 are covenant outcomes (per player, 0.7.3): the guest's own save keeps its 1348.
