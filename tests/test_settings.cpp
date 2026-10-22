@@ -136,6 +136,12 @@ int main() {
                                    {"mkkey.square", std::nullopt}});  // Default keys
     assert(BbSettings::ReadLines("mkkey.").empty());
     assert(Read(path).find("party_rendezvous=") != std::string::npos);  // the rest is kept
+    // Model detail "Highest" (-2) left objects past their nearest detail distance undrawn
+    // (Central Yharnam's corpses popped in and out): read as the game's own detail.
+    const char lod_ini[] = "model_lod=-2\n";
+    assert(bb_test_write_file(path, lod_ini, sizeof(lod_ini) - 1) == 0);
+    BbSettings::Load();
+    assert(BbSettings::Get().model_lod == 0);
     std::remove(path);
-    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines");
+    std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines, model detail -2 read as 0");
 }

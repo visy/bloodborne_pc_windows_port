@@ -173,6 +173,7 @@ struct TravelStep {
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
         HostSpfx, // host_spfx=ENTITY:ID: SpEffect ID on that entity's chr by its ApplySpEffect (D7 doping dedupe)
         HostPoise, // host_poise=N: the Enemy poise setting (party_enemy_poise, % of the step) set live, not saved (D7 A/B)
+        HostGfx,   // host_gfx=lod:N|cap|log: graphics test aid (model LOD bias, frame record, camera values; GfxTestStep)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestFixture, // guest_fixture@S: the BB_PARTY_WORLDACT_TEST objects / pickups again (worldact::FixtureRearm)
@@ -1264,6 +1265,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestPress: return "guest_press";
     case TravelStep::HostOutage: return "host_outage";
     case TravelStep::HostPoise: return "host_poise";
+    case TravelStep::HostGfx: return "host_gfx";
     case TravelStep::HostSpfx: return "host_spfx";
     case TravelStep::GuestOutage: return "guest_outage";
     case TravelStep::HostMark: return "host_mark";
@@ -1300,6 +1302,63 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostGather: return "host_gather";
     }
     return "?";
+}
+
+/// host_gfx=ARG (popin, test aid for graphics A/B sweeps inside one session):
+///   lod:N  the game's own model LOD bias (RendMan 0x5540298 -> +0x10 -> +0x530; the LOD update
+///          0x1D41D60 copies it into 0x5587D20 every frame and all three model draw paths add it to
+///          the distance level, clamped to 0..2; a Model LOD patch replaces one of those reads)
+///   cap    one frame analyzer record and one presented-buffer dump (creates the files named by
+///          BB_CAPTURE_TRIGGER and BB_PRESENT_DUMP_TRIGGER; docs/upscaler.md)
+///   log    the render camera block (RendMan config +0x50): viewport, FOV, LOD distance scale
+void GfxTestStep(const std::string& arg) {
+    std::uint64_t rm = 0, cfg = 0;
+    if (!SafeGet(Guest(0x5540298), &rm) || !rm || !SafeGet(rm + 0x10, &cfg) || !cfg) {
+        Log("test: host_gfx %s: no render manager", arg.c_str());
+        return;
+    }
+    std::int32_t bias = 0, vp[2] = {};
+    float fov = 0, scale = 0, cam[3] = {};
+    SafeGet(cfg + 0x530, &bias);
+    SafeRead(cfg + 0x50 + 0x110, vp, sizeof vp);
+    SafeGet(cfg + 0x50 + 0x140, &fov);
+    SafeGet(cfg + 0x50 + 0x150, &scale);
+    SafeRead(cfg + 0x50 + 0x80, cam, sizeof cam);
+    // The map collision the player stands on (chr +0x288, a 0x138-byte hit record) and its index
+    // in its block's hit array (*0x553E850 +0x28: block records of 0xB8, +0x78 count, +0x80 hits):
+    // the collision decides which of the map's draw groups are shown.
+    std::uint64_t hit = 0, man = 0, recs = 0;
+    int blocks = 0, hit_block = -1, hit_index = -1;
+    if (const std::uint64_t player = LocalPlayer()) SafeGet(player + 0x288, &hit);
+    if (hit && SafeGet(Guest(0x553e850), &man) && man && SafeGet(man + 0x20, &blocks) && SafeGet(man + 0x28, &recs)) {
+        for (int i = 0; recs && i < blocks && i < 4096; ++i) {
+            int n = 0;
+            std::uint64_t base = 0;
+            SafeGet(recs + std::uint64_t(i) * 0xb8 + 0x78, &n);
+            SafeGet(recs + std::uint64_t(i) * 0xb8 + 0x80, &base);
+            if (base && n > 0 && hit >= base && hit < base + std::uint64_t(n) * 0x138) {
+                hit_block = i;
+                hit_index = int((hit - base) / 0x138);
+            }
+        }
+    }
+    if (arg.rfind("lod:", 0) == 0) {
+        const std::int32_t want = std::clamp(std::atoi(arg.c_str() + 4), -2, 2);
+        SafeWrite(cfg + 0x530, &want, sizeof want);
+        Log("test: host_gfx: model LOD bias %d -> %d", bias, want);
+    } else if (arg == "cap") {
+        for (const char* env : {"BB_CAPTURE_TRIGGER", "BB_PRESENT_DUMP_TRIGGER"}) {
+            if (const char* path = std::getenv(env); path && *path) {
+                if (FILE* f = std::fopen(path, "w")) std::fclose(f);
+            }
+        }
+        Log("test: host_gfx: capture (LOD bias %d, camera %.2f %.2f %.2f, hit #%d of block #%d)", bias, cam[0], cam[1],
+            cam[2], hit_index, hit_block);
+    } else {
+        Log("test: host_gfx: LOD bias %d, viewport %dx%d, fov %.4f, LOD distance scale %.4f, camera %.2f %.2f %.2f, "
+            "hit #%d of block #%d",
+            bias, vp[0], vp[1], fov, scale, cam[0], cam[1], cam[2], hit_index, hit_block);
+    }
 }
 
 constexpr std::uint64_t kWarpNextStage = 0x132e010; // Lua WarpNextStage(ctx unused, area, block, region, index, point)
@@ -2015,7 +2074,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // step's delay then counts from the end of the wait.
         const TravelStep::Kind k = t.steps[t.next_step].kind;
         const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
-                               k == TravelStep::HostPoise || k == TravelStep::HostSpfx ||
+                               k == TravelStep::HostPoise || k == TravelStep::HostSpfx || k == TravelStep::HostGfx ||
                                k == TravelStep::GuestOutage || k == TravelStep::HostFlag || k == TravelStep::GuestFlag ||
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
                                k == TravelStep::HostLastLamp || k == TravelStep::GuestLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
@@ -2060,7 +2119,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     const TravelStep step = t.steps[t.next_step++];
     // A flag write is instant and moves nobody: the chain stays armed, so a travel step after it
     // still runs without another join (host_flag=1026:0@15,host_flag=1023@16,host_warp=2102961@18).
-    if (step.kind != TravelStep::HostFlag && step.kind != TravelStep::GuestFlag) {
+    if (step.kind != TravelStep::HostFlag && step.kind != TravelStep::GuestFlag && step.kind != TravelStep::HostGfx) {
         t.armed = false;
     }
     t.step_at = now;
@@ -2159,6 +2218,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         std::string what;
         const bool ok = balance::ApplySpEffectToEntity(entity, id, &what);
         Log("test: host_spfx: SpEffect %d on entity %d: %s", id, entity, ok ? what.c_str() : "FAILED: no such chr loaded");
+    } else if (step.kind == TravelStep::HostGfx) {
+        GfxTestStep(step.args);
     } else if (step.kind == TravelStep::HostPoise) {
         // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the
         // balance pass rewrites row 7503 and sends the rules on.
@@ -3669,6 +3730,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("guest_lamp=", 0) == 0 || item.rfind("host_alone=", 0) == 0 || item.rfind("guest_kill=", 0) == 0 ||
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
                        item.rfind("host_poise=", 0) == 0 || item.rfind("host_spfx=", 0) == 0 ||
+                       item.rfind("host_gfx=", 0) == 0 ||
                        item.rfind("guest_home", 0) == 0 || item.rfind("host_leave", 0) == 0 ||
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
                        item.rfind("guest_rejoin", 0) == 0 || item.rfind("host_gather", 0) == 0) {
@@ -3677,6 +3739,7 @@ void PartyDirector::ConfigureFromEnv() {
                 step.kind = item.rfind("guest_outage", 0) == 0  ? TravelStep::GuestOutage
                             : item.rfind("host_outage", 0) == 0   ? TravelStep::HostOutage
                             : item.rfind("host_poise", 0) == 0    ? TravelStep::HostPoise
+                            : item.rfind("host_gfx", 0) == 0      ? TravelStep::HostGfx
                             : item.rfind("host_spfx", 0) == 0     ? TravelStep::HostSpfx
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
@@ -3729,7 +3792,7 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
-                if (step.kind == TravelStep::HostPoise || step.kind == TravelStep::HostSpfx) {
+                if (step.kind == TravelStep::HostPoise || step.kind == TravelStep::HostSpfx || step.kind == TravelStep::HostGfx) {
                     step.args = item.substr(item.find('=') + 1, item.find_first_of("@%") - item.find('=') - 1);
                 }
                 if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {

@@ -274,8 +274,11 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "model_lod") {
         // 2 (the community patch "Model LOD 2 (Lowest)") is read as 1: the game draws nothing
         // for a model without a third detail level, and some floors have none (the Lecture
-        // Building's floor showed the background through it).
-        v.model_lod = std::clamp(i, -2, 1);
+        // Building's floor showed the background through it). -2 (the community patch "Model
+        // LOD -2 (Highest)") is read as 0: its bias reaches only one of the game's three model draw
+        // paths, and many objects past their nearest detail distance (10-15 m) were then not drawn
+        // at all, so Central Yharnam's corpses popped in close and vanished again further away.
+        v.model_lod = std::clamp(i, 0, 1);
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {

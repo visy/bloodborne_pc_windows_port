@@ -977,8 +977,11 @@ EFFECT_PATCHES = {
 # "Model LOD 2 (Lowest)" is not offered (WITHHELD_PATCHES): the game then draws nothing for a model
 # without a third level of detail, and some map floors have none (the Lecture Building's floor
 # showed the background through it). An older settings file that has it gets the Lower patch.
-MODEL_LOD_PATCHES = {"Model LOD -2 (Highest)": "-2", "Model LOD 1 (Lower)": "1", "Model LOD 2 (Lowest)": "1"}
-WITHHELD_PATCHES = {"Model LOD 2 (Lowest)"}
+# "Model LOD -2 (Highest)" is not offered either: many objects past their nearest level of detail
+# (10-15 m) are then not drawn at all (Central Yharnam's corpses popped in and out); an older
+# settings file that has it gets the game's own detail.
+MODEL_LOD_PATCHES = {"Model LOD -2 (Highest)": "0", "Model LOD 1 (Lower)": "1", "Model LOD 2 (Lowest)": "1"}
+WITHHELD_PATCHES = {"Model LOD 2 (Lowest)", "Model LOD -2 (Highest)"}
 
 
 def effect_patches_from_ini(ini: dict) -> set:
@@ -993,7 +996,7 @@ def effect_patches_ini(names) -> dict:
     """bbport.ini values for the effect patches in `names` (every effect key and model_lod)."""
     values = {key: (on if name in names else ("1" if on == "0" else "0"))
               for name, (key, on) in EFFECT_PATCHES.items()}
-    values["model_lod"] = next((v for n, v in MODEL_LOD_PATCHES.items() if n in names), "0")
+    values["model_lod"] = next((v for n, v in MODEL_LOD_PATCHES.items() if n in names and v != "0"), "0")
     return values
 
 
@@ -1046,7 +1049,7 @@ def migrate_settings_to_ini(s: dict, ini_path: Path):
     for name, (key, on) in EFFECT_PATCHES.items():
         if name in patches:
             values[key] = on
-    lod = next((v for n, v in MODEL_LOD_PATCHES.items() if n in patches), None)
+    lod = next((v for n, v in MODEL_LOD_PATCHES.items() if n in patches and v != "0"), None)
     if lod:
         values["model_lod"] = lod
     if values:
