@@ -5,6 +5,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## Unreleased
 
+- **Fixed: Laurence's arena no longer starts a boss fight too early or shuts a guest in**: before Laurence's fight, which only starts when the host brings Laurence's Skull to the altar, a guest going through his fog counted as starting the fight and was then stuck behind the fog until using a Hunter's Mark. Now his room is open to the whole party until the fight really starts, as it is for the host. Ebrietas's and Lady Maria's rooms, whose fights also start with something the host does there, work the same way. A guest at such a fog is told what starts the fight.
+- **Fixed: the fog at the back of Ludwig's arena goes away when he dies**: with a guest in the world, the fog wall at the far door of Ludwig's arena stayed after his death, blocking the way on into the DLC until the guest left or the game was restarted. It is now gone in a party (and with *Open world* on it never comes up).
+
 ## 0.7.2 (Windows port 0.7.2, the 0.7.1 known issues fixed, lamps, rot and look)
 
 - **Fixed: corpses and other objects no longer pop in and out as you move**: with *Model detail* set to *Highest*, the game drew many objects only while you stood within about 10-15 m of them; further away they vanished instead of switching to their simpler model, so the corpses in Central Yharnam's streets kept appearing and disappearing as you walked back and forth. *Highest* is no longer offered, in the game's *Display* menu, the overlay and the launcher; a setting saved as *Highest* now uses the game's own detail, which draws these objects at every distance. Render resolution and the upscaler never changed this. Far buildings still switch between detail levels as on the PS4.

@@ -67,6 +67,27 @@ int Stay(std::initializer_list<bool> reads) {
     return sent;
 }
 
+// m34 13400010 as the data has it (instruction: bank, id), and a model of it: is the wall up after
+// a while in a session, for Ludwig alive / killed during the stay, with the party's skips?
+const int kM34Wall[15][2] = {{2000, 2}, {2005, 3}, {2006, 1}, {3, 6}, {3, 6}, {3, 0}, {0, 0}, {2005, 3},
+                             {2006, 2}, {3, 6}, {3, 6}, {0, 0}, {3, 0}, {0, 0}, {1000, 4}};
+bool WallSkipped(int index, bool open_world) {
+    return ConfinementWallSkip(13400010, kM34Wall[index][0], kM34Wall[index][1], index, open_world);
+}
+// The wall after Ludwig is killed during a session stay: up from the stay's start ([7], waiting at
+// [13]), then 9471 comes on. `party`: with the party's skips (else the data as it is).
+bool M34WallAfterKill(bool party, bool open_world, bool multiplayer) {
+    if (!multiplayer) {
+        return false;  // the first wait ([3..6]) holds: never a wall alone
+    }
+    const bool wall = !(party && WallSkipped(7, open_world));
+    const bool alone_cond = (party && WallSkipped(11, open_world)) || !multiplayer;
+    if (alone_cond) {
+        return false;  // [13] passes with 9471 on: [14] restart, [1] wall off, [6] waits for good
+    }
+    return wall;
+}
+
 } // namespace
 
 int main() {
@@ -165,6 +186,79 @@ int main() {
     CHECK(Stay({true, true, false, false, true}) == 1);  // stale, then reset, then a real walk-in
     CHECK(Stay({false, true, false, true}) == 2);        // in, out (a death), in again: two walk-ins
     CHECK(Stay({}) == 0 && Stay({false}) == 0);
+
+
+    // How each boss's first fight really starts (player report 2026-10-22, Laurence): one row per
+    // boss fog, and only an `entry` one (the host's position) may be started by a guest's fog.
+    {
+        std::size_t n = 0;
+        const FirstFight* rows = FirstFights(&n);
+        CHECK(n == wa::BossGates().size());
+        std::set<std::uint32_t> action;
+        for (const wa::BossGate& g : wa::BossGates()) {
+            const FirstFight* f = FirstFightFor(g.guest_event);
+            CHECK(f != nullptr);
+            if (!f) {
+                continue;
+            }
+            CHECK((f->start == FirstStart::none) == (g.intro_flag == 0));
+            CHECK(wa::BossGateGuestStarts(g) == (f->start == FirstStart::entry));
+            if (f->start == FirstStart::action) {
+                action.insert(g.guest_event);
+                // The re-fight event of the gate's own map block, its client skip at [2], a notice.
+                CHECK(std::uint32_t(f->refight_event) / 10000 == g.host_flag / 10000);
+                CHECK(f->client_skip_index == 2 && f->notice && f->notice[0]);
+                CHECK(GuestRoomOpenSkip(f->refight_event, 1003, 5, 2));
+                CHECK(!GuestRoomOpenSkip(f->refight_event, 1003, 5, 1) &&
+                      !GuestRoomOpenSkip(f->refight_event, 2005, 3, 2));
+            } else {
+                CHECK(!f->notice && f->refight_event == 0);
+            }
+        }
+        (void)rows;
+        // Ebrietas (the host's hit), Laurence (the skull at the altar), Lady Maria (examined).
+        CHECK(action == (std::set<std::uint32_t>{12424811, 13404851, 13504801}));
+        CHECK(!GuestMayStartFirstFight(13404851) && GuestMayStartFirstFight(13404801) &&
+              GuestMayStartFirstFight(12404841) && !GuestMayStartFirstFight(12424711) &&
+              !GuestMayStartFirstFight(1));
+        CHECK(!GuestRoomOpenSkip(12404840, 1003, 5, 2));  // Amelia's room: the guest's fog starts it
+        // The host's answer to a guest's fog report at Laurence's before his first fight: nothing
+        // (no visit, no "Boss fight started"); after it (a re-fight), the fog opens the fight.
+        const wa::BossGate& laurence = *wa::BossGateByEvent(13404851);
+        CHECK(wa::HostFogAction(laurence, true, false, false, false, 0x22000000u) == wa::FogAction::none);
+        CHECK(wa::HostFogAction(laurence, true, true, false, false, 0x22000000u) == wa::FogAction::open);
+    }
+
+    // Every co-op wall of the game (EMEVD scan, player report 2026-10-22: the wall behind Ludwig).
+    {
+        std::size_t n = 0;
+        const ConfinementWall* walls = ConfinementWalls(&n);
+        std::set<int> events;
+        for (std::size_t i = 0; i < n; ++i) {
+            events.insert(walls[i].event);
+        }
+        CHECK(n == 3 && events == (std::set<int>{7600, 12907600, 13400010}));
+        // 7600 / 12907600: wall [6], SFX [7], with the open world only; nothing else.
+        for (const int ev : {7600, 12907600}) {
+            for (int i = 0; i < 12; ++i) {
+                CHECK(!ConfinementWallSkip(ev, 0, 0, i, true) && !ConfinementWallSkip(ev, 0, 0, i, false));
+            }
+            CHECK(ConfinementWallSkip(ev, 2005, 3, 6, true) && ConfinementWallSkip(ev, 2006, 2, 7, true));
+            CHECK(!ConfinementWallSkip(ev, 2005, 3, 6, false) && !ConfinementWallSkip(ev, 2006, 2, 7, false));
+            CHECK(!ConfinementWallSkip(ev, 2005, 3, 1, true));  // the wall-off instruction stays
+        }
+        // 13400010: open world: [7] [8] [11]; open world off: [11] only.
+        for (int i = 0; i < 15; ++i) {
+            CHECK(WallSkipped(i, true) == (i == 7 || i == 8 || i == 11));
+            CHECK(WallSkipped(i, false) == (i == 11));
+        }
+        CHECK(!ConfinementWallSkip(13400011, 2005, 3, 7, true));
+        // The wall after Ludwig's death, the party still together: vanilla's data keeps it up (the
+        // reported bug: until the guest left); the party: down (open world: never up at all).
+        CHECK(M34WallAfterKill(false, false, true) && M34WallAfterKill(false, true, true));
+        CHECK(!M34WallAfterKill(true, true, true) && !M34WallAfterKill(true, false, true));
+        CHECK(!M34WallAfterKill(false, false, false) && !M34WallAfterKill(true, false, false));  // alone
+    }
 
     if (g_fail) {
         std::printf("%d check(s) failed\n", g_fail);
