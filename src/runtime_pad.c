@@ -766,7 +766,9 @@ static struct { float rate_x, rate_y; uint32_t buttons; int wheel_up, wheel_down
 static void mouse_test_input(BbMouseState *m, int consume, float dt) {
     m->buttons|=mouse_inject.buttons;
     if (!consume) return;
-    if (dt>0.0f && dt<0.1f) { m->dx+=mouse_inject.rate_x*dt; m->dy+=mouse_inject.rate_y*dt; }
+    /* dt capped at 0.1 s as sample_mouse caps it (the rate then reads the same after a long gap
+     * between samples: a game hitch, or pad-test starved on a busy machine, dropped the motion). */
+    if (dt>0.0f) { const float t=dt<0.1f ? dt : 0.1f; m->dx+=mouse_inject.rate_x*t; m->dy+=mouse_inject.rate_y*t; }
     m->wheel_up+=mouse_inject.wheel_up; m->wheel_down+=mouse_inject.wheel_down;
     mouse_inject.wheel_up=mouse_inject.wheel_down=0;
 }
