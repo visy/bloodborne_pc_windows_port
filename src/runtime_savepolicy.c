@@ -900,7 +900,8 @@ int runtime_savepolicy_world_state(const unsigned char *save,size_t size) {
 int runtime_savepolicy_world_fix_file(const char *temp,const char *target) {
     const char *env=getenv("BB_SAVE_GUEST_WORLD_FIX");
     if ((env && env[0]=='0') || !party_session()) return 0;
-    const char *name=base_name(target);
+    const char *name=base_name(target), *back=strrchr(name,'\\');
+    if (back) name=back+1;
     int userdata=0, n=save_number(name,&userdata);
     if (n<0 || n>9 || !userdata) return 0;
     unsigned char *save=NULL, *old=NULL; size_t size=0, old_size=0;
