@@ -60,6 +60,7 @@ void runtime_memory_grow_flexible(uint64_t) { std::abort(); }
 void runtime_pad_director_press(uint32_t) { std::abort(); }
 void runtime_pad_director_sticks(int, int, int, int) { std::abort(); }
 uint32_t runtime_pad_last_buttons() { return 0; }
+uint32_t runtime_pad_last_left() { return 0x8080; }
 uint32_t runtime_pad_cross_presses() { return 0; }
 // Button prompts (bbport_button_prompts.cpp): nothing sampled, the game's icons.
 unsigned runtime_pad_prompt_generation() { return 0; }
