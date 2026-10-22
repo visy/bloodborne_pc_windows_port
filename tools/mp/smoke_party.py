@@ -841,7 +841,7 @@ def phase_rh(only):
     common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s/13501117" % (RH_CAR, RH_POS, RH_BUSY)
     arrived = lambda anim: "?obj=%s:%s" % (RH_CAR, anim)
     top_out = RH_TOP_OUT
-    bot_out = "-341.0:1557.9:-796.0:0:native:pin=2"   # the bottom landing beside the car, off its platform
+    bot_out = RH_BOT_OUT   # run 17: (-341, -796) beside the car has no floor (the host fell out of the world)
     host = [common,
             "host_move=%s@4%%m35^1" % top_out,                                     # at the top landing
             "host_move=%s@3%%m35" % RH_TOP_IN,                                     # (A) down alone
@@ -857,7 +857,7 @@ def phase_rh(only):
           "guest_move=%s@6%%m35" % RH_LAMP,                                         # at the lamp, 40 m away
           "guest_move=%s@1%%m35?near=-357.6:1583.1:-790.2:1.0" % RH_TOP_BESIDE,     # (C) on the car at the top
           "guest_move=%s@2%%m35%s" % (RH_LAMP, arrived(2)),                         # out at the bottom (lamp)
-          "guest_move=%s@3%%m35?near=-341.0:1557.9:-796.0:1.5" % RH_BOT_BESIDE,     # (D) on the car at the bottom
+          "guest_move=%s@3%%m35?near=-332.8:1557.8:-822.2:1.5" % RH_BOT_BESIDE,     # (D) on the car at the bottom
           "guest_move=%s@2%%m35%s" % (RH_TOP_OUT2, arrived(6)),                    # out at the top
           "guest_press=0@4%%m35!?%s=0" % RH_BUSY]
     return dict(
@@ -880,7 +880,7 @@ def phase_rs(only):
     host = [common,
             "host_move=%s@4%%m35" % RH_TOP_OUT,                                    # at the top landing
             "host_move=%s@3%%m35" % RH_TOP_IN,                                     # into the car: down
-            "host_move=-341.0:1557.9:-796.0:0:native:pin=2@2%%m35?obj=%s:2" % RH_CAR,  # out 2 s after the arrival
+            "host_move=%s@2%%m35?obj=%s:2" % (RH_BOT_OUT, RH_CAR),  # out 2 s after the arrival
             "host_move=%s@6%%m35" % RH_BOT_IN,                                     # 6 s later back in: up
             "host_move=%s@2%%m35?obj=%s:6" % (RH_TOP_OUT, RH_CAR),                  # out at the top
             "host_press=0@4%m35!"]
