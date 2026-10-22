@@ -1738,15 +1738,70 @@ def phase_cv(only):
     )
 
 
+# Phase nfa (npcfights Alfred, ~5 min, 2 players, groups `npc_fights` / `npc_alfred`; D11 live proof):
+# Alfred in the Queen's Chamber (m25), friendly at the start (his state 1348 in both saves), the
+# guest standing next to him when he turns hostile (an in-map transition, 12500053), then the guest's
+# hits and killing blow.
+#   The fixture: Logarius dead (12501800/02/03), the castle's display event 12500810 done (its map
+#   parts 2506000-2506073: the Queen's Chamber; without it they stay disabled and the chamber lamp
+#   2502951 is an undrawn void: nf runs 7/9), the arrival scene 12500000 seen (no carriage remo).
+#   1  The party at the chamber lamp; the host 1.8 m in front of Alfred, the guest 2 m beside him.
+#   2  The host's R1s once the guest stands at Alfred (?near): his counter 12500052 (3 hits by the
+#      local player) -> 12500053 on the host: team 27, 1349. The guest's copy of 12500053 (its
+#      1003[6] passed by the rule) fires with the host's flag (run 1: 0.9 s later) and switches him
+#      to team 23 on its game (27 is no foe for a phantom: party_npcfight_rules.h).
+#   3  The guest in front of him locks on, R1s (his HP falls on both games), HP 0 on its game
+#      (guest_kill :hp); the host's 12500054 sees him die: 1350 on the host. Alfred's states
+#      1340-1359 are covenant outcomes (per player, 0.7.3): the guest's own save keeps its 1348.
+#   4  The host to the Tomb (the guest's next load reads its own save).
+NFA_POS = "127:130:-463.8"  # Alfred in the Queen's Chamber (nf run 7, before he fell through the void)
+NFA_FLAGS = "1348/1349/1350/1351/12500053/12500054"
+NFA_FIXTURE_SET = "1348,12501800,12501802,12501803,12500810,12500000"
+# the guest's killing blow, then its next load (the host's warp to the Tomb after 1350, or the
+# condition's timeout)
+NFA_UNTIL = r"1:test: guest_kill[\s\S]*test read \(load mode 1"
+
+
+def phase_nfa(only):
+    host = ",".join([
+        "god", "log_flag=" + NFA_FLAGS,
+        "host_warp=2502951@8^1",                              # 1: the party at the Queen's Chamber lamp
+        "host_chr=%d:1.8@10%%m25^1" % NF_ALFRED,              # in front of Alfred (the guest back in)
+        # 2: the host's R1s once the guest stands at Alfred
+        "host_press=0x800@3%%m25!?near=%s:4" % NFA_POS]
+        + ["host_press=0x800@1.2%m25!"] * 2
+        + ["host_warp=2412953@10%m25?1350=1"])                 # 4: Alfred dead: the guest's next load
+    g1 = ",".join(["god", "log_flag=" + NFA_FLAGS,
+                   "guest_chr=%d:2:90@12%%m25" % NF_ALFRED,     # 1: beside Alfred (friendly)
+                   "guest_press=0x4:lock@1%m25!",              # no lock-on on a friendly chr (the "before")
+                   "guest_chr=%d:1.6@14%%m25" % NF_ALFRED]      # 3: in front of him after the switch
+                  + ["guest_press=0x4:lock@1%m25!"] * 3
+                  + ["guest_press=0x800@1.5%m25!"] * 8
+                  + ["guest_kill=%d:hp@2%%m25" % NF_ALFRED])
+    clear = ",".join(str(f) for f in list(range(1340, 1348)) + list(range(1349, 1360)) + [12500051, 12500052, 12500053, 12500054] + list(range(72500350, 72500360)))
+    return dict(
+        name="nfa", seconds=420, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=" + NFA_FIXTURE_SET,
+             "BB_PARTY_PROGRESS_TEST_READ=1348,1349,1350,12500810", "BB_PARTY_CHR_DUMP=40",
+             "BB_PARTY_TEST_COND_TIMEOUT=100"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: host_chr %d=nfaarrive@0.5,3" % NF_ALFRED,
+               "--watch", r"test: host_press 0x800=nfaprovoke@0.6",
+               "--watch", r"test: guest_press 0x800=nfahit@0.5",
+               "--watch", r"test: guest_kill: =nfakill@1,5"],
+        crash=[], until=[NFA_UNTIL], until_hold=8,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf"}
+          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1757,7 +1812,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nf "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1809,6 +1864,7 @@ GROUP_UNTIL = {
     "scene_mirror": [SM_UNTIL],
     "dream_apart": DA_UNTIL,
     "npc_fights": [NF_UNTIL],
+    "npc_alfred": [NFA_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
     "travel_vote": TV_UNTIL,
@@ -3749,11 +3805,81 @@ def check_nf(v, L):
     rule = need(v, L, "nf (rule on) the guest's copy of Alfred's init runs as the host's", 1,
                 r"guest copy of event 12500050 runs as the host's", on[0])
     guest_b = nf_hp(L, 1, NF_ALFRED, rule or on[0])
-    v.step("nf (rule on) Alfred hostile on the guest's game too (team 27)", any(tm == 27 for _, _, tm in guest_b),
+    # a guest's copy switches him to 23 (a foe for a phantom; 27 is none: party_npcfight_rules.h)
+    v.step("nf (rule on) Alfred hostile on the guest's game too (team 23)", any(tm == 23 for _, _, tm in guest_b),
            "teams %s" % sorted({tm for _, _, tm in guest_b}))
     none_of(v, L, "nf no flag write from a guest copy reaches the host as a world action",
             r"world action sent to the host[^\n]*\b(134[0-9]|1350)\b", 0, insts=(1,))
     check_common(v, L, "nf")
+
+
+def check_nfa(v, L):
+    need(v, L, "nfa join: 2 players", 0, r"cooperators 0 -> 1")
+    at = need(v, L, "nfa host at Alfred (Queen's Chamber)", 0, r"test: host_chr %d" % NF_ALFRED)
+    gat = need(v, L, "nfa guest beside Alfred", 1, r"test: guest_chr %d" % NF_ALFRED)
+    for i, who in ((0, "host"), (1, "guest")):
+        pos = [(t, ln) for t, ln in L.all(i, r"chr dump: entity %d " % NF_ALFRED, at or 0)]
+        ys = [float(m.group(1)) for _, ln in pos for m in [re.search(r"at \(-?[\d.]+, (-?[\d.]+),", ln)] if m]
+        v.step("nfa the chamber is drawn on the %s's game (Alfred stands, y > 100)" % who, bool(ys) and min(ys) > 100,
+               "y %s" % sorted({round(y) for y in ys})[:6])
+    prov = L.find(0, r"test: host_press 0x800", at or 0)
+    if not (at and gat and prov):
+        v.step("nfa the host's R1s ran", False, "host_chr %s guest_chr %s press %s" % (at, gat, bool(prov)))
+        check_common(v, L, "nfa")
+        return
+    before_h = nf_hp(L, 0, NF_ALFRED, 0, prov[0])
+    before_g = nf_hp(L, 1, NF_ALFRED, 0, prov[0])
+    v.step("nfa (before) Alfred friendly on both games (team 26)",
+           bool(before_h) and bool(before_g) and all(tm == 26 for _, _, tm in before_h + before_g),
+           "host teams %s, guest teams %s" % (sorted({tm for _, _, tm in before_h}), sorted({tm for _, _, tm in before_g})))
+    lock0 = L.find(1, r"test: guest_press 0x4; .*lock-on (\d)", gat, prov[0])
+    v.step("nfa (info) the guest's lock-on on the friendly Alfred", True, lock0[1][:120] if lock0 else "no press line")
+    # the host's own switch: its quest state 1349 (12500053's flag write) and team 27 on its game
+    hflag = L.find(0, r"test: flags .*1349=1", prov[0] - 1)
+    hteam = [(t, tm) for t, _, tm in nf_hp(L, 0, NF_ALFRED, prov[0] - 1) if tm == 27]
+    v.step("nfa the host's R1s turn Alfred hostile on the host (1349 / team 27)", bool(hflag or hteam),
+           "1349 at %s, team 27 at %s" % ("+%.1f" % hflag[0] if hflag else "-", "+%.1f" % hteam[0][0] if hteam else "-"))
+    # the guest's copy: team 23 (a foe for a phantom; 27 is none: party_npcfight_rules.h)
+    gteam = [(t, tm) for t, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1) if tm in (23, 27)]
+    t27 = gteam[0][0] if gteam else None
+    gnear = L.find(1, r"test: guest_chr %d" % NF_ALFRED, 0, t27 or 1e9)
+    hsw = min([x for x in (hflag[0] if hflag else None, hteam[0][0] if hteam else None) if x is not None] or [0])
+    v.step("nfa in-map switch: Alfred hostile on the guest's game while it stands there (team 23)",
+           bool(gteam) and bool(gnear) and gteam[0][1] == 23,
+           "team %d at +%.1f s (the host's switch +%.1f s, the guest at him +%.1f s)" % (gteam[0][1], t27, hsw, gnear[0])
+           if gteam and gnear else "guest teams after the host's R1s %s" %
+           sorted({tm for _, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1)}))
+    need(v, L, "nfa the guest's copy of 12500053 runs as the host's", 1, r"guest copy of event 12500053 runs as the host's")
+    need(v, L, "nfa the guest's copy switches him to a foe it can hit (27 -> 23)", 1,
+         r"event 12500053's team switch at 7 \(entity -?\d+\): team 27 -> 23")
+    t0 = t27 or prov[0]
+    gkill = L.find(1, r"test: guest_kill: .*entity %d" % NF_ALFRED, t0)
+    hits = L.all(1, r"test: guest_press 0x800", t0, gkill[0] if gkill else 1e9)
+    lock = L.find(1, r"test: guest_press 0x(4|800)(; | ).*lock-on 1|test: guest_press 0x4:lock skipped: locked on already",
+                  t0, gkill[0] if gkill else 1e9)
+    v.step("nfa the guest locks on to the hostile Alfred", bool(lock), lock[1][:140] if lock else "no lock-on")
+    if hits and gkill:
+        h0 = [h for _, h, _ in nf_hp(L, 0, NF_ALFRED, 0, hits[0][0])]
+        start = h0[-1] if h0 else 3100
+        presses = [m.group(1) for _, ln in hits for m in [re.search(r"target %d \(NPC, team -?\d+\) HP (-?\d+)" % NF_ALFRED, ln)] if m]
+        v.step("nfa (info) Alfred's HP on the guest's game at each guest R1", True, "%s" % presses)
+        hh = [h for _, h, _ in nf_hp(L, 0, NF_ALFRED, hits[0][0] - 0.5, gkill[0])]
+        gh = [h for _, h, _ in nf_hp(L, 1, NF_ALFRED, hits[0][0] - 0.5, gkill[0])]
+        v.step("nfa the guest's R1s hurt Alfred on the host's game", bool(hh) and 0 < min(hh) < start,
+               "from %d: host HP %s" % (start, hh[:10]))
+        v.step("nfa ... and on the guest's game", bool(gh) and 0 < min(gh) < start, "guest HP %s" % gh[:10])
+        need(v, L, "nfa Alfred dies on the host after the guest's killing blow (1350)", 0,
+             r"test: flags .*1350=1", gkill[0] - 1, gkill[0] + 30)
+        drop = L.find(0, r"shared drop roll .*entity %d" % NF_ALFRED, gkill[0] - 1)
+        v.step("nfa (info) his drop roll on the host", True, drop[1][:140] if drop else "none")
+        rd = L.find(1, r"test read \(load mode 1, own save / visible\):[^\n]*1350=", gkill[0])
+        v.step("nfa (info) the guest's own save at its next load (Alfred's states: covenant outcomes, per player)",
+               bool(rd), rd[1][:160] if rd else "no read")
+    else:
+        v.step("nfa the guest hits and kills Alfred", False, "R1s %d, kill %s" % (len(hits), bool(gkill)))
+    none_of(v, L, "nfa no flag write from a guest copy reaches the host as a world action",
+            r"world action sent to the host[^\n]*\b(134[0-9]|135[0-9])\b", 0, insts=(1,))
+    check_common(v, L, "nfa")
 
 
 def check_cv(v, L, d: Path):
@@ -3816,7 +3942,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L)}
 
 
@@ -3842,7 +3968,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf")
+                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
