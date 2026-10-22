@@ -369,7 +369,8 @@ def phase_rules(only):
         row, to_row, press, _, back = change[:5]
         host += "/" + to_row + press + "/mark=rules_h%dc" % (k + 1) + ("/" + back if back else "")
     # Friendly fire back off once the guest has seen it (the guest starts 22 s later)
-    up = "/".join(["up"] * (len(RULES_PAGES) - 2))
+    # from the last page back up to World & PvP (0.7.2: the Rot page before it moved it one down)
+    up = "/".join(["up"] * (len(RULES_PAGES) - 1 - [pg[0] for pg in RULES_PAGES].index("World & PvP")))
     host += "/" + "/".join(["wait"] * 12) + "/circle/" + up + "/cross/left/mark=rules_h_ffoff/circle/circle/circle"
     guest += "/circle/circle/circle"
     watch = []
