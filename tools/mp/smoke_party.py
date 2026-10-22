@@ -162,7 +162,9 @@ WIPE_UNTIL = "0:" + WIPE_RX
 
 def phase_s1(only):
     host = ",".join([
-        "host_warp=2412953@70",             # party lamp travel: the Tomb of Oedon (after the leave/rejoin and death)
+        "host_warp=2412953@30^2*2",         # party lamp travel: the Tomb of Oedon, 30 s after guest 1's Rejoin
+                                            # (cooperators up to 2 the second time; its death and respawn ~19 s
+                                            # after it; was @70 from the join: ~25 s idle after the respawn)
         "host_die@6%m24_01~",               # in the fight: 6 s after the boss intro (the guest went in first)
     ])
     g1 = ",".join([
