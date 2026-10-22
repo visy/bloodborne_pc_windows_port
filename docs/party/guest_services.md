@@ -92,6 +92,10 @@ Insight messenger's 12105043 is different and stays synced: its copy ends on a c
 (`1003[101]`), the host's copy drives every game (live: one rise 3007034/3007035 when the host
 opened t210698, one sink 3007036 when it closed; its talk script clears 12105044 on leaving).
 
+0.7.3: the same filter drops the 0x31 packets of the Dream's gift messengers' events 12101020 /
+12101021 (starting weapons), 12101022 (Notebook), 12101024 / 12101026 (bells) and 12101028 (Eye):
+a guest's copy ending ended the host's (the host's weapon messengers sank before it picked; items.md 10.8).
+
 ### 2.2 Which talk scripts (MSB m21_00_00_00 entity -> talk script) [C]
 
 The filter allows by talk script id; the entity column is where the script is placed.
@@ -341,7 +345,7 @@ whoever uses a lamp or headstone, **the whole party travels**, led by the host (
       (`lamp: slot 1 lit a lamp in the host's world: set 72410201`) and the mirror carries the rest.
       The guest's own save never changes; the host's world is lit for the whole party.
 * **Default on (2026-10-11)**: guest lamps / headstones are on in party mode; `BB_PARTY_GUEST_LAMPS=0`
-  (or the switch "Guests use lamps" on the Party members page / the overlay's party section, ini
+  (or the switch "Guests use lamps" on the My party: World page / the overlay's party section, ini
   `party_guest_lamps`; read at start) turns them off. With them on, live: the guest's Doll level up
   still works (`LEVEL UP on the guest: level 37 -> 38`), the guest's headstone travel works (above).
 * **Rest via a guest's lamp [R]**: the guest's lamp use is a request; the host makes the warp, so

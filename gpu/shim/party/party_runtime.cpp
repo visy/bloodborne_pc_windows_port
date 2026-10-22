@@ -1879,7 +1879,7 @@ void start_host(LinkConfig cfg) {
         // F2 traversal chain: TCP to an open port -> UDP straight in (full cone) -> hole punch
         // (the guest's endpoint from the DHT rendezvous or a guest code) -> relay / VPN advice.
         const bool port_open = upnp_ok || source == "override" || host_nat == nat::Type::Open;
-        // The DHT rendezvous is opt-in (launcher Party tab / System > Party members; both PCs).
+        // The DHT rendezvous is opt-in (launcher Party tab / System > Party network; both PCs).
         const bool rdv_on = !port_open && !internet.empty() && traversal::rendezvous_enabled(lb);
         const nat::Rendezvous rdv = internet.empty()                     ? nat::Rendezvous::NotApplicable
                                     : traversal::rendezvous_enabled(lb) ? nat::Rendezvous::On

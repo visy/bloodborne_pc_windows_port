@@ -331,6 +331,14 @@ int main() {
         assert(pg::CategoryOf(id) == pg::Category::never_sync);
         assert(!WorldActionAllowed(id, false, dream) && !WorldActionAllowed(id, true, dream));
     }
+    // 0.7.3: the starting weapon messengers' done flags are each player's own pick (the host's pick
+    // hid every guest's messengers in its own Dream); the stock flags were per player already.
+    for (std::uint32_t id : {12101020u, 12101021u, 72101000u, 72101002u, 72101010u, 72101011u}) {
+        assert(pg::CategoryOf(id) == pg::Category::never_sync);
+        assert(!WorldActionAllowed(id, false, dream) && !WorldActionAllowed(id, true, dream));
+        assert(pg::ModeFor(pg::Policy::Defaults(), id) == pg::SyncMode::Off);
+    }
+    assert(pg::CategoryOf(12101022u) == pg::Category::item_lot_picked);  // the Notebook messenger: unchanged
     assert(pg::CategoryOf(72100114u) == pg::Category::npc_quest);  // the Doll's key-item gift: unchanged
     assert(pg::CategoryOf(12100110u) == pg::Category::npc_quest);  // the Doll's stand spot: unchanged
     // Playtest 1 bugs 11 / 17: talk NPCs stay solid for guests (NpcParam isChangeWanderGhost).

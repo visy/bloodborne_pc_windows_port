@@ -23,12 +23,13 @@ Phase s2 (~8 min, the Cleric Beast un-killed: the b2_seamless 6.7 fixture flags)
   kill (A3 / K10b), a guest crash and its title rejoin (C6), the host's crash and recovery (the
   guests wait, then are summoned back), the host's Leave (every guest home).
 Phase rules (~3 min, 2 players, BB_GAME_MENU_TRACE + BB_TEST_MENU_FILE: the real System menu walked
-  by the game's own pad path): host and guest open each party rules page (Deaths & revives, Rot, World &
-  PvP, Shared world, Story & dialogue, Party rewards, Enemy scaling, Party display; a screenshot of each); every
+  by the game's own pad path): host and guest open each party settings page (0.7.3: Party rules: World,
+  PvP & lamps, Deaths, Rot, Enemies; My party: Deaths, World, Story, Rewards, Display, Look & notices;
+  a screenshot of each); every
   page's rows and values from its trace line ("Game menu: page N rows (k): NAME=VALUE | ...", no
   text cut); the host changes one option per page and sets it back (the menu's "row ... -> ..." line,
   bbport.ini's line, the party's rules line where the rule is the host's); the guest sees the host's
-  friendly fire and Shared world rules on its read-only rows.
+  friendly fire and Party rules: World rules on its read-only rows.
 Phase summonfail (~3 min, 3 players): guest 1's party port is held by the smoke (every join of it
   fails); guest 2 starts after guest 1's failed direct summon and must be served within 30 s and end
   up in the host's world (a failed join once locked the host's direct summon for minutes).
@@ -352,34 +353,41 @@ def phase_sc(only):
 # after or None)). The labels are the shown rows of a host (a guest's read-only lines have the same
 # names). Toggles: Left = Off, Right = On; sliders: Right = one step up.
 RULES_PAGES = [
-    ("Deaths & revives", ["Guest gets up, no load", "Host gets up, no load", "Up after boss kill",
-                          "Respawn at host's lamp", "Refill vials, bullets"],
-     ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
-      "party_guest_revive_inplace=1", None)),
-    # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
-    ("Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
-     ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
-    ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps", "Guests use lamps",
-                     "Guests use Hunter's Mark", "Open world"],
+    # 0.7.3: the host's rules (Party rules: ..., read-only lines on a guest), then each player's own
+    # (My party: ...), in the System menu's order.
+    # 0.7.1 / 0.7.3: the host's world rules
+    ("Party rules: World", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
+                            "Party votes on travel", "NPC hunters fight all"],
+     ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
+      '"kill_record":false')),
+    ("Party rules: PvP & lamps", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps"],
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
-    # 0.7.1: the host's world rules (switches that had only an env variable before)
-    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
-                      "Party votes on travel", "NPC hunters fight all"],
-     ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
-      '"kill_record":false')),
-    ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
-                          "Share cutscenes, endings", "Cutscenes live with host"],
-     ("Share NPC dialogue", "", "left", "Off", "right", "party_npc_talk=0", "party_npc_talk=1", None)),
-    ("Party rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Own key items as guest",
-                       "Key items at once", "Insight for bosses"],
-     ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
-    ("Enemy scaling", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
+    ("Party rules: Deaths", ["Host gets up, no load", "Up after boss kill"],
+     ("Host gets up, no load", "", "left", "Off", "right", "party_host_revive=0", "party_host_revive=1",
+      '"host_revive":false')),
+    # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
+    ("Party rules: Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
+     ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
+    ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
-    ("Party display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
-                       "Above companions"],
+    ("My party: Deaths", ["Guest gets up, no load", "Respawn at host's lamp", "Refill vials, bullets"],
+     ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
+      "party_guest_revive_inplace=1", None)),
+    ("My party: World", ["Guests use lamps", "Guests use Hunter's Mark", "Open world", "Stay in Chalice Dungeons"],
+     ("Open world", "down/down/", "left", "Off", "right", "party_open_world=0", "party_open_world=1", None)),
+    ("My party: Story", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
+                         "Share cutscenes, endings", "Cutscenes live with host"],
+     ("Share NPC dialogue", "", "left", "Off", "right", "party_npc_talk=0", "party_npc_talk=1", None)),
+    ("My party: Rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Own key items as guest",
+                           "Key items at once", "Insight for bosses"],
+     ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
+    ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
+                           "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
+    ("My party: Look & notices", ["No companion glow", "Join/leave notices"],
+     ("Join/leave notices", "down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
@@ -387,7 +395,8 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
-                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "settings_rev"]
+                   "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
+                   "party_toasts", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -410,8 +419,8 @@ def phase_rules(only):
         row, to_row, press, _, back = change[:5]
         host += "/" + to_row + press + "/mark=rules_h%dc" % (k + 1) + ("/" + back if back else "")
     # Friendly fire back off once the guest has seen it (the guest starts 22 s later)
-    # from the last page back up to World & PvP (0.7.2: the Rot page before it moved it one down)
-    up = "/".join(["up"] * (len(RULES_PAGES) - 1 - [pg[0] for pg in RULES_PAGES].index("World & PvP")))
+    # from the last page back up to Party rules: PvP & lamps
+    up = "/".join(["up"] * (len(RULES_PAGES) - 1 - [pg[0] for pg in RULES_PAGES].index("Party rules: PvP & lamps")))
     host += "/" + "/".join(["wait"] * 12) + "/circle/" + up + "/cross/left/mark=rules_h_ffoff/circle/circle/circle"
     guest += "/circle/circle/circle"
     watch = []
@@ -1836,15 +1845,114 @@ def phase_nfa(only):
     )
 
 
+# Phase eh (echodup, ~5 min, 2 players, group `echo_hold`): Blood Echoes an enemy took are paid once
+# (player report for 0.7.3: 15k from the glowing-eyed enemy and 15k again from the bloodstain the
+# marker pointed to). Guest 1 (15000 echoes, frail) is killed by 2410247 beside it and gets up at
+# the lamp; the game gives its stain to that enemy (glowing eyes, the party stain hidden). Its walk
+# onto the stain spot then pays nothing; its kill of the enemy pays the echoes once and removes the
+# party stain; a walk to the enemy's body (the stain spot) pays nothing again.
+EH_UNTIL = r"1:travel step (\d+)/\1: guest_move"
+
+
+def phase_eh(only):
+    host = ",".join([
+        "god",
+        "host_warp=2412953@20",                                     # the Tomb of Oedon lamp (party travel)
+        # its neighbours (rt: a death loop; eh1: 2410202 killed the guest instead and took the echoes)
+        "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01", "host_kill=2410202@1%m24_01",
+    ] + ["host_press=0@20%m24_01!"] * 12)
+    g1 = ",".join(
+        ["echoes=15000"] + _rt_killed_by(2410247) +                  # killed beside it: the stain there
+        ["guest_move=%s@3%%m24_01" % RT_LAMP,                        # up at the lamp (invincible from here)
+         "guest_press=0@20%m24_01!",                                 # the enemy takes the echoes
+         "guest_chr=2410247@2%m24_01",                               # back beside it (the lamp is 142 m off)
+         "guest_stick=stain:0.6:20@2%m24_01!", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
+         "guest_kill=2410247@2%m24_01", "guest_press=0@10%m24_01!",  # its kill: the echoes once
+         "guest_chr=2410247@2%m24_01", "guest_press=0x4000@2%m24_01!", "guest_press=0@6%m24_01!",
+         "guest_move=%s@4%%m24_01" % RT_LAMP])
+    return dict(
+        name="eh", seconds=420, count=2, headless=0,
+        env=[],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              "1:BB_PARTY_ROT_TEST_FRAIL=1", "1:BB_PARTY_TEST_GUARD=1", "1:BB_PARTY_TEST_INVINCIBLE=1",
+              "1:BB_PARTY_STAIN_MARKER=1"],
+        watch=["--watch", "party stain: an enemy took=ehheld@1,1", "--watch", "party stain: the game paid=ehpaid@1,1",
+               "--watch", "party stain: recovered=ehparty@1,1"],
+        crash=[], until=[EH_UNTIL], until_hold=8,
+    )
+
+
+def check_eh(v, L):
+    """Phase eh: an enemy that took a guest's echoes pays them once; the party stain never pays them too."""
+    need(v, L, "eh join: 2 players", 0, r"cooperators 0 -> 1")
+    d = need(v, L, "eh guest killed by an enemy", 1, r"death \d+: killed by an enemy \(chr [0-9a-f]+, entity 24102\d\d")
+    rec = L.find(1, r"guest: bloodstain recorded: echoes \d+ -> 0, stain \d+ echoes", d or 0)
+    v.step("eh its bloodstain holds the echoes", rec is not None, rec[1][:160] if rec else "no record line")
+    held = need(v, L, "eh the enemy takes them (glowing eyes; the party stain hidden)", 1,
+                r"party stain: an enemy took its \d+ Blood Echoes", d or 0)
+    need(v, L, "eh its kill pays them (the game), the party stain goes", 1,
+         r"party stain: the game paid its \d+ Blood Echoes", held or 0)
+    pays = L.all(1, r"party stain: recovered \d+ Blood Echoes|party stain: the game paid its \d+ Blood Echoes")
+    v.step("eh the echoes are paid exactly once", len(pays) == 1,
+           "; ".join("+%.1f s %s" % (t, l[:110]) for t, l in pays) or "never paid")
+    check_common(v, L, "eh")
+
+
+# Phase clg (chalicelamp, ~6 min, 2 players): two guest reports in a Chalice Dungeon. The host Continues
+# in the Pthumeru dungeon's layer 1 boss room (chalice_pthumeru_inside), guest 1 is
+# summoned in (from chalice_hintertomb_ritual when present, as in cl). (1) The host lights the boss room's lamp 2901952 (its last lamp 2902952, whose template
+# spot in the party's table is 80 m off). (2) Guest 1 is warped 31 m above the floor and dies from the
+# fall: it must get up beside the host, never at the host's lamp's template spot (the report: "teleported
+# above the dungeon"). (3) Both ride the post-boss lift 2901004 down (31.5 -> 10.5): the guest's game
+# learns the car from the ride, no fall. (4) Guest 1 lights the bottom floor's lamp 2901953 and uses it:
+# "Return to the Hunter's Dream" (the report: nothing happened), then YES to the party travel: the party
+# goes to the Dream.
+CLG_LAMP_OBJ2 = "2901953"   # the lift's bottom floor lamp object (return point 2902953)
+CLG_UNTIL = r"0:map .* -> m21_00"
+CLG_UNTIL_G = r"1:travel step (\d+)/: "  # guest 1's last step: 40 s in the Dream (r2: its earlier m21 ended the run)
+
+
+def phase_clg(only):
+    host = ",".join(["log_pos", "god",
+                     "host_obj=%s:1.2:0@12%%m29" % CL_LAMP_OBJ,     # (1) light the boss room's lamp
+                     "host_press=0x4000@2%m29!",
+                     "host_move=-49.4:30.6:-91.0@4%m29!",          # beside the lamp: where the guest gets up
+                     "host_press=0@45%m29!",                       # (2) the guest's fall meanwhile
+                     "host_move=-65.0:31.6:-91.0@1%m29!?near=-64.6:31.6:-90.4:1.5",  # (3) onto the car
+                     "host_press=0@60%m29!"])                      # (4) the guest's lamp: the party travels
+    g1 = ",".join(["log_pos=0.5",
+                   "guest_move=-46.0:62.0:-92.0@25%m29!",         # (2) 31 m above the boss room's floor
+                   "guest_move=-64.6:31.6:-90.4@25%m29!",         # (3) onto the lift's car
+                   "guest_obj=%s:1.2:0@14%%m29!" % CLG_LAMP_OBJ2,  # (4) the bottom lamp: light it
+                   "guest_press=0x4000@2%m29!",
+                   "guest_obj=%s:1.2:0@9%%m29!" % CLG_LAMP_OBJ2,   # use it: the Dream question (r1: at the
+                   "guest_press=0x4000@4%m29!",                    # first Cross), YES (it opens on NO), OK
+                   "guest_press=0x80@3%m29!", "guest_press=0x4000@2%m29!",
+                   "guest_press=0@40%m21!"])
+    watch = []
+    for rx, tag in ((r"died from a fall", "gfall"), (r"up again beside the nearest living member", "gup"),
+                    (r"Chalice Dungeon lift car", "car"), (r"lamp flag 729001", "dream"), (r"map .* -> m21_00", "m21")):
+        watch += ["--watch", "%s=%s@1,4" % (rx, tag)]
+    return dict(
+        name="clg", seconds=480, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
+        env=["BB_PARTY_TRAVEL_CHOICE=party"],
+        watch=watch,
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        crash=[],
+        until=[CLG_UNTIL, CLG_UNTIL_G],
+    )
+
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa"}
+          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1852,10 +1960,10 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ", "gather_ground": r"^gl ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1902,8 +2010,10 @@ GROUP_UNTIL = {
     "story_warp": [KW_UNTIL],
     # the host back in the dungeon from the Dream, ~40 s after (guest 1 summoned back in)
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
+    "chalice_guest": [CLG_UNTIL, CLG_UNTIL_G],
     "fight_load": BF_UNTIL,
     "rot": [RT_UNTIL],
+    "echo_hold": [EH_UNTIL],
     "boss_rooms": BR_UNTIL,
     "scene_mirror": [SM_UNTIL],
     "dream_apart": DA_UNTIL,
@@ -2387,28 +2497,28 @@ def check_rules(v, L):
         if effect:
             need(v, L, "rules host: %s in force (%s)" % (page, effect), 0,
                  r"rules sent to the party: .*%s" % re.escape(effect), t - 1)
-        if back or page == "World & PvP":
+        if back or page == "Party rules: PvP & lamps":
             b = need(v, L, "rules host: %s set back (bbport.ini %s)" % (page, ini_back), 0,
                      r"Settings: bbport.ini %s$" % re.escape(ini_back), t)
-    # The host's rule on the guest: its World & PvP page shows the host's friendly fire (on then)
+    # The host's rule on the guest: its Party rules: PvP & lamps page shows the host's friendly fire (on then)
     ff = L.find(1, r"Game menu: page \d+ rows \(\d+\): Friendly fire / PvP=")
     v.step("rules guest: sees the host's friendly fire (On, read-only)", ff and "Friendly fire / PvP=On" in ff[1],
-           ff[1][:200] if ff else "no World & PvP rows line on the guest")
+           ff[1][:200] if ff else "no PvP & lamps rows line on the guest")
     # 0.7.2: and the host's Guests bring their lamps (off by default)
     v.step("rules guest: sees the host's Guests bring their lamps (Off, read-only)",
-           ff and "Guests bring their lamps=Off" in ff[1], ff[1][:300] if ff else "no World & PvP rows line on the guest")
-    # 0.7.1: the guest's Shared world page shows the host's rules (read-only lines, the host's values)
+           ff and "Guests bring their lamps=Off" in ff[1], ff[1][:300] if ff else "no PvP & lamps rows line on the guest")
+    # 0.7.1: the guest's Party rules: World page shows the host's rules (read-only lines, the host's values)
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
-    v.step("rules guest: sees the host's Shared world rules (read-only)",
+    v.step("rules guest: sees the host's Party rules: World rules (read-only)",
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
            and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
-           sw[1][:250] if sw else "no Shared world rows line on the guest")
+           sw[1][:250] if sw else "no Party rules: World rows line on the guest")
     # guestrules (0.7.3): the enemy scaling is the host's: read-only lines with the host's values on
     # the guest ("150 %", the host's default), no slider position (a host's row shows "5")
     es = L.find(1, r"Game menu: page \d+ rows \(\d+\): Boss health=")
-    v.step("rules guest: sees the host's Enemy scaling (read-only values)",
+    v.step("rules guest: sees the host's Party rules: Enemies (read-only values)",
            bool(es) and "Boss health=150 %" in es[1] and "Boss damage=+10 %" in es[1],
-           es[1][:250] if es else "no Enemy scaling rows line on the guest")
+           es[1][:250] if es else "no Party rules: Enemies rows line on the guest")
     none_of(v, L, "rules guest: never writes the host's scaling to its bbport.ini",
             r"Settings: bbport.ini party_(boss|enemy)_", insts=(1,))
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
@@ -3518,6 +3628,31 @@ def check_cl(v, L):
     check_common(v, L, "cl")
 
 
+def check_clg(v, L):
+    need(v, L, "clg join: guest 1 in the host's dungeon", 1, r"map .* -> m29_00")
+    need(v, L, "clg host lit the boss room's lamp", 0, r"lamp spot: Chalice Dungeon lamp %s lit / used" % CL_LAMP)
+    fall = need(v, L, "clg guest 1 died from the fall", 1, r"local death: HP 0 at")
+    if fall:
+        need(v, L, "clg guest 1 up beside the host (no lamp spot from the table)", 1,
+             r"up again beside the nearest living member", fall)
+        none_of(v, L, "clg guest 1 never at a dungeon lamp's table spot", r"up at the host's last lamp 29|"
+                r"up at its own last lamp 29", fall, 1e9, (1,))
+        none_of(v, L, "clg guest 1 no second fall death after the revive", r"local death: HP 0 at", fall + 1, fall + 20, (1,))
+    car = need(v, L, "clg guest 1's game learns the dungeon's lift car", 1, r"Chalice Dungeon lift car 2901004 seen riding")
+    if car:
+        none_of(v, L, "clg no death on the lift ride", r"local death: HP 0 at", car, car + 15, (0, 1))
+    lamp = need(v, L, "clg guest 1's dungeon lamp: Return to the Dream chosen", 1, r"lamp flag 7290010\d set by this game")
+    if lamp:
+        warp = need(v, L, "clg guest 1's lamp warp runs (12907020 on the guest)", 1,
+                    r"lamp / headstone warp 21029|lamp 21029\d\d|warp to 21029\d\d", lamp)
+        if warp:
+            d = need(v, L, "clg the party to the Dream (host)", 0, r"map .* -> m21_00", lamp)
+            need(v, L, "clg the party to the Dream (guest 1)", 1, r"map .* -> m21_00", lamp)
+    none_of(v, L, "clg no GPU device lost / guest fault",
+            r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
+    check_common(v, L, "clg")
+
+
 def lp_save_flags(d: Path, i, ids):
     """Instance i's party save slot 0 (userdata0000): copied into the phase's output first, the copy
     decoded (save_decode.py). {id: bool}, or None without a readable save."""
@@ -4022,8 +4157,9 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
-          "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L)}
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
+          "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
+          "eh": lambda v, L, d: check_eh(v, L)}
 
 
 def main():
@@ -4032,7 +4168,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,cv,tv")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,el,lt,ch,rh,rs,bf,lp,rt,eh,br,sm,da,cv,tv,nf,nfa")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -4047,8 +4183,8 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "clg", "el", "lt", "bf", "ch",
+                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa", "eh")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

@@ -648,6 +648,12 @@ OVERRIDE_ROWS = (
         (72100110, 72100110, "never_sync", "per-player: Doll talk t210304 state (set as the talk opens)"),
         (72100113, 72100113, "never_sync", "per-player: Doll talk t210304 state after a level-up"),
         (72100202, 72100202, "never_sync", "per-player: the Dream mirror t210696 one-time note ('Wear clothing to change appearance.')"),
+        # 0.7.3 (items for every player): the starting weapon messengers' done flags. m21 events
+        # 12101020 / 12101021 hide the messengers once their flag is set (1003[101] -> label 0)
+        # and set it only after the player's own pick (ShopLineupParam 2000-2002 / 2010-2011,
+        # stock flags 72101000-72101002 / 72101010-72101011, per player). As npc_quest the host's
+        # pick reached every guest's save: its messengers were gone with no weapon taken.
+        (12101020, 12101021, "never_sync", "per-player: starting weapon messengers done (m21 events 12101020 / 12101021; the pick is each player's own)"),
     ])
 
 # covenant_outcome (0.7.3, user decision 2026-10-22: covenant outcomes are per player): the quest

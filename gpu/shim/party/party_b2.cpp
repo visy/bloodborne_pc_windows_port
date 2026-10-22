@@ -3695,6 +3695,69 @@ void StainFromRecordLocked(int slot, const char* why) {
     WriteStainLocked(slot);
 }
 
+// ---- echodup (player report for 0.7.3): Blood Echoes an enemy took (deathrules::PlanStainHold) ----
+// The game's stain object (SprjEventMan +0x80 [+8]): +0xC0 set while an enemy holds the echoes (that
+// chr's +0x1E5 bit 0x20, SpEffect 5100: the glowing eyes). 0x18E76C0(chr) lets go (hold off, the
+// SpEffect off). BB_PARTY_STAIN_HOLD=0: the party stain ignores the hold (the old behaviour).
+bool StainHoldRulesOn() {
+    static const bool on = !EnvOff("BB_PARTY_STAIN_HOLD");
+    return on;
+}
+u64 StainObject() {
+    return Field<u64>(Field<u64>(Slot(0x553b108), 0x80), 8);
+}
+int StainHoldFlag() {
+    const u64 o = StainObject();
+    return o ? int(Field<u8>(o, 0xc0)) : 0;
+}
+bool ChrHoldsEchoes(u64 chr) {
+    return chr && (Field<u8>(chr, 0x1e5) & 0x20) != 0;
+}
+/// The loaded enemy holding the echoes (alive first); 0: none. Main thread.
+u64 EchoHolder(bool* alive, float pos[3], u32* entity) {
+    u64 dead = 0;
+    for (const auto& e : balance::LoadedEnemies()) {
+        if (!ChrHoldsEchoes(e.chr)) {
+            continue;
+        }
+        if (e.alive) {
+            *alive = true;
+            if (e.have_pos) std::memcpy(pos, e.pos, 12);
+            *entity = e.entity;
+            return e.chr;
+        }
+        dead = e.chr;
+    }
+    *alive = false;
+    return dead;
+}
+/// Every loaded holder lets go of the echoes (0x18E76C0 per chr: the hold, the holder bit and the
+/// glowing eyes), and the stain object's hold is cleared. The number of chrs released.
+int ReleaseEchoHolders(const char* why) {
+    static const bool code_ok = MatchesOriginal(0x18e76c0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53});
+    const u64 obj = StainObject();
+    if (!obj) {
+        return 0;
+    }
+    int n = 0;
+    const u8 one = 1, zero = 0;
+    for (const auto& e : balance::LoadedEnemies()) {
+        if (!code_ok || !ChrHoldsEchoes(e.chr)) {
+            continue;
+        }
+        SafeWrite(obj + 0xc0, &one, 1);  // 0x18E76C0 acts only while the object is held
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x18e76c0))(e.chr);
+        Log("bloodstain (%s): enemy %u lets go of the Blood Echoes (its glowing eyes off)", why, e.entity);
+        ++n;
+    }
+    const int was = Field<u8>(obj, 0xc0);
+    SafeWrite(obj + 0xc0, &zero, 1);
+    if (!n && was) {
+        Log("bloodstain (%s): the stain's enemy hold cleared (no holder loaded)", why);
+    }
+    return n;
+}
+
 // C3 (player report 2026-10-21, Logarius): the host's wipe load that came while this guest was
 // still dying (its HP 0 starts the wipe at once, the game takes the death ~8 s later): the follow
 // waits for the death (HeldDeathTick, deathrules::PlanWipeFollow). Under g_wipe_wait_mu.
@@ -3735,6 +3798,9 @@ void GuestBloodstain() {
             Log("guest: no bloodstain (echoes %d)", echoes);
         }
         return;
+    }
+    if (StainHoldRulesOn() && deathrules::ReleaseHoldAtDeath(true, StainHoldFlag())) {
+        ReleaseEchoHolders("a guest's death: the old echoes are lost");  // echodup
     }
     const u8 own = Field<u8>(gsm, 0x1592), gate = Field<u8>(gsm, 0x1770), one = 1;
     SafeWrite(gsm + 0x1592, &one, 1);
@@ -4142,7 +4208,7 @@ bool GuestArenaRevive(const GameSnapshot& s, double held_for);
 bool GuestArenaRuleOn();
 bool LivingMemberHere(u64 me);
 bool GuestChaliceRevive(const GameSnapshot& s);
-bool GuestFallSafeRevive(const GameSnapshot& s);
+bool GuestFallSafeRevive(const GameSnapshot& s, bool boss);
 /// C3: the host's wipe load that waited for this guest's death (OnHostTravel) is followed now: a
 /// dead follow (the host's respawn records, one load to its lamp with the party) once the death is
 /// taken, or as before when the guest is up again. The host has re-synced after its own load by
@@ -4323,7 +4389,7 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         SpectateEnd();  // also one begun at the hold, when the boss died in the grace
     }
     g_death_held_at = 0;
-    if (GuestFallSafeRevive(s)) {
+    if (GuestFallSafeRevive(s, limbo_logged == at)) {
         return;
     }
     // Design decisions (ERSC_PARITY.md): outside a boss fight a dead player respawns at its OWN last
@@ -4655,15 +4721,15 @@ bool ChrTransform(u64 chr, float pos[4], float rot[4]) {
 /// a lamp in another map: the host loads it alone. On by default since 0.7.0 (user decision): the
 /// reasons it was opt-in since playtest 1 are fixed - the guests' HostDead locks (K12, hostdead),
 /// the revived chr's hit bodies (the "hitbody" recipe step), pickups / prompts / lock-on / rally
-/// checked live (revivecheck). Off (bbport.ini party_host_revive=0, System > Deaths & revives;
+/// checked live (revivecheck). Off (bbport.ini party_host_revive=0, System > Party rules: Deaths;
 /// BB_PARTY_B2_HOST_REVIVE=0): the vanilla respawn load for the whole party. Live.
 bool HostReviveOn() {
     return BbSettings::Get().party_host_revive.load();
 }
 
 /// The guests killed the boss while the host lay dead in the fight: the host gets up in the arena,
-/// nobody loads (default on; bbport.ini party_host_limbo_revive, System > Deaths & revives, the
-/// launcher's Party rules & sync; BB_PARTY_HOST_LIMBO_REVIVE). Off: the party's respawn load. Live.
+/// nobody loads (default on; bbport.ini party_host_limbo_revive, System > Party rules: Deaths, the
+/// launcher's Party Rules tab; BB_PARTY_HOST_LIMBO_REVIVE). Off: the party's respawn load. Live.
 bool HostLimboReviveOn() {
     return BbSettings::Get().party_host_limbo_revive.load();
 }
@@ -5489,13 +5555,17 @@ bool FallStainToSafeSpot(const char* why) {
     SafeWrite(rec, g_local_safe.pos, 12);
     const bool own_world = Field<u8>(Slot(kSlotGsm), 0x1592) == 1;
     const u64 stains = Field<u64>(Field<u64>(Slot(0x553b108), 0x80), 8);
-    if (own_world && stains && Field<u8>(Slot(kSlotGameData), 0x28) == 1 && Field<int>(rec, 0x38, -1) > 0) {
+    // echodup: a guest's death in the host's world builds the game's stain object there too (the
+    // record call in GuestBloodstain): it moves with the record, so an enemy takes it from the same
+    // spot the party stain is on.
+    const bool built = stains && Field<u64>(stains, 0x88) != 0;
+    if ((own_world || built) && stains && Field<u8>(Slot(kSlotGameData), 0x28) == 1 && Field<int>(rec, 0x38, -1) > 0) {
         reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1868a50))(stains, 1);
     }
     Log("bloodstain (%s): a fall death: the stain moved from (%.1f, %.1f, %.1f) to the last safe ground spot at HP 0 "
         "(%.1f, %.1f, %.1f), where the player gets up%s",
         why, double(obj[0]), double(obj[1]), double(obj[2]), double(g_local_safe.pos[0]), double(g_local_safe.pos[1]),
-        double(g_local_safe.pos[2]), own_world ? " (live stain built again)" : "");
+        double(g_local_safe.pos[2]), (own_world || built) ? " (live stain built again)" : "");
     return true;
 }
 
@@ -5709,7 +5779,7 @@ bool GuestReviveInPlace(const GameSnapshot& s, u32 lamp, const char* why) {
         // "hitbody" step puts them back (RestoreHitBodies, live A/B revivehit ab3). On by default
         // again since revivecheck (2026-10-21 live, after the revive: hits taken, lock-on, rally,
         // Blood Vial, menu, lamp prompt and its menu, a treasure pickup with its item box, a party
-        // lamp travel). Off (bbport.ini party_guest_revive_inplace=0, System > Deaths & revives;
+        // lamp travel). Off (bbport.ini party_guest_revive_inplace=0, System > My party: Deaths;
         // BB_PARTY_GUEST_REVIVE_INPLACE=0): every death takes the respawn load. Live.
         const bool inplace = BbSettings::Get().party_guest_revive_inplace.load();
         static const bool always = deathrules::OptIn(std::getenv("BB_PARTY_GUEST_REVIVE_FAR"));
@@ -5841,7 +5911,7 @@ bool GuestChaliceRevive(const GameSnapshot& s) {
 /// the destination was the lamp's map at the load's start, the arrival m21); with neither lamp in
 /// the loaded map, its last safe floor. False: no fall, or the in-place revive is off (System >
 /// Deaths & revives): the respawn as before.
-bool GuestFallSafeRevive(const GameSnapshot& s) {
+bool GuestFallSafeRevive(const GameSnapshot& s, bool boss) {
     if (!s.player) {
         return false;
     }
@@ -5849,19 +5919,36 @@ bool GuestFallSafeRevive(const GameSnapshot& s) {
     const bool known = ChrPos(s.player, at) && std::isfinite(at[1]);
     const bool fell = LocalFallDeath(s.player, known ? double(at[1]) : std::numeric_limits<double>::quiet_NaN());
     const u32 stage = Field<u32>(s.player, 0x3f8);
+    // chalicelamp: a Chalice Dungeon's lamp spots are never the table's (LampTableSpotTrusted; the
+    // report's revive at the template's spot of 2902954 put the guest 55 m above the dungeon's floor).
     auto here = [&](u32 lamp, float rs[4]) {
-        return lamp != 0 && lamp != kTravelNone && (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs);
+        return lamp != 0 && lamp != kTravelNone && deathrules::LampTableSpotTrusted(lamp) &&
+               (ids::EntityMap(lamp) >> 16) == (stage >> 16) && ids::ReturnSpot(lamp, rs);
     };
     const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528), host = GuestDeathRedirectLamp();
     float own_rs[4] = {}, host_rs[4] = {};
+    const bool dungeon_member = !boss && (s.map_id >> 24) == 29 && BbSettings::Get().party_chalice_rejoin.load() &&
+                                LivingMemberHere(s.player);
     const deathrules::FallRespawn f = deathrules::PlanFallRespawn(
         fell, BbSettings::Get().party_guest_revive_inplace.load(), here(own, own_rs), here(host, host_rs), g_local_safe.valid,
-        false);
+        false, dungeon_member);
     if (f == deathrules::FallRespawn::Respawn) {
         return false;
     }
+    if (f == deathrules::FallRespawn::BesideMember) {
+        Log("guest: died from a fall in the host's Chalice Dungeon (HP 0 at (%.1f, %.1f, %.1f)): no lamp spot of the "
+            "dungeon is known here; its bloodstain on its last safe floor (%.1f, %.1f, %.1f)",
+            double(g_local_corpse.pos[0]), double(g_local_corpse.pos[1]), double(g_local_corpse.pos[2]),
+            double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]));
+        if (GuestChaliceRevive(s)) {
+            return true;
+        }
+        if (!g_local_safe.valid) {
+            return false;
+        }
+    }
     LampSpot sp;
-    if (f == deathrules::FallRespawn::SafeFloor) {
+    if (f == deathrules::FallRespawn::SafeFloor || f == deathrules::FallRespawn::BesideMember) {
         SafeFloorSpot(&sp, s.map_id, "guest revive on its last safe floor (a fall, no lamp in the loaded map)");
     } else {
         const float* rs = f == deathrules::FallRespawn::OwnLamp ? own_rs : host_rs;
@@ -6700,15 +6787,127 @@ void GuestStainTick(const GameSnapshot& s) {
         own_echoes_was = s.echoes;
         return;
     }
+    // echodup: the game's own record is this stain on the guest's game too (GuestBloodstain), and the
+    // game builds that stain there: an enemy may take it (the glowing eyes) and pay it when killed
+    // (0x130AB80: the record's echoes -1). Then the party stain goes (deathrules::StainTakenByGame).
+    static bool was_stain = false;
+    static int echoes_was = -1, echoes_at_change = 0;
+    static double change_at = -1;
+    const bool is_stain = client && p.s.live && rec && own_echoes == p.s.echoes;
+    if (client && p.s.live && StainHoldRulesOn()) {
+        if (was_stain && !is_stain && echoes_was >= 0) {
+            change_at = Now();
+            echoes_at_change = echoes_was;
+        }
+        if (change_at > 0) {
+            const int gain = s.echoes - echoes_at_change;
+            if (deathrules::StainTakenByGame(true, own_echoes, p.s.echoes, gain)) {
+                Log("party stain: the game paid its %d Blood Echoes (an enemy that held them killed, or the game's own "
+                    "stain taken; record echoes %d, echoes %d -> %d): the party stain goes, no second payment",
+                    p.s.echoes, own_echoes, echoes_at_change, s.echoes);
+                char toast[96];
+                std::snprintf(toast, sizeof toast, "Blood Echoes recovered: %d", p.s.echoes);
+                party::status::SetLastEvent(toast);
+                p = PartyStain{};
+                WriteStainLocked(slot);
+                party::ping::SetStain({});
+                change_at = -1;
+                was_stain = false;
+                echoes_was = s.echoes;
+                RequestGameSave("guest bloodstain recovered by the game");
+                return;
+            }
+            if (Now() - change_at > 5.0) {
+                change_at = -1;  // the echoes never came: not a payment (a new death, a load)
+            }
+        }
+    }
+    was_stain = is_stain;
+    echoes_was = s.echoes;
     if (!client || Field<u8>(gsm, 0x1592) != 0 || !gueststain::InMap(p.s, s.map_id)) {
         party::ping::SetStain({});
         return;
+    }
+    // echodup: an enemy holds the echoes (vanilla: no stain on the ground; its kill gives them back).
+    static double hold_seen_at = -1, next_scan = 0;
+    static bool holder_alive = false;
+    static float holder_pos[3] = {};
+    static u32 holder_entity = 0;
+    static deathrules::StainHold hold_was = deathrules::StainHold::Free;
+    int hold = StainHoldRulesOn() ? StainHoldFlag() : 0;
+    if (!hold && is_stain && StainHoldRulesOn() && Now() >= next_scan) {
+        // eh2 live: 2 s after the take the stain object's hold read 0 again and the stain stood on the
+        // ground once more, while the enemy kept the holder bit (its kill pays the record): two ways
+        // to the same echoes. A living holder with the bit gets the hold back (deathrules::RestoreHold;
+        // the game's tick then removes the ground stain, 0x1868A50(obj, 0)).
+        next_scan = Now() + 0.5;
+        bool alive = false;
+        float pos[3] = {};
+        u32 ent = 0;
+        const u64 obj = StainObject();
+        if (EchoHolder(&alive, pos, &ent) && deathrules::RestoreHold(is_stain, hold, alive) && obj) {
+            const u8 one = 1;
+            SafeWrite(obj + 0xc0, &one, 1);
+            hold = 1;
+            static int restores = 0;
+            if (++restores <= 3 || restores % 50 == 0) {
+                Log("party stain: enemy %u still has the Blood Echoes (glowing eyes) but the game's stain lost its hold: "
+                    "the hold restored (no stain on the ground; restore %d)", ent, restores);
+            }
+        }
+    }
+    if (hold && is_stain) {
+        if (Now() >= next_scan) {
+            next_scan = Now() + 0.5;
+            bool alive = false;
+            float pos[3] = {};
+            u32 ent = 0;
+            const bool any = EchoHolder(&alive, pos, &ent) != 0;
+            holder_alive = alive;
+            if (alive) {
+                std::memcpy(holder_pos, pos, sizeof holder_pos);
+                holder_entity = ent;
+            }
+            (void)any;
+        }
+        if (holder_alive || hold_seen_at < 0) {
+            hold_seen_at = Now();
+        }
+    } else {
+        hold_seen_at = -1;
+        holder_alive = false;
+    }
+    const deathrules::StainHold hs =
+        deathrules::PlanStainHold(is_stain, hold, holder_alive, hold_seen_at < 0 ? 0.0 : Now() - hold_seen_at);
+    if (hs != hold_was) {
+        hold_was = hs;
+        if (hs == deathrules::StainHold::Held) {
+            static int takes = 0;
+            Log("party stain: an enemy took its %d Blood Echoes (entity %u at (%.1f, %.1f, %.1f), glowing eyes; take %d): "
+                "kill it to get them back; nothing to pick up on the ground", p.s.echoes, holder_entity,
+                double(holder_pos[0]), double(holder_pos[1]), double(holder_pos[2]), ++takes);
+        } else if (hs == deathrules::StainHold::Void) {
+            Log("party stain: the enemy hold outlived its enemy (none loaded for 10 s): the stain is recoverable on the "
+                "ground again");
+        } else {
+            const u64 so = StainObject();
+            Log("party stain: no enemy holds its Blood Echoes (hold %d, record %d echoes flag %d, stain object %s, "
+                "%.1f s after the last hold)", hold, own_echoes, own_flag, so && Field<u64>(so, 0x88) ? "built" : "none",
+                hold_seen_at < 0 ? -1.0 : Now() - hold_seen_at);
+        }
     }
     party::ping::StainMark m;
     m.live = true;
     m.map = p.s.map;
     std::memcpy(m.pos, p.s.pos, sizeof m.pos);
     m.echoes = p.s.echoes;
+    if (hs == deathrules::StainHold::Held) {
+        // The marker follows the enemy that has them (none while it is not seen).
+        m.live = holder_alive;
+        std::memcpy(m.pos, holder_pos, sizeof m.pos);
+        party::ping::SetStain(m);
+        return;
+    }
     party::ping::SetStain(m);
     float me[3] = {};
     if (ChrHp(s.player) <= 0 || !ChrPos(s.player, me)) {
@@ -6768,6 +6967,11 @@ void GuestStainTick(const GameSnapshot& s) {
         const int none = 0;
         SafeWrite(gdm + 0x28, &zero, 1);
         SafeWrite(rec + 0x38, &none, 4);
+        if (StainHoldRulesOn() && StainHoldFlag()) {
+            // echodup: a hold that outlived its enemy (Void): whoever still has the bit pays nothing
+            // now (0x130AB80 pays only a record with echoes), and its glowing eyes go.
+            ReleaseEchoHolders("the party stain picked up");
+        }
         const u64 stains = Field<u64>(Field<u64>(Slot(0x553b108), 0x80), 8);
         if (stains) {
             reinterpret_cast<void(BB_COOP_SYSV*)(u64, u32)>(Guest(0x1868a50))(stains, 0);
@@ -7219,6 +7423,11 @@ bool EmptyStainKept() {
 }
 using StainRecordFn = void(BB_COOP_SYSV*)(u64, u64, u32);
 BB_COOP_SYSV void StainRecordHook(u64 events, u64 chr, u32 on) {
+    // echodup: a death's record while an enemy still holds the old echoes (a no-load revive kept it
+    // alive): it lets go first, so the new stain is built and the old holder pays nothing.
+    if (g_on.load() && StainHoldRulesOn() && deathrules::ReleaseHoldAtDeath((on & 0xff) != 0, StainHoldFlag())) {
+        ReleaseEchoHolders("a death's record: the old echoes are lost");
+    }
     reinterpret_cast<StainRecordFn>(Guest(0x13d2910))(events, chr, on);
     const u64 gdm = Slot(kSlotGameData);
     const u64 rec = gdm ? Field<u64>(gdm, 0x30) : 0;

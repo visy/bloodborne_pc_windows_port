@@ -8,7 +8,7 @@
 //    or with the rule off the gate's argument is the data's own again.
 //  - Main-thread tick (a guest in the host's world): the assassins follow the host-world flags.
 //
-// The host's rule: System > Shared world "NPC hunters fight all", bbport.ini party_npc_fights,
+// The host's rule: System > Party rules: World "NPC hunters fight all", bbport.ini party_npc_fights,
 // BB_PARTY_NPC_FIGHTS at start (default on); a guest follows the host's (party_balance Rules).
 #pragma once
 
