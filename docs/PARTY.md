@@ -26,7 +26,7 @@ guest's own save.
 6. [Ports, UPnP, firewall, VPN](#ports-upnp-firewall-vpn)
 7. [What happens in the game](#what-happens-in-the-game)
 8. [What is shared, and what is not](#what-is-shared-and-what-is-not)
-9. [Settings (Rules & sync)](#settings-rules--sync)
+9. [Settings (Party Rules and My Party tabs)](#settings-party-rules-and-my-party-tabs)
 10. [Saves and backups](#saves-and-backups)
 11. [Crashes and disconnects](#crashes-and-disconnects)
 12. [Four players](#four-players)
@@ -119,8 +119,8 @@ The launcher shows a ✓ or ✗ hint under the code field if the name, port or c
 In the game, the game's own menu has two party pages under **System** (on the title
 screen and in the pause menu, after *Environment* (Screen/Sound)): **Party** (the state and your role, *Copy party
 code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, plus the party flow's
-rows to start or join a party game) and **Party members** (each hunter with their state and ping, the
-join / leave notices switch and the last event; the host kicks a
+rows to start or join a party game) and **Party members** (each hunter with their state and ping and
+the last event; the join / leave notices switch is on *My party: Look & notices*; the host kicks a
 hunter by pressing left/right twice on their row). *Leave* also asks for a second press. The
 bottom line of each row explains it (the party code is shown there too). The overlay menu
 (**Insert**, or **L3 + R3** if enabled) still has the same **Party** tab. Players joining and
@@ -132,8 +132,8 @@ arrow pointing their way (relative to the camera). Companions who are not in you
 loading, in their prologue, disconnected) are greyed and say where they are. Companions in your
 world and in view also get a small name tag with their HP above their head. The numbers come from
 the game itself when the companion stands in your world, otherwise from their own game (sent about
-4 times a second through the host). Switch it in the game (**System > Party display > Party HUD**),
-the overlay's Party tab or the launcher's Party tab (bbport.ini `party_hud`, default on; never shown
+4 times a second through the host). Switch it in the game (**System > My party: Display > Party HUD**),
+the overlay's Party tab or the launcher's My Party tab (bbport.ini `party_hud`, default on; never shown
 in single-player). The panel stays clear of the game's HUD and stacks above the performance HUD
 when that sits in the bottom left; join / leave notices appear above the panel.
 
@@ -205,7 +205,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   home routers; not with symmetric NAT (see next point). Details:
   [party/network_robustness.md](party/network_robustness.md) §4.
   Since 0.6.1 this can happen **by itself**, opt-in: with *Find each other through the public
-  DHT* on (launcher *Party* tab or *System > Party members*; **both** host and guest must turn it on;
+  DHT* on (launcher *Party* tab or *System > Party network*; **both** host and guest must turn it on;
   `BB_PARTY_RENDEZVOUS=1`, bbport.ini `party_rendezvous=1`), a guest that cannot reach the host
   leaves its address in the public BitTorrent DHT under a hash only the party can compute, and the
   host finds it there and opens the way (no guest code to pass on). It is **off by default**: DHT
@@ -261,7 +261,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 
 - Character level, stats, inventory, equipment, Blood Echoes and Insight you already have.
 - Shop purchases, the Doll, Hunter's Dream upgrades, runes, chalices.
-- **NPC quests** are shared (on by default, Rules & sync: *Also NPC quests*): the first choice
+- **NPC quests** are shared (on by default, My Party tab: *Also NPC quests*): the first choice
   anyone makes - host or guest, guests can talk to NPCs in the host's world - applies to the
   host's world and to every player's save. Gifts an NPC gives in dialogue go to whoever talked.
 - **Chalice Dungeons** are not part of party play.
@@ -272,12 +272,21 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   `BB_PARTY_GUEST_PICKUP=0` turns it off): every player picks up their own copy into their own
   save, and the host's treasure pickups are not handed to the guests.
 
-## Settings (Rules & sync)
+## Settings (Party Rules and My Party tabs)
 
-The Party tab's **Rules & sync...** button opens the rest of the options. The defaults are the
-recommended settings; hover any option in the launcher for details. Settings marked *guest*
-only matter on the PC of a player while they are a guest; *both* need to be on for the host
-and the guest.
+The launcher's **Party** tab is for hosting, joining and the connection. The party's settings
+are on two more tabs, and on the same pages of the game's *System* menu:
+
+- **Party Rules** (*System > Party rules: ...*): what the **host** decides for the whole party -
+  enemies stay dead, gathering, NPCs as in the host's world, covenants per player, travel votes,
+  NPC hunters fighting everyone, friendly fire, shared lamps, the host's deaths, rot. They apply
+  when you host; as a guest you follow the host's (the game shows them read-only).
+- **My Party** (*System > My party: ...*): what **each player** chooses for itself - the table
+  below, plus what you see on your screen (party HUD, name tags, pings, glow, notices).
+
+The defaults are the recommended settings; hover any option in the launcher for details.
+Settings marked *guest* only matter on the PC of a player while they are a guest; *both* need
+to be on for the host and the guest.
 
 | Option | Default | What it does |
 |---|---|---|
@@ -344,7 +353,7 @@ listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
 
 - **Your game crashes**: it restarts by itself after 3 seconds, presses *Continue* on the title
   screen, loads your save and rejoins the party. The host keeps your place for 60 seconds. At
-  most 5 restarts in 10 minutes (Rules & sync: *Restart the game after a crash*).
+  most 5 restarts in 10 minutes (My Party tab: *Restart the game after a crash*).
 - **The host's game crashes**: guests return to their own worlds and keep trying to reconnect.
   The host's game restarts with the **same party code** and the same member list, and the guests
   are summoned again.

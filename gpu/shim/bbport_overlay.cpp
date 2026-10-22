@@ -1852,7 +1852,7 @@ void PartyTab() {
            on);
     Toggle("party_npc_talk", T("Share NPC dialogue", "Общие диалоги NPC"), s.party_npc_talk,
            T("See and hear the NPC conversations of companions near you: the game's subtitles, the NPC's "
-             "voice, their choices and gifts. Range: System > Story & dialogue > NPC dialogue range.",
+             "voice, their choices and gifts. Range: System > My party: Story > NPC dialogue range.",
              "Видеть и слышать разговоры спутников с NPC рядом с вами: субтитры, голос NPC, их выбор и "
              "подарки. Дальность: Система > Правила группы > Дальность диалогов NPC."),
            on);
