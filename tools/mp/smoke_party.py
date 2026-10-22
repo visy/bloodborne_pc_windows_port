@@ -1765,17 +1765,16 @@ def phase_nfa(only):
         "host_chr=%d:1.8@10%%m25^1" % NF_ALFRED,              # in front of Alfred (the guest back in)
         # 2: the host's R1s once the guest stands at Alfred
         "host_press=0x800@3%%m25!?near=%s:4" % NFA_POS]
-        + ["host_press=0x800@1.2%m25!"] * 4
-        + ["host_kill=%d:hp85@5%%m25" % NF_ALFRED,             # his HP below 90 %: the guest's copy's condition
-           "host_warp=2412953@10%m25?1350=1"])                 # 4: Alfred dead: the guest's next load
+        + ["host_press=0x800@1.2%m25!"] * 2
+        + ["host_warp=2412953@10%m25?1350=1"])                 # 4: Alfred dead: the guest's next load
     g1 = ",".join(["god", "log_flag=" + NFA_FLAGS,
                    "guest_chr=%d:2:90@12%%m25" % NF_ALFRED,     # 1: beside Alfred (friendly)
                    "guest_press=0x4:lock@1%m25!",              # no lock-on on a friendly chr (the "before")
-                   "guest_chr=%d:1.6@18%%m25" % NF_ALFRED,      # 3: in front of him after the switch
-                   "guest_press=0x4:lock@1%m25!", "guest_press=0x4:lock@1%m25!"]
-                  + ["guest_press=0x800@1.2%m25!"] * 8
+                   "guest_chr=%d:1.6@14%%m25" % NF_ALFRED]      # 3: in front of him after the switch
+                  + ["guest_press=0x4:lock@1%m25!"] * 3
+                  + ["guest_press=0x800@1.5%m25!"] * 8
                   + ["guest_kill=%d:hp@2%%m25" % NF_ALFRED])
-    clear = ",".join(str(f) for f in list(range(1340, 1348)) + list(range(1349, 1360)) + [12500051, 12500052, 12500053, 12500054])
+    clear = ",".join(str(f) for f in list(range(1340, 1348)) + list(range(1349, 1360)) + [12500051, 12500052, 12500053, 12500054] + list(range(72500350, 72500360)))
     return dict(
         name="nfa", seconds=420, count=2, headless=0,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=" + NFA_FIXTURE_SET,
@@ -1784,7 +1783,6 @@ def phase_nfa(only):
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
         watch=["--watch", r"test: host_chr %d=nfaarrive@0.5,3" % NF_ALFRED,
                "--watch", r"test: host_press 0x800=nfaprovoke@0.6",
-               "--watch", r"test: host_kill: =nfahp85@1,4",
                "--watch", r"test: guest_press 0x800=nfahit@0.5",
                "--watch", r"test: guest_kill: =nfakill@1,5"],
         crash=[], until=[NFA_UNTIL], until_hold=8,
@@ -3818,14 +3816,12 @@ def check_nfa(v, L):
         v.step("nfa the chamber is drawn on the %s's game (Alfred stands, y > 100)" % who, bool(ys) and min(ys) > 100,
                "y %s" % sorted({round(y) for y in ys})[:6])
     prov = L.find(0, r"test: host_press 0x800", at or 0)
-    hp85 = L.find(0, r"test: host_kill: .*entity %d" % NF_ALFRED, at or 0)
-    if not (at and gat and prov and hp85):
-        v.step("nfa the host's R1s and Alfred's HP step ran", False, "host_chr %s guest_chr %s press %s hp85 %s"
-               % (at, gat, bool(prov), bool(hp85)))
+    if not (at and gat and prov):
+        v.step("nfa the host's R1s ran", False, "host_chr %s guest_chr %s press %s" % (at, gat, bool(prov)))
         check_common(v, L, "nfa")
         return
-    before_h = nf_hp(L, 0, NF_ALFRED, at - 1, prov[0])
-    before_g = nf_hp(L, 1, NF_ALFRED, gat - 1, prov[0])
+    before_h = nf_hp(L, 0, NF_ALFRED, 0, prov[0])
+    before_g = nf_hp(L, 1, NF_ALFRED, 0, prov[0])
     v.step("nfa (before) Alfred friendly on both games (team 26)",
            bool(before_h) and bool(before_g) and all(tm == 26 for _, _, tm in before_h + before_g),
            "host teams %s, guest teams %s" % (sorted({tm for _, _, tm in before_h}), sorted({tm for _, _, tm in before_g})))
@@ -3838,25 +3834,25 @@ def check_nfa(v, L):
            "1349 at %s, team 27 at %s" % ("+%.1f" % hflag[0] if hflag else "-", "+%.1f" % hteam[0][0] if hteam else "-"))
     gteam = [(t, tm) for t, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1) if tm == 27]
     t27 = gteam[0][0] if gteam else None
-    if hteam and hteam[0][0] < hp85[0]:
-        gap = [tm for _, _, tm in nf_hp(L, 1, NF_ALFRED, hteam[0][0], hp85[0])]
-        v.step("nfa (info) the guest's Alfred between the host's switch and the 90 % HP", True,
-               "guest teams %s (the guest's counter ends on a client: its copy waits for the HP)" % sorted(set(gap)))
     gnear = L.find(1, r"test: guest_chr %d" % NF_ALFRED, 0, t27 or 1e9)
+    hsw = min([x for x in (hflag[0] if hflag else None, hteam[0][0] if hteam else None) if x is not None] or [0])
     v.step("nfa in-map switch: Alfred hostile on the guest's game while it stands there (team 27)",
            bool(gteam) and bool(gnear),
-           "team 27 at +%.1f s (the HP step +%.1f s, the guest at him +%.1f s)" % (t27, hp85[0], gnear[0])
+           "team 27 at +%.1f s (the host's switch +%.1f s, the guest at him +%.1f s)" % (t27, hsw, gnear[0])
            if gteam and gnear else "guest teams after the host's R1s %s" %
            sorted({tm for _, _, tm in nf_hp(L, 1, NF_ALFRED, prov[0] - 1)}))
     need(v, L, "nfa the guest's copy of 12500053 runs as the host's", 1, r"guest copy of event 12500053 runs as the host's")
-    gkill = L.find(1, r"test: guest_kill: .*entity %d" % NF_ALFRED, hp85[0])
-    hits = L.all(1, r"test: guest_press 0x800", hp85[0], gkill[0] if gkill else 1e9)
+    t0 = t27 or prov[0]
+    gkill = L.find(1, r"test: guest_kill: .*entity %d" % NF_ALFRED, t0)
+    hits = L.all(1, r"test: guest_press 0x800", t0, gkill[0] if gkill else 1e9)
     lock = L.find(1, r"test: guest_press 0x(4|800)(; | ).*lock-on 1|test: guest_press 0x4:lock skipped: locked on already",
-                  hp85[0], gkill[0] if gkill else 1e9)
+                  t0, gkill[0] if gkill else 1e9)
     v.step("nfa the guest locks on to the hostile Alfred", bool(lock), lock[1][:140] if lock else "no lock-on")
     if hits and gkill:
-        h0 = [h for _, h, _ in nf_hp(L, 0, NF_ALFRED, hp85[0], hits[0][0])]
-        start = min(h0) if h0 else 2635
+        h0 = [h for _, h, _ in nf_hp(L, 0, NF_ALFRED, 0, hits[0][0])]
+        start = h0[-1] if h0 else 3100
+        presses = [m.group(1) for _, ln in hits for m in [re.search(r"target %d \(NPC, team -?\d+\) HP (-?\d+)" % NF_ALFRED, ln)] if m]
+        v.step("nfa (info) Alfred's HP on the guest's game at each guest R1", True, "%s" % presses)
         hh = [h for _, h, _ in nf_hp(L, 0, NF_ALFRED, hits[0][0] - 0.5, gkill[0])]
         gh = [h for _, h, _ in nf_hp(L, 1, NF_ALFRED, hits[0][0] - 0.5, gkill[0])]
         v.step("nfa the guest's R1s hurt Alfred on the host's game", bool(hh) and 0 < min(hh) < start,

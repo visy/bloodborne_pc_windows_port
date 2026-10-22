@@ -2378,6 +2378,24 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                                 : -1.0);
                 target = b;
             }
+            if (target.empty()) {
+                // An NPC hunter (D11) is not in the census list: its chr by entity id (0x13C97A0).
+                const std::uint64_t chr =
+                    reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint64_t, std::uint64_t)>(
+                        Guest(0x13c97a0))(std::int32_t(t.chr_target), 0, 0);
+                if (chr) {
+                    char b[160];
+                    const bool d = player && balance::ChrPosition(player, me) && balance::ChrPosition(chr, at);
+                    std::int32_t team = -1;
+                    SafeGet(chr + 0x88, &team);
+                    std::snprintf(b, sizeof b, "; target %u (NPC, team %d) HP %d, %.1f m", t.chr_target, team,
+                                  balance::EnemyHp(chr),
+                                  d ? double(std::sqrt((me[0] - at[0]) * (me[0] - at[0]) + (me[1] - at[1]) * (me[1] - at[1]) +
+                                                       (me[2] - at[2]) * (me[2] - at[2])))
+                                    : -1.0);
+                    target = b;
+                }
+            }
         }
         {
             // The own HP / max (HP module [+0x3B0] +0x20: +0xF8 / +0xFC; rally and vial checks) and
