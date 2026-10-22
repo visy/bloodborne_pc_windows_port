@@ -2154,6 +2154,64 @@ void CameraBehindPlayer() {
     using CamReset = u64(BB_COOP_SYSV*)(u64, u32, u32);
     reinterpret_cast<CamReset>(Guest(0x132f5a0))(0, 10000, 1);
 }
+/// fallcam 3: the chr's ladder action state (deathrules::LadderLeftover): the int8 at [ChrCtrl +0x38]
+/// +0x60, what the behavior's GetLadderActState / IsLadderAct read (0x1290E50); -1 none.
+int LadderActState(u64 chr) {
+    const u64 a = Field<u64>(Field<u64>(chr, 0x58), 0x38);
+    std::int8_t v = 0;
+    return a && SafeGet(a + 0x60, &v) ? int(v) : deathrules::kLadderUnread;
+}
+/// A ladder state left from a death on a ladder put back to none (the action ctrl constructor's
+/// 0xFF). Main thread; true: it was set.
+bool ReleaseLadder(u64 chr, const char* why) {
+    const int was = LadderActState(chr);
+    if (!deathrules::LadderLeftover(was)) {
+        return false;
+    }
+    const u64 a = Field<u64>(Field<u64>(chr, 0x58), 0x38);
+    const u8 none = 0xff;
+    SafeWrite(a + 0x60, &none, 1);
+    Log("%s: the chr's ladder state released (ChrCtrl +0x38 +0x60 %d -> %d; +0x74 %08x +0x78 %08x +0x7C %08x "
+        "+0xA0 %08x): free movement again", why, was, LadderActState(chr), Field<u32>(a, 0x74), Field<u32>(a, 0x78),
+        Field<u32>(a, 0x7c), Field<u32>(a, 0xa0));
+    return true;
+}
+
+/// fallcam 2: the follow camera's own level reset (deathrules::LevelCameraDue). The ChrCam
+/// (*0x553E860 +0x2830, vtable 0x536B700, built by 0x1435FC0): +0x84 its mode (4 = the fall-die
+/// camera), +0x88 the blend; +0x60 its follow camera (0x143AC60): +0x13C a reset request, +0x13D
+/// "take pitch / yaw from +0x148 / +0x14C" (the ChrCam's 4 -> 0 switch sets it with the fall
+/// camera's own steep direction), clear: pitch +0x140 = 0 and the yaw behind the chr, as a new chr
+/// after a load. A ChrCam still in mode 4 goes straight to 0 (as that switch writes: mode 0, blend 0)
+/// so the switch never hands its direction over. Main thread. False: no ChrCam (or another layout).
+constexpr u64 kSlotGameCamera = 0x553e860;
+constexpr u64 kChrCamVtable = 0x536b700;
+bool LevelFollowCamera(const char* why, bool released, bool warped) {
+    const u64 cc = Field<u64>(Slot(kSlotGameCamera), 0x2830);
+    if (!cc || Field<u64>(cc, 0) != Guest(kChrCamVtable)) {
+        static int logged = 0;
+        if (logged++ < 3) {
+            Log("%s: no ChrCam at *0x553e860 +0x2830 (%#llx): the camera's pitch left as it is", why, ull(cc));
+        }
+        return false;
+    }
+    const u64 fc = Field<u64>(cc, 0x60);
+    const int mode = Field<int>(cc, 0x84, -1);
+    if (!fc || !deathrules::LevelCameraDue(released, warped, mode)) {
+        return false;
+    }
+    const float pitch0 = Field<float>(fc, 0x140);
+    if (mode == deathrules::kChrCamFallDieMode) {
+        const u64 zero = 0;  // +0x84 mode 0, +0x88 blend 0
+        SafeWrite(cc + 0x84, &zero, 8);
+    }
+    const u8 one = 1, zero8 = 0;
+    SafeWrite(fc + 0x13d, &zero8, 1);
+    SafeWrite(fc + 0x13c, &one, 1);
+    Log("%s: the follow camera reset level behind the chr (ChrCam mode %d -> %d, pitch was %.2f)", why, mode,
+        Field<int>(cc, 0x84, -1), double(pitch0));
+    return true;
+}
 /// fallcam: what the player sees after an in-world revive / warp, judged 0.5 s and 3 s after it
 /// (ReviveViewTick, deathrules::JudgeReviveView): the render camera against the chr, the chr's drawn
 /// position (ChrCtrl's world matrix, [chr +0x58] +0xC0) against its physics position, the latch.
@@ -2184,12 +2242,14 @@ bool WarpLocal(const float pos[3], float yaw, const char* why) {
         return false;
     }
     // fallcam: a fall caught by the recovery net (or any warp after the game's fall-death camera
-    // took over) would keep that camera at the old spot: released first.
+    // took over) would keep that camera at the old spot: released first; a ladder state too.
     const bool latched = ReleaseFallCamera(why);
+    ReleaseLadder(player, why);
     // The camera stayed where it was and swung through the walls after a long in-world warp
     // (live vis6: the host looked out of the geometry 3 s after a 68 m move): the Lua CamReset
-    // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player.
+    // 0x132F5A0(ctx, 10000 = the local player, 1) puts it behind the player; level (fallcam 2).
     CameraBehindPlayer();
+    LevelFollowCamera(why, latched, true);
     if (latched) {
         WatchReviveView(why);
     }
@@ -5156,6 +5216,8 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
     if (cam.release_latch) {
         ReleaseFallCamera(host ? "host revive" : "guest revive");
     }
+    // fallcam 3: a death on a ladder left the chr's ladder state (only forward movement after it).
+    ReleaseLadder(p, host ? "host revive" : "guest revive");
     if (RecipeHas("gsm")) {
         const u64 gsm = Slot(kSlotGsm);
         const u8 zero = 0;
@@ -5230,6 +5292,7 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
                                       std::fabs(at[1] - sp.pos[1]) < 3.0f && std::fabs(at[2] - sp.pos[2]) < 3.0f);
         if (there) {
             CameraBehindPlayer();
+            LevelFollowCamera(host ? "host revive" : "guest revive", cam.release_latch, moved);
         } else {
             Log("%s revive: not on its spot yet (%.1f, %.1f, %.1f): no camera reset", host ? "host" : "guest",
                 double(at[0]), double(at[1]), double(at[2]));
@@ -5350,12 +5413,12 @@ void LocalDeathHeightTick(const GameSnapshot& s, double now) {
         g_local_safe.valid = deathrules::SafeSpotUsable(read, g_local_safe.pos, p);
         const double dx = double(g_local_safe.pos[0] - p[0]), dz = double(g_local_safe.pos[2] - p[2]);
         Log("local death: HP 0 at (%.1f, %.1f, %.1f), dropped %.1f m in the 3 s before%s%s; the game's last safe ground "
-            "spot (%.1f, %.1f, %.1f), %.1f m away (height %+.1f m)%s",
+            "spot (%.1f, %.1f, %.1f), %.1f m away (height %+.1f m)%s; ladder state %d",
             double(p[0]), double(p[1]), double(p[2]), d.peak - d.at_death, d.known ? "" : " (no height history)",
             d.riding ? " (on a moving object: a lift's car)" : "",
             double(g_local_safe.pos[0]), double(g_local_safe.pos[1]), double(g_local_safe.pos[2]),
             std::sqrt(dx * dx + dz * dz), double(g_local_safe.pos[1] - p[1]),
-            g_local_safe.valid ? "" : read ? " (not usable)" : " (none)");
+            g_local_safe.valid ? "" : read ? " (not usable)" : " (none)", LadderActState(s.player));
     }
     was_dead = dead;
 }
@@ -5536,19 +5599,21 @@ void ReviveViewTick(const GameSnapshot& s, double now) {
     const bool latch = FallCameraLatched();
     // ChrCtrl +0xC0 is logged only (fl run 1: it holds a rotation row, (1, 0, 0) / (-0.7, 0, 0.7), not
     // the drawn position); the camera and the latch are what the view is judged by.
-    const deathrules::ReviveView v = deathrules::JudgeReviveView(cam_dist, nan, latch);
+    const deathrules::ReviveView v =
+        deathrules::JudgeReviveView(cam_dist, nan, latch, cam.valid ? double(cam.view[9]) : nan);
     // Part of the revive's own lines: the 3 s line always, the 0.5 s one only when it is not right.
     if (w.step == 1 || v != deathrules::ReviveView::Ok) {
         Log("revive view (%s, %.1f s after): camera (%.1f, %.1f, %.1f) %.1f m from the chr (%.1f, %.1f, %.1f), looking "
             "(%.2f, %.2f, %.2f); ChrCtrl +0xC0 (%.1f, %.1f, %.1f) %.2f m off (logged only); fall-death camera %u, "
-            "hp %d: %s",
+            "ladder state %d, hp %d: %s",
             w.what, now - w.at, double(c[0]), double(c[1]), double(c[2]), cam_dist, double(me[0]), double(me[1]),
             double(me[2]), double(cam.view[8]), double(cam.view[9]), double(cam.view[10]), double(drawn[0]),
-            double(drawn[1]), double(drawn[2]), drawn_off, unsigned(latch), ChrHp(s.player),
+            double(drawn[1]), double(drawn[2]), drawn_off, unsigned(latch), LadderActState(s.player), ChrHp(s.player),
             deathrules::ReviveViewName(v));
     }
     if (latch && ChrHp(s.player) > 0 && ReleaseFallCamera("revive view: the latch was set again")) {
         CameraBehindPlayer();
+        LevelFollowCamera("revive view", true, false);
     }
     if (++w.step >= 2) {
         w.at = 0;

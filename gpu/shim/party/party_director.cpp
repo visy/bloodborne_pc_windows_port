@@ -2111,6 +2111,42 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             return;
         }
     }
+    {
+        // fallcam 3: host_die:ladder / guest_die:ladder: only while the own chr climbs a ladder (its
+        // ladder action state [ChrCtrl +0x38] +0x60 is set, what IsLadderAct reads); waits up to 15 s
+        // for it, then is skipped (a death off the ladder would test the fall path, not the ladder).
+        const TravelStep& n = t.steps[t.next_step];
+        static Clock::time_point ladder_wait_from{};
+        static bool ladder_waiting = false;
+        if ((n.kind == TravelStep::HostDie || n.kind == TravelStep::GuestDie) && n.args == "ladder") {
+            std::uint64_t pl = LocalPlayer(), ctrl = 0, act = 0;
+            std::int8_t st = -1;
+            const bool read = pl && SafeGet(pl + 0x58, &ctrl) && ctrl && SafeGet(ctrl + 0x38, &act) && act &&
+                              SafeGet(act + 0x60, &st);
+            if (!read || st < 0) {
+                if (!ladder_waiting) {
+                    ladder_waiting = true;
+                    ladder_wait_from = now;
+                    Log("test: travel step %zu (%s:ladder) waits for the ladder (state %d)", t.next_step + 1,
+                        TravelStepName(n.kind), int(st));
+                }
+                if (Seconds(ladder_wait_from, now) < 15.0) {
+                    return;
+                }
+                Log("test: travel step %zu/%zu: %s:ladder: NOT on a ladder after 15 s (state %d): skipped, no death",
+                    t.next_step + 1, t.steps.size(), TravelStepName(n.kind), int(st));
+                ladder_waiting = false;
+                t.next_step++;
+                t.step_at = now;
+                t.ran = true;
+                t.last_kind = TravelStep::HostPress;  // not a die step: the chain goes on
+                return;
+            }
+            Log("test: %s:ladder: on the ladder (ladder state %d) after %.1f s", TravelStepName(n.kind), int(st),
+                ladder_waiting ? Seconds(ladder_wait_from, now) : 0.0);
+            ladder_waiting = false;
+        }
+    }
     std::uint64_t wts = 0;
     std::uint8_t requested = 1;
     if (!SafeGet(Guest(0x5556678), &wts) || !wts || !SafeGet(wts + 8, &requested) || requested) {
@@ -3801,6 +3837,10 @@ void PartyDirector::ConfigureFromEnv() {
                 if ((step.kind == TravelStep::HostLamp || step.kind == TravelStep::GuestLamp) &&
                     item.find(":story") != std::string::npos) {
                     step.args = "story";
+                }
+                if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) &&
+                    item.find(":ladder") != std::string::npos) {
+                    step.args = "ladder";  // host_die:ladder@S%MAP: only while on a ladder (fallcam 3)
                 }
                 if ((step.kind == TravelStep::HostDie || step.kind == TravelStep::GuestDie) && item.find('%') != std::string::npos) {
                     // host_die@S%MAP: S s after the last load / previous step, in that map (no re-join)

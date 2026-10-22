@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <string>
 
@@ -495,16 +496,50 @@ inline ReviveCamera PlanReviveCamera(bool latch_set, bool warped) {
     c.cam_reset = latch_set || warped;
     return c;
 }
+// The pitch (fallcam 2: after the release the camera kept the fall camera's steep downward look, an
+// almost top-down view): leaving its mode 4 the ChrCam update hands the follow camera the current
+// direction as its new angles (+0x13C reset request with +0x13D set: pitch / yaw from +0x148 /
+// +0x14C). A reset request with +0x13D clear is the follow camera's own level reset (pitch +0x140 =
+// 0, yaw behind the chr), what a new chr after a load starts with. LevelCameraDue: ask for that one
+// (ChrCam put straight from mode 4 to 0, as its own 4 -> 0 switch writes) after a release, a warp
+// or a ChrCam still in mode 4.
+constexpr int kChrCamFallDieMode = 4;
+inline bool LevelCameraDue(bool released, bool warped, int chrcam_mode) {
+    return released || warped || chrcam_mode == kChrCamFallDieMode;
+}
+// The follow camera looks down at the chr from a little above (fl run 1: view y -0.00); the fall
+// camera's leftover pitch read -0.78 .. -0.98 (fdj run r3). Steeper than this is not the level view.
+constexpr double kReviveLookDownMax = -0.4;
+// The ladder (fallcam 3, a player's report: "dying on a ladder makes it so you can only walk
+// forward"). The behavior script asks the chr's ladder action state (HKS env GetLadderActState
+// 0x1259850 -> 0x1290E50: the int8 at [ChrCtrl +0x38] +0x60; IsLadderAct 0x1259860: it is not -1)
+// and drives the chr as on a ladder while it is set. A death on a ladder leaves it; a vanilla death
+// load builds a new chr (its action ctrl's constructor 0x150A480 writes +0x60 = 0xFF). An in-world
+// revive keeps the chr: every revive / in-world warp of the local player puts it back to -1.
+constexpr int kNoLadder = -1;
+constexpr int kLadderUnread = -1000;  // no ChrCtrl / action ctrl to read
+inline bool LadderLeftover(int ladder_act) {
+    return ladder_act >= 0 && ladder_act <= 127;  // a ladder action's state index
+}
+// The walk check after it (smoke ld): a stick walk toward each of four points 4 m away must move the
+// chr at least kWalkMin m toward it (a chr stuck in the ladder's climbing axis moves one way only).
+constexpr double kWalkMin = 1.5;
+inline bool WalkedToward(double dx, double dz, double tx, double tz) {
+    const double len = std::sqrt(tx * tx + tz * tz);
+    return len > 0.0 && (dx * tx + dz * tz) / len >= kWalkMin;
+}
 // The check after a revive (logged; smoke fl / fd): the render camera follows the chr (within
 // kReviveCamNear m of its physics position: the follow camera sits 3-6 m behind, a wall pushes it
 // nearer), the latch is off, and the chr is drawn where it stands (ChrCtrl's world matrix within
 // kReviveDrawnOff m of the physics position; the fall-die camera looked from 150 m away).
 constexpr double kReviveCamNear = 12.0;
 constexpr double kReviveDrawnOff = 1.0;
-enum class ReviveView { Ok, FallCamera, CameraAway, DrawnAway, NoCamera };
+enum class ReviveView { Ok, FallCamera, CameraAway, DrawnAway, NoCamera, Steep };
 /// `cam_dist`: render camera to the chr's physics position (NaN: no camera frame); `drawn_off`:
-/// drawn position to physics position (NaN: unknown, not judged); `latch`: WorldChrMan +0x68.
-inline ReviveView JudgeReviveView(double cam_dist, double drawn_off, bool latch) {
+/// drawn position to physics position (NaN: unknown, not judged); `latch`: WorldChrMan +0x68;
+/// `look_y`: the camera's view direction, up component (NaN: not judged).
+inline ReviveView JudgeReviveView(double cam_dist, double drawn_off, bool latch,
+                                  double look_y = std::numeric_limits<double>::quiet_NaN()) {
     if (latch) {
         return ReviveView::FallCamera;
     }
@@ -517,6 +552,9 @@ inline ReviveView JudgeReviveView(double cam_dist, double drawn_off, bool latch)
     if (std::isfinite(drawn_off) && drawn_off > kReviveDrawnOff) {
         return ReviveView::DrawnAway;
     }
+    if (std::isfinite(look_y) && look_y < kReviveLookDownMax) {
+        return ReviveView::Steep;
+    }
     return ReviveView::Ok;
 }
 inline const char* ReviveViewName(ReviveView v) {
@@ -526,6 +564,7 @@ inline const char* ReviveViewName(ReviveView v) {
     case ReviveView::CameraAway: return "BAD: the camera is away from the chr";
     case ReviveView::DrawnAway: return "BAD: the chr is drawn away from where it stands";
     case ReviveView::NoCamera: return "no camera frame (not judged)";
+    case ReviveView::Steep: return "BAD: the camera looks steeply down (the fall camera's pitch)";
     }
     return "?";
 }

@@ -61,6 +61,9 @@ Phase sm (~5 min, 2 players, group `scene_mirror`): the host's cutscene live on 
   Father Gascoigne's intro with both games running its event at once (the guest's own copy held,
   the host's played within 1 s, once), then the Tomb of Oedon door into Oedon Chapel (scene 24000020)
   with the guest 3 m behind the host still in m24_01 (played within 1 s; no replay after its walk in).
+Phase ld (~4 min, 2 players, group `ladder`): host and guest each take Cathedral Ward's ladder 2401024
+  from its foot and die on it (only once the ladder state is set), are revived in place at the lamp;
+  the ladder state must be gone and a stick walk must reach four points around the lamp.
 Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
   lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
@@ -897,6 +900,46 @@ def phase_fdj(only):
     )
 
 
+# Phase ld (fallcam 3, ~4 min, 2 players, group `ladder`): a death on a ladder (a player's report: "dying
+# on a ladder makes it so you can only walk forward"). The party travels to the Cathedral Ward lamp
+# 2402950; the host stands at the foot of the ladder 2401024 (its "Ascend Ladder" prompt: dlast), takes
+# it with Cross and dies on it: the die step `host_die:ladder` fires only once the chr's ladder state is
+# set (it waits up to 15 s, else no death). Later guest 1 does the same. Each is revived in place at the
+# lamp (~75 m away, no load); its ladder state must be gone and a stick walk to four points 3 m around
+# the lamp (east, north, west, south) must move it toward each one, sideways and backwards too.
+LD_LAMP = (17.58, 102.65)
+LD_WALK = [(3.0, 0.0), (0.0, 3.0), (-3.0, 0.0), (0.0, -3.0)]   # east, north, west, south of the lamp
+LD_UNTIL = [r"0:travel step (\d+)/\1: host_stick", r"1:travel step (\d+)/\1: guest_stick"]
+
+
+def ld_walks(who):
+    return ["%s_stick=%.2f:%.2f:0.5:10@%d%%m24_00!" % (who, LD_LAMP[0] + dx, LD_LAMP[1] + dz, 3 if k == 0 else 1)
+            for k, (dx, dz) in enumerate(LD_WALK)]
+
+
+def ld_climb(who, first):
+    return ["%s_obj=2401024:1.0:180@%d%%m24_00" % (who, first),  # the ladder's foot ("Ascend Ladder")
+            "%s_press=0x4000@1%%m24_00!" % who,                     # Cross: onto the ladder
+            "%s_die:ladder@2%%m24_00" % who,                        # dies on it (only while on it)
+            "%s_press=0@3%%m24_00!" % who]                          # up again at the lamp
+
+
+def phase_ld(only):
+    common = "log_pos=0.5,watch_text=Ladder"
+    host = ",".join([common, "host_warp=2402950@15"] + ld_climb("host", 10) + ld_walks("host"))
+    g1 = ",".join([common, "guest_press=0@10%m24_00!", "guest_press=0@10%m24_00!", "guest_press=0@10%m24_00!",
+                   "guest_press=0@10%m24_00!"]                  # the host's turn first
+                  + ld_climb("guest", 2) + ld_walks("guest"))
+    return dict(
+        name="ld", seconds=420, count=2, headless=0, pads=(0, 1),
+        env=["BB_PARTY_B2_REVIVE_DIFF=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"die:ladder: on the ladder=onladder@0.1", "--watch", "local death: HP 0=hp0@0.5",
+               "--watch", r"revive view \(=view@0.2,3"],
+        crash=[], until=LD_UNTIL, until_hold=4,
+    )
+
+
 # Phase mk (boldmark, ~6 min, 3 players): a guest's Hunter's Mark and Bold Hunter's Mark (a player's
 # report: the Bold Mark crashed the host's game right after the guests were back). The party travels to
 # the Cathedral Ward lamp 2402950 (m24_00); guest 1 (rendered) has that lamp as its own last lamp and
@@ -1395,12 +1438,12 @@ def phase_da(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
@@ -1409,7 +1452,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da "}
 
 
@@ -1443,7 +1486,6 @@ GROUP_UNTIL = {
     "gather": GA_UNTIL,
     # the host back at the lamp (the lift's block streamed in, its init run) and guest 1's chain done
     "lifts": [LF_UNTIL],
-    "ladder": [r"1:travel step (\d+)/\1: guest_press"],
     "fall": [FL_UNTIL, FL_HOST_UNTIL],
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
@@ -2264,7 +2306,7 @@ def check_fl(v, L):
 
 REVIVE_VIEW = re.compile(r"revive view \((?P<what>[^,]+), (?P<t>[\d.]+) s after\): camera \([^)]*\) (?P<cam>[-\w.]+) m "
                          r"from the chr \((?P<chr>[^)]*)\).*?; (?:drawn|ChrCtrl \+0xC0) \([^)]*\) (?P<drawn>[-\w.]+) m off(?: \(logged only\))?; "
-                         r"fall-death camera (?P<latch>\d+), hp (?P<hp>-?\d+): (?P<verdict>.*)$")
+                         r"fall-death camera (?P<latch>\d+), (?:ladder state -?\d+, )?hp (?P<hp>-?\d+): (?P<verdict>.*)$")
 
 
 def check_revive_view(v, L, tag, i, what, after):
@@ -2279,6 +2321,11 @@ def check_revive_view(v, L, tag, i, what, after):
     v.step(tag + " camera on its chr after the revive (within 12 m, the fall-death camera off)",
            latch == 0 and cam == cam and cam <= 12.0, "camera %.1f m from the chr, fall-death camera %d: %s" %
            (cam, latch, m.group("verdict")[:80]))
+    # fallcam 2: level as after a load, not the fall camera's steep look down (fdj r3: -0.78 .. -0.98)
+    look = re.search(r"looking \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", hit[1])
+    ly = float(look.group(2)) if look else float("nan")
+    v.step(tag + " camera level after the revive (view down at most 0.4)", ly == ly and ly >= -0.4,
+           look.group(0) if look else "no look direction")
     # Logged only (fl run 1: ChrCtrl +0xC0 is a rotation row, not the drawn position); the screenshots
     # show whether the chr is drawn at its spot.
     v.step(tag + " ChrCtrl +0xC0 logged (not judged)", True,
@@ -2344,6 +2391,55 @@ def check_fdj(v, L):
     # the report's shaft beside Djura's tower (m23_00): HP 0 in the shaft after a drop of 10 m or more
     check_fall_deep(v, L, "fdj", r"local death: HP 0 at \([-\d.]+, -[5-9]\d\.\d, -6\d\.\d\), dropped ([1-9]\d)\.",
                     False)
+
+
+def check_ld(v, L):
+    """fallcam 3: a death on a ladder, revived in place: the ladder state released, then the stick
+    walks to four points around the lamp each move the chr toward its point (deathrules WalkedToward)."""
+    need(v, L, "ld join: 2 players", 0, r"cooperators 0 -> 1")
+    for i, who in ((0, "host"), (1, "guest")):
+        on = L.find(i, r"%s_die:ladder: on the ladder \(ladder state (\d+)\)" % who)
+        v.step("ld %s on the ladder before the die step (its ladder state set)" % who, bool(on),
+               on[1][:120] if on else (L.find(i, r"%s_die:ladder: NOT on a ladder" % who) or (0, "no ladder line"))[1][:120])
+        d = L.find(i, r"travel step \d+/\d+: %s_die" % who)
+        if not on or not d:
+            v.step("ld %s died on the ladder (the die step)" % who, False, "not on the ladder: no death taken")
+            continue
+        hp0 = L.find(i, r"local death: HP 0 .*ladder state (-?\d+)", d[0] - 1)
+        st = int(re.search(r"ladder state (-?\d+)", hp0[1]).group(1)) if hp0 else None
+        v.step("ld %s died on the ladder (ladder state at HP 0)" % who, st is not None and st >= 0,
+               ("state %s: %s" % (st, hp0[1][:110])) if hp0 else "no HP 0 line")
+        up = L.find(i, r"%s revive #\d+: after" % who, d[0])
+        v.step("ld %s revived in place (no load)" % who, bool(up), up[1][:120] if up else "no revive")
+        if not up:
+            continue
+        none_of(v, L, "ld %s: no loading screen" % who, r"Party B2: load started", d[0], up[0] + 20, (i,))
+        rel = L.find(i, r"%s revive: the chr's ladder state released" % who, d[0], up[0] + 1)
+        if st is not None and st >= 0:
+            v.step("ld %s ladder state released by the revive" % who, bool(rel), rel[1][:140] if rel else "no release line")
+        view = L.find(i, r"revive view \(%s revive, [2-9]\.\d s after\).*ladder state (-?\d+)" % who, up[0], up[0] + 15)
+        vs = int(re.search(r"ladder state (-?\d+)", view[1]).group(1)) if view else None
+        v.step("ld %s no ladder state 3 s after the revive" % who, vs == -1, ("state %s" % vs) if view else "no view line")
+        walks = L.all(i, r"test: %s_stick: walk to \(([-\d.]+), ([-\d.]+)\).*pos \(([-\d.]+), [-\d.]+, ([-\d.]+)\)" % who,
+                      up[0])
+        names = ["east", "north", "west", "south"]
+        for k, (t, line) in enumerate(walks[:4]):
+            m = re.search(r"walk to \(([-\d.]+), ([-\d.]+)\).*pos \(([-\d.]+), [-\d.]+, ([-\d.]+)\)", line)
+            tx, tz, sx, sz = (float(g) for g in m.groups())
+            nxt = walks[k + 1][0] if k + 1 < len(walks) else t + 8
+            ps = [POS_RX.search(l) for _, l in L.all(i, POS_RX.pattern, t, nxt)]
+            if not ps:
+                v.step("ld %s walks %s after the revive" % (who, names[k]), False, "no position samples")
+                continue
+            ex, ez = float(ps[-1].group(1)), float(ps[-1].group(3))
+            dx, dz, wx, wz = ex - sx, ez - sz, tx - sx, tz - sz
+            ln = (wx * wx + wz * wz) ** 0.5
+            along = (dx * wx + dz * wz) / ln if ln > 0 else 0.0
+            v.step("ld %s walks %s after the revive (at least 1.5 m toward it)" % (who, names[k]), along >= 1.5,
+                   "%.1f m toward (%.1f, %.1f) from (%.1f, %.1f); moved (%.1f, %.1f)" % (along, tx, tz, sx, sz, dx, dz))
+        if len(walks) < 4:
+            v.step("ld %s all four walks ran" % who, False, "%d walk(s)" % len(walks))
+    check_common(v, L, "ld")
 
 
 WALL = re.compile(r"\[(\d\d):(\d\d):(\d\d(?:\.\d+)?)\] ")
@@ -3169,7 +3265,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
-          "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L),
+          "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L),
           "rt": lambda v, L, d: check_rt(v, L)}
 
@@ -3195,7 +3291,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cl", "el", "lt", "bf", "ch",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
                                      "lp", "rt", "br", "sm", "da")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():

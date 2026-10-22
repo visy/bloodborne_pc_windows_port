@@ -666,6 +666,30 @@ int main() {
     CHECK(JudgeReviveView(5.0, 158.0, false) == ReviveView::DrawnAway);  // drawn at the old spot
     CHECK(JudgeReviveView(nan, 0.0, false) == ReviveView::NoCamera);     // headless without frames
     CHECK(JudgeReviveView(nan, 0.0, true) == ReviveView::FallCamera);    // the latch is judged without frames
+    CHECK(JudgeReviveView(4.9, nan, false, -0.78) == ReviveView::Steep);   // fdj r3: the fall camera's pitch
+    CHECK(JudgeReviveView(5.1, nan, false, -0.98) == ReviveView::Steep);
+    CHECK(JudgeReviveView(4.0, nan, false, -0.00) == ReviveView::Ok);      // fl r1: the level follow view
+    CHECK(JudgeReviveView(4.0, nan, false, -0.3) == ReviveView::Ok);
+    CHECK(JudgeReviveView(4.0, nan, true, -0.9) == ReviveView::FallCamera);  // the latch first
+    CHECK(JudgeReviveView(158.0, nan, false, -0.9) == ReviveView::CameraAway);
+    CHECK(std::string(ReviveViewName(ReviveView::Steep)).rfind("BAD", 0) == 0);
+    // the level reset after a release, a warp, or a ChrCam still in its fall-die mode
+    CHECK(LevelCameraDue(true, true, 0));
+    CHECK(LevelCameraDue(true, false, 0));
+    CHECK(LevelCameraDue(false, true, 0));      // a normal death's lamp revive: level as after a load
+    CHECK(LevelCameraDue(false, false, kChrCamFallDieMode));
+    CHECK(!LevelCameraDue(false, false, 0));    // up where it lies, no fall: the camera as it is
+    CHECK(!LevelCameraDue(false, false, 1));
+    // fallcam 3: a ladder action state left on the chr is put back to none by the revive
+    CHECK(LadderLeftover(0));              // on a ladder (state 0 .. n)
+    CHECK(LadderLeftover(3));
+    CHECK(!LadderLeftover(kNoLadder));     // the constructor's 0xFF: no ladder
+    CHECK(!LadderLeftover(kLadderUnread)); // unreadable (no ChrCtrl)
+    CHECK(WalkedToward(0.0, 3.0, 0.0, 4.0));    // 3 m of a 4 m walk north
+    CHECK(WalkedToward(-2.0, 0.1, -4.0, 0.0));  // west
+    CHECK(!WalkedToward(0.0, 3.0, 4.0, 0.0));   // asked east, went north: stuck on one axis
+    CHECK(!WalkedToward(0.0, -0.5, 0.0, 4.0));  // backwards
+    CHECK(!WalkedToward(1.0, 1.0, 0.0, 0.0));   // no target
     CHECK(std::string(ReviveViewName(ReviveView::Ok)) == "ok");
     CHECK(std::string(ReviveViewName(ReviveView::FallCamera)).rfind("BAD", 0) == 0);
     CHECK(PlanGuestRevive(0.0, true, false) == GuestRevive::InPlace);        // a normal death
