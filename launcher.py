@@ -164,6 +164,8 @@ PARTY_INI_SWITCHES = [
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
+    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Shared world)
+    ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -3295,6 +3297,11 @@ class BloodborneLauncher(tk.Tk):
                     "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
                     "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
                     "System > Shared world).", command=save)
+        self._check(sec, "Party votes on travel", var["party_travel_vote"],
+                    "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
+                    "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
+                    "and everyone is told who said no or did not answer. The host's setting; guests see it. "
+                    "Default: off (bbport.ini party_travel_vote; in the game: System > Shared world).", command=save)
         self._check(sec, "NPC hunters fight the whole party", var["party_npc_fights"],
                     "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
                     "DLC hunters) turns on the guests too, and Brador is shown on every guest's screen: "

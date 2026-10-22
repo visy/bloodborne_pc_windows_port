@@ -621,6 +621,11 @@ add_executable(party-gather-test EXCLUDE_FROM_ALL ../tests/test_party_gather.cpp
 target_compile_options(party-gather-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-gather-test PRIVATE shim)
 set_target_properties(party-gather-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# 0.7.3 lamp travel voting (party_vote_rules.h). ninja -C out/gpu party-vote-test
+add_executable(party-vote-test EXCLUDE_FROM_ALL ../tests/test_party_vote.cpp)
+target_compile_options(party-vote-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-vote-test PRIVATE shim)
+set_target_properties(party-vote-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Remote player chrs shown by the port only after their member's data (party_remote_show_rules.h).
 # ninja -C out/gpu party-remote-show-test
 add_executable(party-remote-show-test EXCLUDE_FROM_ALL ../tests/test_party_remote_show.cpp)

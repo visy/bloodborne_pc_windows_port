@@ -33,6 +33,7 @@
 #include "party_guestsvc.h"
 #include "party_split.h"
 #include "party_gather.h"
+#include "party_vote.h"
 #include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
@@ -206,6 +207,7 @@ struct TravelStep {
     int min_coop = 0;     // "^N" (host): not before the host's game has N cooperators; S counts from then
     int coop_rise = 0;    // "^N*K": ... and only once the count has risen to N for the K-th time
     bool alive = false;   // "!" on a press step: waits as a step with the own chr (alive, world up)
+    bool out_ok = false;  // "&" on a %MAP step: also runs out of the party (after a Leave: the own world)
     // "?FLAG=V" at the end (liftfall): not before event flag FLAG reads V on this game; S counts from
     // then (e.g. a lift's position flag at the end of its ride: no fixed wait for the ride's length)
     std::uint32_t wait_flag = 0;
@@ -363,6 +365,8 @@ struct Test {
     // after the world was steady again with a cooperator, counted from here.
     Clock::time_point steady_at{};
     bool steady = false;
+    Clock::time_point world_at{};  // the own world up and not loading since ("&" steps out of the party)
+    bool world = false;
     // The game's cutscenes (a step ending in "~" counts from the end of one).
     bool scene_on = false;
     Clock::time_point scene_end_at{};
@@ -1902,6 +1906,10 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     // Steady world with the party (HostKill's clock): restarts at every load / leave.
     // Split travel: members apart (no cooperator here) still count as the party being together.
     const bool steady = (joined || b2::MembersApart() > 0) && s.world_up && !s.loading;
+    if (const bool world = s.world_up && !s.loading; world != t.world) {
+        t.world = world;
+        t.world_at = now;
+    }
     if (steady != t.steady) {
         t.steady = steady;
         t.steady_at = now;
@@ -2080,12 +2088,14 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::GuestStick || next_kind == TravelStep::HostStick ||
          next_kind == TravelStep::HostRoute || next_kind == TravelStep::GuestRoute ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
-        if (!steady || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
+        const bool out = !steady && t.steps[t.next_step].out_ok && t.ran && t.world;
+        if ((!steady && !out) || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
             return; // as the first step of a chain it still waits for the join
         }
         // S s after the later of: the last load (steady again), the previous step (or the join).
         const Clock::time_point prev = t.ran ? t.step_at : t.joined_at;
         Clock::time_point from = t.steady_at > prev ? t.steady_at : prev;
+        if (out && t.world_at > from) from = t.world_at;
         if (t.coop_since > from) from = t.coop_since;
         if (t.flag_since > from) from = t.flag_since;
         if (t.near_since > from) from = t.near_since;
@@ -3909,6 +3919,12 @@ void PartyDirector::ConfigureFromEnv() {
                     // the previous step, in that map): chains of warps / kills without re-joins.
                     step.map = item.substr(item.find('%') + 1);
                 }
+                if (item.find('&') != std::string::npos && !step.map.empty()) {
+                    // "...%MAP&": also out of the party (guest_leave, then a step in the own world),
+                    // S s after the own world is up again or the previous step, in that map.
+                    step.out_ok = true;
+                    step.map.erase(step.map.find('&') == std::string::npos ? step.map.size() : step.map.find('&'));
+                }
                 if (step.kind == TravelStep::HostMove || step.kind == TravelStep::GuestMove) {
                     // host_move=X:Y:Z@S[%MAP] (':' separates: ',' separates the list items)
                     const char* p = item.c_str() + item.find('=') + 1;
@@ -4501,6 +4517,7 @@ void PartyDirector::Tick() {
     split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
     if (role != PartyRole::None) {
         gather::Tick(s, link, role == PartyRole::Host);  // I5 Gather the party (party_gather.h)
+        vote::Tick(s, link, role == PartyRole::Host);    // 0.7.3 lamp travel voting (party_vote.h)
     }
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press

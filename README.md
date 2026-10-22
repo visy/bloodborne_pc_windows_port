@@ -247,6 +247,12 @@ before anyone is in the game):
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later.
+- **Vote on travel** (host's switch, off by default: *Party votes on travel* on *System → Shared
+  world*, or the launcher). The party then travels only when everyone agrees: after *Yes* to
+  "Travel with the party?" every other player gets the game's *Yes* / *No* question with who wants
+  to go and where. One *No*, or no answer within 20 s, cancels the trip for everyone, and the notice
+  says who said no or didn't answer. A guest's own *Yes* is a vote too (the host and the other
+  guests are asked). Travelling alone never needs a vote.
 - **Gather the party.** The host's *System → Party → Gather the party* (or hold the touchpad and
   press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
@@ -381,7 +387,7 @@ before anyone is in the game):
 - **Party HUD.** Party members and events in a small HUD.
 - **Every party rule in the game's own menu.** The *System* menu has the party pages *Deaths &
   revives* (getting up without a loading screen, respawns), *Rot* (rot on death and what cleanses it), *World & PvP*, *Shared world*
-  (enemies the party killed stay dead, gathering the party, NPCs as in the host's world), *Story &
+  (enemies the party killed stay dead, gathering the party, NPCs as in the host's world, voting on travel), *Story &
   dialogue*, *Party rewards* (also your key items as a guest), *Enemy scaling* and *Party display*;
   the host's rules show read-only for guests. The launcher's *Party Rules & Sync* shows the same
   settings (`bbport.ini`).

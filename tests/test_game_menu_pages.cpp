@@ -485,7 +485,8 @@ static void RulesPages() {
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
     const V chalice = {u"Stay in Chalice Dungeons"};
-    const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"Covenants per player", u"NPC hunters fight all"};
+    const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"Covenants per player",
+                      u"Party votes on travel", u"NPC hunters fight all"};
     const V rewards = {u"Full rewards for guests", u"Host's item rewards", u"Give the bells", u"Own key items as guest",
                        u"Key items at once", u"Insight for bosses"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings", u"Show party through walls", u"Bloodstain marker",
@@ -504,6 +505,7 @@ static void RulesPages() {
         BbSettings::Get().party_gather = true;
         BbSettings::Get().party_kill_record = true;
         BbSettings::Get().party_guests_bring_lamps = false;
+        BbSettings::Get().party_travel_vote = false;
         P::Load();
         Advance(300);
         assert(names(u"Deaths & revives") == deaths);
@@ -530,6 +532,8 @@ static void RulesPages() {
         assert(shared_line.find("Enemies stay dead=On") != std::string::npos);
         // 0.7.3: covenant outcomes per player, the host's rule, on by default (a guest: the host's value).
         assert(shared_line.find("Covenants per player=On") != std::string::npos);
+        // 0.7.3: Party votes on travel, the host's rule, off by default (a guest: the host's value).
+        assert(shared_line.find("Party votes on travel=Off") != std::string::npos);
         // 0.7.2: Guests bring their lamps, the host's rule, off by default (a guest: the host's value).
         const std::string world_line = P::ShownSummary(PageNamed(u"World & PvP"));
         assert(world_line.find("Guests bring their lamps=Off") != std::string::npos);
@@ -553,6 +557,7 @@ static void RulesPages() {
             const auto world = P::ShownRows(PageNamed(u"Shared world"));
             assert(std::u16string(P::Text(world[1]->help, false)).find(u"The host turned gathering off") == 0);
             assert(std::u16string(P::Text(world[0]->help, false)).find(u"The host's rule") == 0);
+            assert(std::u16string(P::Text(world[4]->help, false)).find(u"The host decides; off") == 0);
         }
     }
     // A row writes its bbport.ini key (the launcher reads the same key).
@@ -580,6 +585,7 @@ static void RulesPages() {
                      &BbSettings::Values::party_rot_cleanse_echoes},
           std::tuple{u"Shared world", u"Host can gather", "party_gather", &BbSettings::Values::party_gather},
           std::tuple{u"Shared world", u"NPCs as in host's world", "party_npc_mirror", &BbSettings::Values::party_npc_mirror},
+          std::tuple{u"Shared world", u"Party votes on travel", "party_travel_vote", &BbSettings::Values::party_travel_vote},
           std::tuple{u"Shared world", u"NPC hunters fight all", "party_npc_fights", &BbSettings::Values::party_npc_fights},
           std::tuple{u"Party rewards", u"Own key items as guest", "party_key_view", &BbSettings::Values::party_key_view},
           std::tuple{u"Party rewards", u"Key items at once", "party_key_items_summoned",

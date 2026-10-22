@@ -357,7 +357,8 @@ RULES_PAGES = [
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
     # 0.7.1: the host's world rules (switches that had only an env variable before)
-    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world"],
+    ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
+                      "Party votes on travel"],
      ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
       '"kill_record":false')),
     ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
@@ -376,7 +377,7 @@ RULES_PAGES = [
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
 RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fire", "party_npc_talk", "party_full_rewards",
                    "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
-                   "party_kill_record", "party_gather",
+                   "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "settings_rev"]
 
@@ -658,6 +659,82 @@ def phase_ga(only):
         crash=[],
         until=GA_UNTIL,
     )
+
+
+# Phase tv (lampvote, ~4 min, 2 players, group `travel_vote`): lamp travel voting (0.7.3,
+# party_vote.h), the host's rule on (BB_PARTY_TRAVEL_VOTE=1). The host's "Travel with the party?" is
+# answered YES each time (BB_PARTY_SPLIT_TEST), the guest's vote questions by BB_PARTY_VOTE_TEST.
+# (1) all YES: the party travels to the Tomb of Oedon (m24_01). (2) the guest votes NO: cancelled,
+# nobody moves, the notice names it. (3) the guest leaves the question open: the timeout (8 s here,
+# BB_PARTY_VOTE_TIMEOUT) cancels it and names it; its dialog closes. (4) the rule off (host_rule):
+# the party travels as before, no question on the guest (the Cathedral Ward, m24_00). (5) the rule
+# on again, the guest's own lamp: its party request becomes a vote of the host (YES): the party
+# travels back to m24_01.
+TV_UNTIL = [r"1:travel step (\d+)/\1: ", r"0:travel step (\d+)/\1: "]
+
+
+def phase_tv(only):
+    host = ",".join([
+        "god",
+        "host_lamp=2412953@8^1",                  # (1) all YES
+        "host_lamp=2402950@8%m24_01",             # (2) the guest's NO
+        "host_lamp=2402950@10%m24_01",            # (3) no answer: the timeout
+        "host_rule=party_travel_vote:0@10%m24_01",
+        "host_lamp=2402950@3%m24_01",             # (4) the rule off: as before
+        "host_rule=party_travel_vote:1@4%m24_00",
+    ])
+    guest = ",".join(["god",
+                      "guest_lamp=2412953@10%m24_00",  # (5) the guest's own travel: the host votes
+                      "guest_press=0@8%m24_01!"])      # back in the Tomb of Oedon: the end
+    return dict(
+        name="tv", seconds=360, count=2, headless=0,
+        env=["BB_PARTY_VOTE_TIMEOUT=8"],
+        watch=["--watch", r"Party vote: round \d+: question open=q@1.2",
+               "--watch", r"Party vote: round \d+ over \(.*cancelled=cancel@1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + guest,
+              "0:BB_PARTY_TRAVEL_VOTE=1", "0:BB_PARTY_SPLIT_TEST=yes", "0:BB_PARTY_VOTE_TEST=yes",
+              "1:BB_PARTY_SPLIT_TEST=yes", "1:BB_PARTY_VOTE_TEST=yes,no,none"],
+        crash=[],
+        until=TV_UNTIL,
+        until_hold=6,
+    )
+
+
+def check_tv(v, L):
+    need(v, L, "tv join: 2 players", 0, r"cooperators 0 -> 1")
+    # (1) all YES
+    r1 = need(v, L, "tv (1) the host's YES starts a vote", 0, r"Party vote: round 1: the host's lamp / headstone: .* asking 1")
+    need(v, L, "tv (1) the guest gets the question", 1, r"Party vote: round 1: question open")
+    need(v, L, "tv (1) the guest votes yes", 0, r"Party vote: round 1: .* votes yes")
+    g1 = need(v, L, "tv (1) all YES: the party travels", 0, r"Party vote: round 1 over \(.*go\): lamp 2412953 -> the party travels")
+    need(v, L, "tv (1) the guest arrives in m24_01", 1, r"map .*-> m24_01", g1 or 0.0)
+    # (2) one NO
+    need(v, L, "tv (2) the guest votes no", 0, r"Party vote: round 2: .* votes no")
+    r2 = need(v, L, "tv (2) one NO cancels, names who", 0,
+              r"Party vote: round 2 over \(.*declined\): lamp 2402950 cancelled: Party travel cancelled: .* said no")
+    need(v, L, "tv (2) the guest is told", 1, r"Party vote: round 2 over: Party travel cancelled: .* said no")
+    # (3) no answer
+    r3 = need(v, L, "tv (3) no answer: the timeout cancels, names who", 0,
+              r"Party vote: round 3 over \(.*timeout\): lamp 2402950 cancelled: Party travel cancelled: .* did not answer")
+    need(v, L, "tv (3) the guest's open question closes", 1, r"Party vote: round 3: this game's question closed \(cancelled\), dialog cancelled")
+    for t, tag in ((r2, "(2)"), (r3, "(3)")):
+        if t:
+            none_of(v, L, "tv %s cancelled: nobody travels" % tag, r"host travel #\d+ lamp .*lamp 2402950", t - 12, t + 4, (0,))
+    # (4) the rule off: as before, no question on the guest
+    off = need(v, L, "tv (4) the rule off", 0, r"test: host_rule: party_travel_vote 1 -> 0")
+    if off:
+        need(v, L, "tv (4) rule off: the host's party travel runs at once", 0, r"lamp 2402950 \(host\): YES -> travel with the party", off)
+        none_of(v, L, "tv (4) rule off: no vote", r"Party vote: round 4", off, off + 15, (0, 1))
+        need(v, L, "tv (4) rule off: the guest follows to m24_00", 1, r"map .*-> m24_00", off)
+    # (5) a guest's travel: the host votes
+    g5 = need(v, L, "tv (5) the guest's request becomes a vote", 0,
+              r"Party vote: round 4: a guest's lamp / headstone: .* wants the party to travel to lamp 2412953; asking 1")
+    need(v, L, "tv (5) the starter waits", 1, r"Party vote: round 4: the party votes on this player's travel")
+    need(v, L, "tv (5) the host gets the question", 0, r"Party vote: round 4: question open")
+    need(v, L, "tv (5) the host's YES: the party travels", 0, r"Party vote: round 4 over \(.*go\): lamp 2412953 -> the party travels")
+    if g5:
+        need(v, L, "tv (5) the party back in m24_01", 1, r"map .*-> m24_01", g5)
+    check_common(v, L, "tv")
 
 
 # Phase el (liftfall / liftfix, ~3 min, 2 players, group `elevator`): the Nightmare of Mensis' library
@@ -1189,9 +1266,17 @@ def phase_kw(only):
 # EMEVD runs): the host enters alone, guest 1 is summoned back into the dungeon (a forced trip: home
 # by itself, then the summon). (6) Guest 1 CHOOSES to leave: its lamp to the Dream answered "alone"
 # (user decision, option b): it stays out (the notice, no send-home) until (7) Party > Rejoin, which
-# takes it home first and the summon brings it into the dungeon again.
+# takes it home first and the summon brings it into the dungeon again. (8) Guest 1 starts from
+# chalice_hintertomb_ritual (its own Hintertomb dungeon in slot 1, a different ChannelId): in the
+# host's dungeon its game's current dungeon (FrpgNetMan +0xa88, what its signs and messages carry)
+# is the host's, never its own; then it leaves, and the altar's awaken warp takes it into its own
+# dungeon (its own ChannelId again). Its save keeps its own slot-1 dungeon (checked by the smoke).
 CL_FIXTURE = Path(r"E:\games\bbport\test_saves\chalice_pthumeru_inside\savedata")
 CL_DEFAULT = Path(r"E:\games\bbport\test_saves\savedata")
+CL_GUEST_FIXTURE = Path(r"E:\games\bbport\test_saves\chalice_hintertomb_ritual\savedata")
+CL_HOST_CH = "0x3f22b458bd799"   # the host's Pthumeru dungeon (fixture slot 1)
+CL_GUEST_CH = "0xdb68ed64129b"   # guest 1's own Hintertomb dungeon (fixture slot 1)
+CL_OWN_ENTRY = "2902950"         # the altar's first awaken point (the current slot's dungeon)
 CL_LAMP_OBJ = "2901952"   # the layer 1 boss room's lamp object (its return point 2902952)
 CL_LAMP = "2902952"
 CL_UNTIL = r"0:travel step (\d+)/\1: "  # the host's last step (back in the dungeon, guest 1 summoned)
@@ -1199,9 +1284,9 @@ CL_UNTIL_G = r"1:travel step (\d+)/\1: "  # guest 1's last step (back in the dun
 CL_DREAM = "2102954"  # the Dream's altar spot a dungeon lamp's "Return to the Hunter's Dream" warps to (slot 0)
 
 
-def _cl_saves(root: Path, src: Path):
-    """inst0's test save (instances.py copies it to savedata_party with --fresh-saves)."""
-    dst = root / "inst0" / "user" / "savedata"
+def _cl_saves(root: Path, src: Path, inst: int = 0):
+    """inst<inst>'s test save (instances.py copies it to savedata_party with --fresh-saves)."""
+    dst = root / ("inst%d" % inst) / "user" / "savedata"
     if dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -1213,10 +1298,14 @@ def prep_chalamp(root: Path):
         sys.exit("chalamp: the fixture %s is missing (docs/party/test_saves.md)" % CL_FIXTURE)
     _cl_saves(root, CL_FIXTURE)
     print("[smoke] chalamp: inst0 starts from %s" % CL_FIXTURE, flush=True)
+    if CL_GUEST_FIXTURE.is_dir():
+        _cl_saves(root, CL_GUEST_FIXTURE, 1)
+        print("[smoke] chalamp: inst1 starts from %s" % CL_GUEST_FIXTURE, flush=True)
 
 
 def post_chalamp(root: Path):
     _cl_saves(root, CL_DEFAULT)  # the other phases' host starts from the default save again
+    _cl_saves(root, CL_DEFAULT, 1)
 
 
 def _cl_lamp_use():
@@ -1240,14 +1329,17 @@ def phase_cl(only):
     g1 = ",".join(["guest_die@25%m29",
                    "guest_lamp=%s@15#2%%m29" % CL_DREAM,          # (6) back in (join 2): alone to the Dream
                    "guest_rejoin:now@25%m21",                     # (7) stayed out 25 s: Party > Rejoin
-                   "guest_press=0@10%m29!"])                      # summoned into the dungeon: the end
+                   "guest_press=0@10%m29!",                       # summoned into the dungeon
+                   "guest_leave@3%m29",                           # (8) home, then into its own dungeon
+                   "guest_lamp=%s@15%%m21&" % CL_OWN_ENTRY,      # "&": out of the party, its own world
+                   "guest_press=0@15%m29!&"])                     # in its own dungeon: the end
     watch = []
     for rx, tag in ((r"lamp spot: Chalice Dungeon lamp", "lit"), (r"up again beside the nearest living member", "gup"),
                     (r"host revive #\d+: after", "hrev"), (r"Chalice Dungeon lamp: answered 0", "lamp"),
                     (r"map .* -> m21_00", "dream"), (r"travel step \d+/\d+: host_lamp", "back")):
         watch += ["--watch", "%s=%s@1,4" % (rx, tag)]
     return dict(
-        name="cl", seconds=330, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
+        name="cl", seconds=420, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
         env=["BB_PARTY_TRAVEL_CHOICE=party"],
         watch=watch,
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
@@ -1643,14 +1735,14 @@ def phase_cv(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "nf": phase_nf}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "tv": phase_tv, "nf": phase_nf}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "npc_fights": "nf"}
+          "valtr_rune": "cv", "travel_vote": "tv", "npc_fights": "nf"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1661,7 +1753,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "npc_fights": r"^nf "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "travel_vote": r"^tv ", "npc_fights": r"^nf "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1715,6 +1807,7 @@ GROUP_UNTIL = {
     "npc_fights": [NF_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
+    "travel_vote": TV_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -2201,8 +2294,9 @@ def check_rules(v, L):
     # 0.7.1: the guest's Shared world page shows the host's rules (read-only lines, the host's values)
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
     v.step("rules guest: sees the host's Shared world rules (read-only)",
-           sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1],
-           sw[1][:200] if sw else "no Shared world rows line on the guest")
+           sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
+           and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
+           sw[1][:250] if sw else "no Shared world rows line on the guest")
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
     for i, who in ((0, "host"), (1, "guest")):
         need(v, L, "rules %s: 0.7.1 bbport.ini migrated (rot off once)" % who, i,
@@ -3255,6 +3349,23 @@ def check_cl(v, L):
                     if press:
                         need(v, L, "cl Rejoin: home first", 1, r"chalice: Party > Rejoin while apart", press - 1)
                         need(v, L, "cl guest 1 back in the dungeon after Rejoin", 1, r"map .* -> m29_00", press)
+    # (8) Guest 1's current dungeon (FrpgNetMan +0xa88) in the host's dungeon: the host's, never its own.
+    first = need(v, L, "cl join: guest 1 summoned into the dungeon (for +0xa88)", 1, r"map .* -> m29_00")
+    if first and CL_GUEST_FIXTURE.is_dir():
+        need(v, L, "cl guest 1's current dungeon is the host's (+0xa88 retargeted)", 1,
+             r"chalice: in the host's dungeon: the game's current dungeon \(FrpgNetMan \+0xa88\) is the quick-joined slot 0",
+             first - 5)
+        need(v, L, "cl guest 1's +0xa88 holds the host's dungeon", 1,
+             r"chalice: FrpgNetMan ChannelId %s .*the host's dungeon" % CL_HOST_CH, first - 5)
+        none_of(v, L, "cl guest 1's +0xa88 never its own dungeon in the host's",
+                r"chalice: FrpgNetMan ChannelId .*NOT the host's dungeon", 0, 1e9, (1,))
+        left = need(v, L, "cl guest 1 left (Party > Leave)", 1, r"guest_leave: Party > Leave pressed", first)
+        if left:
+            own = need(v, L, "cl guest 1 into its own dungeon from the altar", 1, r"travel step \d+/\d+: guest_lamp",
+                       left)
+            if own:
+                need(v, L, "cl guest 1 in its own dungeon (m29)", 1, r"map .* -> m29_00", own)
+                need(v, L, "cl guest 1's +0xa88 its own dungeon again", 1, r"chalice: FrpgNetMan ChannelId %s " % CL_GUEST_CH, own)
     # A re-summon into the dungeon whose layer boss is dead never pays it again (cl6 / cl8: PREY
     # SLAUGHTERED, +1995 echoes and +1 Insight at every re-summon).
     none_of(v, L, "cl no second paid kill of 2900100 after a re-summon",
@@ -3700,7 +3811,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "nf": lambda v, L, d: check_nf(v, L),
-          "rt": lambda v, L, d: check_rt(v, L)}
+          "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L)}
 
 
 def main():
@@ -3709,7 +3820,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,cv")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,lf,ld,mk,kd,kw,fl,fdj,cl,el,lt,ch,rh,rs,bf,lp,rt,br,sm,da,cv,tv")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -3725,7 +3836,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "nf", "rh", "rs")
+                                     "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
