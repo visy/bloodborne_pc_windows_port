@@ -36,6 +36,7 @@
 #include "party_status.h"
 #include "party_guestvals_rules.h"
 #include "party_glow_rules.h"
+#include "party_stay_rules.h"
 #include "party_remote_show_rules.h"
 #include "party_ping.h"
 #include "party_flow.h"
@@ -451,6 +452,11 @@ std::atomic<bool> g_title_home_now{false};
 std::atomic<bool> g_chalice_bail{false};  // the guest left a host's dungeon it loaded without the dungeon
 std::atomic<bool> g_chalice_chosen{false};  // this guest's own choice took it away (NoteChosenApart)
 
+// Guest: when split travel last dropped OnLeave_Limit's send-home (the host travelled alone / is
+// apart). The Lua state that led there left the action-button hold on (party_stay_rules.h);
+// StayActionHoldTick lifts it until the next load. 0 = no.
+std::atomic<double> g_apart_hold_at{0};
+
 bool SendHomeVeto(u64 site) {
     const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
     // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
@@ -473,6 +479,7 @@ bool SendHomeVeto(u64 site) {
             Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
             double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)),
             g_title_joined.load() ? "; a title-joined guest" : "");
+        g_apart_hold_at = Now();  // the leave state's action-button hold has no load to end it now
         return true;
     }
     // A title-joined guest has no own-world return data (no snapshot: its own world was never
@@ -661,7 +668,7 @@ void HostDeadLockTick(const GameSnapshot& s, double now) {
 // ended the guest's session although its own leave was dropped), so both are kept.
 std::atomic<double> g_k10_at{0};  // when K10 last kept the party (BossClearInvincibleTick)
 std::atomic<bool> g_k10_this_load{false};  // K10 ran since the last load (DeadAfterClearTick)
-std::atomic<double> g_k10_hold_at{0};  // guest: K10 ran in this session (K10ActionHoldTick; 0 = no)
+std::atomic<double> g_k10_hold_at{0};  // guest: K10 ran in this session (StayActionHoldTick; 0 = no)
 BB_COOP_SYSV u64 BossClearLeaveHook(u64 session) {
     const int role = Role();
     if (g_on.load() && (role == RoleClient || role == RoleHost)) {
@@ -3932,33 +3939,62 @@ void K10ProbeTick(const GameSnapshot& s, double now) {
 /// write of 0 to +0x52 alone was back to 1 the next frame; pard3 lifted it only while the boss
 /// reward's item box was up). Once K10 kept the party, the flag and the hold are cleared. BB_PARTY_K10_HOLD=keep: the old behaviour; BB_PARTY_K10_HOLD_DELAY=S (test aid):
 /// lift it S s after the K10 instead of at once (an A/B in one run).
+/// Generalised in 0.7.2 (party_stay_rules.h): the same hold is left on by the leave states
+/// OnRoomDisappeared / OnIrregularLeaveSession_1 when the host travels alone (split travel drops
+/// their send-home), which locked a guest left in the host's Hunter's Dream out of every headstone.
+/// That lift lasts until the guest's next load.
 bool K10HoldLifted() {
-    return g_k10_hold_at.load() > 0 && Role() == RoleClient;
+    return Role() == RoleClient && (g_k10_hold_at.load() > 0 || g_apart_hold_at.load() > 0);
 }
-void K10ActionHoldTick(const GameSnapshot& s, double now) {
+void StayActionHoldTick(const GameSnapshot& s, double now) {
     static const bool keep = std::getenv("BB_PARTY_K10_HOLD") && std::strcmp(std::getenv("BB_PARTY_K10_HOLD"), "keep") == 0;
     static const double delay = std::getenv("BB_PARTY_K10_HOLD_DELAY") ? std::atof(std::getenv("BB_PARTY_K10_HOLD_DELAY")) : 0.0;
-    static double logged_for = 0;
-    const double at = g_k10_hold_at.load();
-    if (at > 0 && (!g_on.load() || Role() != RoleClient)) {
-        g_k10_hold_at = 0;  // the session ended: a new one starts without the lift
-        return;
-    }
-    if (keep || at <= 0 || now - at < delay || !s.world_up || s.loading || !s.player) {
-        return;
-    }
+    static double logged_for[2] = {0, 0};
     const u64 man = Slot(0x5540048), ctx = Field<u64>(Slot(0x553b0c8), 8);
-    const u8 wait = ctx ? Field<u8>(ctx, 0x8d) : 0, hold = man ? Field<u8>(man, 0x52) : 0;
-    if (wait != 1 && hold != 1) {
-        return;
-    }
-    const u8 zero = 0;
-    if (wait == 1) SafeWrite(ctx + 0x8d, &zero, 1);
-    if (hold == 1) SafeWrite(man + 0x52, &zero, 1);
-    if (logged_for != at) {
-        logged_for = at;
-        Log("K10: the boss-clear action-button hold lifted %.1f s after the clear (Lua load wait +0x8d %u, hold +0x52 "
-            "%u -> 0; the party stays: lamps, NPCs and pickups work again)", now - at, unsigned(wait), unsigned(hold));
+    const int wait = ctx ? int(Field<u8>(ctx, 0x8d)) : -1, hold = man ? int(Field<u8>(man, 0x52)) : -1;
+    const bool guest = g_on.load() && Role() == RoleClient;
+    const struct {
+        stayrules::Keep kept;
+        std::atomic<double>* at;
+    } keeps[2] = {{stayrules::Keep::BossClear, &g_k10_hold_at}, {stayrules::Keep::HostApart, &g_apart_hold_at}};
+    for (int i = 0; i < 2; ++i) {
+        const double at = keeps[i].at->load();
+        stayrules::HoldView v;
+        v.party_guest = guest;
+        v.kept = at > 0 ? keeps[i].kept : stayrules::Keep::None;
+        v.since_kept = now - at;
+        if (v.kept == stayrules::Keep::BossClear) {
+            v.delay = delay;
+            v.keep_env = keep;
+        }
+        v.world_up = s.world_up;
+        v.loading = s.loading;
+        v.player = s.player != 0;
+        v.load_wait = wait;
+        v.hold = hold;
+        const stayrules::HoldAction a = stayrules::PlanActionHold(v);
+        if (a == stayrules::HoldAction::End) {
+            *keeps[i].at = 0;  // the session ended / a load: a new one starts without the lift
+            continue;
+        }
+        if (a != stayrules::HoldAction::Lift) {
+            continue;
+        }
+        const u8 zero = 0;
+        const int w = Field<u8>(ctx, 0x8d), h = Field<u8>(man, 0x52);  // the other keep may have lifted it
+        if (w == 1) SafeWrite(ctx + 0x8d, &zero, 1);
+        if (h == 1) SafeWrite(man + 0x52, &zero, 1);
+        if (logged_for[i] != at) {
+            logged_for[i] = at;
+            if (v.kept == stayrules::Keep::BossClear) {
+                Log("K10: the boss-clear action-button hold lifted %.1f s after the clear (Lua load wait +0x8d %d, hold +0x52 "
+                    "%d -> 0; the party stays: lamps, NPCs and pickups work again)", now - at, wait, hold);
+            } else {
+                Log("guest: the leave state's action-button hold lifted %.1f s after its send-home was dropped (%s; Lua load "
+                    "wait +0x8d %d, hold +0x52 %d -> 0): headstones, lamps, NPCs and pickups work here until the next load",
+                    now - at, stayrules::KeepName(v.kept), wait, hold);
+            }
+        }
     }
 }
 
@@ -10845,7 +10881,7 @@ void Tick(const GameSnapshot& s) {
     BossClearInvincibleTick(s, now);
     DeadAfterClearTick(s, now);
     K10ProbeTick(s, now);
-    K10ActionHoldTick(s, now);
+    StayActionHoldTick(s, now);
     LocalDeathHeightTick(s, now);
     ReviveDiffTick(s, now);
     {

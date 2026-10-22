@@ -71,6 +71,10 @@ Phase br (~6 min, 2 players, group `boss_rooms`, the DLC of the default save): t
   through his fog and back in, no fight starts; the skull given to the host there starts it
   (scene, bar on both), Laurence killed; then Ludwig killed and host and guest each walk through
   the wall at the back of his arena and back (party_bossfog_rules.h, 2026-10-22 reports).
+Phase da (~3 min, 2 players, group `dream_apart`): host and guest in the host's Hunter's Dream; the
+  host leaves alone by a headstone; the guest left behind must get its action buttons back (the
+  leave state's hold lifted) and use a headstone itself: its menu opens, it travels and arrives
+  (party_stay_rules.h, a player's report: the guest was stuck in the Dream).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -1360,14 +1364,44 @@ def phase_sm(only):
     )
 
 
+# Phase da (dreamstone, ~3 min, 2 players, group `dream_apart`; a player's report: when the host
+# left the Hunter's Dream alone the guest could not use any headstone and was stuck there). The host
+# starts in its Dream (start lamp 2102950), the guest is summoned in; the host uses headstone t210000
+# and travels alone (1st Floor Sickroom). The guest's game runs its leave state (the load-wait /
+# action-button hold), split travel drops its send-home, and the hold must be lifted; 10 s after the
+# host is in another area the guest uses headstone t210000 itself, travels alone and arrives (the
+# same lamp as the host's: a re-join into the host's area).
+# (after the host's alone travel: the guest's start-of-run re-join into the Dream is a "travels alone (lamp)")
+# Also ends on a failure: the fixture's FAILED (no prompt / no menu), a travel refused or closed.
+DA_UNTIL = [r"1:the host travels alone[\s\S]*(guest: travels alone \(headstone\)[\s\S]*(arrived in the host world|map - -> m2[2-9])"
+            r"|test: levelup: FAILED|travel alone \(headstone\) refused|travelling alone is not possible|nothing runs"
+            r"|the question is closed|no party request possible)"]
+
+
+def phase_da(only):
+    return dict(
+        name="da", seconds=240, count=2, headless=0,
+        env=["BB_PARTY_GUEST_LAMPS=1"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=god",
+              "0:BB_PARTY_GUESTSVC_TEST=hostheadstone;hsdelay=12;keys=cross,cross,left,cross,cross",
+              "0:BB_PARTY_TRAVEL_CHOICE=alone", "1:BB_PARTY_DIRECTOR_TEST=god",
+              "1:BB_PARTY_GUESTSVC_TEST=guestheadstone;needprompt;hsapart;hsdelay=10;keys=cross,cross,cross,cross",
+              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        watch=["--watch", r"test: levelup: before Cross=daprompt@0.2,1",
+               "--watch", r"test: levelup: no talk list: the menu was requested=dahs@0.5,2",
+               "--watch", r"the host travels alone=dahost@1,8"],
+        crash=[], until=DA_UNTIL, until_hold=10,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
-          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm"}
+          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1376,7 +1410,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
-              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm "}
+              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1425,6 +1459,7 @@ GROUP_UNTIL = {
     "rot": [RT_UNTIL],
     "boss_rooms": BR_UNTIL,
     "scene_mirror": [SM_UNTIL],
+    "dream_apart": DA_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -3101,13 +3136,41 @@ def check_sm(v, L):
     check_common(v, L, "sm")
 
 
+def check_da(v, L):
+    need(v, L, "da join: 2 players", 0, r"cooperators 0 -> 1")
+    left = need(v, L, "da host leaves the Dream alone", 1, r"guest: the host travels alone \(.*\); staying here")
+    if left is None:
+        check_common(v, L, "da")
+        return
+    need(v, L, "da guest's send-home dropped (split)", 1, r"\(OnLeave_Limit\) dropped: split travel", left)
+    lift = need(v, L, "da guest's action-button hold lifted", 1, r"the leave state's action-button hold lifted", left)
+    hs = need(v, L, "da guest uses a headstone (fixture started)", 1, r"test: guest headstone: starting", left)
+    pr = L.find(1, r"test: levelup: before Cross", hs or left)
+    v.step("da (info) headstone prompt: see the daprompt screenshots", True,
+           pr[1][:150] if pr else "no 'before Cross' line")
+    need(v, L, "da guest's Cross opens the headstone's travel list", 1,
+         r"test: levelup: no talk list: the menu was requested", hs or left)
+    flag = need(v, L, "da guest's headstone choice (its lamp flag)", 1,
+                r"lamp flag \d+ set by this game|lamp \d+ \(guest\): (held for the choice|BB_PARTY_TRAVEL_CHOICE)",
+                hs or left)
+    fb = L.find(1, r"no warp followed", flag or left)
+    v.step("da (info) the host's destination: warp run by the used-up-event fallback", True,
+           fb[1][:150] if fb else "no fallback line (the event warped itself)")
+    go = need(v, L, "da guest travels from the Dream", 1, r"guest: travels alone \(headstone\)", flag or left)
+    if go is not None:
+        need(v, L, "da guest arrives (not stuck in the Dream)", 1, r"arrived in the host world|map - -> m2[2-9]", go)
+    if lift is not None and hs is not None:
+        v.step("da hold lifted before the guest's headstone use", lift <= hs, "lift +%.1f s, use +%.1f s" % (lift, hs))
+    check_common(v, L, "da")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L),
           "rt": lambda v, L, d: check_rt(v, L)}
 
 
@@ -3133,7 +3196,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm")
+                                     "lp", "rt", "br", "sm", "da")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

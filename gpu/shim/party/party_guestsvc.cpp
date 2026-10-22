@@ -631,6 +631,8 @@ bool GuestRestRequestNow(std::uint32_t id) {
     return true;
 }
 
+void LogButtons();  // the registration probe (below)
+
 namespace {
 
 // Diagnostics (BB_PARTY_GUESTSVC_TEST "probe"): the character with `entity` the way the talk
@@ -907,6 +909,11 @@ struct LevelUpScript {
     int tries = 0, level0 = -1, echoes0 = -1;
     std::uint64_t seq0 = 0;
 } g_lvl;
+// The registration probe's last talk-type (13) button (diagnostics: a headstone's prompt never
+// showed as an action-button text or a type-13 registration in the da runs).
+std::atomic<double> g_talk_btn_at{0};
+std::atomic<int> g_talk_btn_id{0};
+std::atomic<std::uint64_t> g_btn_man{0};  // SprjActionButtonMan as the registration probe saw it
 
 constexpr std::uint32_t kPadCross = 0x4000, kPadCircle = 0x2000, kPadRight = 0x20, kPadLeft = 0x80, kPadUp = 0x10,
                         kPadDown = 0x40;
@@ -962,6 +969,7 @@ void Tap(std::uint32_t buttons, double now) {
     g_lvl.press_until = now + 0.12;
 }
 
+
 void LevelUpTick(const GameSnapshot& s, double now) {
     LevelUpScript& L = g_lvl;
     if (L.stage == LevelUpScript::Off || L.stage == LevelUpScript::Done) {
@@ -991,7 +999,23 @@ void LevelUpTick(const GameSnapshot& s, double now) {
         }
         if (L.approach > 0) {
             std::uint32_t prompt = 0;
-            const bool up = PromptUp(&prompt);
+            bool up = PromptUp(&prompt);
+            if (g.test.find("needprompt") != std::string::npos && L.tries == 0) {
+                // "needprompt" (headstone fixtures): the prompt's proof is a screenshot (the smoke's
+                // watch on this line), 1.5 s before Cross; the registrations seen meanwhile are logged.
+                if (since < 1.5) {
+                    break;
+                }
+                L.tries = 1;
+                LogButtons();
+                Log("test: levelup: before Cross at %.2f m (prompt screenshot; text %s)", dists[L.approach - 1],
+                    up ? std::to_string(prompt).c_str() : "not seen");
+                L.at = now;
+                break;
+            }
+            if (g.test.find("needprompt") != std::string::npos && since < 1.5) {
+                break;
+            }
             L.requests0 = g_menu_requests.load();
             Tap(kPadCross, now);
             Log("test: levelup: at %.2f m: action prompt %s%s; Cross", dists[L.approach - 1], up ? "text " : "not seen",
@@ -1447,7 +1471,7 @@ void GuestServicesInit() {
         return;
     }
     SetEmevdRewriter2(&DollRewriter);
-    if (g.test.find("buttonprobe") != std::string::npos) {
+    if (g.test.find("buttonprobe") != std::string::npos || g.test.find("needprompt") != std::string::npos) {
         HookPrologue(0x1CD91F0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
                                  0xec, 0x58},
                      &ButtonEntry, "action-button registration (test probe)");
@@ -1860,9 +1884,12 @@ BB_COOP_SYSV void TalkManEntry(u64 man, u64, u64, u64, u64, u64) {
 // calls it each frame for each button in range), distinct (type, id) with counts.
 std::mutex g_btn_mu;
 std::map<std::uint64_t, std::uint32_t> g_btn_seen;
-std::atomic<std::uint64_t> g_btn_man{0};
 BB_COOP_SYSV void ButtonEntry(u64 man, u64 type, u64 id, u64 p5, u64 p6, u64 p7) {
     g_btn_man.store(man, std::memory_order_relaxed);
+    if ((type & 0xffu) == 13) {
+        g_talk_btn_at.store(Now(), std::memory_order_relaxed);
+        g_talk_btn_id.store(int(id & 0xffffffffu), std::memory_order_relaxed);
+    }
     std::lock_guard<std::mutex> lk(g_btn_mu);
     if (g_btn_seen.size() < 256) {
         // key: type (8 bits) | p5 | p6 | p7 flags | id
@@ -2576,7 +2603,12 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
                                           g.test.find("hosttalk=") != std::string::npos
                                     ? 3
                                     : -1;
-        if (!started && role >= 0 && s.session_role == role &&
+        // "hsapart" (guestheadstone): the delay counts from the moment the host is in another area
+        // (a guest left in the Dream by the host's alone travel, party_stay_rules.h).
+        static const bool apart_only = g.test.find("hsapart") != std::string::npos;
+        if (!started && apart_only && !b2::MemberApart(0)) {
+            coop_at = 0;
+        } else if (!started && role >= 0 && s.session_role == role &&
             IsDreamMap(s.map_id) && s.world_up && !s.loading && (role != 3 || s.cooperators >= 1)) {
             if (coop_at == 0) {
                 coop_at = Now();

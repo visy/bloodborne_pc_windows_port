@@ -619,6 +619,11 @@ add_executable(party-lift-rules-test EXCLUDE_FROM_ALL ../tests/test_party_lift_r
 target_compile_options(party-lift-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-lift-rules-test PRIVATE shim)
 set_target_properties(party-lift-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# A guest the party keeps where it stands (party_stay_rules.h). ninja -C out/gpu party-stay-rules-test
+add_executable(party-stay-rules-test EXCLUDE_FROM_ALL ../tests/test_party_stay_rules.cpp)
+target_compile_options(party-stay-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-stay-rules-test PRIVATE shim)
+set_target_properties(party-stay-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # A party member's own values (party_guestvals_rules.h). ninja -C out/gpu party-guestvals-test
 add_executable(party-guestvals-test EXCLUDE_FROM_ALL ../tests/test_party_guestvals.cpp)
 target_compile_options(party-guestvals-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
