@@ -422,7 +422,7 @@ class PartyRules071Settings(unittest.TestCase):
         src = Path(self.L.__file__).read_text(encoding="utf-8")
         for key in self.KEYS:
             self.assertIn('var["%s"]' % key, src)
-        self.assertIn('section(3, 0, "Shared world (host)")', src)
+        self.assertIn('section(3, 0, "Shared world (when you host)")', src)
 
 
 class CovenantRuleSetting(unittest.TestCase):

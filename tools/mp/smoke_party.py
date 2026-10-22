@@ -366,7 +366,7 @@ RULES_PAGES = [
       '"friendly_fire":true')),
     # 0.7.1: the host's world rules (switches that had only an env variable before)
     ("Shared world", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
-                      "Party votes on travel"],
+                      "Party votes on travel", "NPC hunters fight all"],
      ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
       '"kill_record":false')),
     ("Story & dialogue", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
@@ -2403,6 +2403,14 @@ def check_rules(v, L):
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
            and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
            sw[1][:250] if sw else "no Shared world rows line on the guest")
+    # guestrules (0.7.3): the enemy scaling is the host's: read-only lines with the host's values on
+    # the guest ("150 %", the host's default), no slider position (a host's row shows "5")
+    es = L.find(1, r"Game menu: page \d+ rows \(\d+\): Boss health=")
+    v.step("rules guest: sees the host's Enemy scaling (read-only values)",
+           bool(es) and "Boss health=150 %" in es[1] and "Boss damage=+10 %" in es[1],
+           es[1][:250] if es else "no Enemy scaling rows line on the guest")
+    none_of(v, L, "rules guest: never writes the host's scaling to its bbport.ini",
+            r"Settings: bbport.ini party_(boss|enemy)_", insts=(1,))
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
     for i, who in ((0, "host"), (1, "guest")):
         need(v, L, "rules %s: 0.7.1 bbport.ini migrated (rot off once)" % who, i,
