@@ -441,6 +441,7 @@ struct State {
     bool start_prologue = false;
     bool left_first_dream = false; // seen out of the Dream with both weapons (party_start.h)
     bool granted = false; // bells granted (or found owned) in this world
+    bool weapons_checked = false; // StartWeaponFlagsToClear ran in this world (own world only)
     Clock::time_point last_hosting{}; // host: when its session role last was host (3): travel audience
     // Title "Continue" (AutoContinue).
     bool continue_done = false, continue_held = false;
@@ -729,10 +730,27 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
     }
     if (in_world) {
         TestPrologueTick(s);
+        if (!st.weapons_checked && progress::FlagLoadMode() == 0 &&
+            (s.session_role == RoleIdle || s.session_role == RoleHost)) {
+            // Only the own save in view (load mode 0): leaving a host's world, the overlay is still
+            // loaded for a moment (session role 7) and a write there is gone after the home load.
+            // 0.7.3: a starting weapon pick synced in from another player's save (12101020 / 21
+            // were npc_quest before): done without a pick of its own hides this player's
+            // messengers for good. Cleared in the own save, the messengers offer the weapons at
+            // the next Dream load.
+            st.weapons_checked = true;
+            for (const std::uint32_t id : StartWeaponFlagsToClear(&ReadEventFlag)) {
+                const bool ok = WriteEventFlag(id, false);
+                Log("start: starting weapon flag %u was set without a pick of this player's own (another "
+                    "player's pick, synced by an older build): %s; the Dream's messengers offer the weapon again",
+                    id, ok ? "cleared" : "NOT cleared");
+            }
+        }
         st.cs = ReadStartFlags();
     } else if (!s.world_up) {
         st.cs = StartFlags{};
         st.granted = false;
+        st.weapons_checked = false;
         if (!s.loading) {
             st.left_first_dream = false;  // the title: another save may come next
             st.start_prologue = false;

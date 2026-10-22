@@ -179,6 +179,8 @@ bool DollLevelUpCharTypeTest(int event_id, int bank, int id, int entity, int typ
 /// are dropped: each game animates them from its own player's talk. The Insight messenger's
 /// 12105043 is not one: it ends on a client (1003[101]) and the host's copy drives every game's
 /// (one rise when the host opens the shop, one sink when it closes; its talk clears 12105044).
+/// 0.7.3: also the gift messengers' events 12101020-12101028 (starting weapons, Notebook, bells, Eye):
+/// another game's end of its copy ended this game's (the host's messengers sank on a guest's pick).
 bool PerPlayerMessengerEvent(std::uint32_t event_id);
 
 /// The local character's record (PlayerGameData +0x90 level, +0x94 echoes, +0x84 Insight).
