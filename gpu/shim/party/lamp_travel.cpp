@@ -174,6 +174,31 @@ bool Flag(u32 id) {
     return ReadEventFlag(id, &v) && v;
 }
 
+/// The entry's name as the warp menu shows it (the game's EventText of its name flag), UTF-8.
+std::string EntryName(u32 name_flag) {
+    std::string out;
+    const char16_t* t = name_flag ? BbGameMenu::GameText(30, name_flag) : nullptr;
+    for (; t && *t && out.size() < 48; ++t) {
+        const u32 c = *t;
+        if (c < 0x80) {
+            out += c == '\n' ? ' ' : char(c);
+        } else if (c < 0x800) {
+            out += char(0xc0 | (c >> 6)), out += char(0x80 | (c & 0x3f));
+        } else if (c < 0xd800 || c > 0xdfff) {
+            out += char(0xe0 | (c >> 12)), out += char(0x80 | ((c >> 6) & 0x3f)), out += char(0x80 | (c & 0x3f));
+        }
+    }
+    return out.empty() ? "?" : out;
+}
+
+/// The name flag of the entry that travels to `rp` in `list` (0: none).
+u32 NameFlagOf(const std::vector<Entry>& list, u32 rp) {
+    for (const Entry& e : list) {
+        if (e.return_point == rp) return e.name_flag;
+    }
+    return 0;
+}
+
 const char* GroupName(std::uint8_t g) {
     switch (g) {
     case Dream: return "Dream";
@@ -267,6 +292,23 @@ bool TryOpen(u64 orig_ctx, u64 a2, u64 a3, u64 a4, u64 a5) {
     }
     Log("lamp %u (%s): the warp menu instead of the Dream question; %zu entries: %s (menu bits now 0x%x)", here,
         MapName(s.map_id).c_str(), n, names.c_str(), MenuFlags());
+    if (g_t_on.load(std::memory_order_relaxed)) {
+        // Test diagnostics: each entry's shown name next to where it travels (the names of the
+        // Cathedral Ward / Grand Cathedral lamps, 0.7.3), a few per line.
+        std::lock_guard<std::mutex> lk(g_mu);
+        std::string line;
+        for (std::size_t i = 0; i < g_p.list.size(); ++i) {
+            const Entry& e = g_p.list[i];
+            char b[96];
+            std::snprintf(b, sizeof b, "%s%u=%u \"%s\"", line.empty() ? "" : ", ", e.index, e.return_point,
+                          EntryName(e.name_flag).c_str());
+            line += b;
+            if ((i + 1) % 8 == 0 || i + 1 == g_p.list.size()) {
+                Log("test: warp menu names: %s", line.c_str());
+                line.clear();
+            }
+        }
+    }
     return true;
 }
 
@@ -870,7 +912,8 @@ void Tick() {
             SafeWrite(mm + 0xec0, &zero, 4);
             g_p.chosen = Chosen(g_p.list, static_cast<u32>(r));
             g_p.chosen_at = now;
-            Log("warp menu: entry %d chosen -> lamp %u", r, g_p.chosen);
+            Log("warp menu: entry %d chosen -> lamp %u (\"%s\")", r, g_p.chosen,
+                EntryName(NameFlagOf(g_p.list, g_p.chosen)).c_str());
             if (!g_p.chosen) {
                 g_p = Pending{};
                 return;

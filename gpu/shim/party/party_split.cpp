@@ -15,6 +15,7 @@
 #include "party_status.h"
 #include "party_stay_rules.h"
 #include "party_travel.h"
+#include "party_vote.h"
 #include "../bbport_game_menu_pages.h"
 
 #include <atomic>
@@ -91,6 +92,7 @@ struct Pending {
     double free_since = -1;  // Queued: since when no dialog / menu is up (the settle before opening)
     double test_at = 0;
     bool after_scene = false;  // a story warp: ask once its cutscene is over (kAskAfterSceneDelay)
+    bool voted = false;  // 0.7.3: the party's vote is over (party_vote): the party move itself
 };
 std::mutex g_mu;
 std::atomic<double> g_story_at{-1};  // NoteStoryWarp
@@ -271,6 +273,17 @@ void Carry(const Pending& p, bool alone, const char* how) {
         // The guest's own choice to go (option b): while the host is in a Chalice Dungeon it stays out
         // until Party > Rejoin, instead of being sent home for the summon.
         b2::NoteChosenApart(p.mark ? "its own Hunter's Mark, alone" : "a lamp / headstone, alone");
+    }
+    if (p.host && !alone && !p.voted && !p.after_scene) {
+        // 0.7.3 lamp travel voting (party_vote.h): with the host's rule on the party travels only
+        // once every member said YES; the vote runs the party move below (nothing on a NO). Not
+        // for a story warp (its scene's own move, after_scene).
+        Pending q = p;
+        q.voted = true;
+        if (vote::HostBegin(p.id, 0, [q] { Carry(q, false, "everyone voted YES"); },
+                            p.mark ? "the host's Hunter's Mark" : "the host's lamp / headstone")) {
+            return;
+        }
     }
     if (p.host) {
         // Inside the loaded map: no load for anyone (the chr warp; guests of this map beside).

@@ -160,6 +160,8 @@ PARTY_INI_SWITCHES = [
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
+    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Shared world)
+    ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
 try:
@@ -3283,6 +3285,11 @@ class BloodborneLauncher(tk.Tk):
                     "An NPC that is gone from the host's world (moved on by a story event, such as the one "
                     "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
                     "Default: on (bbport.ini party_npc_mirror; in the game: System > Shared world).", command=save)
+        self._check(sec, "Party votes on travel", var["party_travel_vote"],
+                    "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
+                    "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
+                    "and everyone is told who said no or did not answer. The host's setting; guests see it. "
+                    "Default: off (bbport.ini party_travel_vote; in the game: System > Shared world).", command=save)
 
         # 0.7.2: rot, the host's rules (System > Rot)
         sec = section(4, 0, "Rot on death (host)")

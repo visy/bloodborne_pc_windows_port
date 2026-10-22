@@ -32,6 +32,7 @@
 #include "party_guestsvc.h"
 #include "party_split.h"
 #include "party_gather.h"
+#include "party_vote.h"
 #include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
@@ -4492,6 +4493,7 @@ void PartyDirector::Tick() {
     split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
     if (role != PartyRole::None) {
         gather::Tick(s, link, role == PartyRole::Host);  // I5 Gather the party (party_gather.h)
+        vote::Tick(s, link, role == PartyRole::Host);    // 0.7.3 lamp travel voting (party_vote.h)
     }
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press

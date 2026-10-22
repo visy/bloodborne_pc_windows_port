@@ -70,6 +70,9 @@ struct Rules {
     bool kill_record = true;
     bool npc_mirror = true;
     bool gather = true;
+    /// 0.7.3 lamp travel voting (party_vote.h): every member votes on a party travel. The host's;
+    /// off by default (a host from before it sends none: off).
+    bool travel_vote = false;
     bool operator==(const Rules& o) const;
     bool operator!=(const Rules& o) const { return !(*this == o); }
 };

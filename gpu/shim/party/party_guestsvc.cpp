@@ -285,6 +285,7 @@ bool GuestServicesEnabledFromEnv(const char* v) {
 #include "party_progress.h"
 #include "party_worldact.h"
 #include "party_split.h"
+#include "party_vote.h"
 #include "party_b2.h"
 #include "party_items.h"
 #include "party_balance.h"
@@ -2382,9 +2383,18 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             continue;
         }
         split::NoteMemberRequestRun(r.id);
-        Log("lamp: slot %d used a lamp / headstone: the host warps to %u, the party follows", slot, r.id);
-        // Another map (the split question is the guest's, already answered): the party travel.
-        RunLampWarpDecided(r.id, false);
+        const std::uint32_t id = r.id;
+        const int from = slot;
+        const auto run = [id, from] {
+            split::NoteMemberRequestRun(id);
+            Log("lamp: slot %d used a lamp / headstone: the host warps to %u, the party follows", from, id);
+            // Another map (the split question is the guest's, already answered): the party travel.
+            RunLampWarpDecided(id, false);
+        };
+        // 0.7.3 lamp travel voting (party_vote.h): with the host's rule on, the others vote first.
+        if (!vote::HostBegin(id, slot, run, "a guest's lamp / headstone")) {
+            run();
+        }
     }
 }
 
