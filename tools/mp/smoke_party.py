@@ -4102,7 +4102,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "el", "lt", "bf", "ch",
                                      "lp", "rt", "br", "sm", "da", "cv", "rh", "rs", "tv", "nf", "nfa", "eh")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
