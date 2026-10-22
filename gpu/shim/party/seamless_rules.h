@@ -60,6 +60,9 @@ bool EnsureEmevdFilter();
 /// A11: a boss health bar is up (EMEVD 2003[11] seen with "on" and not yet "off"; a load resets
 /// it): the host is in a boss fight.
 bool BossBarShown();
+/// The boss health bars stacked on screen (0 while none is up; 1 + the highest bar slot shown since
+/// the bar came up): the party HUD keeps clear of them.
+int BossBarRows();
 /// Seconds since this game's last text banner (EMEVD 2007[2], e.g. PREY SLAUGHTERED) or boss
 /// defeat instruction (2003[12/15/53]); large when none ran.
 double BannerAgeSeconds();

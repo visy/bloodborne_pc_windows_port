@@ -17,6 +17,8 @@
 #include <mmsystem.h>
 #include <tlhelp32.h>
 #include "win32_exception.h"
+/* Crash dumps decode the faulting instruction (Zydis: already linked into bbgpu, PUBLIC). */
+#include <Zydis/Zydis.h>
 #if defined(__GNUC__) || defined(__clang__)
 #include <cpuid.h>
 #endif
@@ -170,6 +172,135 @@ static void check_cpu(void) {
             "these instructions directly: it needs an Intel Haswell (4th generation Core, 2013) or "
             "newer, or an AMD Ryzen. BB_SKIP_CPU_CHECK=1 starts anyway.\n", missing);
     exit(1);
+}
+
+/* Guest assertions for crash reports (after Mrsuss60/bloodborne_pc_windows_port 4035ab4e). Two
+ * sources: the game's panic printer (Dantelion2 DL_PANIC at +0x20b55b0, called with the source
+ * file, the line and a printf format; in the mode retail runs in it prints nothing) and
+ * sceKernelDebugRaiseException (runtime_kernel.c). The first 20 panics are logged, the last of
+ * each is in every crash dump: a crash right after a failed check then names the check. */
+static int read_host_memory(uintptr_t address, void *out, size_t size) {
+    if (address < 0x10000) return 0;
+#ifdef _WIN32
+    SIZE_T got = 0;
+    return ReadProcessMemory(GetCurrentProcess(), (const void *)address, out, size, &got) && got == size;
+#else
+    struct iovec local = {out, size}, remote = {(void *)address, size};
+    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == (ssize_t)size;
+#endif
+}
+/* A guest string for a report: the pointer can itself be the bad one. */
+static void copy_guest_string(uintptr_t address, char *out, size_t size) {
+    size_t i = 0;
+    for (; i + 1 < size; ++i) {
+        char c;
+        if (!read_host_memory(address + i, &c, 1)) {
+            if (!i) { snprintf(out, size, address ? "<%p unreadable>" : "<NULL>", (void *)address); return; }
+            break;
+        }
+        if (!c) break;
+        out[i] = (c == '\n' || c == '\t') ? ' ' : (c >= 0x20 && c < 0x7f) ? c : '.';
+    }
+    out[i] = 0;
+}
+static int in_guest_image(uint64_t address) {
+    return image && address >= (uintptr_t)image && address < (uintptr_t)image + (image_size ? image_size : 0x20000000);
+}
+static uintptr_t guest_offset_of(uint64_t address) { return in_guest_image(address) ? address - (uintptr_t)image : 0; }
+enum { PANIC_ENTRY = 0x20b55b0, PANIC_PROLOGUE = 18, PANIC_MODE = 0x56d30f0, PANIC_ABORT = 0x20b56d2 };
+static uint32_t g_panic_calls, g_raise_calls;
+static uint64_t g_panic_file, g_panic_line, g_panic_format, g_panic_args[2], g_panic_site;
+static uint64_t g_raise_code, g_raise_argument, g_raise_site;
+
+/* Called by the stub at the printer's entry (System V, on the guest thread). */
+__attribute__((used)) static ABI void guest_panic_hook(uint64_t file, uint64_t line, uint64_t format,
+                                                       uint64_t arg0, uint64_t arg1, uint64_t return_address) {
+    const uint32_t n = __atomic_add_fetch(&g_panic_calls, 1, __ATOMIC_RELAXED);
+    g_panic_file = file; g_panic_line = line; g_panic_format = format;
+    g_panic_args[0] = arg0; g_panic_args[1] = arg1; g_panic_site = guest_offset_of(return_address);
+    if (n > 20) return;
+    char where[160], what[256];
+    copy_guest_string(file, where, sizeof(where));
+    copy_guest_string(format, what, sizeof(what));
+    uint32_t mode = 0;
+    read_host_memory((uintptr_t)image + PANIC_MODE, &mode, sizeof(mode));
+    GuestThread *cur = runtime_thread_current();
+    fprintf(stderr, "[GAME PANIC] %s(%u): \"%s\" (0x%" PRIx64 ", 0x%" PRIx64 ") from +0x%" PRIxPTR
+                    ", thread '%s', mode %u%s\n", where, (unsigned)line, what, arg0, arg1,
+            (uintptr_t)g_panic_site, cur ? cur->name : "?", mode,
+            n == 20 ? "; further panics are only counted" : "");
+    fflush(stderr);
+}
+void runtime_note_guest_assert(uint32_t code, uint64_t argument, uint64_t guest_offset) {
+    __atomic_add_fetch(&g_raise_calls, 1, __ATOMIC_RELAXED);
+    g_raise_code = code; g_raise_argument = argument; g_raise_site = guest_offset;
+}
+static void guest_asserts_write(FILE *f) {
+    fprintf(f, "\n--- GUEST ASSERTIONS ---\n");
+    const uint32_t panics = __atomic_load_n(&g_panic_calls, __ATOMIC_RELAXED);
+    const uint32_t raises = __atomic_load_n(&g_raise_calls, __ATOMIC_RELAXED);
+    if (!panics && !raises) { fprintf(f, "None this run.\n"); return; }
+    if (panics) {
+        char where[160], what[256];
+        copy_guest_string(g_panic_file, where, sizeof(where));
+        copy_guest_string(g_panic_format, what, sizeof(what));
+        fprintf(f, "Panics (+0x%x): %u; last: %s(%u): \"%s\" (0x%" PRIx64 ", 0x%" PRIx64 ") from +0x%" PRIx64 "\n",
+                (unsigned)PANIC_ENTRY, panics, where, (unsigned)g_panic_line, what, g_panic_args[0], g_panic_args[1],
+                g_panic_site);
+    }
+    if (raises)
+        fprintf(f, "Debug exceptions raised: %u; last: code 0x%" PRIx64 ", argument 0x%" PRIx64 ", from +0x%" PRIx64 "\n",
+                raises, g_raise_code, g_raise_argument, g_raise_site);
+}
+static void *allocate(size_t size);
+static void protect(void *p, size_t size, unsigned flags);
+/* The stub: saves the argument registers (rax: the vector count of the variadic call) and
+ * xmm0-7, calls guest_panic_hook with the printer's own arguments (r9: the return address),
+ * restores them, runs the 18 prologue bytes it replaced and jumps back after them. An absolute
+ * jump: the stub page need not be within 2 GiB of the image. BB_GAME_PANIC_HOOK=0: off;
+ * =0x<offset>: at that offset instead, also under --cpu-only (tests/test_probe.py's image). */
+static void install_panic_hook(unsigned char *img, uint64_t size) {
+    const char *env = getenv("BB_GAME_PANIC_HOOK");
+    uint64_t at = PANIC_ENTRY;
+    if (env && env[0] == '0' && (env[1] == 'x' || env[1] == 'X')) at = strtoull(env, NULL, 16);
+    else if (env && env[0] == '0') return;
+    static const unsigned char prologue[PANIC_PROLOGUE] = {
+        0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x54, 0x53, /* push rbp .. push rbx */
+        0x48, 0x81, 0xec, 0x00, 0x01, 0x00, 0x00                          /* sub rsp, 0x100 */
+    };
+    if (size < PANIC_PROLOGUE || at > size - PANIC_PROLOGUE || memcmp(img + at, prologue, PANIC_PROLOGUE)) {
+        printf("Guest hooks: the game's panic printer is not at +0x%" PRIx64 "; not recorded\n", at);
+        return;
+    }
+    unsigned char *stub = allocate(page_size), *p = stub;
+    static const unsigned char save[] = {
+        0x50, 0x51, 0x52, 0x56, 0x57, 0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53, /* push rax..r11 (9) */
+        0x48, 0x81, 0xec, 0x80, 0x00, 0x00, 0x00,                                     /* sub rsp, 0x80 */
+    };
+    memcpy(p, save, sizeof(save)); p += sizeof(save);
+    for (int i = 0; i < 8; ++i) { *p++ = 0x0f; *p++ = 0x29; *p++ = (unsigned char)(0x44 | i << 3); *p++ = 0x24; *p++ = (unsigned char)(16 * i); }
+    static const unsigned char ret_to_r9[] = {0x4c, 0x8b, 0x8c, 0x24, 0xc8, 0x00, 0x00, 0x00}; /* mov r9, [rsp+0xc8] */
+    memcpy(p, ret_to_r9, sizeof(ret_to_r9)); p += sizeof(ret_to_r9);
+    const uint64_t hook = (uint64_t)(uintptr_t)guest_panic_hook;
+    *p++ = 0x48; *p++ = 0xb8; memcpy(p, &hook, 8); p += 8;                     /* movabs rax, hook */
+    *p++ = 0xff; *p++ = 0xd0;                                                    /* call rax */
+    for (int i = 0; i < 8; ++i) { *p++ = 0x0f; *p++ = 0x28; *p++ = (unsigned char)(0x44 | i << 3); *p++ = 0x24; *p++ = (unsigned char)(16 * i); }
+    static const unsigned char restore[] = {
+        0x48, 0x81, 0xc4, 0x80, 0x00, 0x00, 0x00,                                     /* add rsp, 0x80 */
+        0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, 0x5f, 0x5e, 0x5a, 0x59, 0x58, /* pop r11..rax */
+    };
+    memcpy(p, restore, sizeof(restore)); p += sizeof(restore);
+    memcpy(p, prologue, PANIC_PROLOGUE); p += PANIC_PROLOGUE;
+    const uint64_t back = (uint64_t)(uintptr_t)(img + at + PANIC_PROLOGUE);
+    *p++ = 0xff; *p++ = 0x25; memset(p, 0, 4); p += 4; memcpy(p, &back, 8); p += 8; /* jmp [rip]: back */
+    protect(stub, page_size, 5);
+    unsigned char entry[PANIC_PROLOGUE];
+    memset(entry, 0x90, sizeof(entry));
+    const uint64_t target = (uint64_t)(uintptr_t)stub;
+    entry[0] = 0xff; entry[1] = 0x25; memset(entry + 2, 0, 4); memcpy(entry + 6, &target, 8); /* jmp [rip]: stub */
+    memcpy(img + at, entry, sizeof(entry));
+    printf("Guest hooks: the game's panic printer (+0x%" PRIx64 ") is recorded for crash reports (%u-byte stub)\n",
+           at, (unsigned)(p - stub));
 }
 static uint64_t read64(FILE *f) {
     unsigned char b[8];
@@ -1032,6 +1163,9 @@ __asm__(
 "enter_on_stack:\n"
 "   push %rbp\n"
 "   mov %rsp, %rbp\n"
+"   push %rbx\n"
+"   push %rsi\n"
+"   push %rdi\n"
 "   push %r12\n"
 "   push %r13\n"
 "   push %r14\n"
@@ -1040,32 +1174,39 @@ __asm__(
 "   mov %gs:0x10, %r13\n"
 "   mov %rcx, %r14\n" /* save entry */
 "   mov %rdx, %r15\n" /* save arg0 */
-"   mov %r8, %r11\n"  /* save arg1 */
+/* arg1 in callee-saved %rbx: the shadow space it was kept in (0x18(%rsp)) belongs to the calls
+ * below, which may store there (Mrsuss60/bloodborne_pc_windows_port 4035ab4e). rsi/rdi are
+ * callee-saved on Windows but not in the guest's System V code: saved as well. */
+"   mov %r8, %rbx\n"
 "   mov %r9, %rsp\n"
 "   and $-16, %rsp\n"
 "   mov %rsp, %gs:0x8\n"
 "   sub $0x800000, %r9\n"
 "   mov %r9, %gs:0x10\n"
 "   sub $0x20, %rsp\n"
-"   mov %r11, 0x18(%rsp)\n" /* preserve arg1 across call */
 "   call runtime_win_has_fsgsbase\n" /* no FSGSBASE: the VEH answers fs: reads */
 "   test %eax, %eax\n"
 "   jz 1f\n"
 "   call runtime_thread_get_tcb\n"
+"   test %rax, %rax\n" /* no TCB yet: FS stays as it is (the VEH rebases it later) */
+"   jz 1f\n"
 "   wrfsbase %rax\n"
 "1:\n"
 "   mov %r14, %r11\n"
 "   mov %r15, %rdi\n"
-"   mov 0x18(%rsp), %rsi\n"
+"   mov %rbx, %rsi\n"
 "   call *%r11\n"
 "   add $0x20, %rsp\n"
 "   mov %r12, %gs:0x8\n"
 "   mov %r13, %gs:0x10\n"
-"   lea -0x20(%rbp), %rsp\n"
+"   lea -0x38(%rbp), %rsp\n"
 "   pop %r15\n"
 "   pop %r14\n"
 "   pop %r13\n"
 "   pop %r12\n"
+"   pop %rdi\n"
+"   pop %rsi\n"
+"   pop %rbx\n"
 "   pop %rbp\n"
 "   ret\n"
 );
@@ -1084,12 +1225,17 @@ static void veh_write(const char *msg) {
 static HANDLE g_crash_event;
 static volatile LONG g_crash_thread;
 static int g_crash_test_hang;
+/* The process exit code of a fatal exception, also when the reaper ends a blocked handler:
+ * 139 a guest/host access fault, 140 a guest NULL dereference (address below 64 KiB from game
+ * code), 141 the game's own deliberate panic abort (+0x20b56d2), 132 an illegal instruction or
+ * other fatal exception (from Mrsuss60/bloodborne_pc_windows_port 4035ab4e). */
+static volatile LONG g_crash_exit_code = 128 + 11;
 
 static DWORD WINAPI crash_reaper(LPVOID param) {
     (void)param;
     WaitForSingleObject(g_crash_event, INFINITE);
     Sleep(5000);
-    TerminateProcess(GetCurrentProcess(), 128 + 11);
+    TerminateProcess(GetCurrentProcess(), (UINT)g_crash_exit_code);
     return 0;
 }
 
@@ -1165,6 +1311,17 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     if (off) fprintf(f, "Faulting RIP:   %p (guest eboot.bin offset 0x%" PRIxPTR ")\n\n", (void *)rip, off);
     else if (resolve_host_address(rip, host_loc, sizeof(host_loc))) fprintf(f, "Faulting RIP:   %p (%s)\n\n", (void *)rip, host_loc);
     else fprintf(f, "Faulting RIP:   %p (host address, no module)\n\n", (void *)rip);
+    fprintf(f, "Exit code:      %ld%s\n", (long)g_crash_exit_code,
+            g_crash_exit_code == 140 ? " (guest NULL dereference: see GUEST MEMORY for a failed allocation)"
+            : g_crash_exit_code == 141 ? " (the game's own panic abort: see GUEST ASSERTIONS)" : "");
+    unsigned char insn_bytes[16];
+    size_t insn_len = 0;
+    while (insn_len < sizeof(insn_bytes) && read_host_memory(rip + insn_len, insn_bytes + insn_len, 1)) ++insn_len;
+    ZydisDisassembledInstruction insn;
+    if (insn_len && ZYAN_SUCCESS(ZydisDisassembleIntel(ZYDIS_MACHINE_MODE_LONG_64, rip, insn_bytes, insn_len, &insn)))
+        fprintf(f, "Instruction:    %s\n\n", insn.text);
+    else
+        fprintf(f, "Instruction:    (%s)\n\n", insn_len ? "not decodable" : "RIP unreadable");
     /* A fault inside a host DLL (ucrtbase/msvcrt memcpy, free): those keep no frame pointers, so
      * list the return addresses into the game or our exe in the top 512 bytes of the stack
      * (from Supermedo/bloodborne_pc 3fbe0576). Every slot is read through ReadProcessMemory. */
@@ -1265,6 +1422,9 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     }
 
     runtime_memory_dump_recent_ops(f);
+    runtime_memory_report_to(f);
+    guest_asserts_write(f);
+    fflush(f);
     if (gpu_enabled) bbgpu_dump_breadcrumbs(f);
     fflush(f);
     /* Last: a snapshot can block on the loader lock (the reaper still ends the process). */
@@ -1293,12 +1453,24 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
         uintptr_t rip = ep->ContextRecord->Rip;
         /* No red-zone backup here: the kernel built this exception's frame below RSP before
          * the handler ran, so the guest's red zone is already gone (Mrsuss60 2ab6fe7a). */
+        if (image && rip == (uintptr_t)image + PANIC_ABORT) {
+            /* The panic printer's own abort (mov dword [0], 0xdeadba) in a non-retail mode. */
+            InterlockedExchange(&g_crash_exit_code, 141);
+            crash_begin();
+            write_crash_dump(ep, fault_addr, rip, code);
+            veh_write("The game stopped itself (its panic abort at +0x20b56d2); the last panic is in the crash log\n");
+            if (g_crash_test_hang) Sleep(INFINITE);
+            TerminateProcess(GetCurrentProcess(), 141);
+        }
 
         unsigned char *ip = (unsigned char *)rip;
         if (rip >= 0x10000 && !IsBadReadPtr((const void *)rip, 1) && ip[0] == 0x64) {
             void *tcb = runtime_thread_get_tcb();
             if (tcb) {
-                const int fsgsbase = runtime_win_has_fsgsbase();
+                /* Rebase only a wrong FS: when it already is this thread's TCB the fault has another
+                 * cause, and retrying it would loop forever at full CPU instead of reporting it
+                 * (Mrsuss60/bloodborne_pc_windows_port 4035ab4e). */
+                const int fsgsbase = runtime_win_has_fsgsbase() && runtime_win_read_fsbase() != tcb;
                 if (fsgsbase) __asm__ __volatile__("wrfsbase %0" : : "r"(tcb));
                 int handled = fsgsbase;
                 if (ip[1] == 0x48 && ip[2] == 0x8b && ip[3] == 0x04 && ip[4] == 0x25 &&
@@ -1364,6 +1536,7 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
          * creation. Its first-chance AV belongs to Windows' own SEH handler.
          * Keep GPU page tracking and speculative guest recovery ahead of it. */
         if (win_fault_is_read_probe(rip)) return EXCEPTION_CONTINUE_SEARCH;
+        if (in_guest_image(rip) && (uintptr_t)fault_addr < 0x10000) InterlockedExchange(&g_crash_exit_code, 140);
         crash_begin();
         write_crash_dump(ep, fault_addr, rip, code);
         char line[512];
@@ -1401,12 +1574,13 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
         veh_write(line);
         if (gpu_enabled) bbgpu_dump_guest_writes(ep);
         if (g_crash_test_hang) Sleep(INFINITE);
-        TerminateProcess(GetCurrentProcess(), 128 + 11);
+        TerminateProcess(GetCurrentProcess(), (UINT)g_crash_exit_code);
     } else if (code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_PRIV_INSTRUCTION ||
                code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_STACK_OVERFLOW ||
                code == 0xC0000409 /* STATUS_STACK_BUFFER_OVERRUN */ ||
                code == 0xC0000374 /* STATUS_HEAP_CORRUPTION */) {
         uintptr_t rip = ep->ContextRecord->Rip;
+        InterlockedExchange(&g_crash_exit_code, 128 + 4);
         crash_begin();
         write_crash_dump(ep, (void *)rip, rip, code);
         char line[512];
@@ -1981,6 +2155,7 @@ int main(int argc, char **argv) {
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
     if (!cpu_only) bbgpu_patch_image(image, size);
+    if (!cpu_only || getenv("BB_GAME_PANIC_HOOK")) install_panic_hook(image, size);
     protect(thunks, round_page((import_count + 1) * 32), 5);
     protect(image, round_page(size), 0);
     int executable_entry = 0;

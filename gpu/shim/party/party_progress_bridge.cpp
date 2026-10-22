@@ -621,6 +621,20 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link) {
     if (!Enabled()) {
         return;
     }
+    {
+        // 0.7.3: "Covenant outcomes per player" (System > Shared world, bbport.ini
+        // party_covenant_per_player): the host's setting; a guest follows the host's party rules.
+        const bool on = CurrentRole() == Role::Guest
+                            ? party::status::HostRuleOn(party::status::HostRule::CovenantPerPlayer)
+                            : BbSettings::Get().party_covenant_per_player.load();
+        static bool logged = false;  // the first value, then every change
+        if (!logged || on != CovenantPerPlayer()) {
+            logged = true;
+            BLog("covenant outcomes per player: %s (%s)", on ? "on" : "off",
+                 CurrentRole() == Role::Guest ? "the host's rule" : "this game's setting");
+        }
+        SetCovenantPerPlayer(on);
+    }
     Tick(s);
     perf::Scope z(perf::Zone::ProgressBridge);
     Bridge& b = B();

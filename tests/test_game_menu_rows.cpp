@@ -127,7 +127,8 @@ static void EveryState() {
         P::Load();
         const auto world = Names(PageNamed("Shared world"));
         assert(world.size() == 4 && Has(world, "Enemies stay dead") && Has(world, "Host can gather") &&
-               Has(world, "NPCs as in host's world") && Has(world, "NPC hunters fight all"));
+               Has(world, "NPCs as in host's world") && Has(world, "Covenants per player") &&
+               Has(world, "NPC hunters fight all"));  // 0.7.3
         const auto rewards = Names(PageNamed("Party rewards"));
         assert(rewards.size() == P::RowsPerPage && Has(rewards, "Own key items as guest") &&
                Has(rewards, "Key items at once") && rewards.back() == "Insight for bosses");

@@ -322,6 +322,10 @@ target_link_libraries(motion-shader-test PRIVATE bbgpu)
 add_executable(vram-reclaim-test EXCLUDE_FROM_ALL ../tests/test_vram_reclaim.cpp)
 target_compile_options(vram-reclaim-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(vram-reclaim-test PRIVATE ..)
+# The texture collector's marks, levels and per-frame quota (texture_cache/gc_policy.h).
+add_executable(gc-policy-test EXCLUDE_FROM_ALL ../tests/test_gc_policy.cpp)
+target_compile_options(gc-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(gc-policy-test PRIVATE ..)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
@@ -479,6 +483,20 @@ if (WIN32)
     target_link_options(bbport PRIVATE "-Wl,--disable-dynamicbase" "-Wl,--disable-high-entropy-va")
 endif()
 set_target_properties(bbport PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+# bbport: strip the shipped exe (Mrsuss60/bloodborne_pc_windows_port a5de3761: ~100 MB -> ~12 MB).
+# The debug info moves to bbport.exe.debug next to it with a debuglink, so addr2line/gdb on a crash
+# log's "bbport.exe+0x..." offsets still work with the matching build; keep that file with the
+# release build, do not ship it. Runtime needs no symbols (crash logs print module offsets; PGO
+# profiles are keyed by object path). Default: with LTO, i.e. release builds; agent builds
+# (BB_LTO=OFF) keep their symbols in the exe.
+option(BB_STRIP "Strip bbport.exe after linking (debug info kept in bbport.exe.debug)" ${BB_LTO})
+if (BB_STRIP AND CMAKE_OBJCOPY AND CMAKE_STRIP)
+    add_custom_command(TARGET bbport POST_BUILD
+        COMMAND "${CMAKE_OBJCOPY}" --only-keep-debug "$<TARGET_FILE:bbport>" "$<TARGET_FILE:bbport>.debug"
+        COMMAND "${CMAKE_STRIP}" -s "$<TARGET_FILE:bbport>"
+        COMMAND "${CMAKE_OBJCOPY}" "--add-gnu-debuglink=$<TARGET_FILE:bbport>.debug" "$<TARGET_FILE:bbport>"
+        COMMENT "Stripping bbport (debug info: bbport.exe.debug)" VERBATIM)
+endif()
 
 # Runtime unit tests (tests/test_sema.c, tests/test_content.c) for tests/test_sema.py and
 # tests/test_content.py, which run out/sema-test and out/content-test (build.sh --test builds them
