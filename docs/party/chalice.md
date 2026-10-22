@@ -171,6 +171,19 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   written under the current slot: the slot records are not part of the load-mode-1 storage, and a
   copy written there replaced the member's own slot-1 dungeon in its save after a summoned save
   (live test); only the quick-joined slot's own record is carried.
+* **The in-game "current dungeon" read too** (0.7.3): the in-game step 0x193ac10 writes FrpgNetMan
+  +0xa88 (the ChannelId signs, messages and summon messages carry, read e.g. by 0x145a250) every
+  frame from the current slot's record (online, not 9f6/9f8/a50, area-29 map:
+  `GetEventFlagValue(9020, 7)` at 0x1941B05 -> 0x1ab2a40), and the map load step 0x1937570 sets
+  FrpgNetMan +0xb14 bit 1 from the current slot helper's channel object (+0x1d8 +0x10c bit 0; read
+  at 0x1937E7B). After the map load retarget a summoned member with its own slot 1.. stood in the
+  host's dungeon with its OWN ChannelId in +0xa88. Both reads are retargeted the same way
+  (`InDungeonSlotHook`, only while the host's dungeon is carried; logged once per change: `in the
+  host's dungeon: the game's current dungeon (FrpgNetMan +0xa88) is the quick-joined slot 0's`).
+  No flag is written; a load mode 0 load ends it and +0xa88 follows the own current slot again on
+  the next frame. Not retargeted: 0x13d2910 (GameDataMan +0x30, the saved position's slot),
+  InGameStart 0x193a3e0 (compares that record's slot with the current one), the ritual helper
+  steps (0x1aa9500, 0x1b038b0).
 * So what the party needs is that **get_details_info finds the host's dungeon**: the host's game
   uploads it when it performs the ritual / resumes it online (helper steps 5-6, ChannelUpload), and
   the board keeps it. **Our rule** (FromApi::sign_get): a host whose sign query is in area 29 gets
