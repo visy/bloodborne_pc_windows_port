@@ -92,6 +92,10 @@ Insight messenger's 12105043 is different and stays synced: its copy ends on a c
 (`1003[101]`), the host's copy drives every game (live: one rise 3007034/3007035 when the host
 opened t210698, one sink 3007036 when it closed; its talk script clears 12105044 on leaving).
 
+0.7.3: the same filter drops the 0x31 packets of the Dream's gift messengers' events 12101020 /
+12101021 (starting weapons), 12101022 (Notebook), 12101024 / 12101026 (bells) and 12101028 (Eye):
+a guest's copy ending ended the host's (the host's weapon messengers sank before it picked; items.md 10.8).
+
 ### 2.2 Which talk scripts (MSB m21_00_00_00 entity -> talk script) [C]
 
 The filter allows by talk script id; the entity column is where the script is placed.
