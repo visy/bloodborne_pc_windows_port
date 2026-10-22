@@ -51,7 +51,10 @@ int main() {
     // The library lift (12601352): from the top (pos 1) car 6, 3; from the bottom 8, 5; its ends:
     // pos 1 car 7 (init 2), pos 0 car 9 (init 4).
     const Lift* lib = LiftByPosFlag(12601253);
-    CHECK(lib && lib->Replays() && lib->car == 2601260 && lib->gate == 2601261);
+    CHECK(lib && lib->Replays() && lib->car == 2601260 && lib->gate == 2601261 && lib->gate_rides);
+    for (const Lift& l : Lifts()) {
+        CHECK(l.gate_rides == (&l == lib));  // only the library lift has a second cage
+    }
     for (const int a : {6, 3, 8, 5}) {
         CHECK(PhaseOf(*lib, a) == CarPhase::riding);
     }
