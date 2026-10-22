@@ -368,11 +368,35 @@ class GuestsBringLampsSetting(unittest.TestCase):
         self.assertIn('("party_guests_bring_lamps", self.party_guests_bring_lamps, False)', src)
 
 
+class TravelVoteSetting(unittest.TestCase):
+    """0.7.3: the host's Party votes on travel checkbox: bbport.ini party_travel_vote, off by default,
+    no variable set (System > Shared world)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_switch_default_off_and_ini(self):
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        self.assertEqual(switches["party_travel_vote"], ("BB_PARTY_TRAVEL_VOTE", False))
+        env = self.L.party_env({"party_mode": "join", "party_name": "A", "party_code": "x"})
+        self.assertIsNone(env["BB_PARTY_TRAVEL_VOTE"])  # bbport.ini decides
+        self.assertEqual(self.L.party_rules_ini({}, "")["party_travel_vote"], "0")
+        self.assertEqual(self.L.party_rules_ini({"party_travel_vote": True}, "")["party_travel_vote"], "1")
+        from pathlib import Path
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn('var["party_travel_vote"]', src)
+
+
 class PartyRules071Settings(unittest.TestCase):
     """0.7.1: the switches that had only an env variable got rows (System > Shared world / Party
     rewards) and Party Rules & Sync checkboxes: bbport.ini keys, on by default, no variable set."""
     KEYS = {"party_kill_record": "BB_PARTY_KILL_RECORD", "party_gather": "BB_PARTY_GATHER",
-            "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_key_view": "BB_PARTY_KEY_VIEW",
+            "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_npc_fights": "BB_PARTY_NPC_FIGHTS",
+            "party_key_view": "BB_PARTY_KEY_VIEW",
             "party_key_items_summoned": "BB_PARTY_KEY_ITEMS_SUMMONED"}
 
     @classmethod

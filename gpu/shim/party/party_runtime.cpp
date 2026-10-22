@@ -22,6 +22,7 @@
 #include "party_progress.h"
 #include "party_split.h"
 #include "party_gather.h"
+#include "party_vote.h"
 #include "party_desync.h"
 #include "party_travel.h"
 #include "party_worldact.h"
@@ -1234,6 +1235,10 @@ LinkCallbacks make_callbacks(bool host) {
                 coop::gather::OnEvent(slot, body);
                 return;
             }
+            if (name == coop::vote::kEventName) {  // a guest's travel vote (0.7.3, party_vote.h)
+                coop::vote::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::worldact::kEventName) {  // a guest's lever / door / NPC talk (D3, D8)
                 std::string err;
                 if (!coop::worldact::OnHostEvent(slot, body, &err)) plog("world_action from slot %d refused: %s", slot, err.c_str());
@@ -1385,6 +1390,10 @@ LinkCallbacks make_callbacks(bool host) {
             }
             if (name == coop::gather::kEventName) {  // the host gathers the party (I5, party_gather.h)
                 coop::gather::OnEvent(slot, body);
+                return;
+            }
+            if (name == coop::vote::kEventName) {  // the host's travel vote: ask / end (0.7.3, party_vote.h)
+                coop::vote::OnEvent(slot, body);
                 return;
             }
             if (name == coop::kPhantomEventName) {  // host lamp / rested / boss Insight

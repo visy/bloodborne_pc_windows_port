@@ -46,6 +46,8 @@ using EmevdRewriter = void (*)(int event_id, int bank, int id, std::uint64_t eve
 /// as for EmevdRewriter (EmevdInstructionArgs finds the bytes). One; nullptr removes.
 using EmevdSkipPredicate = bool (*)(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr);
 void SetEmevdSkipPredicate(EmevdSkipPredicate fn);
+/// A second predicate slot (party_npcfight: a guest copy's progress writes, D11), asked after the first.
+void SetEmevdSkipPredicate2(EmevdSkipPredicate fn);
 /// Sets the rewriter (one; nullptr removes it). Call before EnsureEmevdFilter.
 void SetEmevdRewriter(EmevdRewriter fn);
 /// A second, independent rewriter slot (party_guestsvc), run after the first.
