@@ -85,6 +85,9 @@ static void test_deny() {
     CHECK(ClassifyAward(10040, true) && ClassifyAward(10040, true)->flag == 50000100);
     CHECK(ItemLotDenied(10050, 6670));
     CHECK(ItemLotDenied(43120, 6676));       // DLC NPC gift with a personal flag
+    // 0.7.3: Valtr's gifts are each player's own (never replayed; a guest gives them to itself).
+    CHECK(OwnTalkGiftLotId(43120) && OwnTalkGiftLotId(43130) && !OwnTalkGiftLotId(17000));
+    CHECK(ItemLotFlag(43120) == 6676 && ItemLotFlag(43130) == 6678 && ItemLotDenied(43130, 6678));
     CHECK(!ItemLotDenied(3401800, 6674));    // Ludwig's reward: exception
     CHECK(!ItemLotDenied(3401850, 6673));    // Laurence's reward: exception
     CHECK(ItemLotDenied(100500, kItemNone)); // rune use
