@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: the commands of an indirect draw, checked on the GPU before it runs
+// (vk_indirect_guard.cpp). A command with an implausible vertex (index) count times instance
+// count (billions: garbage in memory a shader wrote) would keep the GPU busy past the kernel's
+// timeout and lose the device; that command draws nothing instead, and is counted. The other
+// commands are copied as they are.
+#version 450
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly buffer Args { uint args[]; };
+layout(std430, binding = 1) writeonly buffer Checked { uint checked[]; };
+layout(std430, binding = 2) buffer Skipped { uint skipped; uint last_count; uint last_instances; uint largest; };
+
+layout(push_constant) uniform Push {
+    uint first;     // the first command's first dword in binding 0
+    uint stride;    // dwords from one command to the next (4, or 5 for indexed draws)
+    uint count;     // commands
+    uint max_total; // vertices (indices) times instances, per command
+    uint slot;      // where in binding 1 (dwords)
+} push;
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= push.count) {
+        return;
+    }
+    const uint src = push.first + i * push.stride;
+    const uint dst = push.slot + i * push.stride;
+    const uint vertices = args[src];
+    const uint instances = args[src + 1];
+    uint high, total;
+    umulExtended(vertices, instances, high, total);
+    const bool plausible = high == 0 && total <= push.max_total;
+    checked[dst] = plausible ? vertices : 0;
+    checked[dst + 1] = plausible ? instances : 0;
+    for (uint k = 2; k < push.stride; ++k) {
+        checked[dst + k] = args[src + k];
+    }
+    if (plausible) {
+        atomicMax(largest, total);
+    } else {
+        atomicAdd(skipped, 1);
+        last_count = vertices;
+        last_instances = instances;
+    }
+}

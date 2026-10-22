@@ -1009,6 +1009,18 @@ public:
         return is_rendering && render_state == state;
     }
 
+    /// bbport: closes the open render pass for commands that may not run inside one (the
+    /// indirect draw check); the next BeginRendering with the same state continues it without
+    /// clearing its attachments again. Returns whether a pass was open.
+    bool SuspendRendering() {
+        if (!is_rendering) {
+            return false;
+        }
+        EndRendering();
+        resume_rendering = true;
+        return true;
+    }
+
     /// Whether BeginRendering(state) would start a new render pass.
     [[nodiscard]] bool WillBeginRendering(const RenderState& state) const {
         return !(is_rendering && render_state == state);
