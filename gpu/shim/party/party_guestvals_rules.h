@@ -199,6 +199,15 @@ inline std::vector<std::uint32_t> LitFlags(std::uint32_t aab, std::uint32_t n) {
     return {base + 10u, base + 11u, 70000000u + aab * 10000u + 200u + n};
 }
 
+/// The lamp of a lamp-lit flag 7AAB0200 + n: its LitFlags (empty for any other id). The host
+/// lighting a guest's lamp sets all three at once, so a save right after it has the whole lamp
+/// (lamprule run 5: the guest's 7AAB02xx came 1 s before its base+10 / +11; the host's save in
+/// between kept only the lamp-lit flag).
+inline std::vector<std::uint32_t> LitFlagsOfLampLit(std::uint32_t id) {
+    if (id < 70000000u || id >= 80000000u || id % 10000u < 200u || id % 10000u >= 220u) return {};
+    return LitFlags((id - 70000000u) / 10000u, id % 10000u - 200u);
+}
+
 /// The flags to send so the other world has this lamp lit: the ones `mine` has and `theirs` lacks,
 /// only when the lamp counts as lit in `mine` (its headstone flag base+10 is set).
 template <class MineFn, class TheirsFn>
@@ -227,6 +236,56 @@ constexpr std::uint32_t BlockBossFlag(std::uint32_t aab) { return 10000000u + aa
 inline bool HeldForBoss(std::uint32_t n, bool boss_dead_mine, bool boss_dead_theirs) {
     return n >= 1 && boss_dead_mine && !boss_dead_theirs;
 }
+
+/// Whose lamps light up where (user decision 2026-10-21, "host state saves lamps, anybody can light
+/// them"; it replaced the 2026-10-15 union of every member's lamps: a high-level guest lit all of
+/// its own lamps in a friend's world, past bosses the friend had not beaten).
+enum class Origin {
+    GuestOwnSave,      ///< lit in a guest's own world before the session (its save brings it)
+    GuestInHostWorld,  ///< a guest lit it in the host's world during the session (EVENT lamp_lit)
+    HostWorld,         ///< lit in the host's world (by the host, now or earlier)
+};
+
+/// The host's two lamp rules (party_balance Rules): Shared lamps (share_lamps, on by default) and
+/// Guests bring their lamps (guests_bring_lamps, off by default: the 0.7.2 rule).
+struct Rule {
+    bool share = true;
+    bool guests_bring = false;
+};
+
+/// host_world: the lamp is lit in the host's world (and saved there). member_saves: it reaches
+/// every party member's own save (C2 and the guest's own-save writer). A guest's own lamps always
+/// stay lit in its own save; only whether they also light up in the host's world is decided here.
+struct Outcome {
+    bool host_world = false;
+    bool member_saves = false;
+};
+
+inline Outcome Decide(Origin o, const Rule& r) {
+    switch (o) {
+    case Origin::GuestOwnSave: {
+        // Only with both rules on (the 2026-10-15 union); HeldForBoss still applies then.
+        const bool in = r.share && r.guests_bring;
+        return {in, in};
+    }
+    case Origin::GuestInHostWorld:
+        // A lamp of the host's world, whoever lit it: the host's world keeps it (also with Shared
+        // lamps off, as before: the host's world is the one it was lit in).
+        return {true, r.share};
+    case Origin::HostWorld:
+        return {true, r.share};
+    }
+    return {};
+}
+
+/// Guest: send the own save's lamps the host's world lacks (EVENT lamp_lit with "own").
+inline bool SendOwnLamps(const Rule& r) { return Decide(Origin::GuestOwnSave, r).host_world; }
+/// Host: light a guest's lamp_lit event in its world (`own`: the guest's own-save lamps).
+inline bool HostTakes(bool own, const Rule& r) {
+    return Decide(own ? Origin::GuestOwnSave : Origin::GuestInHostWorld, r).host_world;
+}
+/// Guest: the host's world's lamps (the host's own and the ones guests lit there) into the own save.
+inline bool IntoOwnSave(const Rule& r) { return Decide(Origin::HostWorld, r).member_saves; }
 
 }  // namespace coop::lampshare
 

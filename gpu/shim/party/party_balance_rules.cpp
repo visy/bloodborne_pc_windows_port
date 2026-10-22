@@ -22,7 +22,8 @@ const int kPoiseTable[11] = {0, 25, 50, 75, 100, 125, 150, 175, 200, 250, 300};
 bool Rules::operator==(const Rules& o) const {
     return rot == o.rot && boss_hp == o.boss_hp && boss_damage == o.boss_damage && boss_poise == o.boss_poise &&
            enemy_hp == o.enemy_hp && enemy_damage == o.enemy_damage && enemy_poise == o.enemy_poise &&
-           friendly_fire == o.friendly_fire && share_lamps == o.share_lamps && host_revive == o.host_revive &&
+           friendly_fire == o.friendly_fire && share_lamps == o.share_lamps &&
+           guests_bring_lamps == o.guests_bring_lamps && host_revive == o.host_revive &&
            host_limbo_revive == o.host_limbo_revive && kill_record == o.kill_record && npc_mirror == o.npc_mirror &&
            gather == o.gather && rot_cleanse_boss == o.rot_cleanse_boss && rot_cleanse_killer == o.rot_cleanse_killer &&
            rot_cleanse_echoes == o.rot_cleanse_echoes;
@@ -82,6 +83,7 @@ std::string ToJson(const Rules& r) {
     v.set("enemy_poise", r.enemy_poise);
     v.set("friendly_fire", r.friendly_fire);
     v.set("share_lamps", r.share_lamps);
+    v.set("guests_bring_lamps", r.guests_bring_lamps);
     v.set("host_revive", r.host_revive);
     v.set("host_limbo_revive", r.host_limbo_revive);
     v.set("kill_record", r.kill_record);
@@ -108,6 +110,8 @@ bool FromJson(const std::string& text, Rules* out, std::string* error) {
         r.friendly_fire = m->boolean;
     if (const json::Value* m = v.find("share_lamps"); m && m->type == json::Value::Type::Bool)
         r.share_lamps = m->boolean;
+    if (const json::Value* m = v.find("guests_bring_lamps"); m && m->type == json::Value::Type::Bool)
+        r.guests_bring_lamps = m->boolean;
     if (const json::Value* m = v.find("host_revive"); m && m->type == json::Value::Type::Bool)
         r.host_revive = m->boolean;
     if (const json::Value* m = v.find("host_limbo_revive"); m && m->type == json::Value::Type::Bool)

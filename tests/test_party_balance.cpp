@@ -71,6 +71,16 @@ int main() {
         assert(FromJson("{\"rot\":true,\"host_revive\":false}", &old) && old.kill_record && old.npc_mirror &&
                old.gather && !old.host_revive);
     }
+    // 0.7.2: Guests bring their lamps goes with the rules, off by default; a host from before it: off.
+    {
+        Rules g;
+        assert(!g.guests_bring_lamps && g.share_lamps);
+        g.guests_bring_lamps = true;
+        Rules gb;
+        assert(FromJson(ToJson(g), &gb) && gb == g && gb.guests_bring_lamps && gb != Rules{});
+        Rules old;
+        assert(FromJson("{\"share_lamps\":true}", &old) && !old.guests_bring_lamps);
+    }
     Rules c;
     assert(FromJson("{\"boss_hp\":100000,\"enemy_damage\":-5,\"rot\":7}", &c));
     assert(c.boss_hp == 400 && c.enemy_damage == 0 && !c.rot);  // not a bool: the default (off)

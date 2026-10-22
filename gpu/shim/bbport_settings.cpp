@@ -234,6 +234,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_friendly_fire = i != 0;
     } else if (key == "party_share_lamps") {
         v.party_share_lamps = i != 0;
+    } else if (key == "party_guests_bring_lamps") {
+        v.party_guests_bring_lamps = i != 0;
     } else if (key == "party_rendezvous") {
         v.party_rendezvous = party::traversal::rendezvous_switch(value.c_str(), false);
     } else if (key == "party_member_relay") {
@@ -385,6 +387,8 @@ void Load() {
         v.party_friendly_fire = ff[0] == '1';
     if (const char* sl = std::getenv("BB_PARTY_SHARE_LAMPS"); sl && (sl[0] == '0' || sl[0] == '1'))
         v.party_share_lamps = sl[0] == '1';
+    if (const char* gb = std::getenv("BB_PARTY_GUESTS_BRING_LAMPS"); gb && (gb[0] == '0' || gb[0] == '1'))
+        v.party_guests_bring_lamps = gb[0] == '1';
     // C4 rot (tests, scripted hosts): BB_PARTY_ROT=0/1 wins over the ini.
     if (const char* ro = std::getenv("BB_PARTY_ROT"); ro && (ro[0] == '0' || ro[0] == '1')) v.party_rot = ro[0] == '1';
     // The party gameplay switches: BB_PARTY_*=0/1 (tools/mp, scripts) wins over the ini; an unset
@@ -693,6 +697,7 @@ void Save() {
     put("party_stain_marker", flag(v.party_stain_marker));
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
+    put("party_guests_bring_lamps", flag(v.party_guests_bring_lamps));
     put("party_rendezvous", flag(v.party_rendezvous));
     put("party_member_relay", flag(v.party_member_relay));
     put("party_ipv6", flag(v.party_ipv6));

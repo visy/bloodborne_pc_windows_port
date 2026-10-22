@@ -1271,6 +1271,15 @@ void DefineAll() {
                "Хост делит фонари: каждый фонарь группы горит и у вас"},
               {"The host turned shared lamps off: your own lamps stay yours",
                "Хост выключил общие фонари: ваши фонари остаются вашими"});
+    // 0.7.2 (user decision 2026-10-21): the host's world keeps its own lamps unless this is on.
+    host_rule(&Values::party_guests_bring_lamps, "Guests bring their lamps", "Фонари гостей",
+              AddText("A joining guest's own lamps light up in your world too (needs Shared lamps). Party rule",
+                      "Фонари из мира гостя загораются и в вашем мире (нужны общие фонари). Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::GuestsBringLamps); },
+              {"The host lets guests bring their lamps: yours light up in the host's world",
+               "Хост принимает фонари гостей: ваши фонари горят и в его мире"},
+              {"The host's world keeps its own lamps; any lamp you light there is saved for all",
+               "Мир хоста хранит свои фонари; зажжённый вами там фонарь сохраняется у всех"});
     // Guests use lamps and headstones (party_guestsvc; read at the next start).
     own(&Values::party_guest_lamps, "Guests use lamps", "Фонари гостям",
         "Guests may use lamps and headstones; the whole party travels (after a restart)",

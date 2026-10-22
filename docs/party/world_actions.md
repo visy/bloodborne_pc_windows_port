@@ -422,7 +422,11 @@ and of the car's animation state on each game, `log_flag=` / `log_objanim=`):
   moves the other way: it arrives beside a player waiting at the far end; Cainhurst's car is a wide
   platform (the landing spots of phase ch, 2.5 m from its axis, are on it, so both hunters rode every
   ch ride); in the narrow shafts (Cathedral Ward's, Cainhurst's) the camera goes into the rider's own
-  model for a few seconds.
+  model for a few seconds. Run 9 (liftfix): the second cage is in the lift table (`Lift::gate_rides`:
+  the in-car and moving-car tests look at both cages; the event, flag, hold, end rewrite and replay are
+  shared) and ridden (el ride D: the host down in it, 39 samples in the cage, the same flag / end on
+  both games); Cainhurst's rides with one rider and the other player on a landing 1 m in front of a
+  call lever (3.2-3.4 m from the axis: off the platform, its height steady, no ride bit) pass too.
 * The lf smoke's guest ride (lifts071) never was one: the guest was put on the car object's root, which
   stays at the TOP while the car is at the bottom; it fell the 48 m shaft through the switch region, the
   up event ran with nobody in the car and the guest died at the shaft's foot (god mode does not stop a

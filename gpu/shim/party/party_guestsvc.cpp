@@ -1517,9 +1517,13 @@ bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why)
     if (!LampLitFromJsonText(body, &ids, why, &own)) {
         return false;
     }
-    if (own && !BbSettings::Get().party_share_lamps.load()) {
+    const lampshare::Rule rule{BbSettings::Get().party_share_lamps.load(),
+                               BbSettings::Get().party_guests_bring_lamps.load()};
+    if (!lampshare::HostTakes(own, rule)) {
         if (why) {
-            *why = "the guest's own lamps: shared lamps are off on the host";
+            *why = rule.share ? "the guest's own lamps: guests bring their lamps is off on the host (the host's "
+                                "world keeps its own lamps)"
+                              : "the guest's own lamps: shared lamps are off on the host";
         }
         return false;
     }
@@ -1530,11 +1534,14 @@ bool GuestServicesOnLampLit(int slot, const std::string& body, std::string* why)
     return true;
 }
 
-/// Statsaudit finding 5 (user decision 2026-10-15: lamps are shared by the whole party). Guest, in
-/// the host's world: the lamps lit in its OWN save that the host's world lacks go to the host
-/// (EVENT lamp_lit with "own"), once per join (again after 20 s, at most 3 times, while the host's
-/// mirror still lacks them). The host lights them in its world (its save), the world mirror shows
-/// them in the guest's travel lists, and C2 brings the host's lamps into every guest's own save.
+/// Statsaudit finding 5 (user decision 2026-10-15: lamps are shared by the whole party), narrowed
+/// for 0.7.2 (user decision 2026-10-21: "host state saves lamps, anybody can light them";
+/// lampshare::Decide). Guest, in the host's world, every 20 s: the host's world's lit lamps go into
+/// the OWN save (C2 carries the lamp-lit flag, this the headstone flags). The lamps lit in the own
+/// save that the host's world lacks stay out of it, unless the host's "Guests bring their lamps"
+/// rule is on: then they go to the host (EVENT lamp_lit with "own"), once per join (again after
+/// 20 s, at most 3 times, while the host's mirror still lacks them), and the host lights them in
+/// its world. A lamp the guest lights in the host's world is GuestLampLitTick's (always sent).
 /// The host's "Shared lamps" rule off: nothing is sent, and C2 leaves lamps out of the own save.
 std::vector<std::uint32_t> g_lit_own_out;  // under g_lit_mu
 
@@ -1545,11 +1552,12 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
     balance::Rules hr;
     const bool known = balance::HostRules(&hr);
     const int share = known ? int(hr.share_lamps) : -1;
+    const lampshare::Rule rule{share == 1, known && hr.guests_bring_lamps};
     if (share >= 0 && share != share_was) {
         // C2: lamps into the own save only while the host shares them.
         progress::Policy p = progress::CurrentPolicy();
         p.mode[static_cast<int>(progress::Category::lamp_unlocked)] =
-            share ? progress::SyncMode::SetOnly : progress::SyncMode::Off;
+            lampshare::IntoOwnSave(rule) ? progress::SyncMode::SetOnly : progress::SyncMode::Off;
         progress::SetPolicy(p);
         Log("lamps: the host's rule: shared lamps %s (the host's lamps %s the own save)", share ? "on" : "off",
             share ? "go into" : "stay out of");
@@ -1582,10 +1590,15 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
         bool v = false;
         return progress::HostWorldFlag(id, &v) && v;
     };
-    std::string held;
+    std::string held, kept;
+    const bool bring = lampshare::SendOwnLamps(rule);
     for (const lamptravel::Lamp& l : lamptravel::kLamps) {
         std::vector<std::uint32_t> add = lampshare::Missing(l.aab, l.n, mine, theirs);
         const std::uint32_t boss = lampshare::BlockBossFlag(l.aab);
+        if (!add.empty() && !bring) {
+            kept += " " + std::to_string(lamptravel::ReturnPoint(l));
+            add.clear();  // the host's world keeps its own lamps (0.7.2)
+        }
         if (!add.empty() && lampshare::HeldForBoss(l.n, mine(boss), theirs(boss))) {
             held += " " + std::to_string(lamptravel::ReturnPoint(l));
             add.clear();  // sent at a later join, once the host's world has beaten that boss too
@@ -1626,6 +1639,17 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
         return;
     }
     ++tries;
+    if (!bring) {
+        tries = 3;  // once per join
+        if (kept.empty()) {
+            Log("lamps: every lamp of the own save is lit in the host's world too");
+        } else {
+            Log("lamps: the own save's lamps the host's world lacks stay out of it (the host's rule: guests bring "
+                "their lamps off; the host's world keeps its own): lamps%s",
+                kept.c_str());
+        }
+        return;
+    }
     if (ids.empty()) {
         tries = 3;  // nothing the host lacks
         Log("lamps: every lamp of the own save is lit in the host's world too");
@@ -2225,17 +2249,30 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
             std::lock_guard<std::mutex> lk(g_lit_mu);
             lit.swap(g_lit_in);
         }
-        bool wrote_own = false;
+        bool wrote_own = false, wrote_lit = false;
         for (const auto& [tagged, ids] : lit) {
             const bool own = tagged < 0;
             const int slot = own ? -1 - tagged : tagged;
             std::string list;
-            for (std::uint32_t id : ids) {
+            std::vector<std::uint32_t> all = ids;
+            if (!own) {
+                // 0.7.2: the whole lamp at once (its object's base+10 / +11 come a second after the
+                // lamp-lit flag from the guest), so the save requested below holds all of it.
+                for (std::uint32_t id : ids) {
+                    for (std::uint32_t f : lampshare::LitFlagsOfLampLit(id)) {
+                        if (LampLitFlagAllowed(f) && std::find(all.begin(), all.end(), f) == all.end()) {
+                            all.push_back(f);
+                        }
+                    }
+                }
+            }
+            for (std::uint32_t id : all) {
                 bool before = false;
                 progress::ReadFlag(id, &before);
                 const bool ok = progress::WriteFlagOwnSave(id, true);  // the host's world (load mode 0)
                 list += " " + std::to_string(id) + (before ? "(was set)" : ok ? "" : "(NOT written)");
                 wrote_own = wrote_own || (own && ok && !before);
+                wrote_lit = wrote_lit || (!own && ok && !before);
             }
             if (own) {
                 Log("lamps: slot %d's own save has lamps this world lacked (shared lamps): set%s", slot, list.c_str());
@@ -2245,6 +2282,10 @@ void LampTick(const GameSnapshot& s, party::PartyLink* link) {
         }
         if (wrote_own) {
             RequestGameSave("shared lamps from a guest's save");
+        }
+        if (wrote_lit) {
+            // 0.7.2: the host's world saves the lamps anyone lit there (as the host's own lamp would be).
+            RequestGameSave("a lamp a guest lit in the host's world");
         }
     }
     for (const auto& [slot, r] : in) {

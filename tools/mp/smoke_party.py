@@ -49,6 +49,10 @@ Phase fl (~3 min, 2 players, group `fall`): guest 1 falls out of the world from 
   fall recovery off) to the kill plane; it must get up at a lamp of the loaded map in the host's world
   with no loading screen and no session leave, stay standing, and its bloodstain must be on its last
   safe floor.
+Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
+  lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
+  guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
+  travel list shows only the host's world's lamps (both saves read from copies after the run).
 
 Test aids used (it is a smoke, not real play): BB_PARTY_DIRECTOR_TEST steps (lamp warps, moves into
 the boss trigger, scripted deaths, the boss kill, Party > Leave / Rejoin presses),
@@ -313,7 +317,8 @@ RULES_PAGES = [
     # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
     ("Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
      ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
-    ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests use lamps", "Guests use Hunter's Mark", "Open world"],
+    ("World & PvP", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps", "Guests use lamps",
+                     "Guests use Hunter's Mark", "Open world"],
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
@@ -335,8 +340,9 @@ RULES_PAGES = [
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
-RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fire", "party_npc_talk", "party_full_rewards", "party_boss_hp",
-                   "party_pings", "party_host_revive", "party_share_lamps", "party_kill_record", "party_gather",
+RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fire", "party_npc_talk", "party_full_rewards",
+                   "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
+                   "party_kill_record", "party_gather",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes"]
 
@@ -627,7 +633,9 @@ def phase_ga(only):
 # (A) the guest rides down alone and steps out at the arrival (the host's copy ends first: the 0.7.1
 # race, the guest's own end must stand). (B) the host rides up alone, out at the arrival (the guest's
 # copy ends first: its report must not move the host's car). (C) the guest rides down alone and stays
-# 2 s in the car (the host's flip waits on the guest until its copy is done). Each ride starts with
+# 2 s in the car (the host's flip waits on the guest until its copy is done). (D) the host rides the
+# lift's second cage (2601261, triggers 2602243 / 2602244: it runs the other way in the same event) down
+# alone. Each ride starts with
 # one step into the car's trigger region (2602242 top / 2602241 bottom); riders step out on the car's
 # arrival (`?obj=`), the next ride waits for the flag (`?FLAG=V`) or the other player's spot (`?near=`).
 # After every ride both games show the same flag and the car at that end; no rider drops faster than a
@@ -641,7 +649,9 @@ EL_LOW_OUT_G = "118.1:943.7:-16.8"     # ... (the guest)
 EL_DOWN_END, EL_UP_END = "3", "5"      # the car's ride animations that stop at the arrival (down / up)
 # both chains' last steps: the guest's last one waits for its own copy's flag at its ride's end
 EL_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
-EL_RIDERS = ("guest", "host", "guest")  # (A), (B), (C)
+EL_CAGE2_TOP = "117.73:1003.5:-18.51"  # region 2602244: in the second cage (2601261) at the top
+EL_RIDERS = ("guest", "host", "guest", "host")  # (A), (B), (C), (D)
+EL_AXES = ((119.43, -18.52),) * 3 + ((117.73, -18.51),)  # the cage each ride's rider stands in
 
 
 def phase_el(only):
@@ -653,14 +663,16 @@ def phase_el(only):
             "host_move=%s@3%%m26?%s=0" % (EL_LOW_OUT_H, EL_POS),                 # (A) over here: to the bottom
             "host_move=%s@2%%m26%s" % (EL_IN_CAR_LOW, near(EL_LOW_OUT_G)),       # (B) into the trigger: up
             "host_move=%s@0.3%%m26%s" % (EL_TOP, arrived(EL_UP_END)),            # out at the arrival
-            "host_press=0@10%%m26!?%s=0" % EL_POS]                               # (C) over here, 10 s more
+            "host_move=%s@3%%m26?%s=0" % (EL_CAGE2_TOP, EL_POS),                 # (D) (C over) the second
+            "host_move=%s@0.3%%m26?obj=2601261:3" % EL_LOW_OUT_H,                # cage down; out at arrival
+            "host_press=0@3%%m26!?%s=1" % EL_POS]                                # (D) over here
     g1 = [common,
           "guest_move=%s@6%%m26" % EL_TOP,                                       # at the top
           "guest_move=%s@3%%m26%s" % (EL_IN_CAR, near(EL_TOP)),                  # (A) into the trigger: down
           "guest_move=%s@0.3%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),     # out at the arrival
           "guest_move=%s@3%%m26?%s=1" % (EL_IN_CAR, EL_POS),                     # (C) (B over here) down
           "guest_move=%s@2%%m26%s" % (EL_LOW_OUT_G, arrived(EL_DOWN_END)),       # 2 s in the car, then out
-          "guest_press=0@10%%m26!?%s=0" % EL_POS]                                # (C) over here, 10 s more
+          "guest_press=0@3%%m26!?%s=1" % EL_POS]                                 # (D) over here
     return dict(
         name="el", seconds=360, count=2, headless=0,
         env=["BB_PARTY_TEST_START_LAMP=2602953", "BB_PARTY_PROGRESS_TEST_SET=12601850,%s" % EL_POS,
@@ -729,17 +741,20 @@ def phase_lt(only):
 CH_CAR, CH_POS, CH_BUSY = "2501010", "12500074", "12505074"
 CH_TOP_IN = "-22.78:64.95:-237.74"     # region 2502001 (the down ride's trigger, a 1.4 m box)
 CH_BOT_IN = "-22.78:30.9:-237.74"      # region 2502000 (the up ride's trigger)
-CH_TOP_H = "-25.3:65.1:-237.0"         # the top landing, between the car and its lever 2501011 (-27, 65, -239)
-CH_TOP_G = "-25.0:65.1:-238.5"
-CH_BOT_H = "-20.4:31.1:-237.9"         # the bottom landing, toward its lever 2501012 (-18.6, 31, -236)
-CH_BOT_G = "-20.6:31.1:-236.6"
+# The car is a wide platform: 2.1-2.4 m from its axis is still on it (run 7: both hunters rode every
+# ride from there). The landings: 1 m in front of each call lever (the operator's spot, 3.2-3.4 m out),
+# top lever 2501011 (-27, 65, -239) facing +x, bottom lever 2501012 (-18.6, 31, -236) facing -x.
+CH_TOP_H = "-26.0:65.1:-239.0:0:native:pin=2"
+CH_TOP_G = "-26.0:65.1:-237.2:0:native:pin=2"
+CH_BOT_H = "-19.6:31.1:-236.0:0:native:pin=2"
+CH_BOT_G = "-19.6:31.1:-237.8:0:native:pin=2"
 CH_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
 CH_RIDERS = ("guest", "guest", "host")
 
 
 def phase_ch(only):
     common = "god,log_pos=0.5,log_objanim=%s,log_flag=%s/%s" % (CH_CAR, CH_POS, CH_BUSY)
-    nat = lambda xyz: xyz + ":0:native"
+    nat = lambda xyz: xyz  # the landings carry their own warp options
     arrived = lambda anim: "?obj=%s:%s" % (CH_CAR, anim)
     host = [common,
             "host_move=%s@4%%m25^1" % nat(CH_TOP_H),                               # at the top landing
@@ -749,7 +764,7 @@ def phase_ch(only):
             "host_press=0@3%%m25!?%s=0" % CH_BUSY]                                # (C) over here
     g1 = [common,
           "guest_move=%s@6%%m25" % nat(CH_TOP_G),                                  # at the top landing
-          "guest_move=%s@3%%m25?near=%s:1.5" % (CH_TOP_IN, CH_TOP_H),  # (A) down
+          "guest_move=%s@3%%m25?near=%s:1.5" % (CH_TOP_IN, CH_TOP_H.split(":0:")[0]),  # (A) down
           "guest_move=%s@0.3%%m25%s" % (nat(CH_BOT_G), arrived(0)),               # out at the arrival
           "guest_move=%s@3%%m25?%s=0" % (CH_BOT_IN, CH_BUSY),                      # (B) up
           "guest_move=%s@2%%m25%s" % (nat(CH_TOP_G), arrived(10)),                # 2 s in the car, then out
@@ -1004,6 +1019,37 @@ def phase_cl(only):
     )
 
 
+# Phase lp (lamprule, ~3 min, 2 players, group `lamps`; user decision 2026-10-21: "host state saves
+# lamps, anybody can light them", Guests bring their lamps off by default). Fixture: the host's save
+# without Old Yharnam's lamp (2302950: the guest's has it) and both saves without Central Yharnam's
+# 2412951; the host starts at the Cleric Beast's lamp (m24_01). The guest joins: its Old Yharnam
+# lamp stays out of the host's world (and the host's save); it walks to the unlit 2412951, lights it
+# (the host lights it in its world and saves; the guest's own save gets it), and its lamp travel list
+# there shows the host's world's lamps only (no 2302950). Then both saves on disk (copies).
+LP_OLD = ("2302950", ["12307810", "12307811", "72300200"])   # Old Yharnam: lit in the guest's save only
+LP_NEW = ("2412951", ["12417830", "12417831", "72410201"])   # Central Yharnam: lit by the guest in the run
+LP_UNTIL = [r"1:test: listonly: warp menu closed",
+            r"0:save requested \(.*a lamp a guest lit in the host's world",
+            r"1:written into the own save \(shared lamps; lamps.* %s[\s\S]*save requested \(.*shared lamps from "
+            r"the host's world" % LP_NEW[0]]
+
+
+def phase_lp(only):
+    read = ",".join(LP_OLD[1] + LP_NEW[1])
+    return dict(
+        name="lp", seconds=300, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_READ=" + read, "BB_PARTY_GUESTS_BRING_LAMPS=0", "BB_PARTY_SHARE_LAMPS=1"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2412952", "0:BB_PARTY_DIRECTOR_TEST=god",
+              "0:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_OLD[1] + LP_NEW[1]),
+              "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_PROGRESS_TEST_CLEAR=" + ",".join(LP_NEW[1]),
+              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,listonly" % LP_NEW[0]],
+        watch=["--watch", r"lamps: the own save's lamps the host's world lacks stay out=lpjoin@3",
+               "--watch", r"lamp: slot \d+ lit a lamp in the host's world=lplit@1,5",
+               "--watch", r"test: warp menu up \(listonly\)=lplist@1"],
+        crash=[], until=LP_UNTIL, until_hold=8,
+    )
+
+
 # Phase bf (wipeboss, ~3 min, 3 players, group `fight_load`): loads into the host's world while the
 # host's boss fight goes on. The host walks into Father Gascoigne's first-fight region (intro, then
 # the fight; invincible, it fights on). Guest 1 at the Tomb of Oedon lamp uses a Hunter's Mark (an
@@ -1103,12 +1149,12 @@ def phase_rt(only):
     )
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rt": phase_rt}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
           "rot": "rt"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
@@ -1117,7 +1163,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
               "rot": r"^rt "}
 
 
@@ -1156,6 +1202,7 @@ GROUP_UNTIL = {
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
     "cainhurst_lift": CH_UNTIL,
+    "lamps": LP_UNTIL,
     "mark": [MK_UNTIL],
     # the host awake in the cell (its last step) and both guests in m28_00
     "kidnap": [KD_UNTIL, "1:map .*-> m28_00", "2:map .*-> m28_00"],
@@ -1633,6 +1680,9 @@ def check_rules(v, L):
     ff = L.find(1, r"Game menu: page \d+ rows \(\d+\): Friendly fire / PvP=")
     v.step("rules guest: sees the host's friendly fire (On, read-only)", ff and "Friendly fire / PvP=On" in ff[1],
            ff[1][:200] if ff else "no World & PvP rows line on the guest")
+    # 0.7.2: and the host's Guests bring their lamps (off by default)
+    v.step("rules guest: sees the host's Guests bring their lamps (Off, read-only)",
+           ff and "Guests bring their lamps=Off" in ff[1], ff[1][:300] if ff else "no World & PvP rows line on the guest")
     # 0.7.1: the guest's Shared world page shows the host's rules (read-only lines, the host's values)
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
     v.step("rules guest: sees the host's Shared world rules (read-only)",
@@ -2001,7 +2051,7 @@ def jump_steps(v, tag, L, rides_by_game, axis, names):
             if r.get("t") is None:
                 continue
             t1 = r.get("t_end") or (r["t"] + 60)
-            j = jumps(L, i, r["t"], t1, axis)
+            j = jumps(L, i, r["t"], t1, axis[k] if isinstance(axis[0], tuple) else axis)
             v.step("%s %s: no jump on the car (inst%d)" % (tag, names[k], i), not j,
                    ("; ".join("+%.1f s %.1f m" % x for x in j[:4])) if j else "no jump over 2 m while on the car")
 
@@ -2044,14 +2094,14 @@ def car_anim_at(L, i, w):
 RIDE_BIT = 0x0200000000  # PlayerIns +0x1E5 bit 0x02: the chr stands on a moving object (deathrules::kRideFlag1e1)
 
 
-def rides_with_car(L, i, t0, t1):
+def rides_with_car(L, i, t0, t1, axis=(119.43, -18.52)):
     """Instance i's chr in the car (within 0.6 m of its axis) between t0 and t1: (samples, samples with the
     ride bit off - the chr is not on the car: falling, or left behind)."""
     n = off = 0
     for _t, line in L.all(i, POS_RX.pattern, t0, t1):
         m = POS_RX.search(line)
         f = re.search(r" f ([0-9a-f]{10})", line)
-        if not f or ((float(m.group(1)) - 119.43) ** 2 + (float(m.group(3)) + 18.52) ** 2) ** 0.5 > 0.6:
+        if not f or ((float(m.group(1)) - axis[0]) ** 2 + (float(m.group(3)) - axis[1]) ** 2) ** 0.5 > 0.6:
             continue
         n += 1
         off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
@@ -2060,7 +2110,8 @@ def rides_with_car(L, i, t0, t1):
 
 def check_el(v, L):
     need(v, L, "el join: 2 players", 0, r"cooperators 0 -> 1")
-    names = ["A guest alone down", "B host alone up", "C guest alone down, 2 s in the car"]
+    names = ["A guest alone down", "B host alone up", "C guest alone down, 2 s in the car",
+             "D host alone down in the second cage"]
     rides = [el_rides(L, i) for i in (0, 1)]
     v.step("el rides: %d on each game (no ride without a step into the car)" % len(names),
            len(rides[0]) == len(names) and len(rides[1]) == len(names), "host %d, guest %d" % (len(rides[0]), len(rides[1])))
@@ -2070,7 +2121,7 @@ def check_el(v, L):
         if not rh or not rg:
             v.step("el %s: ran on both games" % name, False, "host %s, guest %s" % (bool(rh), bool(rg)))
             continue
-        want_up = k % 2 == 1
+        want_up = k % 2 == 1  # (D): the second cage down is the first cage up (anims 8, 5; end 7, pos 1)
         v.step("el %s: one ride on both games (the game's own sync)" % name,
                rh["up"] == want_up and rg["up"] == want_up and abs(rh["start"] - rg["start"]) < 1.0,
                "start host %.2f / guest %.2f, %s" % (rh["start"] % 3600, rg["start"] % 3600, "up" if rh["up"] else "down"))
@@ -2088,14 +2139,14 @@ def check_el(v, L):
                % (fh, fg, end, ah, ag, abs(rh["end"] - rg["end"])))
         i = 0 if EL_RIDERS[k] == "host" else 1
         r = rides[i][k]
-        n, off = rides_with_car(L, i, r["t"] + 0.6, r["t_end"] - 0.6) if r["t_end"] else (0, 0)
+        n, off = rides_with_car(L, i, r["t"] + 0.6, r["t_end"] - 0.6, EL_AXES[k]) if r["t_end"] else (0, 0)
         v.step("el %s: the %s rode in the car all the way" % (name, EL_RIDERS[k]), n >= 10 and off == 0,
                "%d samples in the car, %d off it" % (n, off))
     for i, who in ((0, "host"), (1, "guest")):
         f = falls(L, i)
         v.step("el %s: no fall (vertical speed under 8 m/s)" % who, not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
-    jump_steps(v, "el", L, rides, (119.43, -18.52), names)
+    jump_steps(v, "el", L, rides, EL_AXES, names)
     none_of(v, L, "el no fall recovery on the lift", r"recovery: falling", 0, 1e9, (0, 1))
     none_of(v, L, "el nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     # liftfix: the library lift's ride end became the all-players check once per map load on every game
@@ -2253,12 +2304,23 @@ def check_ch(v, L):
             if f and ((float(m.group(1)) + 22.78) ** 2 + (float(m.group(3)) + 237.74) ** 2) ** 0.5 < 1.2:
                 n += 1
                 off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+        # the other player stays off the car: its height does not follow the ride, no ride bit
+        o = 1 - i
+        ro = rides[o][k]
+        ys, bits = [], 0
+        for _t, line in L.all(o, POS_RX.pattern, ro["t"] + 0.6, (ro["t_arr"] or ro["t"]) - 0.3):
+            ys.append(float(POS_RX.search(line).group(2)))
+            fo = re.search(r" f ([0-9a-f]{10})", line)
+            bits += 1 if fo and int(fo.group(1), 16) & RIDE_BIT else 0
+        v.step("ch %s: the %s stayed off the car" % (name, "host" if o == 0 else "guest"),
+               len(ys) >= 3 and max(ys) - min(ys) < 1.0 and bits == 0,
+               "%d samples, height %s, %d with the ride bit" % (len(ys), ("%.1f..%.1f" % (min(ys), max(ys))) if ys else "-", bits))
         v.step("ch %s: the %s rode in the car to the %s" % (name, CH_RIDERS[k], "top" if up else "bottom"),
                far and n >= 5 and off == 0,
                "y %s at the arrival, %d samples in the car, %d off it" % ("%.1f" % y if y is not None else "-", n, off))
     for i, who in ((0, "host"), (1, "guest")):
         # from the first warp to the lift on: the approach counts too
-        start = L.find(i, r"_move to \(-2[0-5]\.")
+        start = L.find(i, r"_move to \(-(19|2\d)\.")
         f = falls(L, i, start[0] - 0.1 if start else 0.0, rate=16.0)  # this car peaks at 12.7 m/s (run 5)
         v.step("ch %s: no fall from the approach on (vertical speed under 16 m/s)" % who, start is not None and not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else
@@ -2453,6 +2515,69 @@ def check_cl(v, L):
     check_common(v, L, "cl")
 
 
+def lp_save_flags(d: Path, i, ids):
+    """Instance i's party save slot 0 (userdata0000): copied into the phase's output first, the copy
+    decoded (save_decode.py). {id: bool}, or None without a readable save."""
+    sys.path.insert(0, str(REPO / "tools" / "party"))
+    import save_decode  # noqa: E402
+    src = sorted((Path(RUN_ROOT[0]) / f"inst{i}" / "user" / "savedata_party").rglob("userdata0000"))
+    if not src:
+        return None
+    copy = d / "saves" / f"inst{i}_userdata0000"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src[0], copy)
+    try:
+        sv = save_decode.Save.read(copy)
+    except (OSError, ValueError):
+        return None
+    return {f: bool(sv.flag(int(f))) for f in ids}
+
+
+def check_lp(v, L, d: Path):
+    j = need(v, L, "lp join: the guest is in", 0, r"cooperators 0 -> 1")
+    need(v, L, "lp guest's own lamps stay out of the host's world", 1,
+         r"lamps: the own save's lamps the host's world lacks stay out of it .*lamps.* %s" % LP_OLD[0], j or 0)
+    none_of(v, L, "lp host takes none of the guest's own lamps",
+            r"own save has lamps this world lacked|lamps: \d+ flag\(s\) of lamps lit in the own save", insts=(0, 1))
+    lit = need(v, L, "lp guest lights a lamp in the host's world", 1,
+               r"lamp: the guest lit a lamp of the host's world \(overlay:.*%s" % LP_NEW[1][2])
+    need(v, L, "lp host lights it in its world", 0, r"lamp: slot \d+ lit a lamp in the host's world: set.*%s" % LP_NEW[1][2],
+         lit or 0)
+    need(v, L, "lp host saves it", 0, r"save requested \(.*a lamp a guest lit in the host's world", lit or 0)
+    need(v, L, "lp the guest's own save gets it", 1,
+         r"written into the own save \(shared lamps; lamps.* %s" % LP_NEW[0], lit or 0)
+    need(v, L, "lp guest's lamp travel list opens", 1, r"test: warp menu up \(listonly\)")
+    hit = L.find(1, r"test: warp menu up \(listonly\): \d+ entries:")
+    entries = re.findall(r"\b(\d{7})\b", hit[1].split("entries:", 1)[1]) if hit else []
+    v.step("lp guest's list: only the host's world's lamps", hit and LP_OLD[0] not in entries and "2412953" in entries,
+           "entries %s" % " ".join(entries) if hit else "no list")
+    # Every lamp lit in the host's world (its save at the end: lit flag 1AAB7810+20n set, name /
+    # blocked flag 7000AABn clear, as lamp_travel_rules.h BuildList) is in the guest's list, but the
+    # one it stands at ("lamp N (...): the warp menu").
+    src = (REPO / "gpu" / "shim" / "party" / "lamp_travel_rules.h").read_text(encoding="utf-8")
+    table = src.split("kLamps[] = {", 1)[1].split("};", 1)[0]
+    lamps = [(int(a), int(n)) for a, n in re.findall(r"\{(\d{3}), (\d), \w+\}", table)]
+    lit_f = {(a, n): str(10000000 + a * 10000 + 7810 + 20 * n) for a, n in lamps}
+    name_f = {(a, n): str(70000000 + a * 10 + n) for a, n in lamps}
+    hw = lp_save_flags(d, 0, sorted(set(lit_f.values()) | set(name_f.values())))
+    here = L.find(1, r"Lamp travel: lamp (\d+) \(.*the warp menu instead")
+    here_id = re.search(r"lamp (\d+) ", here[1]).group(1) if here else ""
+    want = sorted(str(a * 10000 + 2950 + n) for a, n in lamps
+                  if hw and hw[lit_f[(a, n)]] and not hw[name_f[(a, n)]]) if hw else []
+    missing = [w for w in want if w != here_id and w not in entries]
+    v.step("lp guest's list: made at the lamp it lit", here_id == LP_NEW[0], "here %s" % (here_id or "?"))
+    v.step("lp guest's list: every lamp lit in the host's world", bool(hit and hw) and not missing,
+           "here %s; host world lit %s; missing %s" % (here_id, " ".join(want), " ".join(missing) or "none"))
+    host = lp_save_flags(d, 0, LP_OLD[1] + LP_NEW[1])
+    guest = lp_save_flags(d, 1, LP_OLD[1] + LP_NEW[1])
+    fmt = lambda m: " ".join("%s=%d" % (k, m[k]) for k in m) if m else "no save"
+    v.step("lp host's save: the guest's old lamp unlit", host is not None and not any(host[f] for f in LP_OLD[1]), fmt(host))
+    v.step("lp host's save: the lamp the guest lit", host is not None and all(host[f] for f in LP_NEW[1]), fmt(host))
+    v.step("lp guest's save: its own old lamp kept", guest is not None and all(guest[f] for f in LP_OLD[1]), fmt(guest))
+    v.step("lp guest's save: the lamp it lit", guest is not None and all(guest[f] for f in LP_NEW[1]), fmt(guest))
+    check_common(v, L, "lp")
+
+
 def check_bf(v, L):
     """Loads into the host's world while its boss fight goes on (phase bf)."""
     need(v, L, "bf join: 3 players", 0, r"cooperators [01] -> 2")
@@ -2549,7 +2674,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp,
           "rt": lambda v, L, d: check_rt(v, L)}
 
 
@@ -2559,7 +2684,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf")
+    ap.add_argument("--phase", default="s1,s2,rules,summonfail,s3,sk,ga,lf,mk,kd,kw,fl,cl,bf,lp")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -2574,7 +2699,8 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch", "rt")
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "cl", "el", "lt", "bf", "ch",
+                                     "lp", "rt")
                            if p in {GROUPS[g] for g in only})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
