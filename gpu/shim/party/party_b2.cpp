@@ -3133,7 +3133,7 @@ bool PreRingSpacing(const GameSnapshot& s, u32 host_map) {
 
 /// Safety net: a client in the host's world (GSM+0x1592 == 0) never plays the opening cutscene
 /// (event 12410000's EMEVD 2002 remo): its flags come from the host's overlay, which may lack them.
-bool ClientIntroSkip(int event_id, int bank, int id) {
+bool ClientIntroSkip(int event_id, int bank, int id, std::uint64_t event, std::uint64_t instr) {
     // D10: on by default (BB_PARTY_STORY_DEDUPE=0 off): the guest's own copy of a mirrored event's
     // 2002 would play the scene a second time (soak run 5f).
     static const bool dedupe = StoryDedupeEnabled(std::getenv("BB_PARTY_STORY_DEDUPE"));
@@ -3142,6 +3142,13 @@ bool ClientIntroSkip(int event_id, int bank, int id) {
                         StoryMirroredEvent(static_cast<std::uint32_t>(event_id)))) {
         // The live mirror (party_story) already played this event's scene with the host.
         Log("client: event %d's 2002[%d] skipped: its cutscene already played as the live mirror", event_id, id);
+        return true;
+    }
+    // D10 race (player report 2026-10-22): this game's own copy of a boss intro the host plays
+    // (its event ran here at the same moment as the host's, before the host's EVENT "story" came)
+    // waits for the host's copy, which plays as the live mirror (party_story OwnSceneHold).
+    if (event_id > 0 && bank == 2002 && (id == 1 || id == 3) && Role() == RoleClient &&
+        StoryHoldClientOwnScene(static_cast<std::uint32_t>(event_id), id, event, instr)) {
         return true;
     }
     if (bank != 2002 || event_id != 12410000 || !g_on.load() || Role() != RoleClient ||
@@ -9518,7 +9525,7 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         if (Role() == RoleHost) return;
         const dsummon::Busy b = dsummon::WaitOf(body);
         g_host_busy.store(static_cast<int>(b));
-        party::bridge::OnHostBusy(dsummon::BusyText(b, false));
+        party::bridge::OnHostBusy(dsummon::BusyText(b, false), b == dsummon::Busy::Cutscene, StoryMirrorPlaying());
         Log("A11: the host's hold: %s%s", dsummon::BusyWord(b), b == dsummon::Busy::None ? " (its bell rings again)" : "");
         return;
     }
@@ -11534,6 +11541,16 @@ bool GatherTravelToHost() {
 
 void SetWhere(const std::vector<Where>& members) {
     g_where = members;
+}
+
+bool MemberWhere(int slot, Where* out) {
+    for (const Where& w : g_where) {
+        if (w.slot == slot) {
+            if (out) *out = w;
+            return true;
+        }
+    }
+    return false;
 }
 
 int MembersApart() {

@@ -57,6 +57,10 @@ Phase fd (~3 min, 2 players, group `fall_deep`): guest 1, its own last lamp the 
   "perpetual spectate" report), and walk away from the lamp.
 Phase fdj (~4 min, 2 players, group `fall_deep`): the same at the report's own spot, the shaft beside
   Djura's tower in Old Yharnam (guest 1 walks off the ledge; the host's lamp ~150 m away).
+Phase sm (~5 min, 2 players, group `scene_mirror`): the host's cutscene live on a guest beside it:
+  Father Gascoigne's intro with both games running its event at once (the guest's own copy held,
+  the host's played within 1 s, once), then the Tomb of Oedon door into Oedon Chapel (scene 24000020)
+  with the guest 3 m behind the host still in m24_01 (played within 1 s; no replay after its walk in).
 Phase lp (~3 min, 2 players, group `lamps`): the 0.7.2 lamp rule (Guests bring their lamps off): a
   lamp only the guest's save has stays unlit in the host's world and the host's save; a lamp the
   guest lights in the host's world is lit for the host and saved in both saves; the guest's lamp
@@ -1312,14 +1316,58 @@ def phase_br(only):
     )
 
 
+# Phase sm (cwscene, ~5 min, 2 players, group `scene_mirror`): the host's cutscene plays live on a
+# guest standing beside it (player report 2026-10-22).
+#   1  Father Gascoigne's intro race: the guest stands where the player's guest stood (-51.7, 69.1),
+#      the host walks into the trigger region 2412815 4-5 m from it; both games run event 12411802
+#      at once: the guest's own copy of the intro is held and the host's copy plays there live
+#      (within 1 s of the host's), never a second time. The host then kills Gascoigne.
+#   2  The door from the Tomb of Oedon into Oedon Chapel (door 2401210, m24_00, event 12400750,
+#      scene 24000020 with the evening): the host opens it from the m24_01 side, the guest 3 m behind
+#      it, still in m24_01; the mirror plays there within 1 s (the scene's block m24_00 is loaded /
+#      the host is near), and the guest's walk into m24_00 afterwards plays no catch-up replay.
+SM_DOOR = (30.04, -9.2, 95.57)          # MSB part 2401210 (yaw -60): its back side is m24_01
+SM_GUEST_RACE = "-51.7:-40.8:69.1"      # the player's guest at the intro (cwscene.log 1868)
+SM_UNTIL = r"1:map m24_01_00_00 -> m24_00_00_00"
+
+
+def phase_sm(only):
+    door = "%.2f:%.2f:%.2f" % SM_DOOR
+    host = ",".join([
+        "god",
+        "host_warp=2412953@8^1",                                        # the party at the Tomb of Oedon
+        "host_move=%s@3%%m24_01?near=%s:1.5" % (GASCOIGNE_TRIGGER, SM_GUEST_RACE),  # 1: the intro, guest 4.6 m off
+        "host_kill=2410810@6%m24_01~",                                   # Gascoigne dead after it
+        "host_move=33.2:-10.0:93.7:pin=3@10%m24_01",                     # 2: up at the door (m24_01 side)
+        "host_obj=2401210:1.2:180@4%m24_01",
+        "host_press=0x4000@4%m24_01!",                                   # OK on Gascoigne's key notice (run 1)
+        "host_press=0x4000@3%m24_01!",                                   # "Open Door": scene 24000020
+    ])
+    g1 = ",".join([
+        "god",
+        "guest_move=%s@10%%m24_01?near=%s:4" % (SM_GUEST_RACE, RT_LAMP),  # the party at the lamp: beside the trigger
+        "guest_obj=2401210:4.2:180@1%%m24_01?near=%s:2" % door,           # 3 m behind the host at the door
+        "guest_move=27.4:-9.2:97.1@4%m24_01~",                           # after the scene: through the door (m24_00)
+    ])
+    return dict(
+        name="sm", seconds=480, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR + ",12400750,9800,9801,9802",
+             "BB_PARTY_TEST_INVINCIBLE=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"remo playing=smremo@0.5,1.5,4", "--watch", r"cutscene 24000020=smdoor@0.5,1.5,4",
+               "--watch", r"map m24_01_00_00 -> m24_00_00_00=smwalk@2,8"],
+        crash=[], until=[SM_UNTIL], until_hold=15,
+    )
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cl": phase_cl, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "lifts": "lf", "ladder": "lf", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "lamps": "lp",
-          "rot": "rt", "boss_rooms": "br"}
+          "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -1328,7 +1376,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "lamps": r"^lp ",
-              "rot": r"^rt ", "boss_rooms": r"^br "}
+              "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -1376,6 +1424,7 @@ GROUP_UNTIL = {
     "fight_load": BF_UNTIL,
     "rot": [RT_UNTIL],
     "boss_rooms": BR_UNTIL,
+    "scene_mirror": [SM_UNTIL],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -3004,13 +3053,61 @@ def check_br(v, L):
             _br_walk_rows(v, L, i, who, kind, ("through the wall behind Ludwig", "back through it"), dead)
     check_common(v, L, "br")
 
+def _remo_starts(L, i, after=0.0, before=1e9):
+    return [t for t, _ in L.all(i, r"Party story: remo playing", after, before)]
+
+
+def check_sm(v, L):
+    """Phase sm: the host's intro / door scene live on the guest beside it, once."""
+    need(v, L, "sm join: 2 players", 0, r"cooperators 0 -> 1")
+    # 1: Gascoigne's intro race
+    hm = need(v, L, "sm host walks into Gascoigne's intro region (guest 4-5 m off)", 0, r"travel step \d+/\d+: host_move", 0)
+    t_kill = L.find(0, r"travel step \d+/\d+: host_kill", hm or 0)
+    end1 = t_kill[0] if t_kill else 1e9
+    if hm is not None:
+        h = _remo_starts(L, 0, hm, end1)
+        g = _remo_starts(L, 1, hm - 1, end1)
+        v.step("sm intro: host plays 24010010", h, ("+%.1f s" % h[0]) if h else "no remo on the host")
+        need(v, L, "sm intro: the guest plays the host's copy (live mirror)", 1, r"live mirror: remo 2401(0|1)010", hm - 1, end1)
+        held = L.find(1, r"own 2002\[\d\] \(boss intro 24010010", hm - 1, end1)
+        v.step("sm intro: guest's own copy held for the host's (when its event ran too)", True,
+               ("held +%.1f s" % held[0]) if held else "its own event did not run (no race this time)")
+        ok = bool(h and g and abs(g[0] - h[0]) <= 1.0)
+        v.step("sm intro: guest's scene within 1 s of the host's", ok,
+               "host +%.1f guest +%.1f" % (h[0], g[0]) if h and g else "host %s guest %s" % (h, g))
+        v.step("sm intro: one play on the guest", len(g) == 1, "%d remo start(s) on the guest" % len(g))
+        none_of(v, L, "sm intro: no own copy after a wait", r"held own boss intro|this player triggered and watched it itself",
+                hm, end1, insts=(1,))
+    # 2: the Cathedral Ward door
+    presses = L.all(0, r"travel step \d+/\d+: host_press", end1 if end1 < 1e9 else 0)
+    pr = presses[-1] if presses else None  # the last one opens the door (the first closes the key notice)
+    v.step("sm door: host opens the door (m24_01 side)", pr, ("+%.1f s" % pr[0]) if pr else "no press")
+    if pr:
+        hs = need(v, L, "sm door: host plays 24000020", 0, r"host #\d+ cutscene 24000020", pr[0] - 1)
+        h = _remo_starts(L, 0, pr[0] - 1)
+        g = _remo_starts(L, 1, pr[0] - 1)
+        need(v, L, "sm door: guest takes it as the live mirror", 1, r"cutscene 24000020 .*taken \(phantom: live mirror\)", pr[0] - 1)
+        need(v, L, "sm door: the mirror plays in m24_01 (block loaded / host near)", 1,
+             r"live mirror of remo 24000020 plays here though this guest is in m24_01", pr[0] - 1)
+        none_of(v, L, "sm door: never dropped for its map", r"live mirror of remo 24000020 dropped", pr[0] - 1, insts=(1,))
+        ok = bool(h and g and abs(g[0] - h[0]) <= 1.0)
+        v.step("sm door: guest's scene within 1 s of the host's", ok,
+               "host +%.1f guest +%.1f" % (h[0], g[0]) if h and g else "host %s guest %s" % (h, g))
+        walk = need(v, L, "sm door: guest walks into m24_00 after it", 1, r"map m24_01_00_00 -> m24_00_00_00", pr[0])
+        if walk is not None:
+            none_of(v, L, "sm door: no catch-up replay of the scene", r"replay: remo 2400(0|1)020", pr[0], insts=(1,))
+            late = _remo_starts(L, 1, walk - 0.5)
+            v.step("sm door: no second play after the walk", not late, "none" if not late else "+%.1f s" % late[0])
+    check_common(v, L, "sm")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L),
           "rt": lambda v, L, d: check_rt(v, L)}
 
 
@@ -3036,7 +3133,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cl", "el", "lt", "bf", "ch",
-                                     "lp", "rt")
+                                     "lp", "rt", "br", "sm")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
