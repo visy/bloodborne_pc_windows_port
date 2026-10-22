@@ -167,7 +167,9 @@ def phase_s1(only):
         ])
     return dict(
         name="s1", seconds=420,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
+        # BB_BOOT_WATCHDOG: a thread snapshot if a boot stalls (0.7.1 full smoke: the host on a gray
+        # screen after the title's logo, 1 boot in 16, nothing in the log saying where).
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1", "BB_BOOT_WATCHDOG=20"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2],
         crash=[],
         until=[WIPE_UNTIL, "0:spectating: following"],
@@ -1373,7 +1375,7 @@ class Verdict:
         self.keep = [re.compile(GROUP_ROWS[g]) for g in only] if only else None
 
     def step(self, name, ok, detail):
-        if self.keep and not any(k.search(name) for k in self.keep) and not name.endswith(("no crash / assert", "no 'Session lost'")):
+        if self.keep and not any(k.search(name) for k in self.keep) and not name.endswith(("no crash / assert", "no 'Session lost'", "no boot stall (BB_BOOT_WATCHDOG)")):
             return
         self.rows.append((name, bool(ok), detail))
         print("%-4s %-40s %s" % ("PASS" if ok else "FAIL", name, detail), flush=True)
@@ -1395,6 +1397,7 @@ def none_of(v, L, name, rx, after=0.0, before=1e9, insts=(0, 1, 2)):
 def check_common(v, L, tag):
     none_of(v, L, tag + ": no crash / assert", r"(?i)unhandled exception|assertion failed|EXCEPTION_ACCESS|fatal error")
     none_of(v, L, tag + ": no 'Session lost'", r"Session lost")
+    none_of(v, L, tag + ": no boot stall (BB_BOOT_WATCHDOG)", r"\[WATCHDOG\] Boot stalled|asking for a boot snapshot")
 
 
 def harness_crashes(d: Path):
