@@ -730,7 +730,10 @@ void UpdateStart(State& st, const GameSnapshot& s, StartMode mode) {
     }
     if (in_world) {
         TestPrologueTick(s);
-        if (!st.weapons_checked) {
+        if (!st.weapons_checked && progress::FlagLoadMode() == 0 &&
+            (s.session_role == RoleIdle || s.session_role == RoleHost)) {
+            // Only the own save in view (load mode 0): leaving a host's world, the overlay is still
+            // loaded for a moment (session role 7) and a write there is gone after the home load.
             // 0.7.3: a starting weapon pick synced in from another player's save (12101020 / 21
             // were npc_quest before): done without a pick of its own hides this player's
             // messengers for good. Cleared in the own save, the messengers offer the weapons at
