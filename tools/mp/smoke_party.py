@@ -1264,8 +1264,9 @@ KD_READ = "9420,9421,9423"
 
 def phase_kd(only):
     host = ",".join(["host_warp=%s@15" % KD_LAMP,
-                     "host_press=0@45%m28_00!",           # awake in the cell after guest 1's grab
-                     "host_flag=9423:0@5",                # the kidnap undone (test): the host's grab next
+                     # in the cell after guest 1's grab, every scene over: the kidnap undone (test) for the
+                     # host's grab next (a flag step keeps the chain armed; a press would wait for a join)
+                     "host_flag=9423:0@45%m28_00",
                      "host_flag=9421:0@1",
                      "host_warp=%s@3" % KD_LAMP,          # the party back to the Cathedral Ward
                      "host_flag=9420@30%m24_00",          # the grab-death's trigger

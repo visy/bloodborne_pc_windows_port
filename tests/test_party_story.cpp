@@ -275,6 +275,28 @@ static void test_guest_replays_gaol_scene() {
     a = Until(g, ph, t);
     CHECK(a && a->kind == StoryAction::SetFlags && a->on &&
           std::find(a->flags.begin(), a->flags.end(), 9423u) != a->flags.end());
+    // The grabbed guest arrives from its own death (not calm): the waking scene does not wait for
+    // calm (live run 1: 9 s in the cell first); any other replay still does.
+    CHECK(ReplayIgnoresCalm(28000010) && !ReplayIgnoresCalm(32000000) && !ReplayIgnoresCalm(28000040));
+    {
+        GuestStory h;
+        double th = 200;
+        StoryState hurt = Phantom();
+        hurt.map_id = 0x1c000000;
+        hurt.calm = false;
+        StoryIntent o = s;
+        o.seq = 5;
+        o.id = 28000040;  // another m28 scene: waits for calm
+        o.flags = {};
+        o.tod = 1;
+        CHECK(h.Offer(o, false, th));
+        CHECK(!Until(h, hurt, th, 120));
+        StoryIntent w = s;
+        w.seq = 6;
+        CHECK(h.Offer(w, false, th));
+        auto b = Until(h, hurt, th, 120);
+        CHECK(b && b->kind == StoryAction::PlayRemo && b->id == 28000010);
+    }
     // A guest that watched it live (Seen) keeps only the flags.
     GuestStory w;
     w.NoteSeen(28000010);
