@@ -2141,7 +2141,9 @@ def check_fall_deep(v, L, tag, hp0_rx, walk):
             v.step(tag + " fall-death camera release (info: nothing to release)", True,
                    "released" if rel else "no release line (the camera was not on)")
         check_revive_view(v, L, tag + " guest", 1, "guest revive", up)
-        again = L.find(1, r"local death: HP 0", up + 0.5, up + 8)
+        # until the chain's next move (fdj puts it back on the ledge for the next direction)
+        nxt = L.find(1, r"travel step \d+/\d+: guest_move", up)
+        again = L.find(1, r"local death: HP 0", up + 0.5, min(up + 8, nxt[0]) if nxt else up + 8)
         v.step(tag + " guest alive after it (no second death within 8 s)", not again, again[1][:100] if again else "none")
         none_of(v, L, tag + " no loading screen after the death", r"Party B2: load started", hp0, up + 20, (1,))
         none_of(v, L, tag + " guest stays in the host's world (no session leave)", r"session client \(6, sub 0\) ->", hp0,
