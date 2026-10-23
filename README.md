@@ -4,7 +4,7 @@ Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Wind
 Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
 [Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-**Version 0.7.3** · Playable · Party co-op in development
+**Version 0.7.4** · Playable · Party co-op in development
 
 > No game files are included: you need your own decrypted dump with update 1.09 (any retail
 > release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
