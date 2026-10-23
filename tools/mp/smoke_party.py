@@ -1927,6 +1927,34 @@ def phase_ie(only):
     )
 
 
+# Phase il (items leak, 0.7.5, ~3 min, 2 players, group `items_leak`): the host's catch-up list reaches a
+# guest that lacks the host's progress and items quietly (one summary notice, no 8 s drip, no consumables),
+# and the guest's messenger shop is its own (the 5500-5521 "owns the Uncanny / Lost weapon" gates the guest's game
+# sets in the host's world are put back to its save's values; Gascoigne's attire, 5910, follows the host).
+#   The guest's save: Gascoigne / Cleric Beast / Sword Hunter Badge bosses un-killed (their ledger bits are not
+#   seeded, so the host's list gives them), the key goods 4000 / 4001 / 4114 removed; the guest stands at the Bath
+#   Messenger (talk 210691) with the Purchase list open on the weapons tab (screenshots).
+IL_UNTIL = [r"1:test: levelup: done[\s\S]*test: levelup: done", r"1:catch-up batch: \d+ item grant"]
+
+
+def phase_il(only):
+    host = ",".join(["god", "log_flag=5910/5508/70009300/70009310"])
+    g1 = ",".join(["god", "goods=4000:0", "goods=4001:0", "goods=4114:0", "log_flag=5910/5508/5500/5521"])
+    return dict(
+        name="il", seconds=240, count=2, headless=0,
+        env=["BB_PARTY_START=immediate"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host,
+              "0:BB_PARTY_PROGRESS_TEST_READ=5910,70009300,70009310,70009320,70009330,70009260",
+              "1:BB_PARTY_PROGRESS_TEST_CLEAR=12411800,12401800,12411700,5910,52410920,50001915,52411000,70009300,70009310,70009320,70009330",
+              "1:BB_PARTY_PROGRESS_TEST_READ=5910,12411800,5508,5160",
+              # A/B for the shop screenshots: IL_NOFIX=1 runs the guest without the shop-gate fix
+              ("1:BB_PARTY_SHOP_GATES=0" if os.environ.get("IL_NOFIX") else "1:BB_PARTY_SHOP_GATES=1"),
+              "1:BB_PARTY_DIRECTOR_TEST=" + g1,
+              ("0:BB_PARTY_GUESTSVC_TEST=hosttalk=210691;open=15000140;keys=right,right,right,right,right,down,down,down,down,down,down,down,down,down,down,down,down,down,down;hsdelay=3" if os.environ.get("IL_HOSTSHOP") else "1:BB_PARTY_GUESTSVC_TEST=warp=talk:210691;open=15000140;keys=right,right,right,down,down,down,down,down,down,down,down|warp=talk:210691;open=15000140;keys=right,right,right,right,right,down,down,down,down,down,down,down,down,down,down,down,down,down,down")],
+        watch=[], crash=[], until=IL_UNTIL, until_hold=25,
+    )
+
+
 # Phase nfa (npcfights Alfred, ~5 min, 2 players, groups `npc_fights` / `npc_alfred`; D11 live proof):
 # Alfred in the Queen's Chamber (m25), friendly at the start (his state 1348 in both saves), the
 # guest standing next to him when he turns hostile (an in-map transition, 12500053), then the guest's
@@ -2201,14 +2229,14 @@ def check_sj(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
+          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2219,7 +2247,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2279,6 +2307,7 @@ GROUP_UNTIL = {
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
     "items_every": IE_UNTIL,
+    "items_leak": IL_UNTIL,
     "travel_vote": TV_UNTIL,
     "limbo_leave": BL_UNTIL,
     "seam_rejoin": SJ_UNTIL,
@@ -4483,6 +4512,27 @@ def check_cv(v, L, d: Path):
     check_common(v, L, "cv")
 
 
+def check_il(v, L):
+    """Phase il: the quiet catch-up batch and the guest's shop gates (0.7.5)."""
+    j = need(v, L, "il join: the guest is in", 0, r"cooperators 0 -> 1")
+    need(v, L, "il catch-up: the host's list reaches the guest", 1, r"guest got \d+ grants from the host", 0)
+    gaves = L.all(1, r"gave #\d+ lot \d+ \(.*, full\) while summoned")
+    v.step("il catch-up: the guest is given items from the list", len(gaves) >= 1, "%d gives" % len(gaves))
+    v.step("il catch-up: quiet gives (no item-get dialog each)",
+           bool(gaves) and all("no dialog (catch-up batch)" in h[1] for h in gaves), "")
+    v.step("il catch-up: all given within 10 s (was one per 8 s)",
+           bool(gaves) and gaves[-1][0] - gaves[0][0] < 10.0,
+           "%.1f s for %d" % (gaves[-1][0] - gaves[0][0], len(gaves)) if gaves else "none")
+    need(v, L, "il catch-up: one summary notice", 1, r"catch-up batch: \d+ item grant\(s\) given quietly: Received \d+ item", j or 0)
+    none_of(v, L, "il policy: no consumable (Pebble 22000, Numbing Mist 24000, Sedative 26000, Pellets 27010) in the list",
+            r"(gave|skip) #\d+ lot (22000|24000|24010|26000|27010|35000|15005) ", insts=(1,))
+    need(v, L, "il shop: the guest's overlay gates are put back to its save", 1, r"shop gates while summoned: .*5500=0", j or 0)
+    need(v, L, "il shop: the host's shared gate 5910 (Gascoigne's attire) shows on the guest whose own save has it clear", 1,
+         r"test read \(load mode 1, own save / visible\): 5910=0/1", 0)
+    need(v, L, "il shop: the guest's own Gascoigne flag cleared", 1, r"test: cleared in the own save.*12411800", 0)
+    check_common(v, L, "il")
+
+
 def check_ie(v, L):
     """Phase ie: early items for every player (0.7.3)."""
     j = need(v, L, "ie join: the guest is in", 0, r"cooperators 0 -> 1")
@@ -4522,7 +4572,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": lambda v, L, d: check_il(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -4553,7 +4603,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "clg", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "rh", "rs", "tv", "nf", "nfa", "eh", "bl", "sj")
+                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "tv", "nf", "nfa", "eh", "bl", "sj")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
