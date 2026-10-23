@@ -159,6 +159,9 @@ PARTY_INI_SWITCHES = [
     # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
     # System > Deaths & revives)
     ("party_any_kidnap", "BB_PARTY_ANY_KIDNAP", True),
+    # 0.7.5: level sync and the phantom health cut (the host's rules; System > Party rules: Phantoms)
+    ("party_level_sync", "BB_PARTY_LEVEL_SYNC", True),
+    ("party_phantom_hp", "BB_PARTY_PHANTOM_HP", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -256,6 +259,18 @@ PARTY_RULES_TAB = [
          "grabbed host takes the party there, a grabbed guest just dies. The waking scene plays "
          "for everyone either way. Default: on (bbport.ini party_any_kidnap; in the game: "
          "System > Party rules: Deaths)."),
+    ]),
+    (0, 3, "Phantoms", [
+        ("check", "party_level_sync", "Level sync",
+         "As in Bloodborne's own co-op: a hunter whose level is above the host's range is scaled "
+         "down while it plays in the host's world - less maximum health and stamina, less defence "
+         "and resistance - and gets a blue icon by its name. Anyone can still join at any level. "
+         "The host's setting; guests follow it. Off: everyone keeps full stats. Default: on "
+         "(bbport.ini party_level_sync; in the game: System > Party rules: Phantoms)."),
+        ("check", "party_phantom_hp", "Phantom health cut",
+         "As in Bloodborne's own co-op: hunters who join a party have 30 % less maximum health. "
+         "The host's setting; guests follow it. Off: full maximum health for everyone. Default: on "
+         "(bbport.ini party_phantom_hp; in the game: System > Party rules: Phantoms)."),
     ]),
     (1, 1, "PvP & lamps", [
         ("check", "party_friendly_fire", "Friendly fire / PvP",

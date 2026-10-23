@@ -673,6 +673,11 @@ add_executable(party-glow-test EXCLUDE_FROM_ALL ../tests/test_party_glow.cpp)
 target_compile_options(party-glow-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-glow-test PRIVATE shim)
 set_target_properties(party-glow-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Level sync and phantom health (party_levelsync_rules.h). ninja -C out/gpu party-levelsync-test
+add_executable(party-levelsync-test EXCLUDE_FROM_ALL ../tests/test_party_levelsync.cpp)
+target_compile_options(party-levelsync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-levelsync-test PRIVATE shim)
+set_target_properties(party-levelsync-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Direct lamp travel (lamp_travel_rules.h). ninja -C out/gpu lamp-travel-test
 add_executable(lamp-travel-test EXCLUDE_FROM_ALL ../tests/test_lamp_travel.cpp)
 target_compile_options(lamp-travel-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
