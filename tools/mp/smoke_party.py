@@ -1979,6 +1979,38 @@ def phase_nfa(only):
     )
 
 
+# Phase npa (npcattack, ~5 min, 2 players, group `npc_attack`; 0.7.5 "NPC attacks beyond #13"): a guest
+# hits a FRIENDLY NPC of the host's world (Alfred in the Queen's Chamber, state 1348, team 26) with no
+# help from the host. The SpEffect target table has 1 for the host's body (team 19) against team 26 but
+# 0 for a cooperator (team 20): the guest's blows used to pass through. Same fixture as nfa.
+NPA_UNTIL = r"1:test: guest_kill[\s\S]*test read \(load mode 1"
+
+
+def phase_npa(only):
+    host = ",".join([
+        "god", "log_flag=" + NFA_FLAGS,
+        "host_warp=2502951@8^1",                              # 1: the party at the Queen's Chamber lamp
+        "host_chr=%d:4@10%%m25^1" % NF_ALFRED,                # the host 4 m from Alfred, no blow of its own
+        "host_press=0@60%m25!"])
+    g1 = ",".join(["god", "log_flag=" + NFA_FLAGS,
+                   "guest_chr=%d:1.6@14%%m25" % NF_ALFRED]     # 2: in front of the friendly Alfred
+                  + ["guest_press=0x800@1.5%m25!"] * 8         # 3: R1 x8 on a friendly NPC
+                  + ["guest_press=0@4%m25!"]
+                  + ["guest_kill=%d:hp@2%%m25" % NF_ALFRED])   # 4: a lethal blow's HP 0
+    clear = ",".join(str(f) for f in list(range(1340, 1348)) + list(range(1349, 1360)) + [12500051, 12500052, 12500053, 12500054] + list(range(72500350, 72500360)))
+    return dict(
+        name="npa", seconds=420, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=" + NFA_FIXTURE_SET,
+             "BB_PARTY_PROGRESS_TEST_READ=1348,1349,1350,12500810", "BB_PARTY_CHR_DUMP=40",
+             "BB_PARTY_TEST_COND_TIMEOUT=100"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: guest_chr %d=npaarrive@0.5,3" % NF_ALFRED,
+               "--watch", r"test: guest_press 0x800=npahit@0.5",
+               "--watch", r"test: guest_kill: =npakill@1,5"],
+        crash=[], until=[NPA_UNTIL], until_hold=8,
+    )
+
+
 # Phase eh (echodup, ~5 min, 2 players, group `echo_hold`): Blood Echoes an enemy took are paid once
 # (player report for 0.7.3: 15k from the glowing-eyed enemy and 15k again from the bloodstain the
 # marker pointed to). Guest 1 (15000 echoes, frail) is killed by 2410247 beside it and gets up at
@@ -2166,14 +2198,14 @@ def check_sj(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
+          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2184,7 +2216,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2240,6 +2272,7 @@ GROUP_UNTIL = {
     "dream_apart": DA_UNTIL,
     "npc_fights": [NF_UNTIL],
     "npc_alfred": [NFA_UNTIL],
+    "npc_attack": [NPA_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
     "items_every": IE_UNTIL,
@@ -4367,6 +4400,32 @@ def check_nfa(v, L):
     check_common(v, L, "nfa")
 
 
+def check_npa(v, L):
+    """Phase npa: a guest's blows on a friendly NPC of the host's world land (0.7.5)."""
+    need(v, L, "npa join: 2 players", 0, r"cooperators 0 -> 1")
+    need(v, L, "npa the guest's NPC-hit cells open (what the host hits)", 1, r"npc hit: a guest hits what the host hits: opened[^\n]*effect\[20\]\[26\]")
+    gat = need(v, L, "npa guest in front of Alfred", 1, r"test: guest_chr %d" % NF_ALFRED)
+    hits = L.all(1, r"test: guest_press 0x800", gat or 0)
+    gkill = L.find(1, r"test: guest_kill: .*entity %d" % NF_ALFRED, gat or 0)
+    if not (gat and hits):
+        v.step("npa the guest's R1s ran", False, "guest_chr %s R1s %d" % (gat, len(hits)))
+        check_common(v, L, "npa")
+        return
+    start = nf_hp(L, 0, NF_ALFRED, 0, hits[0][0])
+    s0 = start[-1][1] if start else 3100
+    for i, who in ((0, "host"), (1, "guest")):
+        hp = [h for _, h, _ in nf_hp(L, i, NF_ALFRED, hits[0][0] - 0.5, gkill[0] if gkill else 1e9)]
+        v.step("npa the guest's R1s on friendly Alfred hurt him on the %s's game" % who, bool(hp) and 0 < min(hp) < s0,
+               "from %d: HP %s" % (s0, hp[:10]))
+    tm = sorted({t for _, _, t in nf_hp(L, 1, NF_ALFRED, hits[0][0], gkill[0] if gkill else 1e9)})
+    v.step("npa (info) Alfred's team on the guest's game during the blows", True, "%s" % tm)
+    f = L.find(0, r"test: flags .*1349=1", hits[0][0] - 1)
+    v.step("npa (info) the host's Alfred turned hostile (1349) from the guest's blows", True, f[1][:120] if f else "no: stays friendly")
+    if gkill:
+        need(v, L, "npa the kill is recorded on the host (1350)", 0, r"test: flags .*1350=1", gkill[0] - 1, gkill[0] + 30)
+    check_common(v, L, "npa")
+
+
 def check_cv(v, L, d: Path):
     """Phase cv: covenant outcomes per player; Valtr's rune for a guest (0.7.3)."""
     j = need(v, L, "cv join: the guest is in", 0, r"cooperators 0 -> 1")
@@ -4452,7 +4511,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
