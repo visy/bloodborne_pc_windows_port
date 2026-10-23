@@ -2004,15 +2004,71 @@ def phase_clg(only):
 
 
 
+# Phase sj (forestrejoin, ~4 min, 2 players, group `seam_rejoin`; a player's report, 0.7.4: in the
+# Forbidden Woods cave (the seam between m24_00 and m27_00) the guest that crossed first was sent
+# home seconds after the host caught up - its game's leave state had started when the host's chr
+# left - and its re-join landed in the host's Hunter's Dream (no lit lamp in m27: the lampless
+# transform kept the own world's stage). The host stands at the cave on the m24_00 side, the guest
+# beside it walks over the seam (warp, a few m), the host follows 2 s later: the guest's send-home
+# must be dropped and it stays a cooperator. Then the guest's Leave + Rejoin while the host is in
+# m27_00 (its lamps unlit): the cross-map join must land in m27_00 beside the host, not in m21.
+SJ_M24 = "-171.9:-45.3:182.3"     # in the cave, m24_00 side
+SJ_G24 = "-166.7:-42.9:186.0"
+SJ_G27 = "-183.7:-50.2:183.9"     # over the seam: m27_00
+SJ_H27 = "-185.2:-52.5:188.3"
+SJ_UNTIL = [r"1:guest_rejoin: Party > Rejoin pressed[\s\S]*(arrived (alone|in the host world)[\s\S]{3000}|map - -> m21)"]
+
+
+def phase_sj(only):
+    host = ",".join(["god", "host_move=%s:pin=4@12^1" % SJ_M24,
+                     "host_move=%s:pin=2@2?near=%s:4" % (SJ_H27, SJ_G27)])
+    g1 = ",".join(["god", "guest_move=%s:pin=3@3%%m24_00?near=%s:5" % (SJ_G24, SJ_M24),
+                   "guest_move=%s:pin=2@6%%m24_00" % SJ_G27,
+                   "guest_leave@25%m27", "guest_rejoin@6"])
+    return dict(
+        name="sj", seconds=300, count=2, headless=0,
+        env=["BB_PARTY_HOLD_LOG=1"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2402950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
+              "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"map m24_00_00_00 -> m27_00_00_00=sjcross@1,4",
+               "--watch", r"OnLeave_Limit=sjleave@0.5,4",
+               "--watch", r"guest_rejoin: Party > Rejoin pressed=sjrejoin@20,30,40"],
+        crash=[], until=SJ_UNTIL, until_hold=10,
+    )
+
+
+def check_sj(v, L):
+    need(v, L, "sj join: 2 players", 0, r"cooperators 0 -> 1")
+    cross = need(v, L, "sj guest walks over the seam into m27_00", 1, r"map m24_00_00_00 -> m27_00_00_00")
+    if cross is None:
+        check_common(v, L, "sj")
+        return
+    left = need(v, L, "sj the host's chr leaves on the guest (its leave state starts)", 1,
+                r"split: remote chr .* leaves \(slot 0 is in m24_00", cross - 2)
+    need(v, L, "sj host follows into m27_00", 0, r"map m24_00_00_00 -> m27_00_00_00", cross - 2)
+    lv = L.find(1, r"guest_leave: Party > Leave pressed", cross)
+    end = lv[0] if lv else 1e9
+    need(v, L, "sj guest's send-home dropped while together", 1, r"\(OnLeave_Limit\) dropped", cross, end)
+    none_of(v, L, "sj guest not sent home before its Leave", r"funnel: guest_sent_home", cross, end, insts=(1,))
+    none_of(v, L, "sj host keeps the guest (no 1 -> 0) before its Leave", r"cooperators 1 -> 0", cross, end, insts=(0,))
+    rj = need(v, L, "sj guest's Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", cross)
+    if rj is not None:
+        need(v, L, "sj rejoin: no lit lamp in m27: a placement beside the host", 1,
+             r"no lamp for this alone load: summoned placement = the transform's stage 0x1b000000", rj)
+        need(v, L, "sj rejoin lands in m27_00", 1, r"map - -> m27_00_00_00", rj)
+        none_of(v, L, "sj rejoin never in the Dream", r"map - -> m21_00", rj + 15, insts=(1,))
+    check_common(v, L, "sj")
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh, "sj": phase_sj}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh"}
+          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2023,7 +2079,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh ", "seam_rejoin": r"^sj "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2083,6 +2139,7 @@ GROUP_UNTIL = {
     "valtr_rune": CV_UNTIL,
     "items_every": IE_UNTIL,
     "travel_vote": TV_UNTIL,
+    "seam_rejoin": SJ_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -4276,7 +4333,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "sj": lambda v, L, d: check_sj(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -4287,7 +4344,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,el,lt,ch,rh,rs,bf,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,el,lt,ch,rh,rs,bf,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -4303,7 +4360,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "clg", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "rh", "rs", "tv", "nf", "nfa", "eh")
+                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "rh", "rs", "tv", "nf", "nfa", "eh", "sj")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

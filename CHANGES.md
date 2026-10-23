@@ -3,6 +3,12 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.7.4 (unreleased)
+
+- **Fixed: a guest is no longer sent home while it stands beside the host after crossing between two areas** (player report: the cave between Cathedral Ward and the Forbidden Woods, and the path into Hemwick): when the guest walked across the border between two areas a moment before the host, its game treated the host as gone, and a few seconds later sent the guest back to its own world. This happened even though the host had caught up and was standing right beside it. The guest then came back into the host's world. Now the guest stays with the host. Walking across such a border, together or one after the other, no longer ends the guest's visit.
+- **Fixed: a guest rejoining the host in an area with no lit lamp arrives beside the host, not in the Hunter's Dream** (player report, the Forbidden Woods): when the host's area had no lit lamp, a rejoining guest was loaded into the host's Hunter's Dream instead of next to the host. It now arrives beside the host with one loading screen.
+
+
 ## 0.7.3 (Windows port 0.7.3, late player reports: chalice dungeons, Blood Echoes, saves, items, abductions, settings layout)
 
 - **Fixed: a save made while you are a guest keeps your own world's state** (player report: save editors crashed on it until you hosted and saved again): in another player's world the game saved your character without the part that records your own world (which of its enemies are dead, its objects, its bloodstains), because joining a party never gave the game the copy of it that a normal summon makes. A save written in the host's world now keeps that part from your previous save, as one made at home has it, so save editors read it and quitting as a guest and continuing later finds your own world as you left it. Items, Echoes and progress from the host's world are kept as before. The log says so (`Saves: userdata0000 was written in another player's world ...`); `BB_SAVE_GUEST_WORLD_FIX=0` turns it off. Saves already made that way are fixed by your next save, or opened through *Export for save editor*.

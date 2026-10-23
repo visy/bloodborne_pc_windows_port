@@ -446,6 +446,8 @@ BB_COOP_SYSV void HostDeathReturnHook(u64 man, u64 id) {
 
 /// Guest: HostDead_1's send-home is dropped (the host's death travel brings the guest along).
 bool SplitHostReachable();
+extern std::atomic<int> g_apart;
+extern std::atomic<double> g_host_chr_left_at;
 std::atomic<bool> g_force_load_warp{false};
 std::atomic<bool> g_title_continuing{false};  // the director's AutoContinue is pressing Continue  // the next lamp warp loads (title-join home)
 std::atomic<bool> g_title_joined{false};  // this guest came in by a title join (no own world loaded)
@@ -476,10 +478,13 @@ bool SendHomeVeto(u64 site) {
     if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && !host_in_chalice &&
         SplitHostReachable()) {
         Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: split travel, the host is in another area and "
-            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f%s)",
+            "connected (session %d, flow %d, flow +0xF4 %.1f, session +0x2E0 %.1f +0x2F0 %.1f%s%s)",
             Role(), Field<int>(Slot(kSlotFlow), 0x84, -1), double(Field<float>(Slot(kSlotFlow), 0xf4)),
             double(Field<float>(Slot(kSlotSession), 0x2e0)), double(Field<float>(Slot(kSlotSession), 0x2f0)),
-            g_title_joined.load() ? "; a title-joined guest" : "");
+            g_title_joined.load() ? "; a title-joined guest" : "",
+            g_apart.load() == 0 && Now() - g_host_chr_left_at.load() < 60.0
+                ? "; together again after a map seam: the leave state began when the host's chr left here"
+                : "");
         g_apart_hold_at = Now();  // the leave state's action-button hold has no load to end it now
         return true;
     }
@@ -1626,6 +1631,15 @@ void FinishRemoval(const PendingRemoval& r, const char* how) {
         r.why.c_str(), how, r.member_gone ? "the member left the session" : "its task is kept");
 }
 
+// Guest: when split travel last removed the host's chr here (Now(), 0 = never). Its game takes that
+// as the host leaving: the leave state (flag 4047, the load-wait hold, Lua timer 4046) whose end is
+// OnLeave_Limit's send-home ~5 s later. A player report (0.7.4, the Forbidden Woods cave between
+// m24_00 and m27_00; also m24_00 / m22_00): the guest walked over a map seam first, the host
+// followed within those seconds, the two met again (the chr re-created, no load) and the send-home
+// then came while the host stood beside the guest - not dropped (nobody apart), so the guest was
+// sent home and re-joined. SplitHostReachable counts the host as apart for 60 s after this.
+std::atomic<double> g_host_chr_left_at{0};
+
 void RemoveRemoteChr(u64 chr, const char* why, bool member_gone = false) {
     for (const PendingRemoval& r : g_removals) {
         if (r.chr == chr) {
@@ -1655,6 +1669,13 @@ void RemoveRemoteChr(u64 chr, const char* why, bool member_gone = false) {
         }
     }
     g_split_change_at = Now();
+    if (Role() == RoleClient) {
+        for (const TaskInfo& t : Tasks(false)) {
+            if (t.mode == 2 && PlayerForPeer(t.task + kTaskPeer) == chr) {
+                g_host_chr_left_at = Now();  // the guest's game starts its leave state (SendHomeVeto)
+            }
+        }
+    }
     Log("split: remote chr %#llx (handle %x) leaves (%s): presentation entry %#llx; enterleave%s", ull(chr),
         Field<u32>(chr, 8), why, ull(r.entry), DescribeEnterLeave().c_str());
     g_removals.push_back(r);
@@ -1983,7 +2004,8 @@ void SplitTick(const GameSnapshot& s, double now) {
 /// link entry is connected and fresh.
 bool SplitHostReachable() {
     const Where* h = WhereOf(0);
-    const bool apart = g_apart.load() > 0 || Now() - g_host_alone_seen.load() < 60.0;
+    const bool apart = g_apart.load() > 0 || Now() - g_host_alone_seen.load() < 60.0 ||
+                       Now() - g_host_chr_left_at.load() < 60.0;
     return apart && h && h->connected && h->age_ms < 5000;
 }
 
@@ -4174,6 +4196,27 @@ void StayActionHoldTick(const GameSnapshot& s, double now) {
     const u64 man = Slot(0x5540048), ctx = Field<u64>(Slot(0x553b0c8), 8);
     const int wait = ctx ? int(Field<u8>(ctx, 0x8d)) : -1, hold = man ? int(Field<u8>(man, 0x52)) : -1;
     const bool guest = g_on.load() && Role() == RoleClient;
+    {
+        // BB_PARTY_HOLD_LOG=1 (diagnostic, off by default): every change of the Lua event context, its
+        // load wait (+0x8D), the action-button hold (+0x52), SprjEventState and flag 4047 (the leave
+        // state's marks), checked every 0.25 s on any role.
+        static const bool hold_log = std::getenv("BB_PARTY_HOLD_LOG") && std::getenv("BB_PARTY_HOLD_LOG")[0] == '1';
+        static double next_check = 0;
+        static std::string last;
+        if (hold_log && now >= next_check) {
+            next_check = now + 0.25;
+            bool f4047 = false;
+            const bool f_ok = ReadEventFlag(4047, &f4047);
+            char b[200];
+            std::snprintf(b, sizeof b, "ctx %#llx wait %d hold %d evstate %d flag4047 %s role %d %s%s", ull(ctx), wait, hold,
+                          Field<int>(Slot(0x553b0d8), 0, -1), f_ok ? (f4047 ? "1" : "0") : "?", Role(),
+                          MapName(s.map_id).c_str(), s.loading ? " loading" : "");
+            if (last != b) {
+                last = b;
+                Log("hold log: %s", b);
+            }
+        }
+    }
     const struct {
         stayrules::Keep kept;
         std::atomic<double>* at;
@@ -8476,6 +8519,18 @@ void GuestTick(const GameSnapshot& s, double now) {
                             std::memcpy(t.pos, p16, sizeof t.pos);
                             std::memcpy(t.rot, r16, sizeof t.rot);
                         }
+                    } else if (t.kind == TravelKind::Transform && t.has_pos && t.pos_map != 0 &&
+                               t.pos_map != 0xffffffffu) {
+                        // No lamp (BesideHostIntent: a join into a map with no lit lamp, the
+                        // Forbidden Woods report): the transform's own stage and spot beside the
+                        // host. Without it +0x14C4 kept the own world's stage (the Dream) and the
+                        // forced transform loaded the guest into the host's Hunter's Dream.
+                        const u32 stage = t.pos_map;
+                        alignas(16) float p16[4] = {t.pos[0], t.pos[1], t.pos[2], 1.0f};
+                        alignas(16) float r16[4] = {t.rot[0], t.rot[1], t.rot[2], t.rot[3]};
+                        WriteSummonedPlacement(gsm, &stage, p16, r16);
+                        Log("guest: no lamp for this alone load: summoned placement = the transform's stage %#x pos "
+                            "(%.1f, %.1f, %.1f) (beside the host)", stage, p16[0], p16[1], p16[2]);
                     }
                 }
                 RestoreZeroedOverlay();
