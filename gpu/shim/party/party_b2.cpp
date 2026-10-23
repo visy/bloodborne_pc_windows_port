@@ -4610,6 +4610,10 @@ std::atomic<bool> g_host_limbo{false};   // the host's death came in a boss figh
 std::atomic<bool> g_host_limbo_late{false};  // ...its boss killed in its death animation (KilledAfterHp0)
 std::mutex g_dead_mu;
 deathrules::DownLedger g_dead_members;    // host: party slots down until revived / re-arrived / gone (under g_dead_mu)
+deathrules::LimboFight g_limbo_fight;     // host: who fights on in its boss-fight limbo (under g_dead_mu)
+/// Host: a member left its boss-fight limbo's fight (`how` for the log; `into_here`: a load into this
+/// world, e.g. a Hunter's Mark to the host's lamp: the wipe waits for its arrival, at most 30 s).
+void LimboFighterLeft(int slot, bool into_here, const char* how);
 std::atomic<bool> g_host_revived_note{false};  // guest: the host was revived in place (re-create its chr)
 // The local player's respawn record (GSM +0x1528) on its last frame alive (LocalDeathHeightTick):
 // a death whose script moves it (deathrules::ScriptedDeathWarp) is told from the record at the funnel.
@@ -4962,6 +4966,16 @@ int DeadMemberCount(int* seen = nullptr) {
     return g_dead_members.Count();
 }
 
+void LimboFighterLeft(int slot, bool into_here, const char* how) {
+    if (Role() != RoleHost || !g_host_limbo.load()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(g_dead_mu);
+    if (g_limbo_fight.Left(slot, into_here ? Now() + 30.0 : 0.0)) {
+        Log("host limbo: slot %d left the boss fight (%s)", slot, how);
+    }
+}
+
 int MemberTaskCount() {
     int n = 0;
     for (const TaskInfo& t : Tasks(false)) {
@@ -5091,6 +5105,13 @@ bool HostDeathIntercept() {
         g_host_down_at = Now();
         g_host_limbo = true;
         g_host_limbo_late = v.boss_killed_late;
+        {
+            const std::vector<deathrules::MemberNow> now_members = MembersNow();
+            std::lock_guard<std::mutex> lk(g_dead_mu);
+            g_limbo_fight.Begin(now_members);
+            Log("host limbo: %d member(s) in the fight; the last one leaving it (Hunter's Mark, lamp, death, "
+                "Leave, disconnect) is a wipe", g_limbo_fight.Fighters());
+        }
         g_host_corpse = CorpseSpot{};
         g_host_corpse.valid = ChrTransform(Field<u64>(Slot(kSlotWorldChrMan), 0x60), g_host_corpse.pos, g_host_corpse.rot);
         Log("host death in a boss fight (%s): limbo until the boss is gone (killed: %s), a wipe or a rest; "
@@ -6244,6 +6265,10 @@ void HostDownTick(const GameSnapshot& s, double now) {
     if (s.loading && g_host_down.load()) {
         g_host_down = false;  // a travel (a rest, a guest's lamp) took over: the load revives everyone
         g_host_limbo = false;
+        {
+            std::lock_guard<std::mutex> lk(g_dead_mu);
+            g_limbo_fight.End();
+        }
         Log("host death: a load started while the host was down; nothing left to revive");
     }
     if (!s.world_up || s.loading || !s.player) {
@@ -6299,6 +6324,22 @@ void HostDownTick(const GameSnapshot& s, double now) {
     dv.down_seen = seen;
     dv.limbo = g_host_limbo.load();
     dv.boss_active = dv.limbo && BossFightActive();
+    if (dv.limbo) {
+        const std::vector<deathrules::MemberNow> mn = MembersNow();
+        std::lock_guard<std::mutex> lk(g_dead_mu);
+        dv.fighters = g_limbo_fight.Fighters();
+        dv.fighters_out = g_limbo_fight.Out(mn, [](int slot) { return g_dead_members.Has(slot); });
+        dv.fighter_settling = g_limbo_fight.Settling(now);
+        static int last_out = -1;
+        if (dv.fighters_out != last_out) {
+            last_out = dv.fighters_out;
+            Log("host limbo: %d of %d member(s) out of the fight%s", dv.fighters_out, dv.fighters,
+                deathrules::LimboFightEmpty(dv.fighters, dv.fighters_out)
+                    ? (dv.fighter_settling ? ": nobody fights on; a wipe once its load into this world is over"
+                                           : ": nobody fights on")
+                    : "");
+        }
+    }
     {
         // The boss died while the host lay in limbo: wait for the game's defeat event (it clears the
         // bar and sets the defeat flag), then 3 s more for its flags, at most 20 s from the kill.
@@ -6361,6 +6402,19 @@ void HostDownTick(const GameSnapshot& s, double now) {
     }
     const bool was_limbo = g_host_limbo.exchange(false);
     g_host_down = false;
+    {
+        std::lock_guard<std::mutex> lk(g_dead_mu);
+        g_limbo_fight.End();
+    }
+    if (plan == deathrules::DownTick::Wipe && was_limbo && dv.boss_active &&
+        !deathrules::Wiped(members, dead, seen)) {
+        Log("host death: the last living member left the boss fight (%d of %d out, %.1f s after the death): a wipe; "
+            "the stock funnel runs (the party respawns together)", dv.fighters_out, dv.fighters, dv.down_for);
+        party::status::SetLastEvent("Nobody left in the boss fight: the party respawns");
+        SpectateEnd();
+        HostDeathFunnelNow();
+        return;
+    }
     if (plan == deathrules::DownTick::Wipe) {
         Log("host death: every member went down while the host was (%d of %d, recounted %.1f s after the death): a "
             "wipe; the stock funnel runs",
@@ -11714,6 +11768,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         S().away_have_pos = have;
         std::memcpy(S().away_pos, p, sizeof p);
         Log("host: slot %d travels alone into another area", from_slot);
+        LimboFighterLeft(from_slot, false, "travels alone into another area");
         return;
     }
     if (body.find("\"rejoin\"") != std::string::npos || body.find("\"respawn\"") != std::string::npos) {
@@ -11740,6 +11795,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         Log("host: slot %d %s; re-sending the snapshot%s", from_slot,
             live ? "travels alone into this area" : "died alone and respawns in this world",
             rest ? " after the rest load it carries" : "");
+        LimboFighterLeft(from_slot, true, live ? "a load into this world (Hunter's Mark / lamp)" : "a lone respawn");
         return;
     }
     if (body.find("\"spectating\"") != std::string::npos) {
@@ -11828,6 +11884,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         {
             std::lock_guard<std::mutex> lk(g_dead_mu);
             g_dead_members.Clear(from_slot);
+            g_limbo_fight.Arrived(from_slot);
         }
         std::lock_guard<std::mutex> lk(S().mu);
         S().arrived = true;

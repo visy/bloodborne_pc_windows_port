@@ -58,6 +58,11 @@ Phase fd (~3 min, 2 players, group `fall_deep`): guest 1, its own last lamp the 
   "perpetual spectate" report), and walk away from the lamp.
 Phase fdj (~4 min, 2 players, group `fall_deep`): the same at the report's own spot, the shaft beside
   Djura's tower in Old Yharnam (guest 1 walks off the ledge; the host's lamp ~150 m away).
+Phase bl (~4 min, 2 players, group `limbo_leave`, 0.7.4 player report host_limbo_mark): the host dies in
+  Father Gascoigne's fight while the guest fights on (the host's limbo + spectate; the boss must keep
+  fighting the guest: its HP and the boss's target logged), then the guest, the last one in the fight,
+  takes a Hunter's Mark to the host's lamp: that counts as a wipe (the party's one respawn load: the
+  host up at its lamp, no spectating its corpse until a rest).
 Phase sm (~5 min, 2 players, group `scene_mirror`): the host's cutscene live on a guest beside it:
   Father Gascoigne's intro with both games running its event at once (the guest's own copy held,
   the host's played within 1 s, once), then the Tomb of Oedon door into Oedon Chapel (scene 24000020)
@@ -1503,6 +1508,62 @@ def phase_bf(only):
 
 
 
+# Phase bl (bosslimbo, 0.7.4): the last living member leaves the host's boss-fight limbo -> a wipe.
+BL_UNTIL = [r"0:the last living member left the boss fight[\s\S]*loading screen gone",
+            r"1:guest_use goods 100[\s\S]*arrived in the host world \(flow 4\)"]
+
+
+def phase_bl(only):
+    host = ",".join(["host_warp=2412953@8^1",                               # the party to the Tomb of Oedon
+                     "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER,          # the host starts the fight (intro)
+                     "host_die@16%m24_01~"])                                # dead in it, the guest fighting: the limbo
+    g1 = ",".join(["god",                                                   # alive through the fight (its HP logged)
+                   "guest_obj=2411810@3%m24_01~",                           # at the fog after the intro
+                   "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # through it: in the fight
+                   "guest_press=0x0@12%m24_01!", "guest_press=0x0@8%m24_01!",       # with the host dead
+                   "guest_press=0x0@8%m24_01!",
+                   "guest_lastlamp=2412953@1%m24_01",                       # its last lamp: the host's
+                   "guest_use=100@2%m24_01"])                               # Hunter's Mark: leaves the fight
+    return dict(
+        name="bl", seconds=300, count=2, headless=0, until_hold=12,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1",
+             "BB_PARTY_BOSS_TARGET_LOG=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        watch=["--watch", r"host death in a boss fight=bllimbo@2,8,14",
+               "--watch", r"test: guest_use goods 100=blmark@1",
+               "--watch", r"the last living member left the boss fight=blwipe@0.5",
+               "--watch", r"host chr: hp \d+, .*\(alive\)=blup@2,6"],
+        crash=[], until=BL_UNTIL,
+    )
+
+
+def check_bl(v, L):
+    """Phase bl: the guest's Hunter's Mark out of the host's boss-fight limbo is a wipe."""
+    need(v, L, "bl join: 2 players", 0, r"cooperators 0 -> 1")
+    on = need(v, L, "bl the host's fight is on (bar)", 0, r"boss health bar shown")
+    if on is None:
+        return
+    lim = need(v, L, "bl host death in the fight: the limbo", 0, r"host death in a boss fight", on)
+    if lim is None:
+        return
+    need(v, L, "bl the limbo counts the guest in the fight", 0, r"host limbo: 1 member\(s\) in the fight", lim - 1)
+    need(v, L, "bl the host spectates the guest", 0, r"spectating: following slot \d+ \(1 living member\)", lim)
+    mark = need(v, L, "bl guest uses a Hunter's Mark (the last one in the fight)", 1, r"guest_use goods 100", lim)
+    if mark is None:
+        return
+    left = need(v, L, "bl host: the guest left the boss fight", 0, r"host limbo: slot \d+ left the boss fight", mark - 1)
+    wipe = need(v, L, "bl host: nobody fights on: a wipe", 0, r"the last living member left the boss fight", left or mark)
+    if wipe is None:
+        return
+    none_of(v, L, "bl no wipe before the guest's Mark", r"a wipe; the", 0, mark - 1, insts=(0,))
+    up = need(v, L, "bl host: the wipe's respawn load", 0, r"loading screen gone", wipe)
+    if up is not None:
+        need(v, L, "bl host up again after the load (alive)", 0, r"host chr: hp \d+, .*\(alive\)|B2 load report", wipe)
+        need(v, L, "bl host spectating ended", 0, r"spectating ended", wipe - 1)
+        need(v, L, "bl guest back in the host's world after the wipe", 1, r"arrived in the host world \(flow 4\)", wipe)
+    check_common(v, L, "bl")
+
+
 # Phase rt (rotrules, 0.7.2, ~6 min, 2 players, group `rot`): rot on (BB_PARTY_ROT=1) and what else
 # cleanses it (party_rot_rules.h). Guest 1 is frail (BB_PARTY_ROT_TEST_FRAIL: any hit leaves 1 HP, so
 # the next enemy hit kills it: a death with a killer, the game's own death path) and picks its stains
@@ -2005,14 +2066,14 @@ def phase_clg(only):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "eh": phase_eh, "bl": phase_bl}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh"}
+          "valtr_rune": "cv", "items_every": "ie", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "echo_hold": "eh", "limbo_leave": "bl"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2023,7 +2084,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "echo_hold": r"^eh ", "limbo_leave": r"^bl "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2083,6 +2144,7 @@ GROUP_UNTIL = {
     "valtr_rune": CV_UNTIL,
     "items_every": IE_UNTIL,
     "travel_vote": TV_UNTIL,
+    "limbo_leave": BL_UNTIL,
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -4276,7 +4338,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -4287,7 +4349,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,el,lt,ch,rh,rs,bf,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,el,lt,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
@@ -4303,7 +4365,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "clg", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "rh", "rs", "tv", "nf", "nfa", "eh")
+                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "rh", "rs", "tv", "nf", "nfa", "eh", "bl")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
