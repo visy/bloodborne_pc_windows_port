@@ -154,6 +154,63 @@ int main() {
         CHECK(ScriptedDeathWarp(true, false) && ScriptedDeathWarp(false, true) && !ScriptedDeathWarp(false, false));
     }
 
+    {
+        // 0.7.4 host_limbo_mark: the host in its boss-fight limbo, the last living member leaves the
+        // fight (Hunter's Mark, lamp, Leave, disconnect): a wipe, not a limbo until a rest.
+        std::vector<MemberNow> roster(2);
+        roster[0].slot = 1;
+        roster[1].slot = 2;
+        LimboFight f;
+        CHECK(f.Fighters() == -1 && !LimboFightEmpty(f.Fighters(), 0));
+        f.Begin(roster);
+        CHECK(f.Fighters() == 2);
+        auto none = [](int) { return false; };
+        CHECK(f.Out(roster, none) == 0);
+        CHECK(f.Left(1, 100.0));                 // slot 1: Hunter's Mark into this world, loading until 100
+        CHECK(!f.Left(1, 100.0));                // once
+        CHECK(!f.Left(5, 0.0));                  // not a fighter
+        CHECK(f.Out(roster, none) == 1);
+        CHECK(f.Settling(50.0) && !f.Settling(100.0));
+        f.Arrived(1, 50.0);
+        CHECK(f.Settling(51.0) && !f.Settling(53.0));  // a moment for its re-join to end
+        CHECK(!LimboFightEmpty(f.Fighters(), f.Out(roster, none)));  // slot 2 fights on
+        CHECK(f.Out(roster, [](int s) { return s == 2; }) == 2);       // ... until it is down
+        std::vector<MemberNow> gone(1, roster[0]);
+        CHECK(f.Out(gone, none) == 2);           // slot 2 left the party (Leave / disconnect)
+        f.End();
+        CHECK(f.Fighters() == -1);
+        CHECK(!f.Left(1, 0.0));                  // no limbo: nothing recorded
+
+        DownView v;
+        v.members = 1;
+        v.down_for = 5;
+        v.limbo = true;
+        v.boss_active = true;
+        v.fighters = 1;
+        v.fighters_out = 0;
+        CHECK(PlanDownTick(v) == DownTick::Wait);       // the guest fights on: the limbo
+        v.fighters_out = 1;
+        v.fighter_settling = true;
+        CHECK(PlanDownTick(v) == DownTick::Wait);       // its Mark's load into this world still runs
+        v.fighter_settling = false;
+        CHECK(PlanDownTick(v) == DownTick::Wipe);       // arrived: everyone respawns as in a wipe
+        v.down_for = 0.1;
+        CHECK(PlanDownTick(v) == DownTick::Wipe);       // also within the revive delay
+        v.down_for = 5;
+        v.fighters = 0;
+        v.fighters_out = 0;
+        CHECK(PlanDownTick(v) == DownTick::Wipe);       // nobody was fighting (all left before the death was taken)
+        v.fighters = -1;
+        CHECK(PlanDownTick(v) == DownTick::Wait);       // not tracked: as before
+        v.fighters = 1;
+        v.fighters_out = 1;
+        v.boss_active = false;                           // the boss was killed meanwhile: not a wipe
+        v.boss_killed = true;
+        v.arena_revive_on = true;
+        v.member_here = true;
+        CHECK(PlanDownTick(v) == DownTick::ArenaRevive);
+    }
+
     // While the host is down: recount at every frame (bug 18).
     DownView d;
     d.members = 1;
@@ -417,6 +474,28 @@ int main() {
     CHECK(PlanLampOrigin(3.5, 12) == LampOrigin::Own);      // a stale peer flag
     CHECK(PlanLampOrigin(3.5, 8) == LampOrigin::Own);       // own use after the peer's
     CHECK(PlanLampOrigin(8, 3.4) == LampOrigin::Other);     // the peer's after an old own one
+    {
+        // A peer's lamp packets are dropped (live 0.2.2 b1: a guest's lone Dream trip used up the
+        // host's event 7200 for that lamp; the host's own Dream choice there then did nothing).
+        const std::uint32_t dream_flag[5] = {72400100};     // Cathedral Ward lamp -> Dream (0x0f)
+        const std::uint32_t headstone[5] = {72102950};      // a Dream headstone
+        const std::uint32_t quest_flag[5] = {72400480};     // an NPC quest flag: not a lamp's
+        const std::uint32_t talk_flag[5] = {72100100};      // the Dream's talk state: not a lamp's
+        CHECK(PeerLampPacket(0xf, 4, dream_flag));
+        CHECK(PeerLampPacket(0xf, 4, headstone));
+        CHECK(!PeerLampPacket(0xf, 4, quest_flag));
+        CHECK(!PeerLampPacket(0xf, 4, talk_flag));
+        CHECK(!PeerLampPacket(0xf, 8, dream_flag));          // not the 4-byte flag packet
+        const std::uint32_t lamp_event[5] = {10, 7200, 72400100, 2401950, 2102950};
+        const std::uint32_t headstone_event[5] = {0, 12107000, 0, 0, 0};
+        const std::uint32_t other_event[5] = {10, 7600, 2401999, 2403999, 0};
+        CHECK(PeerLampPacket(0xe, 0x14, lamp_event));
+        CHECK(PeerLampPacket(0xe, 0x14, headstone_event));
+        CHECK(!PeerLampPacket(0xe, 0x14, other_event));
+        CHECK(!PeerLampPacket(0xe, 4, lamp_event));          // wrong size: left alone
+        CHECK(!PeerLampPacket(0x10, 4, dream_flag));         // other packet types: left alone
+        CHECK(!PeerLampPacket(0xf, 4, nullptr));
+    }
 
     // A guest's lamp (bug 10, bug 3).
     CHECK(PlanGuestLamp(false, false, true, false) == GuestLamp::Plain);
@@ -425,7 +504,7 @@ int main() {
     CHECK(PlanGuestLamp(true, true, true, true) == GuestLamp::SoloLoad);   // a Mark to the lamp here
     CHECK(PlanGuestLamp(true, false, false, false) == GuestLamp::Ask);
     CHECK(PlanGuestLamp(true, false, false, true) == GuestLamp::Ask);
-    CHECK(GuestAloneRestsHostWorld(true, false, false));
+    CHECK(!GuestAloneRestsHostWorld(true, false, false));  // travels away alone: no host reload (Nightwatch)
     CHECK(!GuestAloneRestsHostWorld(false, false, false));  // YES: the party travel is the rest
     CHECK(GuestAloneRestsHostWorld(true, true, false));  // D9 (pard4): a lamp of the loaded map rests too
     // 0.7.3: a guest leaving the Hunter's Dream alone (headstone, NO) is a plain travel: no rest load
