@@ -2077,9 +2077,8 @@ def phase_clg(only):
 # side; the guest walks over the seam into m27_00, the host follows 2 s later: the guest's send-home
 # must be dropped (it stays a cooperator) and the leave state undone. Then a party travel to the Hunter's Dream: the guest levels up at the Doll
 # while the host talks to her at the same moment (the guest's action buttons work after the stay).
-# The walk from the Cathedral Ward lamp 2402950 (tools/party/nav_route.py on the m24_00 navmesh) to
-# the stairs above the cave, then short moves to the report's own spots (a far warp fell through
-# the unloaded floor; coming from the Forbidden Woods lamp the m24_00 side never loaded).
+# SJ_ROUTE: the walk from the Cathedral Ward lamp 2402950 (tools/party/nav_route.py, m24_00 navmesh;
+# ~5 min), no longer used by the phase (a ground-checked teleport instead); kept for a manual walk.
 SJ_ROUTE = ("13.1:-9.5:107.0/7.6:-10.9:108.6/3.4:-11.0:109.5/-1.0:-10.3:113.4/-7.3:-10.1:117.1/-10.8:-10.4:120.5/"
             "-10.2:-11.1:128.3/-8.5:-10.4:134.5/-3.6:-6.1:143.2/-1.6:-4.8:148.9/1.7:-2.7:154.0/4.6:0.2:159.1/"
             "6.1:0.8:167.4/9.3:1.0:169.9/10.4:1.2:172.1/7.9:0.2:176.9/3.1:0.1:179.0/0.3:0.3:180.9/-5.4:0.4:183.6/"
@@ -2099,14 +2098,17 @@ SJ_UNTIL = [r"1:test: levelup: (LEVEL UP|FAILED)|1:map - -> m21_00[\s\S]*funnel:
 
 
 def phase_sj(only):
-    # both walk the route (it takes ~5 min), then the guest crosses first and the host follows 2 s later
-    host = ",".join(["god", "host_route=%s@10^1" % SJ_ROUTE, "host_move=%s:pin=3@2" % SJ_M24,
+    # Both teleported (guest first) to the cave mouth on the m24_00 side, each held there until the
+    # game's safe-ground spot is under it (":ground": no ground by the pin's end -> held once more; a
+    # fall after the release -> one re-warp); then the guest walks over the seam and the host follows
+    # as soon as the guest is at it (the together case: the host back within the leave state's ~5 s).
+    host = ",".join(["god", "host_move=%s:pin=10:ground@12^1" % SJ_M24,
                      "host_route=-144.6:-33.5:175.7/-146.6:-33.5:177.3/-149.3:-33.7:178.6@0?near=-146.6:-33.5:177.3:2",
                      "host_warp=2102950@30"])
-    g1 = ",".join(["god", "guest_route=%s@3" % SJ_ROUTE, "guest_move=%s:pin=3@2" % SJ_G24,
+    g1 = ",".join(["god", "guest_move=%s:pin=10:ground@6%%m24_00" % SJ_G24,
                    "guest_route=-144.6:-33.5:175.7/-146.6:-33.5:177.3/%s@4%%m24_00?near=%s:4" % (SJ_G27, SJ_M24)])
     return dict(
-        name="sj", seconds=720, count=2, headless=0, pads=(0, 1),
+        name="sj", seconds=360, count=2, headless=0, pads=(0, 1),
         env=["BB_PARTY_HOLD_LOG=1"],
         ienv=["0:BB_PARTY_TEST_START_LAMP=2402950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
               "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_GUESTSVC_TEST=gate=2;echoes=20000;warp=doll;levelup"],
