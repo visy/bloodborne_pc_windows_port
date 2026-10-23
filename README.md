@@ -380,7 +380,8 @@ before anyone is in the game):
   and checked again when its own world loads and given again if missing; one you already hold is
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
   Both are your own switches on *System → My party: Rewards* (*Own key items as guest*, *Key items at once*).
-  Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
+  Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
+  the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
   messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
   Hunter Bell go to every player, whoever got them in the host's world.

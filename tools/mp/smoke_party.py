@@ -1909,6 +1909,9 @@ def phase_ie(only):
         env=["BB_PARTY_START=immediate"],
         ienv=["0:BB_PARTY_PROGRESS_TEST_CLEAR=12101020,72101000,72101001,72101002,6670",
               "0:BB_PARTY_ITEMS_HOST_TEST=10050",
+              # 0.7.5: the host's pickup flags of a questline treasure (Red Jeweled Brooch) goes to
+              # the guest, an ordinary corpse's (Madman's Knowledge) stays per player
+              "0:BB_PARTY_ITEMS_HOST_TEST_FLAGS=52410920,52410140",
               "0:BB_PARTY_DIRECTOR_TEST=" + host,
               "1:BB_PARTY_PROGRESS_TEST_READ=6670,12101020,12101021",
               "1:BB_PARTY_DIRECTOR_TEST=" + g1],
@@ -4443,6 +4446,14 @@ def check_ie(v, L):
     v.step("ie messengers: the host's stay up until its own pick",
            rise is not None and (done is None or (picked is not None and picked[0] <= done[0])),
            ("done %s; own pick %s" % (done[1][:120] if done else "never", picked[1][:120] if picked else "none")))
+    # 0.7.5: key-item / questline map treasure is shared, ordinary treasure stays per player
+    need(v, L, "ie treasure: the host's pickup of the Red Jeweled Brooch spot goes to the party", 0,
+         r"host flag 52410920 -> #\d+ lot 2410920 .*queued for the party", j or 0)
+    need(v, L, "ie treasure: the guest gets the Red Jeweled Brooch", 1,
+         r"gave #\d+ lot 2410920 .*goods 4306 x1", j or 0)
+    v.step("ie treasure: an ordinary corpse (lot 2410140) stays per player",
+           L.find(0, r"host flag 52410140: map treasure, per player") is not None
+           and L.find(1, r"gave #\d+ lot 2410140 ") is None, "")
     check_common(v, L, "ie")
 
 
