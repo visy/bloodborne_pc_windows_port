@@ -10,6 +10,7 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_runtime.h"
+#include "party_collision.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -858,24 +859,11 @@ bool RemotePlayerChr(u64 chr) {
     return false;
 }
 BB_COOP_SYSV void ChrPreStepHook(u64 chr, u64, u64, u64, u64, u64) {  // rdi = the chr (mov rbx, rdi)
-    if (!chr) {
-        return;
+    // Remote players only, checked first: a local or NPC chr's records are never read (they were
+    // read on every step of every chr before), and each record is queried once.
+    if (collision::ClearStaleHits(chr, RemotePlayerChr, HitLive)) {
+        g_stale_hits.fetch_add(1, std::memory_order_relaxed);
     }
-    u64* hit = reinterpret_cast<u64*>(chr + 0x288);
-    u64* hit2 = reinterpret_cast<u64*>(chr + 0x350);
-    if ((!*hit || HitLive(*hit)) && (!*hit2 || HitLive(*hit2))) {
-        return;
-    }
-    if (!RemotePlayerChr(chr)) {
-        return;
-    }
-    if (*hit && !HitLive(*hit)) {
-        *hit = 0;
-    }
-    if (*hit2 && !HitLive(*hit2)) {
-        *hit2 = 0;
-    }
-    g_stale_hits.fetch_add(1, std::memory_order_relaxed);
 }
 
 // BeginLeaveSession entry (ReplacePrologue: jumped to, so the return address is the caller's):
