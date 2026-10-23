@@ -264,7 +264,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **NPC quests** are shared (on by default, My Party tab: *Also NPC quests*): the first choice
   anyone makes - host or guest, guests can talk to NPCs in the host's world - applies to the
   host's world and to every player's save. Gifts an NPC gives in dialogue go to whoever talked.
-- **Chalice Dungeons** are not part of party play.
+- **Chalice Dungeons** are played together: guests join the host's dungeon (see the README's party section). Checked live with the fixed Pthumeru dungeon (layers 1-2); Root (randomly generated) and glyph dungeons use the host's dungeon id too but have not been checked live yet.
 - World treasure a guest picks up while in the host's world does not exist for guests in the
   normal game; the host's pickups are handed to guests through the item sharing above.
   Enemy drops are per player: every player's game rolls each enemy's drop and keeps the whole of
@@ -424,7 +424,7 @@ player, and say who was the host.
   Doll and use the Bath Messengers' shops, the Insight shop, the workbench and storage on its own
   character; lamps and headstones stay host-only for now (experimental opt-in `BB_PARTY_GUEST_LAMPS=1`).
 - NPC quests are not shared by default; dialogue gifts from NPCs are not handled.
-- Chalice Dungeons are not supported in party play.
+- Chalice Dungeons: checked live only with the fixed Pthumeru dungeon; Root and glyph dungeons are expected to work but are untested.
 - 4 players: experimental, no slot for invaders.
 - An item a guest picks up in the host's world just before a crash may be given twice.
 - The online play of the original game (PSN messages, bloodstains, invasions from strangers) is
