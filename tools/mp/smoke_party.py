@@ -1213,7 +1213,7 @@ MK_LAMP = "2402950"    # Cathedral Ward (m24_00)
 MK_DREAM = "2102950"   # the Hunter's Dream lamp
 MK_UNTIL = r"1:travel step (\d+)/\1: "  # guest 1's last step
 MK_CASES = (("Bold Mark in the host's map", "mark_here"), ("Hunter's Mark from the Dream", "mark"),
-            ("Bold Mark from the Dream", "mark"), ("lamp from the Dream (a rest)", "rest"))
+            ("Bold Mark from the Dream", "mark"), ("lamp from the Dream (no host rest)", "rest"))
 # the host's cases: (name, goods, the answer, in its own map)
 MK_HOST_CASES = (("h1 host Bold Mark in its map, with the party", 1400, "yes", True),
                  ("h2 host Bold Mark in its map, alone", 1400, "no", True),
@@ -2034,7 +2034,7 @@ def check_eh(v, L):
 # goes to the Dream.
 CLG_LAMP_OBJ2 = "2901953"   # the lift's bottom floor lamp object (return point 2902953)
 CLG_UNTIL = r"0:map .* -> m21_00"
-CLG_UNTIL_G = r"1:travel step (\d+)/: "  # guest 1's last step: 40 s in the Dream (r2: its earlier m21 ended the run)
+CLG_UNTIL_G = r"1:travel step (\d+)/\1: "  # guest 1's last step: 40 s in the Dream (r2: its earlier m21 ended the run)
 
 
 def phase_clg(only):
@@ -3623,11 +3623,12 @@ def check_mk(v, L):
         end = starts[k + 1][0] if k + 1 < len(starts) else 1e9
         back = need(v, L, "mk %d guest 1 back in the host's map" % (k + 1), 1, r"map - -> m24_00", u[0], end)
         if kind == "rest":
-            rest = need(v, L, "mk %d host: the rest load the re-join carries" % (k + 1), 0,
-                        r"slot \d rested at lamp %s" % MK_LAMP, u[0] - 1, end)
-            need(v, L, "mk %d guest 2 followed the rest load" % (k + 1), 2, r"map - -> m24_00", rest or u[0], end)
-            need(v, L, "mk %d host: arrivals, member tasks rewound" % (k + 1), 0,
-                 r"a guest arrived; \d+ member task\(s\) rewound", rest or u[0], end)
+            # PR #14 (0.7.4): a guest leaving the Dream alone is a plain travel: no rest load for the
+            # host (only a lamp of the map the party stands in rests the host's world); guest 2 stays
+            none_of(v, L, "mk %d host: no rest load for the guest's trip" % (k + 1),
+                    r"rested at lamp|a rest load for this world", u[0] - 1, back or end, (0,))
+            none_of(v, L, "mk %d guest 2 stays (no load)" % (k + 1), r"map - -> ", u[0], back or end, (2,))
+            need(v, L, "mk %d host: guest 1 arrived" % (k + 1), 0, r"host: slot \d arrived", u[0], end)
         else:
             if kind == "mark_here":
                 none_of(v, L, "mk %d host stays (no rest load for a Mark)" % (k + 1), r"rested at lamp %s" % MK_LAMP,
