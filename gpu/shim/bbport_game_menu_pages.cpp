@@ -1382,19 +1382,17 @@ void DefineAll() {
             "Host's rules: level sync and the phantom health cut, as in Bloodborne's co-op (bbport)",
             "Правила хоста: уравнивание уровней и штраф к здоровью призрака, как в Bloodborne (bbport)");
     host_rule(&Values::party_level_sync, "Level sync", "Уравнивание уровней",
-              AddText("A hunter above the host's level is scaled down (health, stamina, defence), as in the game's "
-                      "password co-op. Off: everyone keeps full stats. Party rule",
-                      "Охотник выше уровнем, чем хост, ослабляется (здоровье, выносливость, защита), как в "
-                      "кооперативе игры. Выкл.: у всех полные характеристики. Правило группы"),
+              AddText("A hunter far above the host's level is scaled down, as in the game. Off: full stats. Party rule",
+                      "Охотник намного выше уровнем хоста ослабляется, как в игре. Выкл.: полные характеристики. "
+                      "Правило группы"),
               [] { return ps::HostRuleOn(ps::HostRule::LevelSync); },
               {"The host's rule: a hunter above the host's level is scaled down (a blue icon by its name)",
                "Правило хоста: охотник выше уровнем, чем хост, ослабляется (синий значок у имени)"},
               {"The host decides; off: every hunter keeps its full stats whatever its level",
                "Решает хост; выкл.: у каждого охотника полные характеристики, каким бы ни был уровень"});
     host_rule(&Values::party_phantom_hp, "Phantom health cut", "Штраф здоровья призрака",
-              AddText("Hunters who join a party have 30 % less maximum health, as in the game. Off: full health. Party rule",
-                      "У присоединившихся охотников на 30 % меньше максимального здоровья, как в игре. Выкл.: полное. "
-                      "Правило группы"),
+              AddText("Joining hunters get 30 % less maximum health, as in the game. Off: full health. Party rule",
+                      "Присоединившиеся охотники теряют 30 % макс. здоровья, как в игре. Выкл.: полное. Правило группы"),
               [] { return ps::HostRuleOn(ps::HostRule::PhantomHp); },
               {"The host's rule: hunters who join the party have 30 % less maximum health",
                "Правило хоста: у присоединившихся охотников на 30 % меньше максимального здоровья"},

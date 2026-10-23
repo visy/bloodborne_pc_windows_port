@@ -568,7 +568,7 @@ static void RulesPages() {
             const auto at = [&](const char16_t* n) { return std::find(order.begin(), order.end(), n) - order.begin(); };
             const auto first = at(u"Party rules: World");
             const char16_t* group[] = {u"Party rules: World", u"Party rules: PvP & lamps", u"Party rules: Deaths",
-                                       u"Party rules: Rot", u"Party rules: Enemies", u"My party: Deaths",
+                                       u"Party rules: Rot", u"Party rules: Enemies", u"Party rules: Phantoms", u"My party: Deaths",
                                        u"My party: World", u"My party: Story", u"My party: Rewards",
                                        u"My party: Display", u"My party: Look & notices"};
             for (std::size_t i = 0; i < std::size(group); ++i) assert(at(group[i]) == first + long(i));
