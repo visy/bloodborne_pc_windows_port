@@ -31,6 +31,7 @@
 #include "party_spectate.h"
 #include "party_director.h"
 #include "party_death_rules.h"
+#include "party_split_notice.h"
 #include "party_kidnap_rules.h"
 #include "party_bossfog_rules.h"
 #include "party_hud.h"
@@ -1901,6 +1902,33 @@ void NetSyncMembers() {
     }
 }
 
+/// Split travel: tell the player why a member's chr is gone (a join / leave notice, rate-limited per
+/// member) and, when it is back in our map, that it is here again. Main thread.
+std::map<int, double> g_split_notice_at;
+std::set<int> g_split_told_away;
+std::string SplitMemberName(int slot) {
+    if (party::PartyLink* link = party::runtime_link()) {
+        for (const party::RosterEntry& r : link->roster()) {
+            if (r.slot == slot) return r.name;
+        }
+    }
+    return slot == party::kHostSlot ? "The host" : "";
+}
+void SplitNoticeAway(int slot, u32 map, double now) {
+    g_split_told_away.insert(slot);
+    if (!splitnotice::MayNotify(&g_split_notice_at[slot], now)) return;
+    const std::string text = splitnotice::WentOn(SplitMemberName(slot), map);
+    party::status::SetLastEvent(text);
+    Log("split: notice: %s", text.c_str());
+}
+void SplitNoticeBack(int slot, double now) {
+    if (!g_split_told_away.erase(slot)) return;
+    if (!splitnotice::MayNotify(&g_split_notice_at[slot], now)) return;
+    const std::string text = splitnotice::HereAgain(SplitMemberName(slot));
+    party::status::SetLastEvent(text);
+    Log("split: notice: %s", text.c_str());
+}
+
 /// Both roles, main thread, steady world, no re-join running. (1) A remote chr whose owner (the
 /// member reporting a position next to it) is in another area is removed; (2) members in our
 /// area whose chr is missing here are built again (rewind), at most every 10 s: a meet without a
@@ -1943,6 +1971,8 @@ void SplitTick(const GameSnapshot& s, double now) {
         }
         if (now - sn.second >= 2.0 && w.has_pos && w.age_ms < 1500 && !ChrNear(p)) {
             meet = true;
+        } else if (w.has_pos && w.age_ms < 1500 && ChrNear(p)) {
+            SplitNoticeBack(w.slot, now);
         }
     }
     if (apart != g_apart.load()) {
@@ -1955,6 +1985,8 @@ void SplitTick(const GameSnapshot& s, double now) {
             if (t.mode == 2) {
                 if (const u64 c = PlayerForPeer(t.task + kTaskPeer)) {
                     RemoveRemoteChr(c, "the host travelled alone");
+                    Where hw;
+                    SplitNoticeAway(party::kHostSlot, MemberWhere(party::kHostSlot, &hw) ? hw.map : 0u, now);
                 }
             }
         }
@@ -1973,6 +2005,7 @@ void SplitTick(const GameSnapshot& s, double now) {
             std::snprintf(why, sizeof why, "slot %d is in %s, we are in %s", slot, MapName(w->map).c_str(),
                           MapName(s.map_id).c_str());
             RemoveRemoteChr(c, why);
+            SplitNoticeAway(slot, w->map, now);
         }
     }
     // (2) a meet without a load.

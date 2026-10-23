@@ -2127,6 +2127,8 @@ def check_sj(v, L):
         return
     need(v, L, "sj the host's chr leaves on the guest (its leave state starts)", 1,
          r"split: remote chr .* leaves \(slot 0 is in m24_00", cross - 2)
+    nt = L.find(0, r"split: notice: .* went on to the Forbidden Woods", cross - 2)
+    v.step("sj (info) host's notice that the guest went on", True, nt[1][:150] if nt else "no notice line (host followed first?)")
     hc = need(v, L, "sj host follows into m27_00", 0, r"map m24_00_00_00 -> m27_00_00_00", cross - 2)
     tr = L.find(0, r"travel step \d+/\d+: host_warp", cross)
     end = tr[0] if tr else 1e9
