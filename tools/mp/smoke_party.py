@@ -2574,7 +2574,8 @@ def check_rules(v, L):
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
     v.step("rules guest: sees the host's Party rules: World rules (read-only)",
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
-           and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
+           and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1]
+           and "NPC hunters fight all=On" in sw[1],  # 0.7.3 defaults
            sw[1][:250] if sw else "no Party rules: World rows line on the guest")
     # guestrules (0.7.3): the enemy scaling is the host's: read-only lines with the host's values on
     # the guest ("150 %", the host's default), no slider position (a host's row shows "5")
