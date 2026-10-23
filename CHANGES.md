@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.7.5 (unreleased)
+
+- **Added: a diagnostic for "out of memory" crashes in the game's network memory** (player report: crashes during the Alfred fight, the game's own "Transaction failed" panic). `BB_HEAP_WATCH_LOG=1` (off by default) logs every 20 s which parts of the game hold the memory the online code uses (the server requests and the other players' character sync), and every request that fails, so the next log of such a crash names what filled it. In a 5-minute two-player test at Alfred with deaths, lamp travels and loads, that memory stayed flat on this port.
+
 ## 0.7.4 (Windows port 0.7.4, player reports: area borders, boss-fight Mark, the Doll, Borderless; contributor PRs)
 
 - **Added: a notice when a party member goes on into another area** (player request): when a hunter walks over a map seam ahead of you, you see "<Name> went on to <area>. You'll see them again while in the same area." (or "<Name> stayed behind in <area>. ..." for the hunter who moved) instead of the hunter just vanishing, and "<Name> is here again." when they are back beside you. At most one notice per hunter every 10 seconds. Shown with the join / leave notices (My party: Look & notices).
