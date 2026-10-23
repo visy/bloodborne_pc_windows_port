@@ -339,6 +339,9 @@ before anyone is in the game):
   what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
   until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
   starts with anyone's hit.
+- **Guests can hit NPCs.** A guest's blows land on the host world's NPCs as the host's do (the friendly
+  hunters and the others the host could hurt): they take damage and a killing blow counts for
+  everyone. Nothing is added that the host could not do.
 - **NPC hunters fight the whole party.** Eileen and Henryk at the Tomb of Oedon, Alfred, the
   blood-drunk Eileen, Valtr and the DLC hunters are there for everyone in the host's world:
   anyone can hurt them, and their death and the quest step after it count for every player's own
