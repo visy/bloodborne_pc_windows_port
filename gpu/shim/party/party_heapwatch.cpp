@@ -154,7 +154,7 @@ void Report() {
                            static_cast<unsigned long long>(top[i].second.live_count),
                            static_cast<unsigned long long>(top[i].second.allocs));
     }
-    std::printf("%s\n", line);
+    std::printf("[coop] %s\n", line);
 }
 
 }  // namespace
