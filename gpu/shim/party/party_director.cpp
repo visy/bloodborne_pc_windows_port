@@ -199,6 +199,8 @@ struct TravelStep {
     int warp = 0;         // HostMove / GuestMove: 0 the bare chr warp +0x5F8, 1 ":native" the game's own player warp
     double pin = 0;       // HostMove / GuestMove ":pin=S" (liftfix): held at the spot for S s (the bare chr warp every
                           // frame) while the floor's collision streams in after a long warp (else the chr falls through)
+    bool ground = false;  // HostMove / GuestMove ":ground" (with pin): released once the game's safe-ground spot is
+                          // there; no ground by the pin's end: held once more; a fall after the release: one re-warp
     std::uint32_t buttons = 0;  // HostPress / GuestPress: pad buttons tapped (0.15 s)
     std::string map;      // HostMove / GuestMove "%NAME": only while the current map name contains it
     std::string args;     // HostStage / HostWalk / HostHeadstone
@@ -347,6 +349,10 @@ struct Test {
     Clock::time_point obj_since{};   // the next step's "?obj=ENTITY:ANIM" condition met (its clock)
     Clock::time_point pin_until{};   // a move step's ":pin=S": the chr held at pin_pos until then
     alignas(16) float pin_pos[4] = {0, 0, 0, 1}, pin_rot[4] = {0, 0, 0, 0};
+    bool pin_ground = false;          // ":ground": the pin waits for ground (the step's ground)
+    double pin_secs = 0;              // the pin's length (a re-hold uses it again)
+    int pin_retries = 0;              // ":ground": re-holds / re-warps done (1 at most)
+    Clock::time_point pin_set{}, fall_check{};  // when the pin started; ":ground": the post-release fall check
     std::size_t obj_seen_step = ~std::size_t(0);  // "?obj=": the step whose ANIM was seen playing
     // liftfix: a step's "?FLAG=V" / "?near=" / "?obj=" condition that never comes true: after
     // kCondTimeout s (BB_PARTY_TEST_COND_TIMEOUT, default 240) the chain jumps to its last step (conditions skipped), so the run ends on its
@@ -1872,11 +1878,51 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             if (!was) Log("test: guard (BB_PARTY_TEST_GUARD): up again after a death: invincible until the next die / chr step");
         }
     }
+    // ":ground": the game's last safe ground spot (PlayerIns +0x400 -> +0x30) at the pinned spot means
+    // the floor's collision is in; the chr's own position 5 m below it after the release is a fall.
+    auto pin_spot_ground = [&](bool fell_check) {
+        const std::uint64_t pl = LocalPlayer();
+        float v[3] = {};
+        std::uint64_t q = 0;
+        if (fell_check) {
+            float pp[3] = {};
+            std::uint64_t a = 0;
+            return pl && SafeGet(pl + 0x58, &a) && a && SafeGet(a + 8, &a) && a && SafeGet(a + 0x3b0, &a) && a &&
+                   SafeGet(a + 0x68, &a) && a && SafeRead(a + 0x1e0, pp, 12) && pp[1] < t.pin_pos[1] - 5.0f;
+        }
+        if (!pl || !SafeGet(pl + 0x400, &q) || !q || !SafeRead(q + 0x30, v, 12)) return false;
+        const float dx = v[0] - t.pin_pos[0], dy = v[1] - t.pin_pos[1], dz = v[2] - t.pin_pos[2];
+        return dx * dx + dz * dz < 4.0f && std::fabs(dy) < 2.0f;
+    };
+    if (t.fall_check != Clock::time_point{} && now >= t.fall_check) {
+        t.fall_check = {};
+        if (s.world_up && !s.loading && pin_spot_ground(true) && t.pin_retries < 1) {
+            ++t.pin_retries;
+            t.pin_until = now + std::chrono::milliseconds(static_cast<int>(t.pin_secs * 1000));
+            t.pin_set = now;
+            Log("test: pin: fell below (%.2f, %.2f, %.2f) after the release: warped back and held again",
+                double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]));
+        }
+    }
+    if (t.pin_until != Clock::time_point{} && t.pin_ground && now - t.pin_set >= std::chrono::seconds(1) &&
+        now < t.pin_until && s.world_up && !s.loading && pin_spot_ground(false)) {
+        Log("test: pin: ground under (%.2f, %.2f, %.2f) after %.1f s (the game's safe spot is there)",
+            double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]),
+            std::chrono::duration<double>(now - t.pin_set).count());
+        t.pin_until = now;  // released below; then the fall check
+    } else if (t.pin_until != Clock::time_point{} && t.pin_ground && now >= t.pin_until && t.pin_retries < 1 &&
+               s.world_up && !s.loading) {
+        ++t.pin_retries;
+        t.pin_until = now + std::chrono::milliseconds(static_cast<int>(t.pin_secs * 1000));
+        Log("test: pin: no ground yet under (%.2f, %.2f, %.2f): held once more", double(t.pin_pos[0]),
+            double(t.pin_pos[1]), double(t.pin_pos[2]));
+    }
     if (t.pin_until != Clock::time_point{}) {
         // ":pin=S": the chr kept at the move's spot every frame until the floor's collision is in.
         const std::uint64_t player = LocalPlayer();
         std::uint64_t vt = 0, fn = 0;
         if (now >= t.pin_until || !s.world_up || s.loading) {
+            if (t.pin_ground) t.fall_check = now + std::chrono::seconds(3);
             t.pin_until = {};
             Log("test: pin at (%.2f, %.2f, %.2f) released", double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]));
         } else if (player && SafeGet(player, &vt) && vt && SafeGet(vt + 0x5f8, &fn) && fn) {
@@ -2325,6 +2371,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 std::memcpy(t.pin_pos, pos, sizeof pos);
                 std::memcpy(t.pin_rot, rot, sizeof rot);
                 t.pin_until = now + std::chrono::milliseconds(static_cast<int>(step.pin * 1000));
+                t.pin_ground = step.ground;
+                t.pin_secs = step.pin;
+                t.pin_retries = 0;
+                t.pin_set = now;
+                t.fall_check = {};
             }
             Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f (%s)%s%s", TravelStepName(step.kind), double(pos[0]),
                 double(pos[1]), double(pos[2]), double(rot[1]), native ? "the game's own player warp" : "bare chr warp",
@@ -4026,6 +4077,7 @@ void PartyDirector::ConfigureFromEnv() {
                     if (const std::size_t pn = item.find(":pin="); pn != std::string::npos) {
                         step.pin = std::min(10.0, std::max(0.0, std::atof(item.c_str() + pn + 5)));
                     }
+                    step.ground = item.find(":ground") != std::string::npos;
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                         step.map = item.substr(pc + 1);
                     }
