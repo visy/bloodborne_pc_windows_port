@@ -171,8 +171,8 @@ int main() {
         CHECK(!f.Left(5, 0.0));                  // not a fighter
         CHECK(f.Out(roster, none) == 1);
         CHECK(f.Settling(50.0) && !f.Settling(100.0));
-        f.Arrived(1);
-        CHECK(!f.Settling(50.0));
+        f.Arrived(1, 50.0);
+        CHECK(f.Settling(51.0) && !f.Settling(53.0));  // a moment for its re-join to end
         CHECK(!LimboFightEmpty(f.Fighters(), f.Out(roster, none)));  // slot 2 fights on
         CHECK(f.Out(roster, [](int s) { return s == 2; }) == 2);       // ... until it is down
         std::vector<MemberNow> gone(1, roster[0]);

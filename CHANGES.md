@@ -6,6 +6,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 ## 0.7.4 (unreleased)
 
 - **Fixed: the host no longer watches its own corpse after the last guest leaves a boss fight** (player report, the Living Failures and Lady Maria): when the host died in a boss fight it watched the guests fight on, and when the last guest still fighting then used the Hunter's Mark (or the Bold Hunter's Mark), the guest went back to the lamp alone while the host's camera stayed on its dead body until the guest travelled to the Hunter's Dream. Now, while the host is down in a boss fight, the last living member leaving the fight in any way (Hunter's Mark, Bold Hunter's Mark, a lamp, dying, *Leave* or a lost connection) counts as a wipe: the whole party gets the respawn loading screen at the host's lamp, as when everyone dies.
+- **Fixed: a boss keeps fighting the guests after the host dies in the fight** (player report): while the host lay dead in a boss fight watching the guests, the boss could stop attacking them, because it kept the host's dead body as its target. While the host is down in a boss fight, the boss is now pointed at the nearest living party member about once a second.
 
 ## 0.7.3 (Windows port 0.7.3, late player reports: chalice dungeons, Blood Echoes, saves, items, abductions, settings layout)
 

@@ -473,10 +473,13 @@ public:
         left_[slot] = settle_until;
         return fresh;
     }
-    /// Its load into this world is over ("arrived"): no longer settling (still out of the fight).
-    void Arrived(int slot) {
+    /// Its load into this world is over ("arrived" at `now`): settled kLimboArriveGrace s later (still
+    /// out of the fight). The guest sends "arrived" a moment before its re-join ends, and a host
+    /// travel that reaches it before that end is dropped (live bl1: the wipe's load 13 ms after it).
+    static constexpr double kLimboArriveGrace = 2.5;
+    void Arrived(int slot, double now) {
         auto it = left_.find(slot);
-        if (it != left_.end()) it->second = 0;
+        if (it != left_.end()) it->second = now + kLimboArriveGrace;
     }
     int Fighters() const { return on_ ? int(in_.size()) : -1; }
     /// Fighters out: left, gone from the roster, or `down(slot)` (reported down).

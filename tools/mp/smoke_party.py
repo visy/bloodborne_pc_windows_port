@@ -1510,29 +1510,29 @@ def phase_bf(only):
 
 # Phase bl (bosslimbo, 0.7.4): the last living member leaves the host's boss-fight limbo -> a wipe.
 BL_UNTIL = [r"0:the last living member left the boss fight[\s\S]*loading screen gone",
-            r"1:guest_use goods 100[\s\S]*arrived in the host world \(flow 4\)"]
+            r"1:guest_use goods 100[\s\S]*arrived in the host world \(flow 4\)[\s\S]*arrived in the host world \(flow 4\)"]
 
 
 def phase_bl(only):
     host = ",".join(["host_warp=2412953@8^1",                               # the party to the Tomb of Oedon
                      "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER,          # the host starts the fight (intro)
-                     "host_die@16%m24_01~"])                                # dead in it, the guest fighting: the limbo
+                     "host_die@9%m24_01~"])                                 # dead in it, the guest fighting: the limbo
     g1 = ",".join(["god",                                                   # alive through the fight (its HP logged)
                    "guest_obj=2411810@3%m24_01~",                           # at the fog after the intro
                    "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # through it: in the fight
-                   "guest_press=0x0@12%m24_01!", "guest_press=0x0@8%m24_01!",       # with the host dead
-                   "guest_press=0x0@8%m24_01!",
+                   "guest_press=0x0@12%m24_01!", "guest_press=0x0@10%m24_01!",      # with the host dead
+                   "guest_press=0x0@10%m24_01!",
                    "guest_lastlamp=2412953@1%m24_01",                       # its last lamp: the host's
                    "guest_use=100@2%m24_01"])                               # Hunter's Mark: leaves the fight
     return dict(
         name="bl", seconds=300, count=2, headless=0, until_hold=12,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1",
-             "BB_PARTY_BOSS_TARGET_LOG=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         watch=["--watch", r"host death in a boss fight=bllimbo@2,8,14",
                "--watch", r"test: guest_use goods 100=blmark@1",
                "--watch", r"the last living member left the boss fight=blwipe@0.5",
-               "--watch", r"host chr: hp \d+, .*\(alive\)=blup@2,6"],
+               "--watch", r"host chr: hp \d+, .*\(alive\)=blup@2,6",
+               "--watch", r"targets the living member=bltarget@3,9"],
         crash=[], until=BL_UNTIL,
     )
 
@@ -1548,6 +1548,8 @@ def check_bl(v, L):
         return
     need(v, L, "bl the limbo counts the guest in the fight", 0, r"host limbo: 1 member\(s\) in the fight", lim - 1)
     need(v, L, "bl the host spectates the guest", 0, r"spectating: following slot \d+ \(1 living member\)", lim)
+    need(v, L, "bl the boss keeps fighting the living guest (its forced target)", 0,
+         r"host limbo: boss [0-9a-f]+ targets the living member [0-9a-f]+ \(ChangeTarget ok\)", lim)
     mark = need(v, L, "bl guest uses a Hunter's Mark (the last one in the fight)", 1, r"guest_use goods 100", lim)
     if mark is None:
         return
@@ -1560,7 +1562,9 @@ def check_bl(v, L):
     if up is not None:
         need(v, L, "bl host up again after the load (alive)", 0, r"host chr: hp \d+, .*\(alive\)|B2 load report", wipe)
         need(v, L, "bl host spectating ended", 0, r"spectating ended", wipe - 1)
+        need(v, L, "bl guest follows the wipe's respawn load", 1, r"loading screen up", wipe)
         need(v, L, "bl guest back in the host's world after the wipe", 1, r"arrived in the host world \(flow 4\)", wipe)
+        none_of(v, L, "bl guest never drops the host's travel", r"came while this guest's own travel runs", insts=(1,))
     check_common(v, L, "bl")
 
 

@@ -6249,6 +6249,47 @@ void AppearanceTick(const GameSnapshot& s) {
     for (const auto& at : due) RecreateMemberNear(at, "appearance changed");
 }
 
+/// Host in its boss-fight limbo, main thread, once a second: the boss's AI keeps the dead host as
+/// its target (static RE: a chr leaves the AI's target bank 0x553B098 only at its teardown, and the
+/// target search has no HP / dying check; in the original game a dead host is torn down by its
+/// respawn load), so the boss idled while the guests fought on. The boss gets the living member
+/// nearest to it as a forced target through the engine's own event ChangeTarget(enemy, target)
+/// path (0x1299CD0 -> 0x12A7640 -> 0x12AD1B0: a kind-4 target entry, battle state 3).
+/// BB_PARTY_LIMBO_RETARGET=0 turns it off (A/B). Live bl2: ChangeTarget accepted, the boss stayed
+/// at the guest (1.7-2.5 m); no A/B run without it yet.
+void LimboBossTargetTick(double now) {
+    static const bool on = !(std::getenv("BB_PARTY_LIMBO_RETARGET") && std::getenv("BB_PARTY_LIMBO_RETARGET")[0] == '0');
+    static double next = 0;
+    if (now < next) return;
+    next = now + 1.0;
+    const u64 hud = Slot(0x5562878);
+    for (int i = 0; hud && i < 3; ++i) {
+        const u32 h = Field<u32>(hud, 0x165c + u64(i) * 0x14, ~0u);
+        const u64 boss = h == ~0u ? 0 : ChrOfHandle(h);
+        if (!boss || ChrHp(boss) <= 0) continue;
+        float bp[3] = {};
+        ChrPos(boss, bp);
+        u64 best = 0;
+        float bd = 1e30f;
+        for (const TaskInfo& t : Tasks(false)) {
+            const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+            float cp[3] = {};
+            if (!c || ChrHp(c) <= 0 || !ChrPos(c, cp)) continue;
+            const float d = (cp[0] - bp[0]) * (cp[0] - bp[0]) + (cp[2] - bp[2]) * (cp[2] - bp[2]);
+            if (d < bd) bd = d, best = c;
+        }
+        if (on && best) {
+            const bool ok = reinterpret_cast<bool(BB_COOP_SYSV*)(u64, u64)>(Guest(0x1299cd0))(boss, best);
+            static u32 logged = ~0u;
+            if (logged != (h ^ Field<u32>(best, 8))) {
+                logged = h ^ Field<u32>(best, 8);
+                Log("host limbo: boss %08x targets the living member %08x (ChangeTarget %s)", h, Field<u32>(best, 8),
+                    ok ? "ok" : "refused: no AI");
+            }
+        }
+    }
+}
+
 /// Main thread, host: the alive snapshot, the taken death's revive (or a wipe's vanilla funnel)
 /// and a 10 s watch of the revived chr.
 void HostDownTick(const GameSnapshot& s, double now) {
@@ -6330,6 +6371,7 @@ void HostDownTick(const GameSnapshot& s, double now) {
         dv.fighters = g_limbo_fight.Fighters();
         dv.fighters_out = g_limbo_fight.Out(mn, [](int slot) { return g_dead_members.Has(slot); });
         dv.fighter_settling = g_limbo_fight.Settling(now);
+        if (dv.boss_active) LimboBossTargetTick(now);
         static int last_out = -1;
         if (dv.fighters_out != last_out) {
             last_out = dv.fighters_out;
@@ -11441,6 +11483,10 @@ bool BeginRejoin(const TravelIntent& t, bool main_thread, bool solo) {
         std::lock_guard<std::mutex> lk(st.mu);
         if (st.gphase != GuestPhase::Idle) {
             if (st.gphase == GuestPhase::AwayLoading || st.solo || solo) {
+                if (!solo) {
+                    Log("guest: the host's travel (%s) came while this guest's own travel runs: dropped (it keeps its own)",
+                        DescribeTravel(t).c_str());
+                }
                 return solo ? false : true;  // the guest's own travel runs: it keeps it
             }
             st.intent = t;  // newer destination; the running re-join takes it
@@ -11884,7 +11930,7 @@ void OnLinkEvent(int from_slot, const std::string& body) {
         {
             std::lock_guard<std::mutex> lk(g_dead_mu);
             g_dead_members.Clear(from_slot);
-            g_limbo_fight.Arrived(from_slot);
+            g_limbo_fight.Arrived(from_slot, Now());
         }
         std::lock_guard<std::mutex> lk(S().mu);
         S().arrived = true;
