@@ -508,11 +508,8 @@ void Presenter::PresentPrecompileFrame() {
         info.AddSignal(swapchain.GetPresentReadySemaphore());
         const u64 tick = scheduler.CurrentTick();
         scheduler.Flush(info);
-        {
-            std::scoped_lock submit_lock{Scheduler::submit_mutex};
-            if (!swapchain.Present()) {
-                swapchain.Recreate(window.GetWidth(), window.GetHeight());
-            }
+        if (!PresentLocked()) {
+            swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
         scheduler.Wait(tick);
         return;
@@ -570,11 +567,8 @@ void Presenter::PresentPrecompileFrame() {
     info.AddSignal(swapchain.GetPresentReadySemaphore());
     const u64 tick = scheduler.CurrentTick();
     scheduler.Flush(info);
-    {
-        std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present()) {
-            swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        }
+    if (!PresentLocked()) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
     scheduler.Wait(tick);
 }
@@ -1553,6 +1547,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 }
 
+// bbport: presents under the queue lock; a recreation after it takes the lock itself
+// (Swapchain::Recreate), so it is done by the caller once this returns.
+bool Presenter::PresentLocked() {
+    std::scoped_lock submit_lock{Scheduler::submit_mutex};
+    return swapchain.Present();
+}
+
 bool Presenter::PresentOne(Frame* frame, vk::Image source_image, vk::ImageView source_view, bool real,
                            std::int64_t deadline) {
     // bbport: nothing to present to while the window is minimised (a 0x0 surface, issue #31), or in
@@ -1738,11 +1739,8 @@ bool Presenter::PresentOne(Frame* frame, vk::Image source_image, vk::ImageView s
         if (real) Reflex::TraceCpuPresent(frame->content_frame_id);
         Reflex::OnPresentBegin(frame->reflex_frame_id, real);
     }
-    {
-        std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present()) {
-            swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        }
+    if (!PresentLocked()) {
+        swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
     if (reflex) {
         Reflex::OnPresentEnd(frame->reflex_frame_id, real);
