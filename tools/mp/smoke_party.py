@@ -1848,6 +1848,10 @@ def phase_ie(only):
                "--watch", r"flags 12101020=0 12105050=1=ierise@1,3,6",
                "--watch", r"text shows=ietext@0.3",
                "--watch", r"flags 12101020=1=iedone@0.5,3"],
+        # The host's full item list is built when the guest connects: the guest starts only after
+        # the host's 6670 clear (0.7.3 release smoke: the guest connected 1 s before it, got lot
+        # 10050 in the full list while still holding the bell, and skipped the later award).
+        start_when=[r"1/0:test: cleared in the own save \(never_sync\):.*6670:"],
         crash=[], until=IE_UNTIL, until_hold=15,
     )
 
@@ -4263,6 +4267,11 @@ def check_cv(v, L, d: Path):
 def check_ie(v, L):
     """Phase ie: early items for every player (0.7.3)."""
     j = need(v, L, "ie join: the guest is in", 0, r"cooperators 0 -> 1")
+    clr = L.find(0, r"test: cleared in the own save \(never_sync\):.*6670:")
+    full = L.find(0, r"items: full list \(\d+ lots\) sent to slot")
+    v.step("ie fixture: the host's 6670 cleared before its full item list to the guest",
+           clr is not None and full is not None and clr[0] < full[0],
+           "clear %s; full list %s" % (clr[0] if clr else "never", full[0] if full else "never"))
     need(v, L, "ie bell: the host's award of lot 10050 goes to the party", 0,
          r"host award #\d+ lot 10050 \(flag 6670, award\) queued for the party", j or 0)
     need(v, L, "ie bell: the guest gets the Old Hunter Bell (item box)", 1,
