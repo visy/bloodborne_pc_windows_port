@@ -460,6 +460,45 @@ std::atomic<bool> g_chalice_chosen{false};  // this guest's own choice took it a
 // StayActionHoldTick lifts it until the next load. 0 = no.
 std::atomic<double> g_apart_hold_at{0};
 
+/// OnLeave_Limit (0x138A4A0) writes, right before the send-home call the veto drops: SprjEventState
+/// (*0x553B0D8) = 2, GSM +0x1520 = 1 (the next load goes to the forced placement: the guest's
+/// pre-summon spot in its own world, +0x14F0..) and the selector 0x1332BC0(ctx, -1) (GSM +0x0C =
+/// that spot's map); the leave states before it set flag 4047. The send-home's load (the reload
+/// 0x13129C0) is what clears them; with it dropped they stayed for the rest of the visit: the next
+/// party load could take the forced placement (the guest's own Hunter's Dream) and the leave marks
+/// stayed set (0.7.4 report: after such a stay the guest could not use a lamp or pick up items).
+/// They are put back to a steady guest's values here (logged with what was found).
+void UndoLeaveState(const char* why) {
+    static const bool off = std::getenv("BB_PARTY_LEAVE_UNDO") && std::getenv("BB_PARTY_LEAVE_UNDO")[0] == '0';
+    if (off) {
+        return;  // test switch: the old behaviour (the marks stay)
+    }
+    const u64 es = Slot(0x553b0d8), gsm = Slot(kSlotGsm);
+    const int ev = Field<int>(es, 0, -1);
+    const u8 forced = Field<u8>(gsm, 0x1520);
+    const u32 sel = Field<u32>(gsm, 0x0c), pre = Field<u32>(gsm, 0x14f0);
+    bool f4047 = false;
+    ReadEventFlag(4047, &f4047);
+    if (es && ev == 2) {
+        const int zero = 0;
+        SafeWrite(es, &zero, 4);
+    }
+    if (gsm && forced == 1) {
+        const u8 zero = 0;
+        SafeWrite(gsm + 0x1520, &zero, 1);
+    }
+    if (gsm && sel != 0xffffffffu && sel == pre) {
+        const u32 none = 0xffffffffu;
+        SafeWrite(gsm + 0x0c, &none, 4);
+    }
+    if (f4047) {
+        WriteEventFlag(4047, false);
+    }
+    Log("guest: the leave state undone (%s): SprjEventState %d -> 0, GSM +0x1520 %u -> 0, +0x0C %#x%s, flag 4047 %d -> 0",
+        why, ev, unsigned(forced), sel, sel != 0xffffffffu && sel == pre ? " -> none (the pre-summon map)" : " kept",
+        int(f4047));
+}
+
 bool SendHomeVeto(u64 site) {
     const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
     // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
@@ -486,6 +525,7 @@ bool SendHomeVeto(u64 site) {
                 ? "; together again after a map seam: the leave state began when the host's chr left here"
                 : "");
         g_apart_hold_at = Now();  // the leave state's action-button hold has no load to end it now
+        UndoLeaveState("OnLeave_Limit's send-home dropped");
         return true;
     }
     // A title-joined guest has no own-world return data (no snapshot: its own world was never

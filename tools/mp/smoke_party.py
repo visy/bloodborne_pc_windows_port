@@ -2004,35 +2004,51 @@ def phase_clg(only):
 
 
 
-# Phase sj (forestrejoin, ~4 min, 2 players, group `seam_rejoin`; a player's report, 0.7.4: in the
-# Forbidden Woods cave (the seam between m24_00 and m27_00) the guest that crossed first was sent
+# Phase sj (forestrejoin, ~5 min, 2 players, group `seam_rejoin`; a player's report, 0.7.4: in the
+# Forbidden Woods cave (the seam between m27_00 and m24_00) the guest that crossed first was sent
 # home seconds after the host caught up - its game's leave state had started when the host's chr
-# left - and its re-join landed in the host's Hunter's Dream (no lit lamp in m27: the lampless
-# transform kept the own world's stage). The host stands at the cave on the m24_00 side, the guest
-# beside it walks over the seam (warp, a few m), the host follows 2 s later: the guest's send-home
-# must be dropped and it stays a cooperator. Then the guest's Leave + Rejoin while the host is in
-# m27_00 (its lamps unlit): the cross-map join must land in m27_00 beside the host, not in m21.
-SJ_M24 = "-171.9:-45.3:182.3"     # in the cave, m24_00 side
-SJ_G24 = "-166.7:-42.9:186.0"
-SJ_G27 = "-183.7:-50.2:183.9"     # over the seam: m27_00
-SJ_H27 = "-185.2:-52.5:188.3"
-SJ_UNTIL = [r"1:guest_rejoin: Party > Rejoin pressed[\s\S]*(arrived (alone|in the host world)[\s\S]{3000}|map - -> m21)"]
+# left - and its re-join landed in the host's Hunter's Dream; after such stays the guest could not
+# use a lamp, pick up items or (another report) the Doll. The party stands in the cave on the m24_00
+# side; the guest walks over the seam into m27_00, the host follows 2 s later: the guest's send-home
+# must be dropped (it stays a cooperator) and the leave state undone. Then a party travel to the Hunter's Dream: the guest levels up at the Doll
+# while the host talks to her at the same moment (the guest's action buttons work after the stay).
+# The walk from the Cathedral Ward lamp 2402950 (tools/party/nav_route.py on the m24_00 navmesh) to
+# the stairs above the cave, then short moves to the report's own spots (a far warp fell through
+# the unloaded floor; coming from the Forbidden Woods lamp the m24_00 side never loaded).
+SJ_ROUTE = ("13.1:-9.5:107.0/7.6:-10.9:108.6/3.4:-11.0:109.5/-1.0:-10.3:113.4/-7.3:-10.1:117.1/-10.8:-10.4:120.5/"
+            "-10.2:-11.1:128.3/-8.5:-10.4:134.5/-3.6:-6.1:143.2/-1.6:-4.8:148.9/1.7:-2.7:154.0/4.6:0.2:159.1/"
+            "6.1:0.8:167.4/9.3:1.0:169.9/10.4:1.2:172.1/7.9:0.2:176.9/3.1:0.1:179.0/0.3:0.3:180.9/-5.4:0.4:183.6/"
+            "-7.5:-0.1:188.5/-12.8:-0.4:186.6/-17.9:-0.4:188.4/-19.6:-0.4:185.0/-25.4:-0.3:184.3/-30.4:0.1:182.1/"
+            "-35.5:0.2:178.7/-37.9:0.1:175.2/-41.9:0.1:172.7/-45.5:0.3:169.5/-50.3:0.2:167.0/-55.5:0.2:165.5/"
+            "-59.7:-0.0:163.2/-64.1:-0.2:165.5/-70.1:-0.3:168.3/-77.9:-0.0:168.4/-82.9:-0.0:165.5/-87.9:-0.0:167.1/"
+            "-91.8:0.2:168.5/-94.4:0.2:174.5/-98.2:0.3:179.4/-101.5:-0.2:183.5/-100.3:-0.1:187.0/-105.1:-1.0:190.3/"
+            "-106.7:-2.4:196.6/-104.9:-2.5:200.5/-107.8:-4.2:202.6/-112.2:-6.3:201.2/-114.3:-7.9:198.6/"
+            "-115.4:-9.5:195.0/-113.3:-11.1:189.8/-116.8:-11.9:186.8/-119.6:-13.5:185.9/-122.0:-15.9:181.8/"
+            "-126.5:-18.8:179.1/-128.3:-19.6:178.7/-131.5:-19.3:175.0/-136.2:-18.9:173.1/-141.3:-18.9:171.1/"
+            "-146.9:-18.9:167.8/-148.7:-19.3:169.8/-148.2:-20.7:174.0/-144.2:-22.4:177.4/-138.7:-24.3:176.6/"
+            "-135.1:-26.3:172.3/-135.4:-28.4:166.5/-140.4:-30.7:163.4")
+SJ_M24 = "-142.9:-33.5:175.0"     # at the cave mouth, m24_00 side (live sj5: the seam is at x ~ -146)
+SJ_G24 = "-141.4:-33.1:170.9"
+SJ_G27 = "-151.1:-34.0:177.7"     # over the seam: m27_00
+SJ_UNTIL = [r"1:test: levelup: (LEVEL UP|FAILED)|1:map - -> m21_00[\s\S]*funnel: guest_sent_home"]
 
 
 def phase_sj(only):
-    host = ",".join(["god", "host_move=%s:pin=4@12^1" % SJ_M24,
-                     "host_move=%s:pin=2@2?near=%s:4" % (SJ_H27, SJ_G27)])
-    g1 = ",".join(["god", "guest_move=%s:pin=3@3%%m24_00?near=%s:5" % (SJ_G24, SJ_M24),
-                   "guest_move=%s:pin=2@6%%m24_00" % SJ_G27,
-                   "guest_leave@25%m27", "guest_rejoin@6"])
+    # both walk the route (it takes ~5 min), then the guest crosses first and the host follows 2 s later
+    host = ",".join(["god", "host_route=%s@10^1" % SJ_ROUTE, "host_move=%s:pin=3@2" % SJ_M24,
+                     "host_stick=-150.0:178.5:1.0:30@2?near=%s:3" % SJ_G27,
+                     "host_warp=2102950@30"])
+    g1 = ",".join(["god", "guest_route=%s@3" % SJ_ROUTE, "guest_move=%s:pin=3@2" % SJ_G24,
+                   "guest_stick=-151.1:177.7:1.0:30@4%%m24_00?near=%s:4" % SJ_M24])
     return dict(
-        name="sj", seconds=300, count=2, headless=0,
+        name="sj", seconds=720, count=2, headless=0, pads=(0, 1),
         env=["BB_PARTY_HOLD_LOG=1"],
         ienv=["0:BB_PARTY_TEST_START_LAMP=2402950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
-              "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+              "0:BB_PARTY_GUESTSVC_TEST=hosttalk=210304;hsdelay=12;keys=cross",
+              "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_GUESTSVC_TEST=gate=2;echoes=20000;warp=doll;levelup"],
         watch=["--watch", r"map m24_00_00_00 -> m27_00_00_00=sjcross@1,4",
                "--watch", r"OnLeave_Limit=sjleave@0.5,4",
-               "--watch", r"guest_rejoin: Party > Rejoin pressed=sjrejoin@20,30,40"],
+               "--watch", r"test: levelup: (before Cross|LEVEL UP)=sjdoll@0.5,2"],
         crash=[], until=SJ_UNTIL, until_hold=10,
     )
 
@@ -2043,20 +2059,19 @@ def check_sj(v, L):
     if cross is None:
         check_common(v, L, "sj")
         return
-    left = need(v, L, "sj the host's chr leaves on the guest (its leave state starts)", 1,
-                r"split: remote chr .* leaves \(slot 0 is in m24_00", cross - 2)
-    need(v, L, "sj host follows into m27_00", 0, r"map m24_00_00_00 -> m27_00_00_00", cross - 2)
-    lv = L.find(1, r"guest_leave: Party > Leave pressed", cross)
-    end = lv[0] if lv else 1e9
+    need(v, L, "sj the host's chr leaves on the guest (its leave state starts)", 1,
+         r"split: remote chr .* leaves \(slot 0 is in m24_00", cross - 2)
+    hc = need(v, L, "sj host follows into m27_00", 0, r"map m24_00_00_00 -> m27_00_00_00", cross - 2)
+    tr = L.find(0, r"travel step \d+/\d+: host_warp", cross)
+    end = tr[0] if tr else 1e9
     need(v, L, "sj guest's send-home dropped while together", 1, r"\(OnLeave_Limit\) dropped", cross, end)
-    none_of(v, L, "sj guest not sent home before its Leave", r"funnel: guest_sent_home", cross, end, insts=(1,))
-    none_of(v, L, "sj host keeps the guest (no 1 -> 0) before its Leave", r"cooperators 1 -> 0", cross, end, insts=(0,))
-    rj = need(v, L, "sj guest's Rejoin pressed", 1, r"guest_rejoin: Party > Rejoin pressed", cross)
-    if rj is not None:
-        need(v, L, "sj rejoin: no lit lamp in m27: a placement beside the host", 1,
-             r"no lamp for this alone load: summoned placement = the transform's stage 0x1b000000", rj)
-        need(v, L, "sj rejoin lands in m27_00", 1, r"map - -> m27_00_00_00", rj)
-        none_of(v, L, "sj rejoin never in the Dream", r"map - -> m21_00", rj + 15, insts=(1,))
+    need(v, L, "sj the leave state undone", 1, r"the leave state undone", cross, end)
+    none_of(v, L, "sj guest not sent home", r"funnel: guest_sent_home", cross, insts=(1,))
+    none_of(v, L, "sj host keeps the guest (no 1 -> 0)", r"cooperators 1 -> 0", cross, end, insts=(0,))
+    if tr:
+        need(v, L, "sj party travel: guest in the Dream", 1, r"map .*-> m21_00", tr[0])
+        need(v, L, "sj guest levels up at the Doll after the stay", 1, r"test: levelup: LEVEL UP on the guest", tr[0])
+        none_of(v, L, "sj guest's level up never fails", r"test: levelup: FAILED", tr[0], insts=(1,))
     check_common(v, L, "sj")
 
 
