@@ -143,8 +143,28 @@ static void test_classify() {
         CHECK(k && k->lot == lot);
         CHECK(GuestGiftShareable(lot, 50000000 + lot));
     }
-    CHECK(!SharedKeyTreasureLot(2410290));            // Saw Hunter Badge: a shop unlock, per player
-    CHECK(InstancedTreasureFlag(52410290, true, false));
+    // Every other key item and the daughter questline (0.7.5): shared too, ordinary treasure not.
+    for (const std::int32_t lot : {2410290, 2410900, 2410910, 2410920, 2420900, 3502000, 3501850, 2500920}) {
+        CHECK(SharedKeyTreasureLot(lot));
+        CHECK(!InstancedTreasureFlag(ItemLotFlag(lot), true, false));
+        CHECK(ClassifyFlag(ItemLotFlag(lot), captured));
+        CHECK(GuestGiftShareable(lot, ItemLotFlag(lot)));
+        // a guest accepts the host's row
+        ItemGrant g;
+        g.lot = lot;
+        g.flag = ItemLotFlag(lot);
+        g.source = ItemSource::Flag;
+        CHECK(ItemGrantFromPeerAllowed(g));
+    }
+    CHECK(!SharedKeyTreasureLot(2410140));            // an ordinary corpse: per player
+    CHECK(InstancedTreasureFlag(52410140, true, false));
+    // the key catch-up re-gives only the progression keys, never a handed-in quest item
+    {
+        const auto lots = KeyCatchupLots([](std::uint32_t f) { return f == 52410920 || f == 52400450; },
+                                         [](std::uint32_t) { return false; });
+        CHECK(std::find(lots.begin(), lots.end(), 2400450) != lots.end());
+        CHECK(std::find(lots.begin(), lots.end(), 2410920) == lots.end());
+    }
     CHECK(!SharedKeyTreasureLot(31000));              // Oedon Tomb Key: a boss award (ledger), not treasure
     captured[50001700] = 33010; // the hook saw the NG variant
     f = ClassifyFlag(50001700, captured);
@@ -681,7 +701,7 @@ static void test_gift_up() {
     CHECK(!GuestGiftShareable(28000, kItemNone));      // Blood of Arianna: each talk is the talker's
     CHECK(!GuestGiftShareable(31000, 60009025));       // other ledger lots never come from a guest
     CHECK(GuestGiftShareable(10040, 50000100));        // the Eye: replayed to everyone (quest_audit.md)
-    CHECK(!GuestGiftShareable(2410290, 52410290));     // map treasure: instanced per player (D4)
+    CHECK(!GuestGiftShareable(2410140, 52410140));     // ordinary map treasure: instanced per player (D4)
     CHECK(GuestGiftShareable(2400450, 52400450));      // ... except a progression key (Hunter Chief Emblem)
     CHECK(!GuestGiftShareable(2300090, 52300090));
     CHECK(!GuestGiftShareable(123456789, 50000200));   // unknown lot
@@ -690,7 +710,7 @@ static void test_gift_up() {
     std::int32_t lot = 0, flag = 0;
     std::string err;
     CHECK(GiftUpFromJsonText(body, &lot, &flag, &err) && lot == 17000 && flag == 50000200);
-    CHECK(!GiftUpFromJsonText(GiftUpToJsonText(2410290, 52410290), &lot, &flag, &err));
+    CHECK(!GiftUpFromJsonText(GiftUpToJsonText(2410140, 52410140), &lot, &flag, &err));
     CHECK(GiftUpFromJsonText(GiftUpToJsonText(23000, 60009005), &lot, &flag, &err) && lot == 23000 &&
           flag == 60009005);
     CHECK(!GiftUpFromJsonText("{\"lot\":17000}", &lot, &flag, &err));
