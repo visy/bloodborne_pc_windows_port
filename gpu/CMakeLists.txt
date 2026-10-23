@@ -648,6 +648,11 @@ add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-death-rules-test PRIVATE shim)
 set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Split travel notice text + rate limit (party_split_notice.h). ninja -C out/gpu party-split-notice-test
+add_executable(party-split-notice-test EXCLUDE_FROM_ALL ../tests/test_party_split_notice.cpp)
+target_compile_options(party-split-notice-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-split-notice-test PRIVATE shim)
+set_target_properties(party-split-notice-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Lifts in a party: the table and the decisions (party_lift_rules.h). ninja -C out/gpu party-lift-rules-test
 add_executable(party-lift-rules-test EXCLUDE_FROM_ALL ../tests/test_party_lift_rules.cpp)
 target_compile_options(party-lift-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
