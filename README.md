@@ -158,7 +158,8 @@ parties: guests drawn with one another's look, pickups animating every other pla
 two-player run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
-**Party sections:** [Starting a party](#start-from-the-title-screen-recommended) ·
+**Party sections:** [First time? Step by step](#first-time-step-by-step) ·
+[Starting a party](#start-from-the-title-screen-recommended) ·
 [How it plays](#how-it-plays) · [Deaths](#deaths) · [Progress vs. Seamless Co-op](#seamless-co-op-progress) ·
 [Coming next](#coming-next) · [Known issues](#known-issues) ·
 [Connecting over the internet](#connecting-over-the-internet) · [Reporting a bug](#reporting-a-co-op-bug)
@@ -168,6 +169,54 @@ so share it only with the people you play with. With a password the code is shor
 characters without one); players on the host's own network can use the shorter **LAN code**
 (e.g. `BBP3-PAJY-EAMH-7TD`). Everyone needs the same bbport version and game files. Party play uses its
 own save; your single-player save is never touched.
+
+### First time? Step by step
+
+One host and two guests, from nothing to playing together. Do the steps in this order.
+
+**1. Everyone:** install the **same release** of this port (the latest one).
+
+**2. Host:**
+
+1. Start `launch_gui.bat` and open the **Party** tab.
+2. *Mode* = **Host a party**. Type **Your name**.
+3. **Max players: 3**. Leave the other options as they are. A **Password** is optional; if you set
+   one, every player must type the same one.
+4. Click **Launch Bloodborne**. If Windows asks whether `bbport.exe` may use the network, click **Allow**.
+5. Once the game runs, the launcher shows two codes. Click **Copy** next to the right one and send it
+   to both friends:
+   - **Internet code**: friends in other homes.
+   - **LAN code**: players on your own Wi-Fi / router.
+6. Just play. When your friends are ready, the game brings them into your world by itself.
+
+**3. Each guest:**
+
+1. Open the **Party** tab and choose *Mode* = **Join a party**. Each player needs a **different name**.
+2. Paste the host's code into **Party code** (the **Paste** button does it). A ✓ under it means the code is valid.
+3. Same **Max players** (3) and the same **Password** as the host.
+4. Click **Launch Bloodborne** **after** the host's game is already running.
+5. Play the start of the game (the prologue) in your own world. After that the host's game summons you
+   automatically.
+
+**4. The guests stay at *Connecting*?**
+
+- The host's PC must be reachable on **port 9307, UDP and TCP**. The game asks the router to open it
+  (UPnP). If the host's log says *"UPnP unavailable"*, open port 9307 (UDP and TCP) to the host's PC
+  in the router's settings.
+- **Shared provider address (CGNAT)**, common with many providers (for example in Brazil): the router's
+  outside address starts with `100.64` to `100.127`, and opening the port on the router does not help.
+  The *Party* page's *Network* line tells you when this is the case. The easiest fix is a free VPN
+  that all three players install, such as **Radmin VPN**, **Tailscale** or **ZeroTier**; the guests then
+  type the host's VPN address as `VPN-IP:9307` into **Party code**. Or let a player with an open port host.
+- **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*).
+- More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
+
+**5. Still not working?** On every PC: launcher → *Advanced / Debug* → **Save support bundle**, and send the
+zips with an issue, together with which step each player reached (see [Reporting a co-op bug](#reporting-a-co-op-bug)).
+The lines starting with `NAT:`, `UPnP:` and `Party:` in the logs usually tell what went wrong.
+
+After the first session, the title screen's **Party → Continue party game** is all anyone needs:
+code and password are remembered, and the host's code stays the same.
 
 ### Start from the title screen (recommended)
 

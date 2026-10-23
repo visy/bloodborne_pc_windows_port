@@ -114,7 +114,7 @@ OUT/verdict.txt (one line per step: PASS / FAIL, the evidence line or what was m
 Exit code 0 only when every step passed. LOOK AT THE SCREENSHOTS too (agents/RULES_062.txt): the
 verdict reads logs, it cannot see a grey screen, a camera in a wall or a stuck dialog.
 """
-import argparse, os, re, shutil, struct, subprocess, sys, time
+import argparse, json, os, re, shutil, struct, subprocess, sys, time
 from pathlib import Path
 
 
@@ -4359,6 +4359,10 @@ def main():
     ap.add_argument("--real-net", action="store_true",
                     help="the phases on the real network (instances.py --real-net: public STUN, UPnP, the Internet code)")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
+    ap.add_argument("--lanes", type=int, default=1,
+                    help="run the phases in N parallel lanes (own instance root each, <root>_lN; split by the "
+                         "last measured phase times); the verdict is made once over all phases")
+    ap.add_argument("--lane-id", type=int, default=-1, help=argparse.SUPPRESS)  # a lane child (--lanes)
     a = ap.parse_args()
     RUN_ROOT[0] = a.root
     only = {g.strip() for g in a.only.split(",") if g.strip()}
@@ -4374,21 +4378,80 @@ def main():
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
-    v = Verdict(only)
+    names = [p.strip() for p in a.phase.split(",") if p.strip()]
+    times_file = AGENT_ROOT / "smoke" / "phase_times.json"
+    if a.lane_id >= 0:
+        # a lane child: run its phases only; the parent makes the verdict
+        for name in names:
+            ph = PHASES[name](only)
+            if only:
+                ph = narrow_phase(ph, only)
+            t0 = time.time()
+            run_phase(a, ph, out / name)
+            (out / name / "wall.txt").write_text("%.0f" % (time.time() - t0))
+            # check now, while this lane's saves are the phase's (the sc / lp checks read them)
+            lv = Verdict(only)
+            CHECKS[name](lv, Logs(out / name), out / name)
+            (out / name / "rows.json").write_text(json.dumps(lv.rows), encoding="utf-8")
+        return
     t_all = time.time()
-    for name in [p.strip() for p in a.phase.split(",") if p.strip()]:
+    if a.lanes > 1 and not a.check_only:
+        # Longest phase first into the least loaded lane (times from the last runs, 300 s if unknown).
+        try:
+            known = json.loads(times_file.read_text())
+        except (OSError, ValueError):
+            known = {}
+        lanes = [[0.0, []] for _ in range(a.lanes)]
+        for name in sorted(names, key=lambda n: -known.get(n, 300)):
+            lane = min(lanes, key=lambda l: l[0])
+            lane[0] += known.get(name, 300)
+            lane[1].append(name)
+        procs = []
+        for k, (est, ph_names) in enumerate(lanes):
+            if not ph_names:
+                continue
+            ph_names.sort(key=names.index)
+            argv = [sys.executable, str(Path(__file__).resolve()), "--root", "%s_l%d" % (a.root, k),
+                    "--build", str(a.build), "--game", str(a.game), "--out", str(out), "--every", str(a.every),
+                    "--phase", ",".join(ph_names), "--lane-id", str(k)] + (["--only", a.only] if a.only else []) + (
+                    ["--real-net"] if a.real_net else [])
+            print("[smoke] lane %d (~%.0f s): %s" % (k, est, ",".join(ph_names)), flush=True)
+            out.mkdir(parents=True, exist_ok=True)
+            procs.append(subprocess.Popen(argv, stdout=open(out / ("lane%d.log" % k), "w"), stderr=subprocess.STDOUT))
+        for p in procs:
+            p.wait()
+        for name in names:
+            try:
+                known[name] = float((out / name / "wall.txt").read_text())
+            except (OSError, ValueError):
+                pass
+        times_file.parent.mkdir(parents=True, exist_ok=True)
+        times_file.write_text(json.dumps(known, indent=1))
+        a.check_only = True  # the verdict below reads the lanes' logs
+        lanes_used = True
+    else:
+        lanes_used = False
+    v = Verdict(only)
+    for name in names:
         ph = PHASES[name](only)
         if only:
             ph = narrow_phase(ph, only)
         if not a.check_only:
             run_phase(a, ph, out / name)
         print("[smoke] verdict %s" % name, flush=True)
+        if lanes_used:
+            try:
+                v.rows += [tuple(r) for r in json.loads((out / name / "rows.json").read_text(encoding="utf-8"))]
+            except (OSError, ValueError):
+                v.rows.append(("%s: lane result" % name, False, "no rows.json (lane crashed? see lane*.log)"))
+            continue
         CHECKS[name](v, Logs(out / name), out / name)
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
-    if not a.check_only:
-        text += "wall time %.0f s (queue wait included)" % (time.time() - t_all) + chr(10)
+    if not a.check_only or lanes_used:
+        text += "wall time %.0f s (queue wait included%s)" % (
+            time.time() - t_all, ", %d lanes" % a.lanes if lanes_used else "") + chr(10)
     out.mkdir(parents=True, exist_ok=True)
     (out / "verdict.txt").write_text(text, encoding="utf-8")
     print("[smoke] %d steps, %d failed; %s" % (len(v.rows), len(fails), out / "verdict.txt"))
