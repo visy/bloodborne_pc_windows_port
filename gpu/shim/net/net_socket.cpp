@@ -996,7 +996,7 @@ std::shared_ptr<P2pPort> p2p_port_open(std::uint16_t want) {
     }
     if (!sock_ok(port->fd)) return nullptr;
     if (port->port != want) log("party port %u (BB_PARTY_PORT %u was taken); peers reach this game there", port->port, want);
-    else log("party port %u open", port->port);
+    else log("party port %u: listening on this PC (whether the internet reaches it: the Party NAT line)", port->port);
     g_bound_port.store(port->port);
     if (g_ipv6_wanted.load()) open_v6(*port);
     port->reader = std::thread(p2p_reader, port);
