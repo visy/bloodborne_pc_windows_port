@@ -1900,7 +1900,10 @@ def phase_ie(only):
                      "watch_text=Saw Cleaver/Hunter Axe",
                      "host_warp=2412951@35^1", "host_warp=2102961@10",
                      "host_chr=2100215:1.5@6%m21_00"])
-    g1 = ",".join(["god", "goods=4312:0", "log_flag=6670/12101020", "guest_flag=6670:0@12"])
+    g1 = ",".join(["god", "goods=4312:0", "log_flag=6670/12101020", "guest_flag=6670:0@12",
+                   # again after the award (the guest's bell messenger event must run at the
+                   # Dream reload, for the per-player messenger state check below)
+                   "guest_flag=6670:0@30"])
     return dict(
         name="ie", seconds=300, count=2, headless=0,
         env=["BB_PARTY_START=immediate"],
