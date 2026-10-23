@@ -900,6 +900,36 @@ def party_log_env(s: dict) -> dict:
     return env
 
 
+# launcher_settings.json window_rev: one-time change of the saved window mode.
+#   1 (0.7.4): Borderless became the default; a saved exclusive Fullscreen moves to Borderless once
+#              (exclusive fullscreen lost the GPU on laptops with hybrid graphics, especially at
+#              Alt+Tab). Fullscreen chosen again after that stays.
+WINDOW_REV = 1
+
+
+def window_mode_setting(s: dict) -> str:
+    """The window mode of launcher settings: windowed / borderless / fullscreen (WINDOW_REV)."""
+    mode = str(s.get("window_mode") or "").lower()
+    if mode not in ("windowed", "borderless", "fullscreen"):
+        # Before window_mode (Mrsuss60 e2a647d) only the fullscreen toggle; nothing saved: the default.
+        legacy = s.get("feat_fullscreen", s.get("fullscreen"))
+        mode = "borderless" if legacy is None else ("fullscreen" if legacy else "windowed")
+    if mode == "fullscreen" and int(s.get("window_rev", 0) or 0) < WINDOW_REV:
+        mode = "borderless"
+    return mode
+
+
+def migrate_window_mode(s: dict) -> bool:
+    """Does the WINDOW_REV change in `s` (launcher settings) once; True when `s` changed."""
+    if int(s.get("window_rev", 0) or 0) >= WINDOW_REV:
+        return False
+    mode = window_mode_setting(s)
+    s["window_mode"] = mode
+    s["feat_fullscreen"] = mode == "fullscreen"
+    s["window_rev"] = WINDOW_REV
+    return True
+
+
 def settings_env(s: dict) -> dict:
     """BB_* environment for run.bat from launcher settings (None = unset the variable).
 
@@ -936,9 +966,7 @@ def settings_env(s: dict) -> dict:
     env["BB_PREP_WORKERS"] = None if on("feat_draw_prep") else "0"
     # Window mode (Mrsuss60 e2a647d): Windowed / Borderless / Fullscreen; older settings only have
     # the fullscreen toggle. The game reads BB_WINDOW_MODE, BB_FULLSCREEN stays for older builds.
-    win_mode = str(s.get("window_mode") or "").lower()
-    if win_mode not in ("windowed", "borderless", "fullscreen"):
-        win_mode = "fullscreen" if on("feat_fullscreen", bool(s.get("fullscreen", False))) else "windowed"
+    win_mode = window_mode_setting(s)
     env["BB_WINDOW_MODE"] = win_mode
     env["BB_FULLSCREEN"] = "1" if win_mode == "fullscreen" else "0"
     # Overlay menu toggle on gamepad L3 + R3 (Insert always works)
@@ -1008,7 +1036,11 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
     # run.bat without the launcher after an update: the old launcher values move to bbport.ini once.
     try:
         migrate_ini_rev(bbport_ini_path())
-        if migrate_settings_to_ini(data, bbport_ini_path()) is not None:
+        changed = migrate_settings_to_ini(data, bbport_ini_path()) is not None
+        # The window mode's one-time change only in a saved file (none: the default, borderless).
+        if settings_path.exists() and migrate_window_mode(data):
+            changed = True
+        if changed:
             settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except OSError:
         pass
@@ -2157,9 +2189,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_draw_prep = tk.BooleanVar(value=self.settings.get("feat_draw_prep", True))
         self.feat_fullscreen = tk.BooleanVar(  # "fullscreen": key of the upstream launcher toggle (PR #39)
             value=self.settings.get("feat_fullscreen", self.settings.get("fullscreen", False)))
-        _wm = str(self.settings.get("window_mode") or "").capitalize()
-        self.window_mode_var = tk.StringVar(
-            value=_wm if _wm in WINDOW_MODE_CHOICES else ("Fullscreen" if self.feat_fullscreen.get() else "Windowed"))
+        # Borderless by default since 0.7.4; a saved Fullscreen moves to Borderless once (WINDOW_REV).
+        self.window_mode_var = tk.StringVar(value=window_mode_setting(self.settings).capitalize())
         self.feat_overlay_pad = tk.BooleanVar(value=self.settings.get("feat_overlay_pad", False))
         self.feat_game_menu = tk.BooleanVar(value=self.settings.get("feat_game_menu", True))
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
@@ -2304,10 +2335,11 @@ class BloodborneLauncher(tk.Tk):
             "in-game preset (BB_RENDER_RES).",
             width=18, indent=True)
         self._combo(sec, "Window mode:", self.window_mode_var, WINDOW_MODE_CHOICES,
-                    "Windowed (default): a normal window with title bar. Borderless: a frameless window "
-                    "covering the monitor (quick Alt+Tab). Fullscreen: exclusive fullscreen at the desktop's "
-                    "display mode (the driver may present with less latency). Alt+Enter toggles "
-                    "fullscreen in game (BB_WINDOW_MODE).", width=12)
+                    "Borderless (default): a frameless window covering the monitor (quick Alt+Tab). "
+                    "Windowed: a normal window with title bar. Fullscreen: exclusive fullscreen at the "
+                    "desktop's display mode (the driver may present with less latency); it can crash on "
+                    "laptops with hybrid graphics (GPU device lost), especially at Alt+Tab. Alt+Enter "
+                    "toggles fullscreen in game (BB_WINDOW_MODE).", width=12)
         self._combo(sec, "Monitor:", self.display_var, [c[0] for c in self.display_choices],
                     "Which monitor the game opens on. The list comes from bb-gpu-capabilities; "
                     "Primary (default) uses the main monitor (BB_DISPLAY).", width=24)
@@ -4085,6 +4117,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_draw_prep": self.feat_draw_prep.get(),
             "feat_fullscreen": self.window_mode_var.get() == "Fullscreen",
             "window_mode": self.window_mode_var.get().lower(),
+            "window_rev": WINDOW_REV,
             "feat_overlay_pad": self.feat_overlay_pad.get(),
             "feat_game_menu": self.feat_game_menu.get(),
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),

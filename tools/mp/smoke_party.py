@@ -1171,7 +1171,9 @@ def ld_walks(who):
 
 def ld_climb(who, first):
     return ["%s_obj=2401024:1.0:180@%d%%m24_00" % (who, first),  # the ladder's foot ("Ascend Ladder")
-            "%s_press=0x4000@1%%m24_00!" % who,                     # Cross: onto the ladder
+            # Cross: onto the ladder, 2 s after the turn ("Ascend Ladder" came 1.5 s after it in the
+            # 0.7.3 release smoke, under load: a press at 1 s did nothing)
+            "%s_press=0x4000@2%%m24_00!" % who,
             "%s_die:ladder@2%%m24_00" % who,                        # dies on it (only while on it)
             "%s_press=0@3%%m24_00!" % who]                          # up again at the lamp
 
@@ -1199,8 +1201,8 @@ def phase_ld(only):
 # map: the guest's own loading screen, the host stays. Then from the Hunter's Dream (guest 1 goes there
 # alone from the lamp: a rest, the host's world reloads and guest 2 follows): (2) the Hunter's Mark,
 # (3) the Bold Mark, each a re-join into the host's world (a Mark is no rest); (4) the lamp 2402950
-# itself from the Dream (a headstone's travel: a rest the re-join carries, the host's rest load for it
-# and guest 2 following: the report's host log). After each everyone is back (the host rewinds its
+# itself from the Dream (a headstone's travel: since 0.7.3 a split-travel re-join with the host's
+# snapshot, no host rest load, guest 2 stays: a guest leaving the Dream never resets the host's world). After each everyone is back (the host rewinds its
 # member tasks for the arrivals); no crash, no device lost.
 # The host's Marks come first (hostmark; the host answers "Travel with the party?" by
 # BB_PARTY_SPLIT_TEST, its last lamp the Cathedral Ward's): (h1) the Bold Mark in its own map, YES:
@@ -1898,7 +1900,10 @@ def phase_ie(only):
                      "watch_text=Saw Cleaver/Hunter Axe",
                      "host_warp=2412951@35^1", "host_warp=2102961@10",
                      "host_chr=2100215:1.5@6%m21_00"])
-    g1 = ",".join(["god", "goods=4312:0", "log_flag=6670/12101020", "guest_flag=6670:0@12"])
+    g1 = ",".join(["god", "goods=4312:0", "log_flag=6670/12101020", "guest_flag=6670:0@12",
+                   # again after the award (the guest's bell messenger event must run at the
+                   # Dream reload, for the per-player messenger state check below)
+                   "guest_flag=6670:0@30"])
     return dict(
         name="ie", seconds=300, count=2, headless=0,
         env=["BB_PARTY_START=immediate"],
@@ -1911,6 +1916,10 @@ def phase_ie(only):
                "--watch", r"flags 12101020=0 12105050=1=ierise@1,3,6",
                "--watch", r"text shows=ietext@0.3",
                "--watch", r"flags 12101020=1=iedone@0.5,3"],
+        # The host's full item list is built when the guest connects: the guest starts only after
+        # the host's 6670 clear (0.7.3 release smoke: the guest connected 1 s before it, got lot
+        # 10050 in the full list while still holding the bell, and skipped the later award).
+        start_when=[r"1/0:test: cleared in the own save \(never_sync\):.*6670:"],
         crash=[], until=IE_UNTIL, until_hold=15,
     )
 
@@ -2724,7 +2733,8 @@ def check_rules(v, L):
     sw = L.find(1, r"Game menu: page \d+ rows \(\d+\): Enemies stay dead=")
     v.step("rules guest: sees the host's Party rules: World rules (read-only)",
            sw and "Host can gather=On" in sw[1] and "NPCs as in host's world=On" in sw[1]
-           and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1],  # 0.7.3 defaults
+           and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1]
+           and "NPC hunters fight all=On" in sw[1],  # 0.7.3 defaults
            sw[1][:250] if sw else "no Party rules: World rows line on the guest")
     # guestrules (0.7.3): the enemy scaling is the host's: read-only lines with the host's values on
     # the guest ("150 %", the host's default), no slider position (a host's row shows "5")
@@ -2927,7 +2937,10 @@ def check_sk(v, L):
     if away is not None:
         v.step("sk host left within 5 s of the kill (before any census)", away - kill < 5, "%.1f s" % (away - kill))
         gone = need(v, L, "sk host far: %s not loaded (its map streamed out)" % SK_ENEMY, 0,
-                    r"test: host_kill: no target \(entity %s\)" % SK_ENEMY, away)
+                    # 0.7.3 (673d1b29): a ':hp' kill outside the census tries the chr by entity id
+                    # first, so an unloaded enemy logs "chr 0" in place of "no target"
+                    r"test: host_kill: (no target \(entity {0}\)|NPC entity {0} \(chr 0, not in the census list\))"
+                    .format(SK_ENEMY), away)
     for i in (1, 2):
         need(v, L, "sk guest %d: %s dead there too (the kill record)" % (i, SK_ENEMY), i,
              r"kill record: entity %s alive here, killed by the party 3 s ago: put to death|kill seen: entity %s died here"
@@ -2945,7 +2958,8 @@ def check_sk(v, L):
         ech = L.all(0, r"\] Echoes \d+ -> \d+", rk - 0.1, rk + 6)
         v.step("sk host: no echoes from the second death", not ech, "none in 6 s" if not ech else ech[0][1][:160])
     end = need(v, L, "sk host: %s still dead at the end (no target)" % SK_ENEMY, 0,
-               r"test: host_kill: no target \(entity %s\)" % SK_ENEMY, (rk or back) + 15)
+               r"test: host_kill: (no target \(entity {0}\)|NPC entity {0} \(chr 0x[0-9a-f]+, not in the census list\): "
+               r"HP 0 -> 0)".format(SK_ENEMY), (rk or back) + 15)
     for i in (1, 2):
         need(v, L, "sk guest %d census matches the host's after the return" % i, i,
              r"enemy census: digest \d+ matches the host's", rk or back, (end or 1e9) + 1)
@@ -3709,11 +3723,14 @@ def check_mk(v, L):
         end = starts[k + 1][0] if k + 1 < len(starts) else 1e9
         back = need(v, L, "mk %d guest 1 back in the host's map" % (k + 1), 1, r"map - -> m24_00", u[0], end)
         if kind == "rest":
-            rest = need(v, L, "mk %d host: the rest load the re-join carries" % (k + 1), 0,
-                        r"slot \d rested at lamp %s" % MK_LAMP, u[0] - 1, end)
-            need(v, L, "mk %d guest 2 followed the rest load" % (k + 1), 2, r"map - -> m24_00", rest or u[0], end)
-            need(v, L, "mk %d host: arrivals, member tasks rewound" % (k + 1), 0,
-                 r"a guest arrived; \d+ member task\(s\) rewound", rest or u[0], end)
+            # 0.7.3 (5c286072, user decision): a guest leaving the Dream alone never resets the host's
+            # world: a split-travel re-join with the host's snapshot, no rest load, guest 2 stays
+            need(v, L, "mk %d host: the guest's lone travel, the snapshot again" % (k + 1), 0,
+                 r"host: a guest travels alone into this area \(split travel\)", u[0] - 1, end)
+            none_of(v, L, "mk %d host: no rest load from the guest leaving the Dream" % (k + 1),
+                    r"rested at lamp %s" % MK_LAMP, u[0] - 1, end, (0,))
+            none_of(v, L, "mk %d guest 2 stays (no load)" % (k + 1), r"map - -> m24_00", u[0], end, (2,))
+            need(v, L, "mk %d host: guest 1 arrived" % (k + 1), 0, r"host: slot \d arrived", u[0], end)
         else:
             if kind == "mark_here":
                 none_of(v, L, "mk %d host stays (no rest load for a Mark)" % (k + 1), r"rested at lamp %s" % MK_LAMP,
@@ -4405,6 +4422,11 @@ def check_cv(v, L, d: Path):
 def check_ie(v, L):
     """Phase ie: early items for every player (0.7.3)."""
     j = need(v, L, "ie join: the guest is in", 0, r"cooperators 0 -> 1")
+    clr = L.find(0, r"test: cleared in the own save \(never_sync\):.*6670:")
+    full = L.find(0, r"items: full list \(\d+ lots\) sent to slot")
+    v.step("ie fixture: the host's 6670 cleared before its full item list to the guest",
+           clr is not None and full is not None and clr[0] < full[0],
+           "clear %s; full list %s" % (clr[0] if clr else "never", full[0] if full else "never"))
     need(v, L, "ie bell: the host's award of lot 10050 goes to the party", 0,
          r"host award #\d+ lot 10050 \(flag 6670, award\) queued for the party", j or 0)
     need(v, L, "ie bell: the guest gets the Old Hunter Bell (item box)", 1,
