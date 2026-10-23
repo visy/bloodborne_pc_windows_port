@@ -31,6 +31,11 @@ The `Note` text in the XML and all docs quote **our offsets**. Example: "Bells a
 `0x157f8c8`; its XML line is `Address="0x0197f8c8"`. If your fork's loader already applies shadPS4
 patch XML, copy the `<Line>` elements as they are.
 
+> **Log prefix (0.7.5):** the party code (`gpu/shim/party/*`, `gpu/shim/net/*`) starts every log line with `[coop] `
+> (`Party ...:`, `Net: `, `Coop hooks:` ...), added in `coop::asyncio::Print` (`party_async_io.cpp`, constant
+> `kLogPrefix`) and at the direct `printf` sites. If your fork carries our party code on another engine, keep it: a
+> reader of your logs then sees which lines are ours. Tools (`tools/mp/*.py`) accept lines with and without it.
+
 ## 2. Co-op patches (game side)
 
 "Copy as is": **yes** = self-contained byte patch that needs no party layer to apply (it only matters

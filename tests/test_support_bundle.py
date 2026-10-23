@@ -86,7 +86,7 @@ class Bundle(unittest.TestCase):
             (app / "user" / "savedata").mkdir(parents=True)
             (app / "user" / "savedata" / "userdata0000").write_bytes(b"save")
             (app / "eboot.bin").write_bytes(b"\x7fELF")
-            (app / "launcher.log").write_text("Party: build 0.6.1 (abc)\nPassword=topsecret from 198.51.100.9:1\n",
+            (app / "launcher.log").write_text("[coop] Party: build 0.6.1 (abc)\nPassword=topsecret from 198.51.100.9:1\n",
                                               encoding="utf-8")
             for i in range(14):
                 (app / "logs" / f"launcher_20261013_1800{i:02d}.log").write_text(f"log {i}\n", encoding="utf-8")

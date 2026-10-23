@@ -3,6 +3,10 @@
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
 
+## 0.7.5 (unreleased)
+
+- **Changed: every co-op line in the game log starts with `[coop] `** (request, so lines of the party code can be told apart from the port's own lines, also in the logs of other projects that ship our party code): `[coop] Party: ...`, `[coop] Party B2: ...`, `[coop] Net: ...` and so on, after the `[+ 12.345]` time the test tools add. Lines of the port itself (GPU, Boot, Runtime, Patches, Overlay) are unchanged. The test tools and the support bundle read both the new and the old form.
+
 ## 0.7.4 (Windows port 0.7.4, player reports: area borders, boss-fight Mark, the Doll, Borderless; contributor PRs)
 
 - **Added: a notice when a party member goes on into another area** (player request): when a hunter walks over a map seam ahead of you, you see "<Name> went on to <area>. You'll see them again while in the same area." (or "<Name> stayed behind in <area>. ..." for the hunter who moved) instead of the hunter just vanishing, and "<Name> is here again." when they are back beside you. At most one notice per hunter every 10 seconds. Shown with the join / leave notices (My party: Look & notices).
