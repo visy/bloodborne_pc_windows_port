@@ -323,6 +323,11 @@ before anyone is in the game):
   (+1 Insight each). Only the first kidnap does this, as in the game. The host can turn off
   *Anyone can be abducted* (*System > Party rules: Deaths*): then only a grabbed host takes the party
   there and a grabbed guest just dies. A kidnap never follows a guest home into its own world.
+- **Any level can play together.** Nobody is turned away for their level. As in the game's own co-op, a
+  hunter far above the host's level is scaled down while in the host's world (less health, stamina and
+  defence, a blue icon by the name on the game's own name plate), and everyone who joins has 30 % less
+  maximum health. The host can turn both off (*System > Party rules: Phantoms*: *Level sync*, *Phantom
+  health cut*), then everyone keeps full stats. Both are on by default.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared

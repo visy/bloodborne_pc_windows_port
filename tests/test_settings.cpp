@@ -101,7 +101,7 @@ int main() {
     for (const char* e : new_envs) assert(bb_test_setenv(e, "") == 0);
     BbSettings::Load();
     assert(s.party_kill_record && s.party_npc_mirror && s.party_gather && s.party_key_view &&
-           s.party_key_items_summoned && s.party_npc_fights && s.party_any_kidnap);
+           s.party_key_items_summoned && s.party_npc_fights && s.party_any_kidnap && s.party_level_sync && s.party_phantom_hp);
     for (const char* e : new_envs) assert(!std::getenv(e) || !std::getenv(e)[0]);  // not exported
     s.party_kill_record = false;
     s.party_key_items_summoned = false;

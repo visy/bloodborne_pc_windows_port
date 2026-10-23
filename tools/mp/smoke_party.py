@@ -383,6 +383,9 @@ RULES_PAGES = [
      ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
     ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
+    # 0.7.5: level sync and the phantom health cut (on by default: the change turns level sync off and back on)
+    ("Party rules: Phantoms", ["Level sync", "Phantom health cut"],
+     ("Level sync", "", "left", "Off", "right", "party_level_sync=0", "party_level_sync=1", '"level_sync":false')),
     ("My party: Deaths", ["Guest gets up, no load", "Respawn at host's lamp", "Refill vials, bullets"],
      ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
       "party_guest_revive_inplace=1", None)),
@@ -407,7 +410,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "party_any_kidnap", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "settings_rev"]
 
 
 def rules_walk_to_first():
