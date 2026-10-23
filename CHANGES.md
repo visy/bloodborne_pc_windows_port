@@ -7,6 +7,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 - **Changed: every co-op line in the game log starts with `[coop] `** (request, so lines of the party code can be told apart from the port's own lines, also in the logs of other projects that ship our party code): `[coop] Party: ...`, `[coop] Party B2: ...`, `[coop] Net: ...` and so on, after the `[+ 12.345]` time the test tools add. Lines of the port itself (GPU, Boot, Runtime, Patches, Overlay) are unchanged. The test tools and the support bundle read both the new and the old form.
 
+- **Added: a diagnostic for "out of memory" crashes in the game's network memory** (player report: crashes during the Alfred fight, the game's own "Transaction failed" panic). `BB_HEAP_WATCH_LOG=1` (off by default) logs every 20 s which parts of the game hold the memory the online code uses (the server requests and the other players' character sync), and every request that fails, so the next log of such a crash names what filled it. In a 5-minute two-player test at Alfred with deaths, lamp travels and loads, that memory stayed flat on this port.
+
 ## 0.7.4 (Windows port 0.7.4, player reports: area borders, boss-fight Mark, the Doll, Borderless; contributor PRs)
 
 - **Added: a notice when a party member goes on into another area** (player request): when a hunter walks over a map seam ahead of you, you see "<Name> went on to <area>. You'll see them again while in the same area." (or "<Name> stayed behind in <area>. ..." for the hunter who moved) instead of the hunter just vanishing, and "<Name> is here again." when they are back beside you. At most one notice per hunter every 10 seconds. Shown with the join / leave notices (My party: Look & notices).
