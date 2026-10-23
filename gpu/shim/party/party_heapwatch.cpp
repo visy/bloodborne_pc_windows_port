@@ -55,7 +55,7 @@ void Record(u64 p, u64 size, u64 ra) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!p) {
         if (g_failed++ < 20) {
-            std::printf("Heap watch: allocation of %llu bytes FAILED from +0x%llx (live %llu bytes in %zu blocks, peak %llu)\n",
+            std::printf("[coop] Heap watch: allocation of %llu bytes FAILED from +0x%llx (live %llu bytes in %zu blocks, peak %llu)\n",
                         static_cast<unsigned long long>(size), static_cast<unsigned long long>(site),
                         static_cast<unsigned long long>(g_live), g_blocks.size(), static_cast<unsigned long long>(g_peak));
             std::fflush(stdout);
@@ -111,7 +111,7 @@ void Install(u64 slot) {
     u64 heap = 0, vt = 0;
     if (!SafeGet(Guest(slot), &heap) || !heap || !SafeGet(heap, &vt) || !vt) return;  // not made yet
     if (!SafeRead(vt, g_vtable, sizeof g_vtable)) {
-        std::printf("Heap watch: heap +0x%llx: its vtable is unreadable; off\n", static_cast<unsigned long long>(slot));
+        std::printf("[coop] Heap watch: heap +0x%llx: its vtable is unreadable; off\n", static_cast<unsigned long long>(slot));
         g_state = -1;
         return;
     }
@@ -129,7 +129,7 @@ void Install(u64 slot) {
     std::memcpy(reinterpret_cast<void*>(static_cast<std::uintptr_t>(heap)), &copy, 8);
     g_state = 2;
     g_last_log = Clock::now();
-    std::printf("Heap watch: heap +0x%llx (object 0x%llx, vtable +0x%llx) watched: live bytes per call site every 20 s\n",
+    std::printf("[coop] Heap watch: heap +0x%llx (object 0x%llx, vtable +0x%llx) watched: live bytes per call site every 20 s\n",
                 static_cast<unsigned long long>(slot), static_cast<unsigned long long>(heap),
                 static_cast<unsigned long long>(vt - g_base));
 }
@@ -154,7 +154,7 @@ void Report() {
                            static_cast<unsigned long long>(top[i].second.live_count),
                            static_cast<unsigned long long>(top[i].second.allocs));
     }
-    std::printf("%s\n", line);
+    std::printf("[coop] %s\n", line);
 }
 
 }  // namespace
