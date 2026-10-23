@@ -565,6 +565,12 @@ set_target_properties(party-nat-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
 if (WIN32)
     target_link_libraries(party-nat-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# Stale collision records on remote players (ChrPreStepHook): NPCs and the local player untouched.
+# ninja -C out/gpu party-collision-test
+add_executable(party-collision-test EXCLUDE_FROM_ALL ../tests/test_party_collision.cpp)
+target_include_directories(party-collision-test PRIVATE shim)
+target_compile_options(party-collision-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+set_target_properties(party-collision-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # The in-game party flow's pure parts (shim/party/party_flow.cpp: party.json with the DPAPI-protected
 # password, the action planner, the relaunch file). ninja -C out/gpu party-flow-test
 add_executable(party-flow-test EXCLUDE_FROM_ALL ../tests/test_party_flow.cpp shim/party/party_flow.cpp shim/net/json.cpp)

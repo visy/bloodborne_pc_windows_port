@@ -1215,7 +1215,7 @@ MK_LAMP = "2402950"    # Cathedral Ward (m24_00)
 MK_DREAM = "2102950"   # the Hunter's Dream lamp
 MK_UNTIL = r"1:travel step (\d+)/\1: "  # guest 1's last step
 MK_CASES = (("Bold Mark in the host's map", "mark_here"), ("Hunter's Mark from the Dream", "mark"),
-            ("Bold Mark from the Dream", "mark"), ("lamp from the Dream (a rest)", "rest"))
+            ("Bold Mark from the Dream", "mark"), ("lamp from the Dream (no host rest)", "rest"))
 # the host's cases: (name, goods, the answer, in its own map)
 MK_HOST_CASES = (("h1 host Bold Mark in its map, with the party", 1400, "yes", True),
                  ("h2 host Bold Mark in its map, alone", 1400, "no", True),
@@ -2043,7 +2043,7 @@ def check_eh(v, L):
 # goes to the Dream.
 CLG_LAMP_OBJ2 = "2901953"   # the lift's bottom floor lamp object (return point 2902953)
 CLG_UNTIL = r"0:map .* -> m21_00"
-CLG_UNTIL_G = r"1:travel step (\d+)/: "  # guest 1's last step: 40 s in the Dream (r2: its earlier m21 ended the run)
+CLG_UNTIL_G = r"1:travel step (\d+)/\1: "  # guest 1's last step: 40 s in the Dream (r2: its earlier m21 ended the run)
 
 
 def phase_clg(only):

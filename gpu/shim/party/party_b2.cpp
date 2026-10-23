@@ -10,6 +10,7 @@
 #include "party_fourp.h"
 #include "party_link.h"
 #include "party_runtime.h"
+#include "party_collision.h"
 
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -903,24 +904,11 @@ bool RemotePlayerChr(u64 chr) {
     return false;
 }
 BB_COOP_SYSV void ChrPreStepHook(u64 chr, u64, u64, u64, u64, u64) {  // rdi = the chr (mov rbx, rdi)
-    if (!chr) {
-        return;
+    // Remote players only, checked first: a local or NPC chr's records are never read (they were
+    // read on every step of every chr before), and each record is queried once.
+    if (collision::ClearStaleHits(chr, RemotePlayerChr, HitLive)) {
+        g_stale_hits.fetch_add(1, std::memory_order_relaxed);
     }
-    u64* hit = reinterpret_cast<u64*>(chr + 0x288);
-    u64* hit2 = reinterpret_cast<u64*>(chr + 0x350);
-    if ((!*hit || HitLive(*hit)) && (!*hit2 || HitLive(*hit2))) {
-        return;
-    }
-    if (!RemotePlayerChr(chr)) {
-        return;
-    }
-    if (*hit && !HitLive(*hit)) {
-        *hit = 0;
-    }
-    if (*hit2 && !HitLive(*hit2)) {
-        *hit2 = 0;
-    }
-    g_stale_hits.fetch_add(1, std::memory_order_relaxed);
 }
 
 // BeginLeaveSession entry (ReplacePrologue: jumped to, so the return address is the caller's):
@@ -968,13 +956,24 @@ BB_COOP_SYSV u64 FlagApplyHook(u64 man, u64 blob) {
     return r;
 }
 
-// K5: Lua OnMatchingCheck: a member's chr is missing (it is loading).
-BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
+// K5: Lua OnMatchingCheck 0x13808B0: a member's chr is missing (it is loading). The check has two
+// ends: with the event's +8 clear it leaves at once (0x13809B7); with +8 set it posts event
+// 0xFE0/4 instead, and Lua OnMatchingError 0x13809F0 leaves (0x1380A65) when that event names the
+// current room (live: summoned guests left the host's Chalice Dungeon 1-3 s after arriving, the
+// members apart in other worlds having no chr there).
+bool MatchLeaveHeld(const char* what) {
     // Split travel: a member apart (no chr here, by design), or a chr removed / re-created in the
     // last 15 s (live split1: the leave came 50 ms after a meet's rewind, the chr not built yet).
     const bool split = g_apart_k5.load() > 0 || Now() - g_split_change_at.load() < 15.0;
     if (g_on.load() && (g_rejoin.load() || split)) {
-        Log("K5: OnMatchingCheck leave suppressed (%s)", g_rejoin.load() ? "re-join in flight" : "split travel: members apart");
+        Log("K5: %s leave suppressed (%s)", what, g_rejoin.load() ? "re-join in flight" : "split travel: members apart");
+        return true;
+    }
+    return false;
+}
+
+BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
+    if (MatchLeaveHeld("OnMatchingCheck")) {
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)(u64);
@@ -989,8 +988,12 @@ BB_COOP_SYSV u64 MatchCheckHook(u64 session) {
 // slot 2), the host's copy of this chr still has the old number until its 1.5 s rebuild, and the
 // summon's check message already carries the new one (live sf3: every join of guest 2 after guest
 // 1's failed join ended 0.2 s after the arrival load). That error is a stale chr there, not a
-// broken session: ignored for 10 s after a renumber (the host's rebuild fixes its copy).
+// broken session: ignored for 10 s after a renumber (the host's rebuild fixes its copy). The K5
+// holds above (re-join, split travel) come first.
 BB_COOP_SYSV u64 MatchErrorHook(u64 session) {
+    if (MatchLeaveHeld("OnMatchingError")) {
+        return 0;
+    }
     const double since = Now() - g_renumber_at.load();
     if (g_on.load() && Role() == RoleClient && since < 10.0) {
         // The packet 7 receive (OwnNumberRecvHook) numbers the guest before its chr exists, so this
@@ -11006,7 +11009,7 @@ void Init() {
     InstallCall(kMatchCheckCall, kBeginLeave, reinterpret_cast<const void*>(&MatchCheckHook),
                 "B2 K5 OnMatchingCheck leave");
     InstallCall(kMatchErrorCall, kBeginLeave, reinterpret_cast<const void*>(&MatchErrorHook),
-                "B2 K5b OnMatchingError leave");
+                "B2 K5/K5b OnMatchingError leave");
     InstallCall(kOwnNumberRecvCall, kRecvFromHost, reinterpret_cast<const void*>(&OwnNumberRecvHook),
                 "B2 packet 7 own player number");
     InstallCall(kJoinStartCall, kJoinStartLua, reinterpret_cast<const void*>(&JoinStartHook), "B2 K6 OnBeJoinStart");
