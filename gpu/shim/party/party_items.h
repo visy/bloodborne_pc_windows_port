@@ -163,6 +163,9 @@ std::size_t ItemLedgerCount();
 
 /// Per-player or repeatable lots that are never replayed (docs/party/items.md 6.1 item 3).
 bool ItemLotDenied(std::int32_t lot, std::int32_t flag);
+/// Party policy (0.7.5, generated table ITEM_UNSHARED): the lot gives no key item and no unique item
+/// (goodsType 1, maxNum 1, weapons / armor / rings), so it is per player. ItemLotDenied includes it.
+bool ItemLotUnshared(std::int32_t lot);
 /// The Doll / Messenger gifts every player gets once in the own Hunter's Dream (Beckoning Bell
 /// 10010, Small Resonant Bell 10000, Old Hunter Bell 10050). Their talk awards them hostOnly, which
 /// a summoned guest's game refuses (items.md 3): the guest gives the lot to itself instead
@@ -515,8 +518,12 @@ public:
     ItemApplyMode LastMode() const { return last_mode_; }
     /// Why the last Step held a grant that was due (ItemPopupHold), else nullptr.
     const char* LastHold() const { return last_hold_; }
+    /// The grant Step returned last is a quiet one (a host catch-up grant while summoned: no spacing,
+    /// no popup; the caller shows one summary notice for the batch).
+    bool LastQuiet() const { return last_quiet_; }
     std::size_t HomeOnly() const { return home_only_.size(); }
-    /// The grant Step returned was really awarded (a popup opened): the next waits kSpacing.
+    /// The grant Step returned was really awarded (a popup opened): the next waits kSpacing (not
+    /// after a quiet one, LastQuiet).
     /// Skips (flag already set, item held) take no time, so a long catch-up list goes fast.
     void Awarded(double now) { last_apply_ = now; }
     std::size_t Pending() const { return q_.size(); }
@@ -529,6 +536,7 @@ private:
     std::set<std::int64_t> home_only_;   // deferred while summoned
     ItemApplyMode stable_mode_ = ItemApplyMode::None, last_mode_ = ItemApplyMode::None;
     const char* last_hold_ = nullptr;
+    bool last_quiet_ = false;
     int stable_ = 0;
     double last_apply_ = -1e9;
 };
