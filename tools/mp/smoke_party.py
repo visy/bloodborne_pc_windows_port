@@ -2093,6 +2093,7 @@ SJ_ROUTE = ("13.1:-9.5:107.0/7.6:-10.9:108.6/3.4:-11.0:109.5/-1.0:-10.3:113.4/-7
             "-135.1:-26.3:172.3/-135.4:-28.4:166.5/-140.4:-30.7:163.4")
 SJ_M24 = "-142.9:-33.5:175.0"     # at the cave mouth, m24_00 side (live sj5: the seam is at x ~ -146)
 SJ_G24 = "-141.4:-33.1:170.9"
+SJ_H24 = "-144.6:-33.5:175.7"     # the host waits here, 2 m before the seam, until the guest is over it
 SJ_G27 = "-149.3:-33.7:177.4"     # over the seam: m27_00 (live sj5: the host walked in there)
 SJ_UNTIL = [r"1:test: levelup: (LEVEL UP|FAILED)|1:map - -> m21_00[\s\S]*funnel: guest_sent_home"]
 
@@ -2100,15 +2101,19 @@ SJ_UNTIL = [r"1:test: levelup: (LEVEL UP|FAILED)|1:map - -> m21_00[\s\S]*funnel:
 def phase_sj(only):
     # Both teleported (guest first) to the cave mouth on the m24_00 side, each held there until the
     # game's safe-ground spot is under it (":ground": no ground by the pin's end -> held once more; a
-    # fall after the release -> one re-warp); then the guest walks over the seam and the host follows
-    # as soon as the guest is at it (the together case: the host back within the leave state's ~5 s).
-    host = ",".join(["god", "host_move=%s:pin=10:ground@12^1" % SJ_M24,
-                     "host_route=-144.6:-33.5:175.7/-146.6:-33.5:177.3/-149.3:-33.7:178.6@0?near=-146.6:-33.5:177.3:2",
+    # fall after the release -> one re-warp); the host waits 2 m before the seam, the guest walks over
+    # it and the host starts its step over as the guest reaches the seam (still in m24_00: once the
+    # guest is over, the host's step chain is out of the party - cooperators 0 - and would wait), so
+    # it is back beside the guest within the leave state's ~5 s, before its send-home. (Live sj10: a
+    # route ending at x -148.6 is "done" 2 m short, still in m24_00 for the host; it goes on to the
+    # report's own spot in the cave.)
+    host = ",".join(["god", "host_move=%s:pin=10:ground@12^1" % SJ_H24,
+                     "host_route=-147.5:-33.5:177.6/-149.3:-33.7:177.4/-151.1:-35.0:183.5@0.5?near=-146.6:-33.5:178.0:1.5",
                      "host_warp=2102950@30"])
     g1 = ",".join(["god", "guest_move=%s:pin=10:ground@6%%m24_00" % SJ_G24,
-                   "guest_route=-144.6:-33.5:175.7/-146.6:-33.5:177.3/%s@4%%m24_00?near=%s:4" % (SJ_G27, SJ_M24)])
+                   "guest_route=-143.2:-33.4:177.0/-146.6:-33.5:178.0/%s@4%%m24_00?near=%s:3" % (SJ_G27, SJ_H24)])
     return dict(
-        name="sj", seconds=360, count=2, headless=0, pads=(0, 1),
+        name="sj", seconds=300, count=2, headless=0, pads=(0, 1),
         env=["BB_PARTY_HOLD_LOG=1"],
         ienv=["0:BB_PARTY_TEST_START_LAMP=2402950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
               "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_GUESTSVC_TEST=gate=2;echoes=20000;warp=doll;levelup"],
@@ -2130,7 +2135,12 @@ def check_sj(v, L):
     hc = need(v, L, "sj host follows into m27_00", 0, r"map m24_00_00_00 -> m27_00_00_00", cross - 2)
     tr = L.find(0, r"travel step \d+/\d+: host_warp", cross)
     end = tr[0] if tr else 1e9
-    need(v, L, "sj guest's send-home dropped (host apart or just back)", 1, r"\(OnLeave_Limit\) dropped", cross, end)
+    dr = need(v, L, "sj guest's send-home dropped (host apart or just back)", 1, r"\(OnLeave_Limit\) dropped", cross, end)
+    if dr is not None and hc is not None:
+        # the report's case: the host is back beside the guest before the leave state's send-home
+        v.step("sj together: the host over the seam before the guest's send-home", hc < dr,
+               "host +%.1f s, send-home +%.1f s" % (hc, dr))
+        need(v, L, "sj together: the drop names the seam case", 1, r"together again after a map seam", cross, end)
     need(v, L, "sj the leave state undone", 1, r"the leave state undone", cross, end)
     none_of(v, L, "sj guest not sent home", r"funnel: guest_sent_home", cross, insts=(1,))
     # (the host's cooperator count drops while the two are in different areas: split removes the chr)
@@ -2139,8 +2149,8 @@ def check_sj(v, L):
         need(v, L, "sj party travel: guest in the Dream", 1, r"map .*-> m21_00", tr[0])
         need(v, L, "sj guest's action buttons free after the stay (hold log)", 1,
              r"hold log: ctx 0x[0-9a-f]+ wait 0 hold 0 evstate 0 flag4047 0 role 6 m21_00", tr[0])
-        lv = L.find(1, r"test: levelup: (LEVEL UP|FAILED)", tr[0])
-        v.step("sj (info) guest's Doll level up after the stay", True, lv[1][:150] if lv else "no result line")
+        # after a B2 load into the Dream (live sj8 before the fix: the Doll's lines, no LevelUp menu)
+        need(v, L, "sj guest levels up at the Doll after a party travel", 1, r"test: levelup: LEVEL UP on the guest", tr[0])
     check_common(v, L, "sj")
 
 
