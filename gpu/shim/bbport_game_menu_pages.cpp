@@ -1189,7 +1189,7 @@ void DefineAll() {
                                std::function<bool()> in_force, Texts guest_on, Texts guest_off) {
         AddRow(Flag(member), AddText(en, ru), help, toggle, Kind::Toggle, [is_guest] { return !is_guest(); });
         GuestRule g{AddDynamic(MaxValueLength), AddDynamic(MaxHelpLength), std::move(in_force),
-                    std::move(guest_on), std::move(guest_off)};
+                    std::move(guest_on), std::move(guest_off), {}};
         AddRow(Info(), AddText(en, ru), g.help, {g.value}, Kind::Button, is_guest);
         guest_rules.push_back(std::move(g));
     };
@@ -1411,17 +1411,8 @@ void DefineAll() {
                "Правило хоста: вы получаете полные отголоски крови и добычу, как хост"},
               {"The host decides; off: the game's co-op rewards (half echoes, only vials and bullets drop)",
                "Решает хост; выкл.: награды как в игре (половина отголосков, падают только склянки и пули)"});
-    {   // A list opens a pop-up over the rows below it: last on the page. A guest's line shows its own
+    {   // A list opens a pop-up over the rows below it: last on the page (after the guest's line). A guest's line shows its own
         // value: the join check makes it the host's.
-        AddRow(Setting(
-                   Kind::List, [](const Values& v) { return std::clamp(v.party_guest_insight.load(), 0, 2); },
-                   [](int i) { BbSettings::Get().party_guest_insight = std::clamp(i, 0, 2); }),
-               AddText("Insight for bosses", "Озарение за боссов"),
-               AddText("Insight a guest gets when you kill a boss. Everyone the same. Next start",
-                       "Озарение гостю, когда вы убиваете босса. У всех одинаково. Со следующего запуска"),
-               {AddText("Same as the host", "Как у хоста"), AddText("Full bonus", "Полный бонус"),
-                AddText("Game's own (+1)", "Как в игре (+1)")},
-               Kind::List, [is_guest] { return !is_guest(); });
         GuestRule g{AddDynamic(MaxValueLength), AddDynamic(MaxHelpLength), [] { return true; },
                     {"The host's rule: the Insight you get when the host kills a boss",
                      "Правило хоста: озарение, которое вы получаете, когда хост убивает босса"},
@@ -1433,6 +1424,15 @@ void DefineAll() {
                     }};
         AddRow(Info(), AddText("Insight for bosses", "Озарение за боссов"), g.help, {g.value}, Kind::Button, is_guest);
         guest_rules.push_back(std::move(g));
+        AddRow(Setting(
+                   Kind::List, [](const Values& v) { return std::clamp(v.party_guest_insight.load(), 0, 2); },
+                   [](int i) { BbSettings::Get().party_guest_insight = std::clamp(i, 0, 2); }),
+               AddText("Insight for bosses", "Озарение за боссов"),
+               AddText("Insight a guest gets when you kill a boss. Everyone the same. Next start",
+                       "Озарение гостю, когда вы убиваете босса. У всех одинаково. Со следующего запуска"),
+               {AddText("Same as the host", "Как у хоста"), AddText("Full bonus", "Полный бонус"),
+                AddText("Game's own (+1)", "Как в игре (+1)")},
+               Kind::List, [is_guest] { return !is_guest(); });
     }
 
     // ---- Party rules: Rot (party_balance, party_rot_rules.h): the death debuff and what else cleanses it ----
