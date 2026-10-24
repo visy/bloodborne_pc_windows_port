@@ -2592,8 +2592,7 @@ GROUP_UNTIL = {
                   r"0:a wipe; the[\s\S]*boss fog: slot \d+ went in first"],
     "kill": ["2:host boss kill", "0:K10: boss-clear leave suppressed"],
     "arena": [r"2:test: guest_move to \(-136\.5"],
-    "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010",
-                "1:" + STORAGE_GIVE],
+    "itembox": ["1:item notice closed|lot 50000010 .*(?:not )?given (?:now )?while summoned|owed key item: lot 50000010"],
     # guest 1 back in the host's world after the Rejoin, then ~10 s more log (the no-kick check);
     # the press alone ended the run before the join (kickfix k2)
     "rejoin_kill": [r"1:guest_rejoin: Party > Rejoin pressed[\s\S]*apply gate open: summoned[\s\S]{20000}"],
