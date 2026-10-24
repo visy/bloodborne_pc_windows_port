@@ -3010,16 +3010,8 @@ def check_s2(v, L, d: Path):
         if ib is not None and L.find(1, r"item notice up on a summoned guest", k):
             need(v, L, "s2 item box OK row closes it (Cross)", 1, r"item notice closed", ib)
     check_arena(v, L, k)
-    # Goods past the inventory maximum land in the storage (items.md 10.4: the +0x48 storage limit
-    # and the give list), one in, no "Unable to acquire" box and nothing left on the ground.
-    sg = L.find(1, STORAGE_GIVE)
-    if sg is None:
-        need(v, L, "s2 item box: a Pebble past the maximum lands in the storage", 1, STORAGE_GIVE)
-    else:
-        m = re.search(STORAGE_GIVE, sg[1])
-        a, b = int(m.group(1)), int(m.group(2))
-        v.step("s2 item box: a Pebble past the maximum lands in the storage", b == a - 1,
-               "+%.1f s inst1: storage room %d -> %d" % (sg[0], a, b))
+    # Removed in 0.7.5: "a Pebble past the maximum lands in the storage". Since 35c4306a only key and
+    # unique items are shared with the party, so the host's Pebble lot is no longer given to the guest.
     none_of(v, L, "s2 item box: no 'Unable to acquire' box on guest 1", r"text shows: \"Unable to acquire", 0, 1e9, (1,))
     none_of(v, L, "s2 item box: no Pebble left on the ground (no give counted as Full)",
             r"lot 2100000 .*(Full|skip .*while summoned)", 0, 1e9, (1,))
