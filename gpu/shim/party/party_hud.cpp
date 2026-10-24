@@ -156,9 +156,8 @@ std::int64_t NowMs() {
         .count();
 }
 
-bool OverheadBarShown(int overhead, bool have_hp, int max_hp, bool pvp_active) {
-    return overhead == 3 && have_hp && max_hp > 0 && !pvp_active;
-}
+bool OverheadBarShown(int overhead, bool have_hp, int max_hp) { return overhead == 3 && have_hp && max_hp > 0; }
+bool OverheadBarRed(bool pvp_active) { return pvp_active; }
 
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why) {
     const char* w = nullptr;

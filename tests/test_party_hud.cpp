@@ -236,14 +236,13 @@ static void OwnBodyCover() {
 
 // Overhead tags: only a live chr here, alive, on our map, from a fresh board (user report: health
 // bars floating in midair).
-// The overhead health bar: only "Name and health" with data, and not while PvP is in force (the game
-// draws its own red-name bar on a hostile member: one bar, not two).
+// The overhead health bar: only "Name and health" with data; red while PvP is in force.
 static void OverheadBar() {
-    assert(hud::OverheadBarShown(3, true, 100, false));
-    assert(!hud::OverheadBarShown(3, true, 100, true));
-    assert(!hud::OverheadBarShown(1, true, 100, false));
-    assert(!hud::OverheadBarShown(3, false, 100, false));
-    assert(!hud::OverheadBarShown(3, true, 0, false));
+    assert(hud::OverheadBarShown(3, true, 100));
+    assert(!hud::OverheadBarShown(1, true, 100));
+    assert(!hud::OverheadBarShown(3, false, 100));
+    assert(!hud::OverheadBarShown(3, true, 0));
+    assert(hud::OverheadBarRed(true) && !hud::OverheadBarRed(false));
 }
 
 static void Tags() {

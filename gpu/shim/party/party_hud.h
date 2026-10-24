@@ -275,10 +275,11 @@ void MemberColour(int slot, float rgb[3]);
 /// `why` names the reason ("stale", "dead", "not here", ...).
 constexpr std::int64_t kTagFreshMs = 500;
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why);
-/// Whether our overhead health bar is drawn for a member (party_overhead "Name and health"): only
-/// with the data and not while PvP is in force: a hostile party member then gets the game's own
-/// red-name health bar, and one bar is enough (0.7.5, user report "two health bars in PvP").
-bool OverheadBarShown(int overhead, bool have_hp, int max_hp, bool pvp_active);
+/// Whether our overhead health bar is drawn for a member (party_overhead "Name and health"): with
+/// the data. `pvp_active` (party PvP in force: every member is an opponent) only changes its
+/// colour (OverheadBarRed): the bar stays, red (0.7.5, user spec for the PvP double bar).
+bool OverheadBarShown(int overhead, bool have_hp, int max_hp);
+bool OverheadBarRed(bool pvp_active);
 /// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge: role line, name, thin HP bar) is
 /// turned off in party mode (party_hud_game.cpp: its per-entry visible flag, written by
 /// FUN_0176cfa0 into MenuMan+0x900+i*0x90+0xc, is stored as 0) and ours, drawn in its style,
