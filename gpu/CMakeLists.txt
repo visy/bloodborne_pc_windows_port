@@ -844,6 +844,11 @@ target_include_directories(party-npcfight-test PRIVATE shim)
 add_executable(party-kidnap-test EXCLUDE_FROM_ALL ../tests/test_party_kidnap.cpp)
 target_compile_options(party-kidnap-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-kidnap-test PRIVATE shim)
+# 0.7.5 guests' blows in the host's damage records (shim/party/party_npchit_rules.h, header only).
+# --target party-npchit-test
+add_executable(party-npchit-test EXCLUDE_FROM_ALL ../tests/test_party_npchit.cpp)
+target_compile_options(party-npchit-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-npchit-test PRIVATE shim)
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp

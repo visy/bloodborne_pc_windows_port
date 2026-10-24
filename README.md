@@ -350,7 +350,8 @@ before anyone is in the game):
   starts with anyone's hit.
 - **Guests can hit NPCs.** A guest's blows land on the host world's NPCs as the host's do (the friendly
   hunters and the others the host could hurt): they take damage and a killing blow counts for
-  everyone. Nothing is added that the host could not do.
+  everyone. An NPC that turns hostile after a few hits (Alfred) does so on a guest's blows too.
+  Nothing is added that the host could not do.
 - **NPC hunters fight the whole party.** Eileen and Henryk at the Tomb of Oedon, Alfred, the
   blood-drunk Eileen, Valtr and the DLC hunters are there for everyone in the host's world:
   anyone can hurt them, and their death and the quest step after it count for every player's own
