@@ -428,6 +428,7 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             l.have_pos = r.have_pos;
             std::memcpy(l.pos, r.pos, sizeof l.pos);
             l.chr = chr;
+            l.level_sync = balance::ChrHasLevelSync(chr);
         }
     }
     party::MemberVitals vit[party::kMaxVitals];

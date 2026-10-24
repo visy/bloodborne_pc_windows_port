@@ -115,6 +115,7 @@ void Compose(const ComposeIn& in, Board* out) {
                 if (std::strncmp(l.name, c.name, kNameBytes) != 0) continue;
                 c.local_read = true;
                 c.chr = l.chr;
+                c.level_sync = l.level_sync;
                 c.age_ms = 0;
                 c.local_dead = l.have_hp && l.hp <= 0;
                 if (l.have_hp && !c.have_hp) {  // VITALS first: the remote data module lags
@@ -154,6 +155,9 @@ std::int64_t NowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
+
+bool OverheadBarShown(int overhead, bool have_hp, int max_hp) { return overhead == 3 && have_hp && max_hp > 0; }
+bool OverheadBarRed(bool pvp_active) { return pvp_active; }
 
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why) {
     const char* w = nullptr;

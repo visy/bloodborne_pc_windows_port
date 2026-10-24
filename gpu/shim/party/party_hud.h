@@ -55,6 +55,8 @@ struct Companion {
     int rot = 0;
     std::uint32_t ping_ms = 0; // the link's round trip to this member (E2 "name and ping"; 0 unknown):
                                // the host's measure; a guest's view of the host shows its own link's
+    bool level_sync = false;   // its chr here carries SpEffect 9200 (downscaled by the Level sync rule):
+                               // the tag draws the game plate's blue level-sync marker (0.7.5)
     std::uint64_t chr = 0;     // its PlayerIns here (local_read): the overlay re-reads its position
                                // every frame (coop::PartyHudChrPos), the board's is the 10 Hz tick's
 };
@@ -81,6 +83,7 @@ struct LocalChr {
     int stamina = 0, max_stamina = 0;
     bool have_pos = false;
     float pos[3] = {0, 0, 0};
+    bool level_sync = false;  // carries SpEffect 9200
     std::uint64_t chr = 0;  // the PlayerIns (guest address)
 };
 
@@ -272,6 +275,11 @@ void MemberColour(int slot, float rgb[3]);
 /// `why` names the reason ("stale", "dead", "not here", ...).
 constexpr std::int64_t kTagFreshMs = 500;
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why);
+/// Whether our overhead health bar is drawn for a member (party_overhead "Name and health"): with
+/// the data. `pvp_active` (party PvP in force: every member is an opponent) only changes its
+/// colour (OverheadBarRed): the bar stays, red (0.7.5, user spec for the PvP double bar).
+bool OverheadBarShown(int overhead, bool have_hp, int max_hp);
+bool OverheadBarRed(bool pvp_active);
 /// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge: role line, name, thin HP bar) is
 /// turned off in party mode (party_hud_game.cpp: its per-entry visible flag, written by
 /// FUN_0176cfa0 into MenuMan+0x900+i*0x90+0xc, is stored as 0) and ours, drawn in its style,
