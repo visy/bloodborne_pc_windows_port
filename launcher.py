@@ -177,7 +177,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_guest_lamps", True),
@@ -350,6 +350,10 @@ MY_PARTY_TAB = [
          "without the game's blue, glowing phantom look. Off: that look, as in the "
          "original game. Only how you see them: they stay cooperators. Also in the game: "
          "System > My party: Look & notices. Default: on (bbport.ini party_glow_off)."),
+        ("check", "party_hud_ping", "Ping in the party list",
+         "The connection delay to each companion in ms after the name in the party list "
+         "(bottom left), green under 80 ms, yellow under 160, red above. Also in the game: "
+         "System > My party: Look & notices. Default: on (bbport.ini party_hud_ping)."),
         ("check", "party_toasts", "Join/leave notices",
          "A short notice in a top corner when a hunter joins or leaves the party. Also in the game: "
          "System > My party: Look & notices. Default: on (bbport.ini party_toasts)."),
@@ -1139,6 +1143,8 @@ def settings_env(s: dict) -> dict:
     # Party arrival render log for black-world reports: did the 3D scene draw after a party travel
     env["BB_ARRIVAL_LOG"] = "1" if on("feat_arrival_log", False) else "0"
     # Party spectate camera log: camera resets and jumps while a dead player spectates a boss fight
+    # Online-heap watch: which game parts hold the memory of the online code, every 20 s, and each failed request
+    env["BB_HEAP_WATCH_LOG"] = "1" if on("feat_heap_watch_log", False) else "0"
     env["BB_PARTY_SPECTATE_LOG"] = "1" if on("feat_spectate_log", False) else "0"
     # Party host-death lock log for frozen-guest reports: the HostDead locks every 0.25 s on a guest
     env["BB_HOSTDEAD_LOG"] = "1" if on("feat_hostdead_log", False) else "0"
@@ -2347,6 +2353,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
         self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
+        self.feat_heap_watch_log = tk.BooleanVar(value=self.settings.get("feat_heap_watch_log", False))
         self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
         self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
         self.feat_boot_watchdog = tk.BooleanVar(value=self.settings.get("feat_boot_watchdog", False))
@@ -2394,6 +2401,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_npc_talk = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_npc_talk"))
         # Pings (I2): game settings (bbport.ini party_pings on, party_through_walls off by default).
         self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
+        self.party_hud_ping = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud_ping"))
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))
@@ -2803,6 +2811,10 @@ class BloodborneLauncher(tk.Tk):
                     "After each party travel or join load: whether the 3D world drew, where the camera is "
                     "and the video memory state, 3 s and 10 s after arriving. Two lines per arrival. "
                     "Default: off (BB_ARRIVAL_LOG).")
+        self._check(sec, "Online memory watch (Transaction failed crash)", self.feat_heap_watch_log,
+                    "Every 20 s: which parts of the game hold the memory the online code uses (server "
+                    "requests, the other players' character sync), and each request that fails. For reports of "
+                    "a crash with the game's own 'Transaction failed' panic. Default: off (BB_HEAP_WATCH_LOG).")
         self._check(sec, "Party spectate camera log", self.feat_spectate_log,
                     "While a dead player watches a boss fight: camera resets per minute and the largest "
                     "camera jump and turn between frames, one line every 10 s. Default: off "
@@ -4386,6 +4398,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_save_log": self.feat_save_log.get(),
             "feat_audio_log": self.feat_audio_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),
+            "feat_heap_watch_log": self.feat_heap_watch_log.get(),
             "feat_spectate_log": self.feat_spectate_log.get(),
             "feat_hostdead_log": self.feat_hostdead_log.get(),
             "feat_boot_watchdog": self.feat_boot_watchdog.get(),

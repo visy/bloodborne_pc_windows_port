@@ -454,7 +454,7 @@ before anyone is in the game):
 - **Friendly fire / PvP** (host's switch, off by default): party members can hurt each other, both
   ways, like invaders (*System → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
   gets no Echoes or Insight.
-- **Party HUD.** Party members and events in a small HUD.
+- **Party HUD.** Party members and events in a small HUD; each companion's ping in ms after the name (green / yellow / red; *My party: Look & notices > Ping in the party list*, on by default).
 - **Every party setting in the game's own menu, in two groups.** *Party rules* holds what the host
   decides for the whole party: *Party rules: World* (enemies the party killed stay dead, gathering the
   party, NPCs as in the host's world, covenants, voting on travel, NPC hunters), *PvP & lamps*,

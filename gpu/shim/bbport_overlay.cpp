@@ -1869,6 +1869,12 @@ void PartyTab() {
              "Маленький ромб с расстоянием на каждом спутнике на вашей карте, поверх стен и деревьев, "
              "цветом спутника."),
            on);
+    Toggle("party_hud_ping", T("Ping in the party list", "Пинг в списке группы"), s.party_hud_ping,
+           T("The connection delay to each companion in ms after the name in the party list (bottom left): "
+             "green under 80, yellow under 160, red above.",
+             "Задержка связи с каждым спутником в мс после имени в списке группы (слева внизу): "
+             "зелёный до 80, жёлтый до 160, красный выше."),
+           on);
     Toggle("party_stain_marker", T("Bloodstain marker", "Метка пятна крови"), s.party_stain_marker,
            T("A red drop with \"Blood Echoes\" and the distance on your lost echoes' bloodstain in the "
              "host's world, drawn over walls. The bloodstain is there either way.",
@@ -2666,7 +2672,7 @@ void PartyHud() {
         party::hud::MemberColour(c.slot, mc);  // the same colour as the member's tag (and I2's pings)
         ImGui::TextColored(here ? ImVec4(mc[0], mc[1], mc[2], 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
                            c.name);
-        const float name_h = ImGui::GetItemRectSize().y;
+        const float name_h = ImGui::GetItemRectSize().y, name_w = ImGui::GetItemRectSize().x;
         ImGui::PopFont();
         float right_edge = row.x + width;
         if (c.spectating && here) {
@@ -2684,6 +2690,19 @@ void PartyHud() {
             std::snprintf(right_text, sizeof right_text, d < 10.0f ? "%.1f m" : "%.0f m", d);
         } else {
             std::snprintf(right_text, sizeof right_text, "%s", here ? "" : StateText(c));
+        }
+        if (BbSettings::Get().party_hud_ping.load() && c.connected && c.ping_ms > 0) {
+            // The link's round trip after the name, green / yellow / red by quality.
+            char ping[24];
+            party::hud::FormatPing(c.ping_ms, BbSettings::MenuText("en", "ru")[0] == 'r', ping, sizeof ping);
+            static const ImVec4 kQ[3] = {ImVec4(0.52f, 0.80f, 0.46f, 1.0f), ImVec4(0.92f, 0.78f, 0.34f, 1.0f),
+                                         ImVec4(0.90f, 0.35f, 0.30f, 1.0f)};
+            const ImVec4 q = kQ[party::hud::PingQuality(c.ping_ms)];
+            ImGui::PushFont(game_font, 13.0f);
+            const ImVec2 ps = ImGui::CalcTextSize(ping);
+            draw->AddText(ImVec2(row.x + name_w + 8.0f * s, row.y + (name_h - ps.y) * 0.5f),
+                          Rgba(q.x, q.y, q.z, 0.95f * alpha), ping);
+            ImGui::PopFont();
         }
         if (right_text[0]) {
             ImGui::PushFont(game_font, 14.0f);
