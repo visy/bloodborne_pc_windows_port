@@ -196,7 +196,10 @@ One host and two guests, from nothing to playing together. Do the steps in this 
 3. Same **Max players** (3) and the same **Password** as the host.
 4. Click **Launch Bloodborne** **after** the host's game is already running.
 5. Play the start of the game (the prologue) in your own world. After that the host's game summons you
-   automatically.
+   automatically. Short of time? The host can turn on *Skip the prologue* (*System > Party rules:
+   Phantoms* or the launcher's Party Rules tab): a brand-new character then starts at the Central
+   Yharnam lamp with the Saw Cleaver, the Hunter Pistol and Iosefka's Blood Vial, ready to be summoned.
+   Characters past the clinic are never touched.
 
 **4. The guests stay at *Connecting*?**
 
