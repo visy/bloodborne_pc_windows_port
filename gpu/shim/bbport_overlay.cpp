@@ -2877,7 +2877,8 @@ void PartyHud() {
         const party::hud::PlateParams& pp = party::hud::CurrentPlateParams();
         const party::hud::PlateLayout pl =
             party::hud::LayoutPlate(sp.x + shift * display.x, sp.y, display.x, display.y, sp.depth, pp);
-        const bool with_bar = party::hud::OverheadBarShown(overhead, c.have_hp, c.max_hp, coop::pvp::Active());
+        const bool with_bar = party::hud::OverheadBarShown(overhead, c.have_hp, c.max_hp);
+        const bool red = party::hud::OverheadBarRed(coop::pvp::Active());;
         // pl.font is the em size (as the plate was measured); ImGui sizes a font by its line
         // height (ascent - descent), smaller per em: convert through the cap height of 'H' (live
         // 2026-10-12: without this our name came out at 0.6 of the game's).
@@ -2921,8 +2922,9 @@ void PartyHud() {
             }
             bg->AddRectFilled(p0, p1, Rgba(0.16f, 0.09f, 0.09f, 0.85f * alpha));
             if (frac > 0.0f) {
-                const ImU32 top = Rgba(pp.bar_top[0], pp.bar_top[1], pp.bar_top[2], alpha),
-                            bottom = Rgba(pp.bar_bottom[0], pp.bar_bottom[1], pp.bar_bottom[2], alpha);
+                // A PvP opponent (friendly fire in force): a plain bright red bar and name-red rim.
+                const ImU32 top = red ? Rgba(0.90f, 0.10f, 0.10f, alpha) : Rgba(pp.bar_top[0], pp.bar_top[1], pp.bar_top[2], alpha),
+                            bottom = red ? Rgba(0.60f, 0.03f, 0.05f, alpha) : Rgba(pp.bar_bottom[0], pp.bar_bottom[1], pp.bar_bottom[2], alpha);
                 bg->AddRectFilledMultiColor(p0, ImVec2(p0.x + (p1.x - p0.x) * frac, p1.y), top, top, bottom, bottom);
             }
             const ImU32 cap = Rgba(pp.cap_rgb[0], pp.cap_rgb[1], pp.cap_rgb[2], alpha),
