@@ -111,13 +111,16 @@ static uint64_t committed_bytes, committed_logged;
  * When it refuses, the section is reserved (SEC_RESERVE) and each range is committed when the game
  * maps it (win_mem_commit): the game maps far less than the pool. Before, the commit was retried
  * for 120 s and the process then exited.
- * BB_GUEST_COMMIT_ON_MAP=1 forces the reserved pool; BB_TEST_POOL_FAILURES=N simulates N commit
+ * The reserved pool is now the default (0.7.5: the commit charge follows what the game maps, about
+ * half of the pool in the Hunter's Dream, instead of the whole pool at once);
+ * BB_GUEST_COMMIT_ON_MAP=0 commits the whole pool at once (the old behaviour); BB_TEST_POOL_FAILURES=N simulates N commit
  * failures (the first one already picks the reserved pool; tests). */
 int win_mem_section(uint64_t size, void **backing) {
     commit_wait_s = env_number("BB_POOL_COMMIT_WAIT", 120);
     const char *forced = getenv("BB_GUEST_COMMIT_ON_MAP");
     section = NULL;
-    if (forced && forced[0] == '1') SetLastError(ERROR_COMMITMENT_LIMIT);
+    const int commit_all = forced && forced[0] == '0';
+    if (!commit_all) SetLastError(ERROR_COMMITMENT_LIMIT); /* default: reserve, commit as the game maps */
     else if (env_number("BB_TEST_POOL_FAILURES", 0)) SetLastError(ERROR_COMMITMENT_LIMIT);
     else section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
                                       (DWORD)(size >> 32), (DWORD)size, NULL);
@@ -131,8 +134,7 @@ int win_mem_section(uint64_t size, void **backing) {
         committed_pages = calloc((size >> 15) + 1, 1);
         printf("Runtime: the %llu MiB guest memory pool %s (error %lu, %llu MiB of commit left): "
                "committed as the game maps it\n", (unsigned long long)(size >> 20),
-               forced && forced[0] == '1' ? "is reserved (BB_GUEST_COMMIT_ON_MAP=1)"
-                                          : "does not fit Windows' commit limit at once",
+               !commit_all ? "is reserved" : "does not fit Windows' commit limit at once",
                error, commit_free_mib());
         fflush(stdout);
     }
