@@ -213,6 +213,8 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   type the host's VPN address into **Party code** (the port 9307 is added if left out). The host's
   launcher finds the VPN adapter by itself and shows the address to copy (*Host over a VPN*: Auto / Off
   / adapter name). Or let a player with an open port host.
+  The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
+  *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
 - **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 
@@ -457,7 +459,7 @@ before anyone is in the game):
 - **Friendly fire / PvP** (host's switch, off by default): party members can hurt each other, both
   ways, like invaders (*System → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
   gets no Echoes or Insight.
-- **Party HUD.** Party members and events in a small HUD.
+- **Party HUD.** Party members and events in a small HUD; each companion's ping in ms after the name (green / yellow / red; *My party: Look & notices > Ping in the party list*, on by default).
 - **Every party setting in the game's own menu, in two groups.** *Party rules* holds what the host
   decides for the whole party: *Party rules: World* (enemies the party killed stay dead, gathering the
   party, NPCs as in the host's world, covenants, voting on travel, NPC hunters), *PvP & lamps*,

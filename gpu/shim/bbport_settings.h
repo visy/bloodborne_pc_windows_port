@@ -212,6 +212,9 @@ struct Values {
     /// 2026-10-20); the bloodstain and its echoes are there either way (ini party_stain_marker; env
     /// BB_PARTY_STAIN_MARKER overrides). Live, local.
     std::atomic<bool> party_stain_marker{false};
+    /// The party HUD board shows each member's round-trip time in ms after the name, green / yellow / red
+    /// by quality (ini party_hud_ping, default on). Live, local.
+    std::atomic<bool> party_hud_ping{true};
     /// I1: friendly fire / PvP - party members can hurt each other (party_pvp.h). A party rule: the
     /// host's value is sent to every guest, a guest's own value never counts. Off by default (ini
     /// party_friendly_fire; env BB_PARTY_FRIENDLY_FIRE=0/1 overrides at start). Live.
@@ -247,6 +250,9 @@ struct Values {
     /// auto|off|<adapter name>; env BB_PARTY_VPN overrides. The host's choice; read when the game
     /// starts (the address is chosen once). The name itself lives in bbnet (set_vpn_preference).
     std::atomic<int> party_vpn{0};
+    /// 0.7.5: party discovery (net/party_discovery.h): the host announces itself on the VPN and LAN adapters
+    /// only; the launcher's Join page lists what it hears. ini party_discovery, env BB_PARTY_DISCOVERY. Live.
+    std::atomic<bool> party_discovery{true};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,

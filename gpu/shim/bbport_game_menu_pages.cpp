@@ -1609,6 +1609,9 @@ void DefineAll() {
         "On: the other hunters look like normal hunters on your screen. Off: the game's blue phantom glow",
         "Вкл.: другие охотники выглядят как обычные. Выкл.: синее свечение фантомов, как в игре");
 
+    own(&Values::party_hud_ping, "Ping in the party list", "Пинг в списке группы",
+        "Each companion's connection delay in ms after the name in the bottom left list",
+        "Задержка связи каждого спутника в мс после имени в списке слева внизу");
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
@@ -1623,6 +1626,10 @@ void DefineAll() {
                [](const Values& v) { return coop::npctalk::RangePosition(v.party_npc_talk_range.load()); },
                [](int i) { BbSettings::Get().party_npc_talk_range = coop::npctalk::RangeAtPosition(i); }),
            AddText("NPC dialogue range", "Дальность диалогов NPC"), balance.npc_range_help, {}, Kind::Slider);
+    // 0.7.5: party discovery (net/party_discovery.h; the Join list is in the launcher).
+    AddRow(Flag(&Values::party_discovery), "Party discovery", "Поиск групп",
+           "Host: announce the party on your VPN / LAN (never the Internet) for the launcher's Join list",
+           "Хост: объявлять группу в VPN и LAN (не в Интернет) для списка лаунчера", toggle, Kind::Toggle);
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

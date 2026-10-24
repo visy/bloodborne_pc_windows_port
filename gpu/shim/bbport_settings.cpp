@@ -229,6 +229,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_toasts = i != 0;
     } else if (key == "party_hud") {
         v.party_hud = i != 0;
+    } else if (key == "party_discovery") {
+        v.party_discovery = i != 0;
     } else if (key == "party_guest_lamps") {
         v.party_guest_lamps = i != 0;
     } else if (key == "party_rot") {
@@ -257,6 +259,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_pings = i != 0;
     } else if (key == "party_through_walls") {
         v.party_through_walls = i != 0;
+    } else if (key == "party_hud_ping") {
+        v.party_hud_ping = i != 0;
     } else if (key == "party_stain_marker") {
         v.party_stain_marker = i != 0;
     } else if (key == "party_friendly_fire") {
@@ -416,7 +420,7 @@ void Load() {
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
         {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
-        {"BB_PARTY_VPN", "party_vpn"},
+        {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
@@ -748,12 +752,14 @@ void Save() {
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
+    put("party_discovery", flag(v.party_discovery));
     put("party_name_tags", flag(v.party_name_tags));
     put("party_glow_off", flag(v.party_glow_off));
     put("party_npc_talk", flag(v.party_npc_talk));
     put("party_pings", flag(v.party_pings));
     put("party_through_walls", flag(v.party_through_walls));
     put("party_stain_marker", flag(v.party_stain_marker));
+    put("party_hud_ping", flag(v.party_hud_ping));
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
     put("party_guests_bring_lamps", flag(v.party_guests_bring_lamps));

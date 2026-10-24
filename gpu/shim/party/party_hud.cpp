@@ -158,6 +158,7 @@ std::int64_t NowMs() {
 
 bool OverheadBarShown(int overhead, bool have_hp, int max_hp) { return overhead == 3 && have_hp && max_hp > 0; }
 bool OverheadBarRed(bool pvp_active) { return pvp_active; }
+bool GameEnemyBarHidden(long long now_ms, long long drawn_ms) { return drawn_ms > 0 && now_ms - drawn_ms <= 300 && now_ms >= drawn_ms; }
 
 bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why) {
     const char* w = nullptr;
@@ -417,6 +418,15 @@ void SetGameDialog(bool open) {
 bool GameDialog() {
     return g_game_dialog.load(std::memory_order_relaxed);
 }
+
+int FormatPing(std::uint32_t ms, bool ru, char* out, std::size_t cap) {
+    if (cap == 0) return 0;
+    out[0] = 0;
+    if (ms == 0) return 0;
+    return std::snprintf(out, cap, ru ? "%u мс" : "%u ms", ms);
+}
+
+int PingQuality(std::uint32_t ms) { return ms < 80 ? 0 : ms < 160 ? 1 : 2; }
 
 float Distance(const float a[3], const float b[3]) {
     const float dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];

@@ -487,7 +487,8 @@ static void RulesPages() {
     const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests bring their lamps"};
     const V travel = {u"Guests use lamps", u"Guests use Hunter's Mark", u"Open world", u"Stay in Chalice Dungeons",
                       u"Cutscenes live with host"};
-    const V look = {u"No companion glow", u"Join/leave notices", u"Share NPC dialogue", u"NPC dialogue range"};
+    const V look = {u"No companion glow", u"Ping in the party list", u"Join/leave notices", u"Share NPC dialogue",
+                    u"NPC dialogue range", u"Party discovery"};
     const V save = {u"Share story progress", u"Share NPC quests", u"Share cutscenes, endings"};
     const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"Covenants per player",
                       u"Party votes on travel", u"NPC hunters fight all"};

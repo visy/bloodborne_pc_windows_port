@@ -3976,7 +3976,14 @@ u64 EchoHolder(bool* alive, float pos[3], u32* entity) {
 }
 /// Every loaded holder lets go of the echoes (0x18E76C0 per chr: the hold, the holder bit and the
 /// glowing eyes), and the stain object's hold is cleared. The number of chrs released.
+constexpr double kHoldTrackWindow = 6.0;
+double g_hold_released_at = -100;  // main thread: when we last let a holder go (echohold: not a game release)
+bool RetakeHoldOn() {
+    static const bool on = !EnvOff("BB_PARTY_STAIN_RETAKE");
+    return on;
+}
 int ReleaseEchoHolders(const char* why) {
+    g_hold_released_at = Now();
     static const bool code_ok = MatchesOriginal(0x18e76c0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53});
     const u64 obj = StainObject();
     if (!obj) {
@@ -7222,6 +7229,69 @@ void GuestStainTick(const GameSnapshot& s) {
             }
         }
     }
+    // echohold: the game lets the holder go 2-4 s after the take (see deathrules::RetakeHold): it takes the
+    // echoes again, so its kill pays them as in vanilla.
+    {
+        static u64 trk_chr = 0;
+        static double trk_seen = -100;
+        static int retakes = 0;
+        if (hold && is_stain) {
+            if (trk_chr) trk_seen = Now();
+        } else if (trk_chr && StainHoldRulesOn() && RetakeHoldOn()) {
+            bool alive = false;
+            for (const auto& e : balance::LoadedEnemies()) {
+                if (e.chr == trk_chr) alive = e.alive;
+            }
+            const bool released_by_us = Now() - g_hold_released_at < 5.0;
+            if (deathrules::RetakeHold(is_stain, hold, alive, Now() - trk_seen, released_by_us)) {
+                static const bool code_ok = MatchesOriginal(0x18e75a0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x56, 0x53});
+                const u64 obj = StainObject();
+                if (code_ok && obj && !ChrHoldsEchoes(trk_chr)) {
+                    reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x18e75a0))(trk_chr);
+                    hold = StainHoldFlag();
+                    if (++retakes <= 5 || retakes % 50 == 0) {
+                        Log("party stain: the game let the holder go; it takes the Blood Echoes again "
+                            "(retake %d, hold now %d)", retakes, hold);
+                    }
+                    trk_seen = Now();
+                }
+            } else if (Now() - trk_seen > kHoldTrackWindow) {
+                trk_chr = 0;
+            }
+        }
+        if (hold && is_stain && Now() >= next_scan) {
+            bool al = false; float ps[3] = {}; u32 en = 0;
+            if (const u64 c = EchoHolder(&al, ps, &en)) { trk_chr = c; trk_seen = Now(); }
+        }
+    }
+    {
+        static u64 diag_chr = 0;
+        static u64 diag_flags = 0;
+        static int diag_hp = -9, diag_hold = -1;
+        static double diag_t0 = 0;
+        if (std::getenv("BB_PARTY_STAIN_LOG")) {
+            if (hold && is_stain && !diag_chr) {
+                bool al = false; float ps[3] = {}; u32 en = 0;
+                diag_chr = EchoHolder(&al, ps, &en);
+                diag_t0 = Now();
+                diag_flags = 0; diag_hp = -9; diag_hold = -1;
+            }
+            if (diag_chr) {
+                u64 fl = 0;
+                SafeRead(diag_chr + 0x1e1, &fl, 5);
+                const int hp = balance::EnemyHp(diag_chr);
+                float cp[3] = {};
+                const bool have = ChrPos(diag_chr, cp);
+                if (fl != diag_flags || hp != diag_hp || hold != diag_hold) {
+                    Log("party stain: holder trace +%.2f s: flags %010llx hp %d hold %d at (%.1f, %.1f, %.1f) anim-state %08x", Now() - diag_t0,
+                        (unsigned long long)fl, hp, hold, have ? double(cp[0]) : 0.0, have ? double(cp[1]) : 0.0,
+                        have ? double(cp[2]) : 0.0, Field<u32>(Field<u64>(diag_chr, 0x58), 0x10));
+                    diag_flags = fl; diag_hp = hp; diag_hold = hold;
+                }
+                if (Now() - diag_t0 > 8.0) diag_chr = 0;
+            }
+        }
+    }
     if (hold && is_stain) {
         if (Now() >= next_scan) {
             next_scan = Now() + 0.5;
@@ -7234,7 +7304,9 @@ void GuestStainTick(const GameSnapshot& s) {
                 std::memcpy(holder_pos, pos, sizeof holder_pos);
                 holder_entity = ent;
             }
-            (void)any;
+            if (std::getenv("BB_PARTY_STAIN_LOG")) {
+                Log("party stain: hold scan: holder found %d alive %d entity %u", any ? 1 : 0, alive ? 1 : 0, ent);
+            }
         }
         if (holder_alive || hold_seen_at < 0) {
             hold_seen_at = Now();
@@ -7245,9 +7317,11 @@ void GuestStainTick(const GameSnapshot& s) {
     }
     const deathrules::StainHold hs =
         deathrules::PlanStainHold(is_stain, hold, holder_alive, hold_seen_at < 0 ? 0.0 : Now() - hold_seen_at);
+    static u64 held_obj = 0;
     if (hs != hold_was) {
         hold_was = hs;
         if (hs == deathrules::StainHold::Held) {
+            held_obj = StainObject();
             static int takes = 0;
             Log("party stain: an enemy took its %d Blood Echoes (entity %u at (%.1f, %.1f, %.1f), glowing eyes; take %d): "
                 "kill it to get them back; nothing to pick up on the ground", p.s.echoes, holder_entity,
@@ -7257,6 +7331,16 @@ void GuestStainTick(const GameSnapshot& s) {
                 "ground again");
         } else {
             const u64 so = StainObject();
+            if (std::getenv("BB_PARTY_STAIN_LOG")) {
+                int bits = 0, chrs = 0;
+                u32 first = 0;
+                for (const auto& e : balance::LoadedEnemies()) {
+                    ++chrs;
+                    if (ChrHoldsEchoes(e.chr)) { ++bits; if (!first) first = e.entity; }
+                }
+                Log("party stain: hold diag: stain object %#llx (at the take %#llx), %d loaded enemies, %d with the holder bit (first %u), "
+                    "record flag %d", (unsigned long long)so, (unsigned long long)held_obj, chrs, bits, first, own_flag);
+            }
             Log("party stain: no enemy holds its Blood Echoes (hold %d, record %d echoes flag %d, stain object %s, "
                 "%.1f s after the last hold)", hold, own_echoes, own_flag, so && Field<u64>(so, 0x88) ? "built" : "none",
                 hold_seen_at < 0 ? -1.0 : Now() - hold_seen_at);
