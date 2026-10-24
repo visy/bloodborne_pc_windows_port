@@ -5,6 +5,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.5 (unreleased)
 
+- **Fixed: riding a lift no longer launches you into the air** (player report, 3 players, the Forbidden Woods' second shortcut lift: while the lift went down, the host stuttered upward a foot at a time far above the car and then fell to his death). The party's "fell through the lift" safety net could take the speed of the ride up into the ride down and kept putting the player back higher and higher. It now only uses the speed of the ride in progress and gives up after three put-backs, leaving real falls to the normal fall recovery.
+
 - **Added: level sync, as in the game's co-op** (new host setting *Level sync*, *System -> Party rules: Phantoms*, the launcher's *Party Rules* tab, `bbport.ini` `party_level_sync`), on by default. Any level can still join, but a hunter far above the host's level is scaled down while playing in the host's world, as Bloodborne's own password co-op does: less maximum health and stamina, less defence and resistance (a level 100 guest with a level 1 host: about half the health, 82 % of the stamina, and takes several times the damage). The game's own name plate shows the blue icon by the name. The host's setting counts for everyone; guests see it read-only. Off: everyone keeps full stats whatever their level.
 
 - **Added / Changed: phantom health cut** (new host setting *Phantom health cut*, *System -> Party rules: Phantoms*, the launcher's *Party Rules* tab, `bbport.ini` `party_phantom_hp`), on by default. Hunters who join a party have 30 % less maximum health, as in the game. **This is a change: until now guests always had full health.** To keep the old behaviour, the host turns *Phantom health cut* off.

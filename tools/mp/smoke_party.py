@@ -1108,10 +1108,10 @@ def phase_fh(only):
     common = "god,log_pos=0.25,log_obj=%s,log_objanim=%s,log_flag=%s/%s" % (FH_CAR, FH_CAR, FH_POS, FH_BUSY)
     host = [common, "host_move=" + FH_LAMP + "@4%m22",
             "host_move=" + FH_TOP_IN + "@3%m22?near=" + ":".join(FH_TOP_EDGE.split(":")[:3]) + ":1.5",
-            "host_move=" + FH_BOT_OUT + "@2%m22?" + FH_POS + "=1",
-            "host_move=" + FH_BOT_IN + "@3%m22",
-            "host_move=" + FH_TOP_OUT + "@2%m22?" + FH_POS + "=0",
-            "host_press=0@6%m22!"]
+            "host_move=" + FH_BOT_OUT + "@1%m22?obj=" + FH_CAR + ":2",      # arrived (anim 2 stopped): out
+            "host_move=" + FH_BOT_IN + "@3%m22?" + FH_POS + "=1",           # back in: the ride up
+            "host_move=" + FH_TOP_OUT + "@8%m22",                           # up: out
+            "host_press=0@6%m22!?" + FH_POS + "=0"]
     g1 = [common, "guest_move=" + FH_LAMP + "@4%m22",
           "guest_move=" + FH_TOP_EDGE + "@2%m22",
           "guest_press=0@1%m22?" + FH_POS + "=1",
