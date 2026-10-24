@@ -1314,6 +1314,18 @@ inline bool StainTakenByGame(bool was_stain, int record_echoes_now, int stain_ec
 inline bool RestoreHold(bool record_is_stain, int hold_flag, bool holder_alive) {
     return record_is_stain && hold_flag == 0 && holder_alive;
 }
+/// echohold (smoke eh, live 2026-10-24): 1.6-4.7 s after the take the game itself lets the holder go
+/// (0x18E76C0: the stain object's +0xC0, the chr's +0x1E5 bit 0x20 and the glowing eyes all clear in one
+/// frame; the holder alive, unmoved, record intact), so the stain stood on the ground again and the
+/// enemy's kill paid nothing. The holder seen `seen_ago` s ago with the hold (<= kRetakeWindow), alive
+/// now, the hold gone while the party stain is the record, and not let go by us (`released_by_us`: a
+/// new death, the pickup): it takes the echoes again (0x18E75A0), as in vanilla where it keeps them.
+constexpr double kRetakeWindow = 3.0;
+inline bool RetakeHold(bool record_is_stain, int hold_flag, bool holder_alive_now, double seen_ago,
+                       bool released_by_us) {
+    return record_is_stain && hold_flag == 0 && holder_alive_now && !released_by_us && seen_ago >= 0 &&
+           seen_ago <= kRetakeWindow;
+}
 /// A new death's record while an enemy still holds the old echoes (a no-load revive keeps that
 /// enemy alive): the old hold is released first (vanilla: the old echoes are lost, and the death's
 /// load brings that enemy back without them); else the new stain is never built (0x1868A50 builds
