@@ -228,6 +228,21 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   in the same VPN pastes that into **Party code**; a bare address without `:port` gets the
   party port (9307) added. Commercial VPNs (NordVPN, ...) are never picked in Auto, only by name.
   `BB_PARTY_LOCAL_IP` still overrides everything.
+- **Party discovery (0.7.5).** While a game hosts it broadcasts a small announcement (UDP port 9308, every
+  1.5 s) on its Radmin / Hamachi / ZeroTier adapters and on private-LAN adapters (10/8, 172.16/12,
+  192.168/16, real adapters only): host name, level, players / max, whether a password is set, the bbport
+  build, the area name, the party port. Never the Internet, a commercial VPN, Tailscale or a virtual
+  switch (Hyper-V, WSL, Docker). It carries no password and no party code; the guest takes the host's
+  address from the datagram. The launcher's *Parties found* list (Party tab) listens on the same port,
+  ignores its own PC's announcements, caps the list and rate-limits each sender, and parses every packet
+  strictly (version, lengths, printable ASCII). **Join selected** fills *Party code* with `address:port`
+  and asks for the password only when the entry says there is one. Tailscale passes no broadcasts: with
+  a Tailscale adapter up, the launcher lists the online peers of `tailscale status --json` instead
+  (silently nothing without the CLI), joined at the default port. Setting `party_discovery` (bbport.ini,
+  `BB_PARTY_DISCOVERY`; launcher checkbox; System > My party: Look & notices; default on) switches both the
+  announcing and the listing. Hosting with no password over Radmin VPN / Hamachi shows a warning in the
+  launcher (strangers can be in those networks). `BB_PARTY_DISCOVERY_LOOPBACK=1` (host) and
+  `BB_PARTY_DISCOVERY_SELF=1` (launcher) are test aids: announce to 127.0.0.1, keep own packets.
 - Guests talk to each other directly when they can; when a direct path does not work, their game
   traffic goes through the host automatically.
 

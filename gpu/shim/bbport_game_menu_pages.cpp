@@ -1553,6 +1553,10 @@ void DefineAll() {
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    // 0.7.5: party discovery (net/party_discovery.h; the Join list is in the launcher).
+    AddRow(Flag(&Values::party_discovery), "Party discovery", "Поиск групп",
+           "Host: announce the party on your VPN / LAN (never the Internet) for the launcher's Join list",
+           "Хост: объявлять группу в VPN и LAN (не в Интернет) для списка лаунчера", toggle, Kind::Toggle);
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

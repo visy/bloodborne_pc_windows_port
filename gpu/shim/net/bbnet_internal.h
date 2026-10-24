@@ -165,6 +165,7 @@ struct LanAdapter {
     bool default_route = false;  // the interface the system routes the Internet through
     bool physical = false;    // Ethernet or Wi-Fi interface type
     std::uint32_t metric = 0;    // IPv4 interface metric (lower first), a tie breaker
+    std::uint32_t mask = 0;      // network order; 0 unknown (party discovery's directed broadcast)
 };
 // Hyper-V / WSL / Docker switches, VirtualBox / VMware host-only adapters, VPN and overlay
 // adapters (TAP, Wintun, WireGuard, Tailscale, ZeroTier, Hamachi, Radmin ...): by name.
