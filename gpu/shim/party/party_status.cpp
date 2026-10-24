@@ -209,9 +209,13 @@ bool ShareLamps() {
     return g_share_lamps.load();
 }
 namespace {
-// Rot off by default (0.7.2), guests bring lamps off, the rest on (the party tick sets them all).
-std::atomic<bool> g_host_rules[int(HostRule::Count)] = {false, true, true, true, true, true, false,
-                                                     true,  true, true, true, false, true};
+// Rot off by default (0.7.2), guests bring lamps and travel votes off, the rest on (the party tick
+// sets them all; party_balance_rules.h Rules defaults).
+std::atomic<bool> g_host_rules[int(HostRule::Count)] = {
+    false, true, true, true, true, true, false,       // Rot .. GuestsBringLamps
+    true,  true, true, true, false, true, true,       // RotCleanseBoss .. AnyKidnap
+    true,  true, true, true, true, true, true, true, true};  // OpenWorld .. FullRewards
+static_assert(int(HostRule::Count) == 23, "a HostRule without its default above");
 }  // namespace
 void SetHostRule(HostRule rule, bool on) {
     if (rule < HostRule::Count) g_host_rules[int(rule)].store(on);

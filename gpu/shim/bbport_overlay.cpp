@@ -1904,12 +1904,20 @@ void PartyTab() {
              "помогает за CGNAT провайдера). Хост без открытого порта IPv4 добавляет свой адрес IPv6 в код "
              "группы. Со следующего запуска группы."),
            on);
+    // 0.7.4: the host's rule (a guest starts with the host's value: the join check).
+    if (b.role == ps::Role::Guest) {
+        Note(ps::HostRuleOn(ps::HostRule::GuestLamps)
+                 ? T("Guests use lamps: on (the host's rule)", "Фонари гостям: вкл. (правило хоста)")
+                 : T("Guests use lamps: off (the host decides)", "Фонари гостям: выкл. (решает хост)"),
+             Dim());
+    } else {
     Toggle("party_guest_lamps", T("Guests use lamps", "Фонари гостям"), s.party_guest_lamps,
            T("Guests may use lamps and the Dream's headstones; the host leads and the whole party "
-             "travels. After a restart.",
+             "travels. The host's rule: every player starts with the host's. After a restart.",
              "Гости могут пользоваться фонарями и надгробиями Сна; ведёт хост, группа перемещается "
-             "вместе. После перезапуска."),
+             "вместе. Правило хоста: у всех как у хоста. После перезапуска."),
            on);
+    }
     // Party rules (party_balance.h): the host's values count for the whole party.
     ImGui::Spacing();
     Note(T("Party rules (the host's count for everyone)", "Правила группы (действуют правила хоста)"), Dim());
