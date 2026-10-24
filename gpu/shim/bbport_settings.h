@@ -242,6 +242,11 @@ struct Values {
     /// carry the PC's IPv6 address). ini party_ipv6; env BB_PARTY_IPV6 overrides at start. Read when
     /// the party starts.
     std::atomic<bool> party_ipv6{false};
+    /// 0.7.5: host over a VPN (Radmin, Hamachi, ZeroTier, Tailscale): 0 auto (a VPN adapter that is
+    /// up, else the usual address), 1 off, 2 a named adapter (party_vpn_name). ini party_vpn =
+    /// auto|off|<adapter name>; env BB_PARTY_VPN overrides. The host's choice; read when the game
+    /// starts (the address is chosen once). The name itself lives in bbnet (set_vpn_preference).
+    std::atomic<int> party_vpn{0};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,
