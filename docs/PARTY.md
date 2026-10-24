@@ -218,6 +218,16 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
   virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
   `address:9307` (or sets it as *Public address*, so the code contains it).
+- **Hosting over a VPN (0.7.5).** With Radmin VPN, Hamachi, ZeroTier or Tailscale running, the
+  game finds the VPN adapter by itself (setting *Host over a VPN*: **Auto**, **Off**, or an adapter
+  picked by name; launcher *Party* tab, *System > Party network*, bbport.ini `party_vpn`,
+  `BB_PARTY_VPN`; the host's choice, read when the game starts). The party code's LAN code then holds
+  your VPN address (Radmin 26.x, Hamachi 25.x, Tailscale 100.64/10, ZeroTier whatever its network
+  assigns); the Internet code is unchanged. The *Party* tab shows *Hosting over Radmin VPN:
+  26.x.y.z* and a *VPN address* line with **Copy** (always `address:port`, your party port). A friend
+  in the same VPN pastes that into **Party code**; a bare address without `:port` gets the
+  party port (9307) added. Commercial VPNs (NordVPN, ...) are never picked in Auto, only by name.
+  `BB_PARTY_LOCAL_IP` still overrides everything.
 - Guests talk to each other directly when they can; when a direct path does not work, their game
   traffic goes through the host automatically.
 
@@ -264,7 +274,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **NPC quests** are shared (on by default, My Party tab: *Also NPC quests*): the first choice
   anyone makes - host or guest, guests can talk to NPCs in the host's world - applies to the
   host's world and to every player's save. Gifts an NPC gives in dialogue go to whoever talked.
-- **Chalice Dungeons** are not part of party play.
+- **Chalice Dungeons** are played together: guests join the host's dungeon (see the README's party section). Checked live with the fixed Pthumeru dungeon (layers 1-2); Root (randomly generated) and glyph dungeons use the host's dungeon id too but have not been checked live yet.
 - World treasure a guest picks up while in the host's world does not exist for guests in the
   normal game; the host's pickups are handed to guests through the item sharing above.
   Enemy drops are per player: every player's game rolls each enemy's drop and keeps the whole of
@@ -424,7 +434,7 @@ player, and say who was the host.
   Doll and use the Bath Messengers' shops, the Insight shop, the workbench and storage on its own
   character; lamps and headstones stay host-only for now (experimental opt-in `BB_PARTY_GUEST_LAMPS=1`).
 - NPC quests are not shared by default; dialogue gifts from NPCs are not handled.
-- Chalice Dungeons are not supported in party play.
+- Chalice Dungeons: checked live only with the fixed Pthumeru dungeon; Root and glyph dungeons are expected to work but are untested.
 - 4 players: experimental, no slot for invaders.
 - An item a guest picks up in the host's world just before a crash may be given twice.
 - The online play of the original game (PSN messages, bloodstains, invasions from strangers) is

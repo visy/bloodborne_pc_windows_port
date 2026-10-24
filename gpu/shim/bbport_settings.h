@@ -242,6 +242,11 @@ struct Values {
     /// carry the PC's IPv6 address). ini party_ipv6; env BB_PARTY_IPV6 overrides at start. Read when
     /// the party starts.
     std::atomic<bool> party_ipv6{false};
+    /// 0.7.5: host over a VPN (Radmin, Hamachi, ZeroTier, Tailscale): 0 auto (a VPN adapter that is
+    /// up, else the usual address), 1 off, 2 a named adapter (party_vpn_name). ini party_vpn =
+    /// auto|off|<adapter name>; env BB_PARTY_VPN overrides. The host's choice; read when the game
+    /// starts (the address is chosen once). The name itself lives in bbnet (set_vpn_preference).
+    std::atomic<int> party_vpn{0};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,
@@ -280,8 +285,16 @@ struct Values {
     /// 0.7.3: a party travel by lamp, headstone or Hunter's Mark runs only once every member voted
     /// YES (party_vote.h). The host's rule; OFF by default.
     std::atomic<bool> party_travel_vote{false};
+    /// 0.7.5: Party starts = skip the prologue (party_start.h StartMode::SkipPrologue): a NEW character
+    /// begins as after the prologue. The host's rule; OFF by default.
+    std::atomic<bool> party_skip_prologue{false};
     std::atomic<bool> party_npc_fights{true};   ///< D11 (0.7.3): NPC hunters fight the whole party (party_npcfight_rules.h)
     std::atomic<bool> party_any_kidnap{true};   ///< 0.7.3: a Snatcher grabbing a guest takes the party to the Gaol (party_kidnap_rules.h)
+    /// 0.7.5 (levelsync, party_levelsync_rules.h): the host's rules, both ON = Bloodborne's own co-op.
+    /// Level sync: a hunter above the host's level is scaled down (max HP, stamina, defence, resistances)
+    /// as in password co-op; phantom health: a hunter joining a party has 30 % less max HP.
+    std::atomic<bool> party_level_sync{true};
+    std::atomic<bool> party_phantom_hp{true};
     /// Each player's own (while it is a guest; party_items):
     std::atomic<bool> party_key_view{true};     ///< the own key items while summoned (next start)
     std::atomic<bool> party_key_items_summoned{true}; ///< a host-world key item given at once (needs key_view)

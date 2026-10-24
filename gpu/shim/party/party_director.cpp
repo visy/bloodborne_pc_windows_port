@@ -44,6 +44,7 @@
 #include "seamless_rules.h"
 #include "test_newgame.h"
 #include "../bbport_game_menu.h"
+#include "party_heapwatch.h"
 #include "party_online.h"
 #include "party_perf.h"
 #include "party_watchdog.h"
@@ -199,6 +200,8 @@ struct TravelStep {
     int warp = 0;         // HostMove / GuestMove: 0 the bare chr warp +0x5F8, 1 ":native" the game's own player warp
     double pin = 0;       // HostMove / GuestMove ":pin=S" (liftfix): held at the spot for S s (the bare chr warp every
                           // frame) while the floor's collision streams in after a long warp (else the chr falls through)
+    bool ground = false;  // HostMove / GuestMove ":ground" (with pin): released once the game's safe-ground spot is
+                          // there; no ground by the pin's end: held once more; a fall after the release: one re-warp
     std::uint32_t buttons = 0;  // HostPress / GuestPress: pad buttons tapped (0.15 s)
     std::string map;      // HostMove / GuestMove "%NAME": only while the current map name contains it
     std::string args;     // HostStage / HostWalk / HostHeadstone
@@ -246,6 +249,8 @@ struct Test {
     bool a11_bar_seen = false;
     bool log_state = false;
     int insight = -1;
+    int level = -1; // level=N: writes the player's level once (0.7.5 level sync A/B; test saves)
+    bool level_done = false;
     int echoes = -1; // echoes=N: writes the player's Blood Echoes once (test saves)
     // armor=SET: puts on armor set SET (EquipParamProtector SET, +1000, +2000, +3000: head, chest,
     // arms, legs) once, 3 s into the first steady world, as the equipment menu does; in a session
@@ -347,6 +352,10 @@ struct Test {
     Clock::time_point obj_since{};   // the next step's "?obj=ENTITY:ANIM" condition met (its clock)
     Clock::time_point pin_until{};   // a move step's ":pin=S": the chr held at pin_pos until then
     alignas(16) float pin_pos[4] = {0, 0, 0, 1}, pin_rot[4] = {0, 0, 0, 0};
+    bool pin_ground = false;          // ":ground": the pin waits for ground (the step's ground)
+    double pin_secs = 0;              // the pin's length (a re-hold uses it again)
+    int pin_retries = 0;              // ":ground": re-holds / re-warps done (1 at most)
+    Clock::time_point pin_set{}, fall_check{};  // when the pin started; ":ground": the post-release fall check
     std::size_t obj_seen_step = ~std::size_t(0);  // "?obj=": the step whose ANIM was seen playing
     // liftfix: a step's "?FLAG=V" / "?near=" / "?obj=" condition that never comes true: after
     // kCondTimeout s (BB_PARTY_TEST_COND_TIMEOUT, default 240) the chain jumps to its last step (conditions skipped), so the run ends on its
@@ -700,6 +709,12 @@ void TestPrologueTick(const GameSnapshot& s) {
         const bool ok = WriteEventFlag(id, !on);
         Log("test: prologue end: flag %u back to %d (%s)", id, int(!on), ok ? "written" : "NOT written");
     }
+}
+
+/// 0.7.5 Party starts "skip the prologue": BB_PARTY_START=skip_prologue, or the host's rule
+/// (party_skip_prologue; on a guest the host's once it arrived, else its own).
+static bool SkipPrologueOn(StartMode env_mode) {
+    return env_mode == StartMode::SkipPrologue || ::party::status::HostRuleOn(::party::status::HostRule::SkipPrologue);
 }
 
 /// The start flags (full ticks): logs step and readiness changes.
@@ -1872,11 +1887,51 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             if (!was) Log("test: guard (BB_PARTY_TEST_GUARD): up again after a death: invincible until the next die / chr step");
         }
     }
+    // ":ground": the game's last safe ground spot (PlayerIns +0x400 -> +0x30) at the pinned spot means
+    // the floor's collision is in; the chr's own position 5 m below it after the release is a fall.
+    auto pin_spot_ground = [&](bool fell_check) {
+        const std::uint64_t pl = LocalPlayer();
+        float v[3] = {};
+        std::uint64_t q = 0;
+        if (fell_check) {
+            float pp[3] = {};
+            std::uint64_t a = 0;
+            return pl && SafeGet(pl + 0x58, &a) && a && SafeGet(a + 8, &a) && a && SafeGet(a + 0x3b0, &a) && a &&
+                   SafeGet(a + 0x68, &a) && a && SafeRead(a + 0x1e0, pp, 12) && pp[1] < t.pin_pos[1] - 5.0f;
+        }
+        if (!pl || !SafeGet(pl + 0x400, &q) || !q || !SafeRead(q + 0x30, v, 12)) return false;
+        const float dx = v[0] - t.pin_pos[0], dy = v[1] - t.pin_pos[1], dz = v[2] - t.pin_pos[2];
+        return dx * dx + dz * dz < 4.0f && std::fabs(dy) < 2.0f;
+    };
+    if (t.fall_check != Clock::time_point{} && now >= t.fall_check) {
+        t.fall_check = {};
+        if (s.world_up && !s.loading && pin_spot_ground(true) && t.pin_retries < 1) {
+            ++t.pin_retries;
+            t.pin_until = now + std::chrono::milliseconds(static_cast<int>(t.pin_secs * 1000));
+            t.pin_set = now;
+            Log("test: pin: fell below (%.2f, %.2f, %.2f) after the release: warped back and held again",
+                double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]));
+        }
+    }
+    if (t.pin_until != Clock::time_point{} && t.pin_ground && now - t.pin_set >= std::chrono::seconds(1) &&
+        now < t.pin_until && s.world_up && !s.loading && pin_spot_ground(false)) {
+        Log("test: pin: ground under (%.2f, %.2f, %.2f) after %.1f s (the game's safe spot is there)",
+            double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]),
+            std::chrono::duration<double>(now - t.pin_set).count());
+        t.pin_until = now;  // released below; then the fall check
+    } else if (t.pin_until != Clock::time_point{} && t.pin_ground && now >= t.pin_until && t.pin_retries < 1 &&
+               s.world_up && !s.loading) {
+        ++t.pin_retries;
+        t.pin_until = now + std::chrono::milliseconds(static_cast<int>(t.pin_secs * 1000));
+        Log("test: pin: no ground yet under (%.2f, %.2f, %.2f): held once more", double(t.pin_pos[0]),
+            double(t.pin_pos[1]), double(t.pin_pos[2]));
+    }
     if (t.pin_until != Clock::time_point{}) {
         // ":pin=S": the chr kept at the move's spot every frame until the floor's collision is in.
         const std::uint64_t player = LocalPlayer();
         std::uint64_t vt = 0, fn = 0;
         if (now >= t.pin_until || !s.world_up || s.loading) {
+            if (t.pin_ground) t.fall_check = now + std::chrono::seconds(3);
             t.pin_until = {};
             Log("test: pin at (%.2f, %.2f, %.2f) released", double(t.pin_pos[0]), double(t.pin_pos[1]), double(t.pin_pos[2]));
         } else if (player && SafeGet(player, &vt) && vt && SafeGet(vt + 0x5f8, &fn) && fn) {
@@ -2325,6 +2380,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 std::memcpy(t.pin_pos, pos, sizeof pos);
                 std::memcpy(t.pin_rot, rot, sizeof rot);
                 t.pin_until = now + std::chrono::milliseconds(static_cast<int>(step.pin * 1000));
+                t.pin_ground = step.ground;
+                t.pin_secs = step.pin;
+                t.pin_retries = 0;
+                t.pin_set = now;
+                t.fall_check = {};
             }
             Log("test: %s to (%.2f, %.2f, %.2f) rot y %.3f (%s)%s%s", TravelStepName(step.kind), double(pos[0]),
                 double(pos[1]), double(pos[2]), double(rot[1]), native ? "the game's own player warp" : "bare chr warp",
@@ -3071,6 +3131,12 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         const bool ok = WritePlayerInsight(t.insight);
         Log("test: Insight %d -> %d %s", before, t.insight, ok ? "written" : "NOT written (no player record)");
     }
+    if (t.level > 0 && !t.level_done && Seconds(st.world_at, now) >= 2.0 && !s.loading) {
+        t.level_done = true;
+        const int before = s.level;
+        const bool ok = WritePlayerLevel(t.level);
+        Log("test: level %d -> %d %s", before, t.level, ok ? "written" : "NOT written (no player record)");
+    }
     // god: this player's chr stays invincible (chr +0x1E1 bit 14, as a11_move), e.g. a scripted
     // event walk through an area full of enemies (B6 live triggers).
     if (t.god && s.world_up && !s.loading && s.player) {
@@ -3675,6 +3741,8 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* c = std::getenv("BB_PARTY_AUTOCONTINUE"); c && c[0]) {
         st.auto_continue = c[0] == '0' ? 0 : 1;
     }
+    st.auto_continue = ShouldAutoContinue(st.auto_continue,
+        bb_party_value_on(std::getenv("BB_PARTY_RESTARTED")));
     // A crash-restarted game (run.bat's BB_PARTY_RESTARTED=1) takes BB_PARTY_DIRECTOR_TEST_RESTART
     // as its test chain when that is set ("none": no steps), so a scripted run's chain is not run a
     // second time from its start after a --crash-plan kill (tools/mp/smoke_party.py).
@@ -3895,6 +3963,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.bell = kHostBell;
             } else if (item == "bell_guest") {
                 st.test.bell = kGuestBell;
+            } else if (item.rfind("level=", 0) == 0) {
+                st.test.level = std::atoi(item.c_str() + 6);
             } else if (item.rfind("insight=", 0) == 0) {
                 st.test.insight = std::atoi(item.c_str() + 8);
             } else if (item.rfind("host_warp=", 0) == 0 || item.rfind("host_die", 0) == 0 ||
@@ -4024,6 +4094,7 @@ void PartyDirector::ConfigureFromEnv() {
                     if (const std::size_t pn = item.find(":pin="); pn != std::string::npos) {
                         step.pin = std::min(10.0, std::max(0.0, std::atof(item.c_str() + pn + 5)));
                     }
+                    step.ground = item.find(":ground") != std::string::npos;
                     if (const std::size_t pc = item.find('%'); pc != std::string::npos) {
                         step.map = item.substr(pc + 1);
                     }
@@ -4127,7 +4198,7 @@ void PartyDirector::ConfigureFromEnv() {
     bool known = true;
     st.start_mode = ParseStartMode(std::getenv("BB_PARTY_START"), &known);
     if (!known) {
-        Log("BB_PARTY_START='%s' is not prologue_solo or immediate; using prologue_solo", std::getenv("BB_PARTY_START"));
+        Log("BB_PARTY_START='%s' is not prologue_solo, skip_prologue or immediate; using prologue_solo", std::getenv("BB_PARTY_START"));
     }
     if (const char* g = std::getenv("BB_PARTY_GRANT_BELLS"); g && g[0] == '0') {
         st.grant_bells = false;
@@ -4232,6 +4303,7 @@ void PartyDirector::Tick() {
     }
     ++st.ticks;
     BbBootWatchState::Tick(); // BB_BOOT_WATCHDOG: the main loop moves
+    HeapWatchTick();          // BB_HEAP_WATCH_LOG: live bytes per call site in a game heap
     // The cheap reads every frame; the game's cooperator count twice a second.
     const bool full = Seconds(st.last_full, now) >= 0.5;
     if (full) {
@@ -4331,12 +4403,12 @@ void PartyDirector::Tick() {
             }
         }
         CatchupTick(s, role == PartyRole::Guest && link && link->state() == party::LinkState::Connected,
-                    Seconds(st.start, now), host_map);
+                    Seconds(st.start, now), host_map, SkipPrologueOn(start_mode));
     }
     // C1: the campaign start (readiness, bells).
     if (full || !st.start_logged) {
         perf::Scope z(perf::Zone::DirStart);
-        UpdateStart(st, s, start_mode);
+        UpdateStart(st, s, SkipPrologueOn(start_mode) ? StartMode::SkipPrologue : start_mode);
         if (((grant_bells && role != PartyRole::None) || st.test.grant_bells) && st.world_seen &&
             Seconds(st.world_at, now) >= std::min(5.0, st.ring_delay) && !PrologueSkipBusy() && !CatchupBusy()) {
             GrantBells(st, s);
@@ -4353,14 +4425,16 @@ void PartyDirector::Tick() {
             st.last_from_client = std::move(fc);
         }
     }
-    // Title: Continue on our own (party mode default; always after a crash restart).
+    // Title: Continue on our own when asked (BB_PARTY_AUTOCONTINUE=1) or after a supervised crash
+    // restart (run.bat's BB_PARTY_RESTARTED=1). A recovered party marker alone does not press
+    // buttons on a game the player started by hand.
     if (role != PartyRole::None) {
         int ac;
         {
             std::lock_guard<std::mutex> lk(st.mu);
             ac = st.auto_continue;
         }
-        if ((ac == 1 || party::runtime().restarted()) && !NewGameTestRequested()) {
+        if (ac == 1 && !NewGameTestRequested()) {
             AutoContinue(st, s, role, link, now);
         }
     }

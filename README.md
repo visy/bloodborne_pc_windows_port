@@ -4,7 +4,7 @@ Run the PS4 version of *Bloodborne* (v1.09, any retail release) natively on Wind
 Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28 (Linux) and the original
 [Windows port](https://github.com/Mrsuss60/bloodborne_pc_windows_port) by Mrsuss60.
 
-**Version 0.7.3** · Playable · Party co-op in development
+**Version 0.7.4** · Playable · Party co-op in development
 
 > No game files are included: you need your own decrypted dump with update 1.09 (any retail
 > release: CUSA03173, CUSA00900, ...; they share the same 1.09 executable).
@@ -158,7 +158,8 @@ parties: guests drawn with one another's look, pickups animating every other pla
 two-player run from two new characters to the end credits passed, and a three-player travel run
 ([docs/party/campaign_soak.md](docs/party/campaign_soak.md)).
 
-**Party sections:** [Starting a party](#start-from-the-title-screen-recommended) ·
+**Party sections:** [First time? Step by step](#first-time-step-by-step) ·
+[Starting a party](#start-from-the-title-screen-recommended) ·
 [How it plays](#how-it-plays) · [Deaths](#deaths) · [Progress vs. Seamless Co-op](#seamless-co-op-progress) ·
 [Coming next](#coming-next) · [Known issues](#known-issues) ·
 [Connecting over the internet](#connecting-over-the-internet) · [Reporting a bug](#reporting-a-co-op-bug)
@@ -168,6 +169,59 @@ so share it only with the people you play with. With a password the code is shor
 characters without one); players on the host's own network can use the shorter **LAN code**
 (e.g. `BBP3-PAJY-EAMH-7TD`). Everyone needs the same bbport version and game files. Party play uses its
 own save; your single-player save is never touched.
+
+### First time? Step by step
+
+One host and two guests, from nothing to playing together. Do the steps in this order.
+
+**1. Everyone:** install the **same release** of this port (the latest one).
+
+**2. Host:**
+
+1. Start `launch_gui.bat` and open the **Party** tab.
+2. *Mode* = **Host a party**. Type **Your name**.
+3. **Max players: 3**. Leave the other options as they are. A **Password** is optional; if you set
+   one, every player must type the same one.
+4. Click **Launch Bloodborne**. If Windows asks whether `bbport.exe` may use the network, click **Allow**.
+5. Once the game runs, the launcher shows two codes. Click **Copy** next to the right one and send it
+   to both friends:
+   - **Internet code**: friends in other homes.
+   - **LAN code**: players on your own Wi-Fi / router.
+6. Just play. When your friends are ready, the game brings them into your world by itself.
+
+**3. Each guest:**
+
+1. Open the **Party** tab and choose *Mode* = **Join a party**. Each player needs a **different name**.
+2. Paste the host's code into **Party code** (the **Paste** button does it). A ✓ under it means the code is valid.
+3. Same **Max players** (3) and the same **Password** as the host.
+4. Click **Launch Bloodborne** **after** the host's game is already running.
+5. Play the start of the game (the prologue) in your own world. After that the host's game summons you
+   automatically. Short of time? The host can turn on *Skip the prologue* (*System > Party rules:
+   Phantoms* or the launcher's Party Rules tab): a brand-new character then starts at the Central
+   Yharnam lamp with the Saw Cleaver, the Hunter Pistol and Iosefka's Blood Vial, ready to be summoned.
+   Characters past the clinic are never touched.
+
+**4. The guests stay at *Connecting*?**
+
+- The host's PC must be reachable on **port 9307, UDP and TCP**. The game asks the router to open it
+  (UPnP). If the host's log says *"UPnP unavailable"*, open port 9307 (UDP and TCP) to the host's PC
+  in the router's settings.
+- **Shared provider address (CGNAT)**, common with many providers (for example in Brazil): the router's
+  outside address starts with `100.64` to `100.127`, and opening the port on the router does not help.
+  The *Party* page's *Network* line tells you when this is the case. The easiest fix is a free VPN
+  that all three players install, such as **Radmin VPN**, **Tailscale** or **ZeroTier**; the guests then
+  type the host's VPN address into **Party code** (the port 9307 is added if left out). The host's
+  launcher finds the VPN adapter by itself and shows the address to copy (*Host over a VPN*: Auto / Off
+  / adapter name). Or let a player with an open port host.
+- **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*).
+- More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
+
+**5. Still not working?** On every PC: launcher → *Advanced / Debug* → **Save support bundle**, and send the
+zips with an issue, together with which step each player reached (see [Reporting a co-op bug](#reporting-a-co-op-bug)).
+The lines starting with `NAT:`, `UPnP:` and `Party:` in the logs usually tell what went wrong.
+
+After the first session, the title screen's **Party → Continue party game** is all anyone needs:
+code and password are remembered, and the host's code stays the same.
 
 ### Start from the title screen (recommended)
 
@@ -274,6 +328,11 @@ before anyone is in the game):
   (+1 Insight each). Only the first kidnap does this, as in the game. The host can turn off
   *Anyone can be abducted* (*System > Party rules: Deaths*): then only a grabbed host takes the party
   there and a grabbed guest just dies. A kidnap never follows a guest home into its own world.
+- **Any level can play together.** Nobody is turned away for their level. As in the game's own co-op, a
+  hunter far above the host's level is scaled down while in the host's world (less health, stamina and
+  defence, a blue icon by the name on the game's own name plate), and everyone who joins has 30 % less
+  maximum health. The host can turn both off (*System > Party rules: Phantoms*: *Level sync*, *Phantom
+  health cut*), then everyone keeps full stats. Both are on by default.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared
@@ -290,6 +349,10 @@ before anyone is in the game):
   what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
   until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
   starts with anyone's hit.
+- **Guests can hit NPCs.** A guest's blows land on the host world's NPCs as the host's do (the friendly
+  hunters and the others the host could hurt): they take damage and a killing blow counts for
+  everyone. An NPC that turns hostile after a few hits (Alfred) does so on a guest's blows too.
+  Nothing is added that the host could not do.
 - **NPC hunters fight the whole party.** Eileen and Henryk at the Tomb of Oedon, Alfred, the
   blood-drunk Eileen, Valtr and the DLC hunters are there for everyone in the host's world:
   anyone can hurt them, and their death and the quest step after it count for every player's own
@@ -331,7 +394,8 @@ before anyone is in the game):
   and checked again when its own world loads and given again if missing; one you already hold is
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
   Both are your own switches on *System → My party: Rewards* (*Own key items as guest*, *Key items at once*).
-  Keys and tools found lying around go to the whole party, so nobody is locked out of a door.
+  Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
+  the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
   messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
   Hunter Bell go to every player, whoever got them in the host's world.
@@ -379,7 +443,8 @@ before anyone is in the game):
   poise) on the *Party rules: Enemies* page.
 - **Names over party members**, in the game's own style, at any distance, with level, health,
   deaths or ping (your choice; *Party name tags* turns them off). A member standing behind your own
-  character has no tag until it steps out (walls do not hide tags). Party text steps aside while the
+  character has no tag until it steps out (walls do not hide tags).
+  A small blue marker by a name shows a hunter scaled down by *Level sync*; in PvP our health bar is red. Party text steps aside while the
   game's own menus are open; party messages are centred in their box.
 - **Companions look like normal hunters.** Summoned hunters are drawn without the game's blue,
   glowing phantom look (they are still cooperators for the game). Each player chooses for their own
@@ -432,7 +497,7 @@ before anyone is in the game):
 |---|---|
 | A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing. **A fall** (off a ledge, or out of the world): it gets up at its own lamp, or at the host's lamp when its own is in another area, with no loading screen when that lamp is in the area, never in the Hunter's Dream; its Blood Echoes wait on the last solid ground before the fall, never under the map |
 | The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. After a fall (off a ledge or out of the world) it also gets up at its lamp (no loading screen when the lamp is in the area, never in the Hunter's Dream); its echoes wait on the last solid ground before the fall. A death that takes the host somewhere else by the story (a Snatcher's kidnap to the Hypogean Gaol) takes the whole party there instead: one loading screen for everyone, the guests wake beside the host. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
-| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (after a fall: on the last solid ground before it, where their bloodstain is; or beside a living hunter), never under the map, no load, their echoes still in their bloodstain. the host's *System → Party rules: Deaths → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
+| Anyone, during a boss fight | Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the host is down and the last hunter still fighting leaves the fight (Hunter's Mark, a lamp, its death, *Leave* or a lost connection), that counts as everyone dying: the whole party gets the respawn loading screen at the host's lamp. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (after a fall: on the last solid ground before it, where their bloodstain is; or beside a living hunter), never under the map, no load, their echoes still in their bloodstain. the host's *System → Party rules: Deaths → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp with one loading screen; the session stays. Also when the last hunter falls long after the others (the ones already down wait for it, however long the fight goes on); its echoes wait in a bloodstain where it fell |
 
 A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.

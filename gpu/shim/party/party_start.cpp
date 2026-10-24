@@ -8,6 +8,10 @@
 
 namespace coop {
 
+bool ShouldAutoContinue(int configured, bool supervised_restart) {
+    return configured > 0 || (configured < 0 && supervised_restart);
+}
+
 StartMode ParseStartMode(const char* text, bool* known) {
     if (known) {
         *known = true;
@@ -22,6 +26,9 @@ StartMode ParseStartMode(const char* text, bool* known) {
     if (v == "prologue_solo" || v == "prologue" || v == "solo") {
         return StartMode::PrologueSolo;
     }
+    if (v == "skip_prologue" || v == "skip") {
+        return StartMode::SkipPrologue;
+    }
     if (v == "immediate" || v == "clinic") {
         return StartMode::Immediate;
     }
@@ -32,7 +39,7 @@ StartMode ParseStartMode(const char* text, bool* known) {
 }
 
 const char* StartModeName(StartMode m) {
-    return m == StartMode::Immediate ? "immediate" : "prologue_solo";
+    return m == StartMode::Immediate ? "immediate" : m == StartMode::SkipPrologue ? "skip_prologue" : "prologue_solo";
 }
 
 const char* StartStepName(StartStep s) {
@@ -241,10 +248,17 @@ CatchupAction Catchup::Step(const CatchupInput& in) {
     switch (phase_) {
     case Phase::Idle:
     case Phase::Opening: {
-        if (!in.guest || !in.host_known || !in.host_ready) {
+        if (!in.self_skip && (!in.guest || !in.host_known || !in.host_ready)) {
             return a; // nothing to compare against (or the host itself is in its prologue)
         }
         const StartStep step = ClassifyStart(in.flags, in.in_world);
+        if (in.self_skip && step == StartStep::FirstDream) {
+            // Past the clinic already (9401 ON): not a new character, never touched.
+            phase_ = Phase::Done;
+            a.kind = CatchupAction::Finished;
+            a.why = "skip prologue: the own save is in or past the first Dream visit: not touched";
+            return a;
+        }
         // A scene playing in the own world while behind the host (the opening; its 12410000 may
         // already be set by C2's snapshot while the remo still runs): the game's skip request,
         // retried until the remo is skippable and gone.
@@ -256,7 +270,7 @@ CatchupAction Catchup::Step(const CatchupInput& in) {
                 skip_at_ = in.t;
                 ++skips_;
                 a.kind = CatchupAction::SkipOpening;
-                a.why = "behind the host and a cutscene plays in the own world: skip " + std::to_string(skips_);
+                a.why = std::string(in.self_skip ? "skip prologue and a cutscene plays in the own world: skip " : "behind the host and a cutscene plays in the own world: skip ") + std::to_string(skips_);
             }
             return a;
         }
@@ -277,7 +291,7 @@ CatchupAction Catchup::Step(const CatchupInput& in) {
                 skip_at_ = in.t;
                 ++skips_;
                 a.kind = CatchupAction::SkipOpening;
-                a.why = "behind the host and in the opening cutscene: skip " + std::to_string(skips_);
+                a.why = std::string(in.self_skip ? "skip prologue and in the opening cutscene: skip " : "behind the host and in the opening cutscene: skip ") + std::to_string(skips_);
             }
             return a;
         }
@@ -286,7 +300,7 @@ CatchupAction Catchup::Step(const CatchupInput& in) {
         }
         phase_ = Phase::Apply;
         a.kind = CatchupAction::ApplyStart;
-        a.why = std::string("behind the host (step ") + StartStepName(step) + ")";
+        a.why = std::string(in.self_skip ? "skip prologue (step " : "behind the host (step ") + StartStepName(step) + ")";
         applied_ = true;
         phase_at_ = in.t;
         return a;

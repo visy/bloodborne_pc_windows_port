@@ -164,6 +164,8 @@ def _build_id(app_dir: Path):
         try:
             with open(log, encoding="utf-8", errors="replace") as f:
                 for line in f:
+                    if line.startswith("[coop] "):
+                        line = line[len("[coop] "):]
                     if line.startswith("Party: build "):
                         return line.strip()[len("Party: build "):]
         except OSError:

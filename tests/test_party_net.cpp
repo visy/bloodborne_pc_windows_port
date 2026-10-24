@@ -239,6 +239,40 @@ static void test_aliases() {
     std::printf("endpoint aliases: ok\n");
 }
 
+// Two homes with the same router-assigned LAN address (Radmin / Hamachi players, 2026-10-23): the
+// peer's local candidate is our own endpoint and must never be probed or counted as heard.
+static void test_same_lan_address() {
+    using bbnet::party::ip_parse;
+    using bbnet::udp::OwnIf;
+    using bbnet::udp::is_own_endpoint;
+    using bbnet::udp::local_candidate_usable;
+    const std::uint32_t mask = ip_parse("255.255.255.0");
+    const std::vector<OwnIf> own = {{ip_parse("192.168.1.50"), mask}, {ip_parse("127.0.0.1"), ip_parse("255.0.0.0")}};
+    const std::uint16_t port = htons(9307);
+    const std::uint32_t pub_a = ip_parse("203.0.113.5"), pub_b = ip_parse("198.51.100.7");
+    // Same local IP and port on both sides, different public IPs: dropped.
+    CHECK(!local_candidate_usable(ip_parse("192.168.1.50"), port, port, own, pub_a, pub_b));
+    CHECK(!local_candidate_usable(ip_parse("192.168.1.50"), port, port, own, 0, 0));
+    CHECK(!local_candidate_usable(ip_parse("192.168.1.50"), port, port, own, pub_a, pub_a));
+    // Same public IP, different local IPs (two PCs in one home): the local address stays.
+    CHECK(local_candidate_usable(ip_parse("192.168.1.20"), port, port, own, pub_a, pub_a));
+    CHECK(local_candidate_usable(ip_parse("10.0.5.9"), port, port, own, pub_a, pub_a));
+    // Different public IP but inside our subnet: kept.
+    CHECK(local_candidate_usable(ip_parse("192.168.1.20"), port, port, own, pub_a, pub_b));
+    // Another subnet and another public IP: not our network.
+    CHECK(!local_candidate_usable(ip_parse("192.168.7.20"), port, port, own, pub_a, pub_b));
+    // Same machine, another port (two instances): kept. No adapter list: kept.
+    CHECK(local_candidate_usable(ip_parse("127.0.0.1"), htons(9308), port, own, 0, 0));
+    CHECK(local_candidate_usable(ip_parse("192.168.1.50"), htons(9308), port, own, pub_a, pub_a));
+    CHECK(local_candidate_usable(ip_parse("192.168.9.9"), port, port, {}, 0, 0));
+    // A datagram from our own endpoint is ours; from a peer with another port or address, not.
+    CHECK(is_own_endpoint(ip_parse("192.168.1.50"), port, port, own));
+    CHECK(!is_own_endpoint(ip_parse("192.168.1.50"), htons(9308), port, own));
+    CHECK(!is_own_endpoint(ip_parse("192.168.1.14"), port, port, own));
+    CHECK(!is_own_endpoint(ip_parse("203.0.113.9"), port, port, own));
+    std::printf("same LAN address: ok\n");
+}
+
 static void test_netsim() {
     using namespace bbnet::netsim;
     Config c;
@@ -696,6 +730,61 @@ static std::uint32_t ipv4(const char* text) {
     inet_pton(AF_INET, text, &a);
     return a;
 }
+// Host over a VPN (0.7.5): which adapter is "the VPN", for auto / off / a name; same-LAN-address homes.
+static void test_vpn_selection() {
+    using bbnet::LanAdapter;
+    using bbnet::VpnKind;
+    auto adapter = [](const char* name, const char* ip, bool gw, bool def, bool phys) {
+        LanAdapter a;
+        a.name = name;
+        a.ip = ipv4(ip);
+        a.gateway = gw;
+        a.default_route = def;
+        a.physical = phys;
+        return a;
+    };
+    const LanAdapter lan = adapter("Ethernet / Realtek PCIe 2.5GbE Family Controller", "192.168.1.20", true, true, true);
+    const LanAdapter radmin = adapter("Radmin VPN / Famatech Radmin VPN Ethernet Adapter", "26.41.7.9", false, false, true);
+    const LanAdapter hamachi = adapter("Hamachi / LogMeIn Hamachi Virtual Ethernet Adapter", "25.4.5.6", false, false, true);
+    const LanAdapter tail = adapter("Tailscale / Tailscale Tunnel", "100.101.102.103", false, false, false);
+    const LanAdapter zt = adapter("ZeroTier One [8056c2e21c000001] / ZeroTier Virtual Port", "10.147.17.5", false, false, true);
+    const LanAdapter nord = adapter("NordLynx / NordLynx Tunnel", "10.5.0.2", true, true, false);
+    const LanAdapter lan2 = adapter("Ethernet 2 / Intel(R) Ethernet I219-V", "192.168.1.20", true, false, true);  // same address as lan
+    CHECK(bbnet::vpn_kind(radmin) == VpnKind::Radmin && bbnet::vpn_kind(hamachi) == VpnKind::Hamachi);
+    CHECK(bbnet::vpn_kind(tail) == VpnKind::Tailscale && bbnet::vpn_kind(zt) == VpnKind::ZeroTier);
+    CHECK(bbnet::vpn_kind(nord) == VpnKind::Other && bbnet::vpn_kind(lan) == VpnKind::None);
+    CHECK(bbnet::vpn_label(radmin) == "Radmin VPN" && bbnet::vpn_label(nord) == "NordLynx");
+    // an unnamed virtual adapter is recognised by its range; a real adapter is not
+    CHECK(bbnet::vpn_kind(adapter("Ethernet 5 / Virtual Adapter", "26.1.2.3", false, false, true)) == VpnKind::Radmin);
+    CHECK(bbnet::vpn_kind(adapter("Ethernet 5 / Virtual Adapter", "100.64.0.9", false, false, true)) == VpnKind::Tailscale);
+    CHECK(bbnet::vpn_kind(adapter("Ethernet 5 / Virtual Adapter", "100.128.0.9", false, false, true)) == VpnKind::None);
+    CHECK(bbnet::vpn_kind(adapter("Ethernet / Realtek", "26.1.2.3", true, true, true)) == VpnKind::None);
+    CHECK(bbnet::vpn_pref_normalize("") == "auto" && bbnet::vpn_pref_normalize(" AUTO ") == "auto");
+    CHECK(bbnet::vpn_pref_normalize("Off") == "off" && bbnet::vpn_pref_normalize(" Radmin VPN ") == "Radmin VPN");
+
+    const std::vector<LanAdapter> list{lan, radmin, nord};
+    CHECK(bbnet::select_vpn_adapter(list, "auto") == 1);   // Radmin; the commercial VPN is never taken unasked
+    CHECK(bbnet::select_vpn_adapter(list, "") == 1);
+    CHECK(bbnet::select_vpn_adapter(list, "off") == -1);
+    CHECK(bbnet::select_vpn_adapter({lan, nord}, "auto") == -1);
+    CHECK(bbnet::select_vpn_adapter({lan}, "auto") == -1);
+    CHECK(bbnet::select_vpn_adapter(list, "radmin") == 1);  // a name, any case, a part of it
+    CHECK(bbnet::select_vpn_adapter(list, "NORDLYNX") == 2);
+    CHECK(bbnet::select_vpn_adapter(list, "zerotier") == -1);  // not up: the usual address
+    CHECK(bbnet::select_vpn_adapter({lan, hamachi, tail, radmin}, "auto") == 3);  // Radmin, Hamachi, Tailscale, ZeroTier
+    CHECK(bbnet::select_vpn_adapter({lan, zt, tail}, "auto") == 2);
+    // an adapter without an address (169.254 / 0) is never the VPN
+    CHECK(bbnet::select_vpn_adapter({adapter("Radmin VPN", "169.254.1.1", false, false, true)}, "auto") == -1);
+    // two homes with the same router-assigned address (0.7.5 samelanip): the VPN address tells them apart
+    const int pick = bbnet::select_vpn_adapter({lan2, radmin}, "auto");
+    CHECK(pick == 1 && ipv4("192.168.1.20") == lan2.ip && radmin.ip != lan2.ip);
+    // The address choice itself: auto takes the VPN over the LAN with the default route, off does not.
+    // (Not on the real adapters of this PC: the scores only.)
+    CHECK(bbnet::vpn_adapter_score(radmin, "auto") > bbnet::lan_adapter_score(lan));
+    CHECK(bbnet::vpn_adapter_score(radmin, "off") < 0);
+    std::printf("vpn selection: ok\n");
+}
+
 static void test_local_address() {
     using bbnet::LanAdapter;
     auto adapter = [](const char* name, const char* ip, bool gw, bool def, bool phys) {
@@ -869,12 +958,15 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     test_local_address();
+
+    test_vpn_selection();
     set_env("BB_PARTY_LOOPBACK", "1");  // back to loopback-only sockets for the tests below
     test_stun();
     test_netsim();
     test_nr_outage();
     test_peer_paths();
     test_aliases();
+    test_same_lan_address();
     test_routing();
     test_np();
     test_dispatcher();

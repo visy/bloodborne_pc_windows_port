@@ -40,7 +40,7 @@ Double-click `launch_gui.bat` or run:
 launch_gui.bat
 ```
 - Select your `eboot.bin` file or game folder.
-- **Display**: target frame rate (60 FPS recommended), render resolution, window mode (`BB_WINDOW_MODE`: *Windowed*, *Borderless* or exclusive *Fullscreen*), monitor (`BB_DISPLAY`), frames ahead (1 = least input lag, 2 = default, 3 = smoothest).
+- **Display**: target frame rate (60 FPS recommended), render resolution, window mode (`BB_WINDOW_MODE`: *Borderless* (default), *Windowed* or exclusive *Fullscreen*, which can crash on laptops with hybrid graphics), monitor (`BB_DISPLAY`), frames ahead (1 = least input lag, 2 = default, 3 = smoothest).
 - **Graphics**: *Enable upscaler* with its choice (FSR 3.1 / FSR 4 / FSR 4.1.1 / TAA / DLSS, the game menu's list; unchecked = `upscaler=off`; the launcher cannot check the GPU, so it lists all of them and the game falls back to FSR 3.1 when FSR 4 / 4.1.1 or DLSS is not available), object motion vectors, anisotropic filtering, frame generation (Off / DLSS FG 2x-4x / FSR FG 2x) and NVIDIA Reflex (Off / On / On + Boost; both game settings in `bbport.ini`, off by default, see [FG_REFLEX.md](FG_REFLEX.md)), HDR output with its peak brightness and paper white ([HDR output](#hdr-output); off by default), VRAM pre-upload (*Full* needs a 12 GB+ GPU).
 - **Performance & Shaders**: *Performance Patch*, draw preparation workers, shader precompile, async shaders, GPL, the compile indicator, and **Export / Import shader cache**.
 - **Game**: skip intro, skip the online/offline choice, settings in the game's System menu, mods, and *All XML Patches...*.

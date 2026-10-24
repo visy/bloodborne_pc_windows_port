@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace coop::deathrules {
 
@@ -132,12 +133,31 @@ struct DownView {
     bool scripted_warp = false;  ///< as HostDeathView::scripted_warp (a death in a fight: after the limbo)
     double down_for = 0;       ///< s since the death was taken
     double delay = 1.0;        ///< BB_PARTY_B2_HOST_REVIVE_DELAY
+    /// The limbo's fight (LimboFightView): members in the fight when the host died, and how many of
+    /// them are out of it now (down, or gone: Hunter's Mark, lamp, Leave, disconnect).
+    int fighters = -1;         ///< -1: not tracked (no limbo)
+    int fighters_out = 0;
+    /// A member that left by a load into this world (a Mark to the host's lamp) is still loading:
+    /// the wipe waits for its arrival (one load after the other, not two at once).
+    bool fighter_settling = false;
 };
+/// The host's boss-fight limbo has nobody left fighting (player report 2026-10-22, host_limbo_mark:
+/// the last living guest used the Hunter's Mark, the host spectated its own corpse until the guest
+/// lamped to the Dream): every member that was in the fight is down or gone from it.
+inline bool LimboFightEmpty(int fighters, int out) {
+    return fighters >= 0 && out >= fighters;
+}
 inline DownTick PlanDownTick(const DownView& v) {
     // Recounted every frame: a member whose death arrives a moment after the host's turns the
     // host's lone death into a wipe (playtest 1 bug 18: "0 down" counted 0.3 s too early).
     if (Wiped(v.members, v.down_reported, v.down_seen)) {
         return DownTick::Wipe;
+    }
+    // 0.7.4 (user decision): the last living member leaving the fight by any way (Hunter's Mark,
+    // Bold Hunter's Mark, a lamp, its death, Leave, a disconnect) counts as a wipe: everyone
+    // respawns as in one. Only while the boss still fights (its kill: the arena revive / load below).
+    if (v.limbo && v.boss_active && !v.boss_killed && LimboFightEmpty(v.fighters, v.fighters_out)) {
+        return v.fighter_settling ? DownTick::Wait : DownTick::Wipe;
     }
     if (v.down_for < v.delay) {
         return DownTick::Wait;
@@ -425,6 +445,75 @@ private:
     };
     std::map<int, Entry> e_;
 };
+/// The host's boss-fight limbo: who was fighting when the host died and who has left the fight
+/// since (DownView fighters / fighters_out / fighter_settling). Host, under g_dead_mu.
+class LimboFight {
+public:
+    /// The limbo starts: the members in the roster now (MembersNow, the host excluded).
+    template <class Container>
+    void Begin(const Container& members) {
+        on_ = true;
+        in_.clear();
+        left_.clear();
+        for (const MemberNow& m : members) {
+            if (m.in_roster && m.slot > 0) in_.push_back(m.slot);
+        }
+    }
+    void End() {
+        on_ = false;
+        in_.clear();
+        left_.clear();
+    }
+    bool On() const { return on_; }
+    /// A fighter left the fight (Hunter's Mark, a lamp, Leave). `settle_until`: a load into this world
+    /// still running until then (its "arrived" ends it sooner); 0 when it went elsewhere. True: newly.
+    bool Left(int slot, double settle_until) {
+        if (!on_ || !Has(slot)) return false;
+        const bool fresh = left_.count(slot) == 0;
+        left_[slot] = settle_until;
+        return fresh;
+    }
+    /// Its load into this world is over ("arrived" at `now`): settled kLimboArriveGrace s later (still
+    /// out of the fight). The guest sends "arrived" a moment before its re-join ends, and a host
+    /// travel that reaches it before that end is dropped (live bl1: the wipe's load 13 ms after it).
+    static constexpr double kLimboArriveGrace = 2.5;
+    void Arrived(int slot, double now) {
+        auto it = left_.find(slot);
+        if (it != left_.end()) it->second = now + kLimboArriveGrace;
+    }
+    int Fighters() const { return on_ ? int(in_.size()) : -1; }
+    /// Fighters out: left, gone from the roster, or `down(slot)` (reported down).
+    template <class Container, class DownFn>
+    int Out(const Container& members, DownFn down) const {
+        int n = 0;
+        for (int slot : in_) {
+            bool here = false;
+            for (const MemberNow& m : members) {
+                if (m.slot == slot && m.in_roster) here = true;
+            }
+            n += (!here || left_.count(slot) || down(slot)) ? 1 : 0;
+        }
+        return n;
+    }
+    /// A fighter that left by a load into this world has not arrived yet (and `now` is before its cap).
+    bool Settling(double now) const {
+        for (const auto& kv : left_) {
+            if (kv.second > now) return true;
+        }
+        return false;
+    }
+
+private:
+    bool Has(int slot) const {
+        for (int s : in_) {
+            if (s == slot) return true;
+        }
+        return false;
+    }
+    bool on_ = false;
+    std::vector<int> in_;
+    std::map<int, double> left_;
+};
 /// Members seen at HP 0 right now (their own fresh vitals): HostDeathView / DownView down_seen.
 template <class Container>
 inline int SeenDown(const Container& members) {
@@ -457,6 +546,12 @@ constexpr std::uint64_t kFallFlags1e1 = 0x0400000040ull;
 constexpr std::uint16_t kDeathBitsHp200 = 0x7800;
 inline bool FallDeathState(std::uint64_t f1e1, std::uint16_t /*hp200*/) {
     return (f1e1 & kFallFlags1e1) != 0;
+}
+/// [ChrCtrl +0x38] +0x48 on a revive: the game's own revive (0x13CBAD0) does `& 0xFC`. Bit 0 is the death
+/// bit; bit 1 is set by a fall death and, left set, killed the revived chr again a frame later (player
+/// report cainhurst_death_loop). `both` false = the old bit-0-only clear (BB_PARTY_REVIVE_BIT1=0).
+inline std::uint8_t ReviveCtrl38Clear(std::uint8_t v, bool both = true) {
+    return std::uint8_t(v & ~(both ? 3u : 1u));
 }
 enum class GuestRevive { InPlace, LoadFall, LoadFallState };
 inline const char* GuestReviveName(GuestRevive g) {
@@ -705,6 +800,34 @@ inline bool LampTriggerFlag(std::uint32_t id) {
     const std::uint32_t area = id / 100000 % 100, block = id / 10000 % 10;
     return area >= 21 && !(area == 21 && block == 0);
 }
+/// The lamp warp events: world lamp 7200, Dream headstone 12107000, common 7300 (the Dream side of
+/// a headstone warp).
+inline bool LampWarpEvent(std::uint32_t id) {
+    return id == 7200 || id == 7300 || id == 12107000;
+}
+/// A peer's packet that would run this game's copy of a lamp warp event: packet 0x0f (a peer's
+/// CompleteEvent flag, 4 bytes) with a lamp / headstone flag, or 0x0e (a peer's replicated EMEVD
+/// event state, 0x14 bytes, `words` its 5 words) naming a lamp warp event. Its warp here would
+/// only be dropped as "another member's lamp", and running it uses the event up: a lamp's event
+/// (7200, rest 0) waits for its flag once per area load, so this player's own Dream choice at that
+/// lamp later set the flag and nothing warped (live, 0.2.2 b1: a guest's lone Dream trip, then
+/// the host at the same lamp). Such packets are dropped before the game reads them.
+inline bool PeerLampPacket(std::uint32_t type, std::uint32_t size, const std::uint32_t* words) {
+    if (!words) {
+        return false;
+    }
+    if (type == 0xf && size == 4) {
+        return LampTriggerFlag(words[0]);
+    }
+    if (type == 0xe && size == 0x14) {
+        for (int i = 0; i < 5; ++i) {
+            if (LampWarpEvent(words[i])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 /// The other 7AAB01xx flags: per-player talk state (the Dream's 721001xx, 700001xx), set and
 /// cleared by each game's own talk scripts and events; kept out of the host-world mirror like the
 /// lamp flags (a mirrored host 0 would undo a guest's Doll handshake mid level-up).
@@ -930,9 +1053,12 @@ inline GuestLamp PlanGuestLamp(bool guest_in_host_world, bool at_lamp_spot, bool
 /// 0.7.3 (user decision 2026-10-22: "only the host's own rest resets the world"): a guest that
 /// leaves the Hunter's Dream alone (`from_dream`: a headstone, NO) never rests the host's world;
 /// its trip is a plain travel for the guest (the dreamstone da run gave the host a rest load).
+/// Nightwatch (playtest 23 Oct, the same decision): a guest that travels away alone (to the Dream or
+/// another lamp) never rests the host's world either: the host no longer reloads where it stands.
+/// Only a lamp of the map the party stands in stays a rest (`same_map_solo`): the guest reloads that
+/// map itself, and without the host's rest load the host's kills would live again on its screen only.
 inline bool GuestAloneRestsHostWorld(bool alone, bool same_map_solo, bool from_dream) {
-    (void)same_map_solo;
-    return alone && !from_dream;
+    return alone && same_map_solo && !from_dream;
 }
 
 // ---- The host runs a rest load for a guest's rest ----

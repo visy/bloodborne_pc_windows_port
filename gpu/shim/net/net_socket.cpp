@@ -394,6 +394,68 @@ struct P2pPort {
 constexpr std::size_t kMaxInbox = 1024;     // datagrams queued for one game socket
 constexpr std::size_t kMaxHeard = 4096;     // sources remembered
 constexpr std::size_t kSmallDgram = 96;     // F5: a keepalive-sized datagram (replayed in an outage)
+// Every IPv4 address of this machine (all adapters, loopback included, plus the forced
+// BB_PARTY_LOCAL_IP / chosen LAN address) with its mask, cached for 10 s. Used to recognise our
+// own endpoint: a peer in another home can report the very same LAN address as ours.
+// BB_PARTY_SELF_GUARD=0 turns the self-endpoint checks off (tests only).
+bool self_guard_on() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_SELF_GUARD");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+std::vector<udp::OwnIf> own_ifaces() {
+    static std::mutex mu;
+    static std::vector<udp::OwnIf> cache;
+    static Clock::time_point at{};
+    std::lock_guard<std::mutex> lk(mu);
+    if (!cache.empty() && Clock::now() - at < std::chrono::seconds(10)) return cache;
+    std::vector<udp::OwnIf> out;
+#if defined(_WIN32)
+    ULONG size = 16 * 1024;
+    std::vector<std::uint8_t> buf;
+    ULONG rc = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 4 && rc == ERROR_BUFFER_OVERFLOW; ++tries) {
+        buf.resize(size);
+        rc = ::GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+                                    nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (rc == NO_ERROR) {
+        for (auto* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
+            if (a->OperStatus != IfOperStatusUp) continue;
+            for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
+                if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET) continue;
+                udp::OwnIf o;
+                o.ip = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr.s_addr;
+                const ULONG bits = u->OnLinkPrefixLength;
+                o.mask = bits ? bswap32(bits >= 32 ? 0xffffffffu : ~(0xffffffffu >> bits)) : 0;
+                out.push_back(o);
+            }
+        }
+    }
+#else
+    ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) == 0) {
+        for (ifaddrs* i = list; i; i = i->ifa_next) {
+            if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || !(i->ifa_flags & IFF_UP)) continue;
+            udp::OwnIf o;
+            o.ip = reinterpret_cast<sockaddr_in*>(i->ifa_addr)->sin_addr.s_addr;
+            o.mask = i->ifa_netmask ? reinterpret_cast<sockaddr_in*>(i->ifa_netmask)->sin_addr.s_addr : 0;
+            out.push_back(o);
+        }
+        ::freeifaddrs(list);
+    }
+#endif
+    if (const std::uint32_t l = local_ipv4()) {
+        bool have = false;
+        for (const udp::OwnIf& o : out) have = have || o.ip == l;
+        if (!have) out.push_back({l, 0});
+    }
+    cache = out;
+    at = Clock::now();
+    return out;
+}
 void note_heard_locked(P2pPort& port, std::uint64_t key) {
     const auto now = Clock::now();
     if (port.heard.size() >= kMaxHeard && !port.heard.count(key)) {
@@ -711,6 +773,12 @@ void p2p_reader(std::shared_ptr<P2pPort> port) {
             from.port = s6.sin6_port;
         }
         if (n < 0) continue;  // Windows: an ICMP port unreachable surfaces as WSAECONNRESET
+        // Our own hole-punch probe looped back (a peer in another home with the same LAN address as ours,
+        // probed at that address): never a datagram from a peer, never "heard".
+        if (!from.v6 && self_guard_on() && from.port == bswap16(port->port) &&
+            udp::is_probe(buf, static_cast<std::size_t>(n)) &&
+            udp::is_own_endpoint(from.addr, from.port, bswap16(port->port), own_ifaces()))
+            continue;
         // The route table (party_route.h): an IPv6 source becomes its IPv4 key, member relay frames
         // are answered, forwarded or unwrapped; what is left reaches the layers below as before.
         from.data.assign(buf, buf + n);
@@ -996,7 +1064,7 @@ std::shared_ptr<P2pPort> p2p_port_open(std::uint16_t want) {
     }
     if (!sock_ok(port->fd)) return nullptr;
     if (port->port != want) log("party port %u (BB_PARTY_PORT %u was taken); peers reach this game there", port->port, want);
-    else log("party port %u open", port->port);
+    else log("party port %u: listening on this PC (whether the internet reaches it: the Party NAT line)", port->port);
     g_bound_port.store(port->port);
     if (g_ipv6_wanted.load()) open_v6(*port);
     port->reader = std::thread(p2p_reader, port);
@@ -1780,6 +1848,15 @@ BBNET_ABI int net_resolver_aton(int id, const void* addr, char* hostname, int le
 
 // ---- libSceNetCtl ------------------------------------------------------------------------------
 
+namespace {
+std::mutex g_vpn_mu;
+std::string g_vpn_in_use;       // "label|ip"
+void set_vpn_in_use(const std::string& v) {
+    std::lock_guard<std::mutex> lk(g_vpn_mu);
+    g_vpn_in_use = v;
+}
+}  // namespace
+
 struct LocalNet {
     std::uint32_t ip = 0, mask = 0, gateway = 0, dns1 = 0, dns2 = 0;  // network order
     std::uint8_t mac[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x01};
@@ -1794,6 +1871,7 @@ LocalNet query_local_net(std::string* how) {
     LocalNet out;
     std::string source;
     const std::uint32_t want = forced_local_ipv4(&source);
+    const std::string pref = vpn_preference();
     std::string candidates;
     LanAdapter chosen{};
     char text[32];
@@ -1851,6 +1929,9 @@ LocalNet query_local_net(std::string* how) {
             if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
             info.ip = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr.s_addr;
             int score = lan_adapter_score(info);
+            if (score >= 0 && !want) {
+                if (const int v = vpn_adapter_score(info, pref); v >= 0) score = v;
+            }
             note(info, score);
             if (want) score = info.ip == want ? 1 : -1;
             if (score < 0) continue;
@@ -1886,6 +1967,9 @@ LocalNet query_local_net(std::string* how) {
             info.physical = info.name.rfind("en", 0) == 0 || info.name.rfind("eth", 0) == 0 ||
                             info.name.rfind("wl", 0) == 0;
             int score = lan_adapter_score(info);
+            if (score >= 0 && !want) {
+                if (const int v = vpn_adapter_score(info, pref); v >= 0) score = v;
+            }
             note(info, score);
             if (want) score = info.ip == want ? 1 : -1;
             if (score <= best) continue;
@@ -1923,9 +2007,11 @@ LocalNet query_local_net(std::string* how) {
             write_ipv4(gw, sizeof(gw), out.gateway);
             tag(std::string("gateway ") + gw);
         }
-        if (adapter_is_virtual(chosen.name)) tag("virtual adapter: no better one");
+        if (vpn_adapter_score(chosen, pref) >= 0) tag("hosting over " + vpn_label(chosen) + ", party_vpn=" + pref);
+        else if (adapter_is_virtual(chosen.name)) tag("virtual adapter: no better one");
         if (!tags.empty()) line += " [" + tags + "]";
         line += "; candidates: " + candidates + "; BB_PARTY_LOCAL_IP overrides";
+        set_vpn_in_use(vpn_adapter_score(chosen, pref) >= 0 ? vpn_label(chosen) + "|" + text : std::string());
     } else {
         line = "none (no usable IPv4 adapter" + (candidates.empty() ? std::string() : ": " + candidates) + ")";
     }
@@ -2056,6 +2142,94 @@ int lan_adapter_score(const LanAdapter& a) {
     if (a.gateway) score += 4;
     if (a.physical) score += 2;
     return score;
+}
+
+namespace {
+std::string lower_text(const std::string& s) {
+    std::string n;
+    for (char c : s) n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return n;
+}
+}  // namespace
+
+VpnKind vpn_kind(const LanAdapter& a) {
+    const std::string n = lower_text(a.name);
+    auto has = [&](const char* m) { return n.find(m) != std::string::npos; };
+    if (has("radmin")) return VpnKind::Radmin;
+    if (has("hamachi")) return VpnKind::Hamachi;
+    if (has("zerotier")) return VpnKind::ZeroTier;
+    if (has("tailscale")) return VpnKind::Tailscale;
+    if (!adapter_is_virtual(a.name)) return VpnKind::None;
+    const std::uint32_t host = bswap32(a.ip);
+    if ((host >> 24) == 26) return VpnKind::Radmin;
+    if ((host >> 24) == 25) return VpnKind::Hamachi;
+    if ((host >> 22) == (0x64400000u >> 22)) return VpnKind::Tailscale;  // 100.64.0.0/10
+    if (has("vpn") || has("tap") || has("wintun") || has("wireguard") || has("nordlynx") || has("anyconnect") ||
+        has("fortinet") || has("pangp"))
+        return VpnKind::Other;
+    return VpnKind::None;
+}
+
+std::string vpn_label(const LanAdapter& a) {
+    switch (vpn_kind(a)) {
+        case VpnKind::Radmin: return "Radmin VPN";
+        case VpnKind::Hamachi: return "Hamachi";
+        case VpnKind::ZeroTier: return "ZeroTier";
+        case VpnKind::Tailscale: return "Tailscale";
+        default: break;
+    }
+    const std::size_t slash = a.name.find(" / ");
+    return slash == std::string::npos ? a.name : a.name.substr(0, slash);
+}
+
+std::string vpn_pref_normalize(const std::string& pref) {
+    std::size_t b = 0, e = pref.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(pref[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(pref[e - 1]))) --e;
+    const std::string t = pref.substr(b, e - b);
+    const std::string l = lower_text(t);
+    if (t.empty() || l == "auto" || l == "on" || l == "1") return "auto";
+    if (l == "off" || l == "0" || l == "none" || l == "no") return "off";
+    return t;
+}
+
+int vpn_adapter_score(const LanAdapter& a, const std::string& pref_in) {
+    const std::string pref = vpn_pref_normalize(pref_in);
+    if (pref == "off" || lan_adapter_score(a) < 0) return -1;
+    const VpnKind k = vpn_kind(a);
+    if (pref == "auto") {
+        switch (k) {
+            case VpnKind::Radmin: return 1004;
+            case VpnKind::Hamachi: return 1003;
+            case VpnKind::Tailscale: return 1002;
+            case VpnKind::ZeroTier: return 1001;
+            default: return -1;
+        }
+    }
+    return lower_text(a.name).find(lower_text(pref)) != std::string::npos ? 1000 : -1;
+}
+
+int select_vpn_adapter(const std::vector<LanAdapter>& adapters, const std::string& pref) {
+    int best = -1, best_score = -1;
+    for (std::size_t i = 0; i < adapters.size(); ++i) {
+        const int s = vpn_adapter_score(adapters[i], pref);
+        if (s > best_score) {
+            best_score = s;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
+std::string vpn_preference() {
+    const char* e = std::getenv("BB_PARTY_VPN");
+    return vpn_pref_normalize(e ? e : "");
+}
+
+std::string vpn_in_use() {
+    local_net();  // chosen once; the cache holds g_vpn_in_use
+    std::lock_guard<std::mutex> lk(g_vpn_mu);
+    return g_vpn_in_use;
 }
 
 std::uint32_t query_local_ipv4(std::string* how) {
@@ -2414,7 +2588,23 @@ void p2p_punch(const char* label, std::uint32_t addr, std::uint16_t port_host, s
     a.sin_addr.s_addr = addr;
     a.sin_port = bswap16(port_host);
     targets.push_back(a);
-    if (local_addr && local_port && (local_addr != addr || local_port != port_host)) {
+    bool local_ok = local_addr && local_port && (local_addr != addr || local_port != port_host);
+    if (local_ok && self_guard_on()) {
+        std::uint32_t own_public = 0;
+        {
+            std::lock_guard<std::mutex> lk(port->mu);
+            own_public = port->stun_addr;
+        }
+        if (!udp::local_candidate_usable(local_addr, bswap16(local_port), bswap16(port->port), own_ifaces(), own_public,
+                                         addr)) {
+            char lip[32];
+            write_ipv4(lip, sizeof(lip), local_addr);
+            log("punch %s: ignoring its local address %s:%u (our own address, or not on our network)",
+                label ? label : "peer", lip, local_port);
+            local_ok = false;
+        }
+    }
+    if (local_ok) {
         sockaddr_in b{};
         b.sin_family = AF_INET;
         b.sin_addr.s_addr = local_addr;

@@ -1144,13 +1144,22 @@ void DefineAll() {
                    "Гость: скопируйте гостевой код участника (BBG1-...) и нажмите: его ретранслятор, если хост недоступен"),
            {AddText("Paste", "Вставить")}, Kind::Button,
            [] { return party::status::Snapshot().role == party::status::Role::Guest; });
+    // 0.7.5: host over a VPN. A list opens a pop-up over the rows below it: last on the page.
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return std::clamp(v.party_vpn.load(), 0, 2); },
+               [](int i) { BbSettings::Get().party_vpn = std::clamp(i, 0, 2); }),
+           AddText("Host over a VPN", "Хост через VPN"),
+           AddText("Radmin, Hamachi, ZeroTier, Tailscale: your code holds the VPN address. Auto: if one is up. Next start",
+                   "Radmin, Hamachi, ZeroTier, Tailscale: в код попадёт адрес VPN. Авто: если он есть. Со след. запуска"),
+           {AddText("Auto", "Авто"), AddText("Off", "Выкл."), AddText("Named adapter", "Адаптер по имени")},
+           Kind::List);
 
     // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
     // headstone or Hunter's Mark in a party (docs/party/split_travel.md).
-    split_text[0] = AddText("Travel with the party?\nYES: everyone travels together.  NO: you travel alone.\n"
-                            "A rest at a lamp resets the world for the party.",
-                            "Путешествовать всей группой?\nДА: вся группа вместе.  НЕТ: только вы.\n"
-                            "Отдых у лампы сбрасывает мир для всей группы.");
+    split_text[0] = AddText("Travel with the party?\nYES: everyone travels together and the world resets.\n"
+                            "NO: you travel alone; the others stay where they are.",
+                            "Путешествовать всей группой?\nДА: вся группа вместе, мир сбрасывается.\n"
+                            "НЕТ: только вы; остальные остаются на месте.");
 
     // D10 story notices a guest's own game never shows (party_story StoryNoticeMessage): the
     // game's EventText 10012014, as its English / Russian text.
@@ -1491,6 +1500,37 @@ void DefineAll() {
     scale_row(&Values::party_boss_poise, kPoiseTable, "Boss poise", "Стойкость боссов", 2);
     scale_row(&Values::party_enemy_poise, kPoiseTable, "Enemy poise", "Стойкость врагов", 5);
 
+
+    // ---- Party rules: Phantoms (0.7.5, levelsync, party_levelsync_rules.h): what a hunter keeps of its
+    // stats when it joins a party. Both ON = Bloodborne's own co-op. ----
+    AddPage("Party rules: Phantoms", "Правила: призраки",
+            "Host's rules: level sync and the phantom health cut, as in Bloodborne's co-op (bbport)",
+            "Правила хоста: уравнивание уровней и штраф к здоровью призрака, как в Bloodborne (bbport)");
+    host_rule(&Values::party_level_sync, "Level sync", "Уравнивание уровней",
+              AddText("A hunter far above the host's level is scaled down, as in the game. Off: full stats. Party rule",
+                      "Охотник намного выше уровнем хоста ослабляется, как в игре. Выкл.: полные характеристики. "
+                      "Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::LevelSync); },
+              {"The host's rule: a hunter above the host's level is scaled down (a blue icon by its name)",
+               "Правило хоста: охотник выше уровнем, чем хост, ослабляется (синий значок у имени)"},
+              {"The host decides; off: every hunter keeps its full stats whatever its level",
+               "Решает хост; выкл.: у каждого охотника полные характеристики, каким бы ни был уровень"});
+    host_rule(&Values::party_phantom_hp, "Phantom health cut", "Штраф здоровья призрака",
+              AddText("Joining hunters get 30 % less maximum health, as in the game. Off: full health. Party rule",
+                      "Присоединившиеся охотники теряют 30 % макс. здоровья, как в игре. Выкл.: полное. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::PhantomHp); },
+              {"The host's rule: hunters who join the party have 30 % less maximum health",
+               "Правило хоста: у присоединившихся охотников на 30 % меньше максимального здоровья"},
+              {"The host decides; off: hunters who join keep their full maximum health",
+               "Решает хост; выкл.: присоединившиеся охотники сохраняют полное максимальное здоровье"});
+    host_rule(&Values::party_skip_prologue, "Skip the prologue", "Пропустить пролог",
+              AddText("A NEW character skips the clinic and first Dream visit: weapons, Yharnam lamp. Party rule",
+                      "НОВЫЙ персонаж пропускает клинику и первый Сон: оружие, фонарь Ярнама. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::SkipPrologue); },
+              {"The host's rule: a new character skips the prologue (Saw Cleaver, Hunter Pistol, Central Yharnam lamp)",
+               "Правило хоста: новый персонаж пропускает пролог (Пила-тесак, Охотничий пистолет, фонарь Центрального Ярнама)"},
+              {"The host decides; off: every new character plays the prologue. A character past it is never touched",
+               "Решает хост; выкл.: каждый новый персонаж проходит пролог. Прошедшего пролог это не затрагивает"});
 
     // ---- My party: Your save (0.7.4, partyrules): what a party brings into this player's own save
     // (its character): each player's own choice, also as a guest. ----

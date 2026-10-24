@@ -349,6 +349,10 @@ target_link_libraries(reflex-cpu-test PRIVATE Vulkan::Headers fmt::fmt)
 if (WIN32)
     target_compile_definitions(reflex-cpu-test PRIVATE VK_USE_PLATFORM_WIN32_KHR)
 endif()
+# Swapchain acquire / recreation rules (vk_swapchain_rules.h): suboptimal acquires, frame index.
+add_executable(swapchain-rules-test EXCLUDE_FROM_ALL ../tests/test_swapchain_rules.cpp)
+target_compile_options(swapchain-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(swapchain-rules-test PRIVATE ..)
 # Native HDR output (shim/bbport_hdr.h, I4): PQ, Rec.2020, the inverse tone curve, settings.
 add_executable(hdr-test EXCLUDE_FROM_ALL ../tests/test_hdr.cpp shim/bbport_settings.cpp)
 target_compile_options(hdr-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -561,6 +565,12 @@ set_target_properties(party-nat-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
 if (WIN32)
     target_link_libraries(party-nat-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# Stale collision records on remote players (ChrPreStepHook): NPCs and the local player untouched.
+# ninja -C out/gpu party-collision-test
+add_executable(party-collision-test EXCLUDE_FROM_ALL ../tests/test_party_collision.cpp)
+target_include_directories(party-collision-test PRIVATE shim)
+target_compile_options(party-collision-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+set_target_properties(party-collision-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # The in-game party flow's pure parts (shim/party/party_flow.cpp: party.json with the DPAPI-protected
 # password, the action planner, the relaunch file). ninja -C out/gpu party-flow-test
 add_executable(party-flow-test EXCLUDE_FROM_ALL ../tests/test_party_flow.cpp shim/party/party_flow.cpp shim/net/json.cpp)
@@ -638,6 +648,11 @@ add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-death-rules-test PRIVATE shim)
 set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Split travel notice text + rate limit (party_split_notice.h). ninja -C out/gpu party-split-notice-test
+add_executable(party-split-notice-test EXCLUDE_FROM_ALL ../tests/test_party_split_notice.cpp)
+target_compile_options(party-split-notice-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-split-notice-test PRIVATE shim)
+set_target_properties(party-split-notice-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Lifts in a party: the table and the decisions (party_lift_rules.h). ninja -C out/gpu party-lift-rules-test
 add_executable(party-lift-rules-test EXCLUDE_FROM_ALL ../tests/test_party_lift_rules.cpp)
 target_compile_options(party-lift-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -658,6 +673,11 @@ add_executable(party-glow-test EXCLUDE_FROM_ALL ../tests/test_party_glow.cpp)
 target_compile_options(party-glow-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-glow-test PRIVATE shim)
 set_target_properties(party-glow-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Level sync and phantom health (party_levelsync_rules.h). ninja -C out/gpu party-levelsync-test
+add_executable(party-levelsync-test EXCLUDE_FROM_ALL ../tests/test_party_levelsync.cpp)
+target_compile_options(party-levelsync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-levelsync-test PRIVATE shim)
+set_target_properties(party-levelsync-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Direct lamp travel (lamp_travel_rules.h). ninja -C out/gpu lamp-travel-test
 add_executable(lamp-travel-test EXCLUDE_FROM_ALL ../tests/test_lamp_travel.cpp)
 target_compile_options(lamp-travel-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -824,6 +844,11 @@ target_include_directories(party-npcfight-test PRIVATE shim)
 add_executable(party-kidnap-test EXCLUDE_FROM_ALL ../tests/test_party_kidnap.cpp)
 target_compile_options(party-kidnap-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-kidnap-test PRIVATE shim)
+# 0.7.5 guests' blows in the host's damage records (shim/party/party_npchit_rules.h, header only).
+# --target party-npchit-test
+add_executable(party-npchit-test EXCLUDE_FROM_ALL ../tests/test_party_npchit.cpp)
+target_compile_options(party-npchit-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-npchit-test PRIVATE shim)
 # Party status bridge (shim/party/party_status_bridge.cpp; in bbgpu through SHIM_SOURCES): link /
 # game facts -> the Party tab's state, roster, events, commands. ninja -C out/gpu party-status-bridge-test
 add_executable(party-status-bridge-test EXCLUDE_FROM_ALL ../tests/test_party_status_bridge.cpp

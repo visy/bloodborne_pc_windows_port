@@ -80,9 +80,17 @@ struct Rules {
     /// D11 (0.7.3, party_npcfight_rules.h): NPC hunters fight the whole party (a guest's copy of the
     /// host-only NPC transitions runs). The host's; on by default (a host from before it sends none: on).
     bool npc_fights = true;
+    /// 0.7.5 Party starts "skip the prologue" (party_start.h): a new character starts as after the
+    /// prologue. The host's; off by default (a host from before sends none: off).
+    bool skip_prologue = false;
     /// 0.7.3 (party_kidnap_rules.h): a Snatcher grabbing a guest takes the whole party to the Hypogean
     /// Gaol, as the host's own grab. The host's; on by default (a host from before it sends none: on).
     bool any_kidnap = true;
+    /// 0.7.5 (levelsync, party_levelsync_rules.h): Bloodborne's level sync (a hunter above the host's level is
+    /// scaled down: max HP, stamina, defence, resistances) and the phantom health cut (30 % less max HP
+    /// for a joined hunter). The host's; on by default = vanilla (a host from before sends none: on).
+    bool level_sync = true;
+    bool phantom_hp = true;
     /// 0.7.4 (partyrules, user spec 2026-10-23): the session rules that were each player's own until
     /// 0.7.3 and now come from the host, so the party plays one way ("HOST DECIDES"; what reaches a
     /// guest's own save stays the guest's). Read live on every peer (party_status HostRuleOn):

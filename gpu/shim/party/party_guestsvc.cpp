@@ -496,7 +496,21 @@ void DollRewriter(int event_id, int bank, int id, std::uint64_t event, std::uint
         !DollLevelUpCharTypeTest(event_id, bank, id, entity, type)) {
         return;
     }
-    const std::int8_t want = LocalSessionRole() == kSessionRoleClient ? 1 : 0;
+    // The test compares the LOCAL chr's type (PlayerIns +0x78) at this moment. After a B2 load into
+    // the Dream (a party travel, a re-join) a guest's body is an own-world one (type 0) for ~0.3 s
+    // until GuestChrTypeTick makes it a white phantom (1) again; these events run their first test
+    // right at the load, so "1" then ended them for the rest of the stay: no kneel, no gesture, no
+    // LevelUp menu (live sj8: the Doll's lines, then nothing - a player report: "the Doll randomly
+    // doesn't work for guests"). The test now asks for the type the chr has when it runs.
+    std::int8_t want = LocalSessionRole() == kSessionRoleClient ? 1 : 0;
+    {
+        std::uint64_t wcm = 0, me = 0;
+        std::int32_t now_type = -1;
+        if (want == 1 && SafeGet(Guest(0x553e878), &wcm) && wcm && SafeGet(wcm + 0x60, &me) && me &&
+            SafeGet(me + 0x78, &now_type) && (now_type == 0 || now_type == 1)) {
+            want = static_cast<std::int8_t>(now_type);
+        }
+    }
     if (type != want && SafeWrite(args + 8, &want, 1)) {
         g_doll_rewrites.fetch_add(1, std::memory_order_relaxed);
     }
@@ -539,7 +553,7 @@ void Log(const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    std::printf("Party guest services: %s\n", line);
+    std::printf("[coop] Party guest services: %s\n", line);
     std::fflush(stdout);
 }
 
@@ -1329,6 +1343,24 @@ bool RunTestFixture(const GameSnapshot& s, int step) {
         float d[4] = {}, r[4] = {};
         SafeRead(doll + 0xc0, d, sizeof d);
         SafeRead(doll + 0xd0, r, sizeof r);
+        // +0xC0 / +0xD0 keep her MSB spot by the lamp; event 12100110 short-warps her to one of three
+        // stand spots each Dream load (2102301 lamp / 2102302 workshop / 2102303 lower garden), so the
+        // live spot is the physics one (+0x58 -> +8 -> +0x3B0 -> +0x68: +0x1E0 position, +0x1D0
+        // rotation). Release smoke full1 sj: she stood elsewhere, the guest talked to the empty lamp spot.
+        {
+            std::uint64_t ph = 0;
+            float pp[4] = {}, pr[4] = {};
+            if (SafeGet(doll + 0x58, &ph) && ph && SafeGet(ph + 8, &ph) && ph && SafeGet(ph + 0x3b0, &ph) && ph &&
+                SafeGet(ph + 0x68, &ph) && ph && SafeRead(ph + 0x1e0, pp, sizeof pp) && SafeRead(ph + 0x1d0, pr, sizeof pr) &&
+                (pp[0] != 0.0f || pp[2] != 0.0f)) {
+                if (std::fabs(pp[0] - d[0]) + std::fabs(pp[2] - d[2]) > 0.5f) {
+                    Log("test: the Doll was moved to her stand spot (%.2f, %.2f, %.2f) yaw %.3f (her MSB spot (%.2f, %.2f, %.2f))",
+                        pp[0], pp[1], pp[2], pr[1], d[0], d[1], d[2]);
+                }
+                std::memcpy(d, pp, sizeof d);
+                r[1] = pr[1];
+            }
+        }
         const float yaw = r[1];
         pos[0] = d[0] - 1.2f * std::sin(yaw);
         pos[1] = d[1];

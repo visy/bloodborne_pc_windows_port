@@ -45,6 +45,30 @@ int main() {
         v.hold = -1;
         CHECK(PlanActionHold(v) == HoldAction::None);  // unreadable: nothing written
     }
+    // 0.7.5 guest Dream report: a world lamp's Dream flag -> that lamp's event warp point; a guest's flag still
+    // set 1.5 s later with no warp = the lamp's event 7200 is used up.
+    CHECK(WorldLampDreamPoint(72200100) == 2102951);  // Hemwick
+    CHECK(WorldLampDreamPoint(72200101) == 2102951);
+    CHECK(WorldLampDreamPoint(72410100) == 2102950);  // 1st Floor Sickroom
+    CHECK(WorldLampDreamPoint(72410103) == 2102950);
+    CHECK(WorldLampDreamPoint(72500102) == 2102952);  // Nightmare Frontier lamps (common.emevd: 2102952)
+    CHECK(WorldLampDreamPoint(72600103) == 2102953);
+    CHECK(WorldLampDreamPoint(72800102) == 2102952);
+    CHECK(WorldLampDreamPoint(72800103) == 2102953);
+    CHECK(WorldLampDreamPoint(73200101) == 2102953);
+    CHECK(WorldLampDreamPoint(73200102) == 2102951);
+    CHECK(WorldLampDreamPoint(72102410) == 0);  // a headstone flag
+    CHECK(WorldLampDreamPoint(72100100) == 0);  // the Dream's talk state
+    CHECK(WorldLampDreamPoint(2202951) == 0);   // a lamp id, not a flag
+    CHECK(WorldLampDreamPoint(72200110) == 0);
+    CHECK(WorldLampWarpFallback(true, true, 1.6, false, true, false));
+    CHECK(!WorldLampWarpFallback(true, true, 1.0, false, true, false));   // the event may still clear it
+    CHECK(!WorldLampWarpFallback(true, true, 2.0, false, false, false));  // cleared: the event runs
+    CHECK(!WorldLampWarpFallback(true, true, 2.0, true, true, false));    // a warp followed
+    CHECK(!WorldLampWarpFallback(false, true, 2.0, false, true, false));  // not in a party (a guest or the host)
+    CHECK(!WorldLampWarpFallback(true, false, 2.0, false, true, false));  // in the Dream: headstones
+    CHECK(!WorldLampWarpFallback(true, true, 2.0, false, true, true));    // once
+    CHECK(!WorldLampWarpFallback(true, true, 9.6, false, true, false));   // past the own-use window
     // Never without a keep: the game's own hold (a guest on its way home, a boss clear before K10).
     {
         HoldView v = Held(Keep::None);

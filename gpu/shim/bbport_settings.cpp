@@ -49,7 +49,11 @@ const PartySwitch PartySwitches[] = {
     // 0.7.3: lamp travel voting (party_vote.h reads it live; the host's rule, off by default).
     {"party_travel_vote", "BB_PARTY_TRAVEL_VOTE", &Values::party_travel_vote, false},
     {"party_npc_fights", "BB_PARTY_NPC_FIGHTS", &Values::party_npc_fights, false},  // 0.7.3, D11
+    {"party_skip_prologue", "BB_PARTY_SKIP_PROLOGUE", &Values::party_skip_prologue, false},  // 0.7.5
     {"party_any_kidnap", "BB_PARTY_ANY_KIDNAP", &Values::party_any_kidnap, false},  // 0.7.3, kidnapall
+    // 0.7.5 (levelsync): the host's rules for what a joined hunter keeps of its stats
+    {"party_level_sync", "BB_PARTY_LEVEL_SYNC", &Values::party_level_sync, false},
+    {"party_phantom_hp", "BB_PARTY_PHANTOM_HP", &Values::party_phantom_hp, false},
     {"party_key_view", "BB_PARTY_KEY_VIEW", &Values::party_key_view, false},
     {"party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", &Values::party_key_items_summoned, false},
     // 0.7.2: the rot cleanses (party_balance reads them live; host's rules).
@@ -64,6 +68,22 @@ const char* GuestInsightName(int mode) {
 }
 
 namespace {
+
+std::mutex g_vpn_mu;
+std::string g_vpn_name;  // party_vpn when it names an adapter
+
+// party_vpn's value: "auto" (empty too), "off", else an adapter name (net_socket vpn_pref_normalize).
+std::string VpnPref(const std::string& value) {
+    std::size_t b = 0, e = value.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(value[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(value[e - 1]))) --e;
+    const std::string t = value.substr(b, e - b);
+    std::string l;
+    for (char c : t) l += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (l.empty() || l == "auto" || l == "on" || l == "1") return "auto";
+    if (l == "off" || l == "0" || l == "none" || l == "no") return "off";
+    return t;
+}
 
 int ParseGuestInsight(const std::string& value) {
     return value == "full" ? 1 : value == "0" || value == "off" ? 2 : 0;
@@ -251,6 +271,15 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_member_relay = party::traversal::rendezvous_switch(value.c_str(), true);
     } else if (key == "party_ipv6") {
         v.party_ipv6 = party::traversal::rendezvous_switch(value.c_str(), false);
+    } else if (key == "party_vpn") {
+        const std::string pref = VpnPref(value);
+        v.party_vpn = pref == "auto" ? 0 : pref == "off" ? 1 : 2;
+        {
+            std::lock_guard<std::mutex> lk(g_vpn_mu);
+            g_vpn_name = v.party_vpn == 2 ? pref : std::string();
+        }
+        // The network library reads BB_PARTY_VPN (an explicit variable wins: it is not replaced).
+        if (!std::getenv("BB_PARTY_VPN")) PutEnv("BB_PARTY_VPN", pref.c_str());
     } else if (key == "party_npc_talk_range") {
         v.party_npc_talk_range = std::clamp(i, 0, 500);
     } else if (key == "party_guest_insight") {
@@ -387,6 +416,7 @@ void Load() {
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
         {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
+        {"BB_PARTY_VPN", "party_vpn"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
@@ -730,6 +760,10 @@ void Save() {
     put("party_rendezvous", flag(v.party_rendezvous));
     put("party_member_relay", flag(v.party_member_relay));
     put("party_ipv6", flag(v.party_ipv6));
+    {
+        std::lock_guard<std::mutex> lk(g_vpn_mu);
+        put("party_vpn", v.party_vpn == 0 ? "auto" : v.party_vpn == 1 ? "off" : g_vpn_name);
+    }
     for (const PartySwitch& sw : PartySwitches) put(sw.key, flag(v.*(sw.member)));
     put("party_guest_insight", GuestInsightName(v.party_guest_insight));
     put("party_npc_talk_range", std::to_string(v.party_npc_talk_range.load()));

@@ -17,10 +17,18 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #include "video_core/renderer_vulkan/vk_reflex.h"
+#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_swapchain_rules.h"
 
 #include <mutex>
 
 namespace Vulkan {
+
+static_assert(BbSwapchain::kSuccess == VK_SUCCESS && BbSwapchain::kSuboptimal == VK_SUBOPTIMAL_KHR &&
+              BbSwapchain::kErrorOutOfDate == VK_ERROR_OUT_OF_DATE_KHR &&
+              BbSwapchain::kErrorSurfaceLost == VK_ERROR_SURFACE_LOST_KHR &&
+              BbSwapchain::kErrorUnknown == VK_ERROR_UNKNOWN &&
+              BbSwapchain::kErrorDeviceLost == VK_ERROR_DEVICE_LOST);
 
 namespace {
 // bbport: NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker): its driver sleep,
@@ -52,6 +60,8 @@ Swapchain::Swapchain(const Instance& instance_, const Frontend::WindowSDL& windo
 
 Swapchain::~Swapchain() {
     {
+        std::unique_lock<std::mutex> queue_lock;
+        if (BbSwapchain::Safe()) queue_lock = std::unique_lock{Scheduler::submit_mutex};
         ReflexWsiLock lock{instance.IsReflexSupported(), true};
         Destroy();
     }
@@ -126,6 +136,8 @@ void Swapchain::Create(u32 width_, u32 height_) {
 
     SetupImages();
     RefreshSemaphores();
+    // bbport: new semaphores, maybe fewer images: the old index could point past the arrays.
+    frame_index = BbSwapchain::FrameIndexAfterCreate(frame_index, image_count);
     if (hdr_output) {
         // A new swapchain has no metadata yet.
         const float peak = metadata_peak, paper = metadata_paper;
@@ -160,6 +172,11 @@ void Swapchain::SetHdrMetadata(float peak_nits, float paper_white_nits) {
 void Swapchain::Recreate(u32 width_, u32 height_) {
     LOG_DEBUG(Render_Vulkan, "Recreate the swapchain: width={} height={} HDR={}", width_, height_,
               needs_hdr);
+    // bbport: Destroy waits for the queues, which the recording threads submit to: under their
+    // lock (vkQueueWaitIdle / vkDeviceWaitIdle need the queues externally synchronized). The
+    // callers must not hold it (vk_swapchain_rules.h).
+    std::unique_lock<std::mutex> queue_lock;
+    if (BbSwapchain::Safe()) queue_lock = std::unique_lock{Scheduler::submit_mutex};
     Create(width_, height_);
 }
 
@@ -168,10 +185,12 @@ void Swapchain::SetHDR(bool hdr) {
         return;
     }
 
-    auto result = instance.GetDevice().waitIdle();
-    if (result != vk::Result::eSuccess) {
-        LOG_WARNING(ImGui, "Failed to wait for Vulkan device idle on mode change: {}",
-                    vk::to_string(result));
+    if (!BbSwapchain::Safe()) { // Recreate waits for the queues (under their lock) itself
+        auto result = instance.GetDevice().waitIdle();
+        if (result != vk::Result::eSuccess) {
+            LOG_WARNING(ImGui, "Failed to wait for Vulkan device idle on mode change: {}",
+                        vk::to_string(result));
+        }
     }
 
     needs_hdr = hdr;
@@ -187,23 +206,25 @@ bool Swapchain::AcquireNextImage() {
         device.acquireNextImageKHR(swapchain, std::numeric_limits<u64>::max(),
                                    image_acquired[frame_index], VK_NULL_HANDLE, &image_index);
 
-    switch (result) {
-    case vk::Result::eSuccess:
-        break;
-    case vk::Result::eSuboptimalKHR:
-    case vk::Result::eErrorSurfaceLostKHR:
-    case vk::Result::eErrorOutOfDateKHR:
-    case vk::Result::eErrorUnknown:
+    // bbport: a SUBOPTIMAL acquire has the image (its semaphore will be signalled): it is
+    // presented and the swapchain recreated after that (Present returns false), instead of
+    // destroying the semaphore with its signal pending (vk_swapchain_rules.h).
+    switch (BbSwapchain::ClassifyAcquire(static_cast<int>(result), BbSwapchain::Safe())) {
+    case BbSwapchain::AcquireAction::Use:
+        return true;
+    case BbSwapchain::AcquireAction::UseThenRecreate:
         needs_recreation = true;
-        break;
-    default:
-        LOG_CRITICAL(Render_Vulkan, "Swapchain acquire returned unknown result {}",
-                     vk::to_string(result));
-        UNREACHABLE();
+        return true;
+    case BbSwapchain::AcquireAction::Recreate:
+        needs_recreation = true;
+        return false;
+    case BbSwapchain::AcquireAction::Fatal:
         break;
     }
-
-    return !needs_recreation;
+    LOG_CRITICAL(Render_Vulkan, "Swapchain acquire returned unknown result {}",
+                 vk::to_string(result));
+    UNREACHABLE();
+    return false;
 }
 
 bool Swapchain::Present() {
@@ -224,7 +245,7 @@ bool Swapchain::Present() {
                    vk::to_string(result));
     }
 
-    frame_index = (frame_index + 1) % image_count;
+    frame_index = BbSwapchain::NextFrameIndex(frame_index, image_count);
 
     return !needs_recreation;
 }
@@ -403,7 +424,19 @@ void Swapchain::SetSurfaceProperties() {
 
 void Swapchain::Destroy() {
     vk::Device device = instance.GetDevice();
-    const auto wait_result = device.waitIdle();
+    // bbport: only the graphics and present queues use the swapchain's images and semaphores;
+    // the readback queue is submitted to without the queue lock, so the device-wide wait raced
+    // with it (vk_swapchain_rules.h). The caller holds Scheduler::submit_mutex (Recreate).
+    vk::Result wait_result = vk::Result::eSuccess;
+    if (BbSwapchain::Safe()) {
+        wait_result = instance.GetGraphicsQueue().waitIdle();
+        if (wait_result == vk::Result::eSuccess &&
+            instance.GetPresentQueue() != instance.GetGraphicsQueue()) {
+            wait_result = instance.GetPresentQueue().waitIdle();
+        }
+    } else {
+        wait_result = device.waitIdle();
+    }
     if (wait_result != vk::Result::eSuccess) {
         LOG_WARNING(Render_Vulkan, "Failed to wait for device to become idle: {}",
                     vk::to_string(wait_result));

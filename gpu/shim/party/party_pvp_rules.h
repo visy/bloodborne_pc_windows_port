@@ -27,6 +27,8 @@
 namespace coop::pvp {
 
 constexpr int kTeams = 32;             ///< the tables are kTeams x kTeams bytes
+constexpr int kHostTeam = 19;          ///< the host's body (measured live)
+constexpr int kGuestTeam = 20;         ///< a cooperator / white phantom (measured live)
 constexpr int kSessionRoleHost = 3;    ///< game_state.h RoleHost
 constexpr int kSessionRoleClient = 6;  ///< game_state.h RoleClient
 
@@ -58,6 +60,13 @@ inline std::vector<std::pair<int, int>> TeamPairs(const std::vector<int>& teams)
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
+}
+
+/// A living player's chr whose hit bodies still carry a dead chr's collision layer 0x36 (filter low
+/// 6 bits): attacks and bullets pass through it. A guest's copy of a host revived in place kept them
+/// (party PvP "the host is invincible after a few deaths"); they go back to the alive layer 8.
+inline bool DeadHitBodiesOnLiving(int hp, std::uint32_t filter) {
+    return hp > 0 && (filter & 0x3f) == 0x36;
 }
 
 /// The toast on every member when the rule changes (and once on join when it is on).
