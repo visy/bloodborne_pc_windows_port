@@ -438,7 +438,7 @@ before anyone is in the game):
 - **Names over party members**, in the game's own style, at any distance, with level, health,
   deaths or ping (your choice; *Party name tags* turns them off). A member standing behind your own
   character has no tag until it steps out (walls do not hide tags).
-  A small blue marker by a name shows a hunter scaled down by *Level sync*; in PvP our health bar is red. Party text steps aside while the
+  A small blue marker by a name shows a hunter scaled down by *Level sync*; in PvP our health bar is red. Party text steps aside while the
   game's own menus are open; party messages are centred in their box.
 - **Companions look like normal hunters.** Summoned hunters are drawn without the game's blue,
   glowing phantom look (they are still cooperators for the game). Each player chooses for their own
