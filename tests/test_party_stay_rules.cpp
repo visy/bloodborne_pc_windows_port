@@ -65,7 +65,7 @@ int main() {
     CHECK(!WorldLampWarpFallback(true, true, 1.0, false, true, false));   // the event may still clear it
     CHECK(!WorldLampWarpFallback(true, true, 2.0, false, false, false));  // cleared: the event runs
     CHECK(!WorldLampWarpFallback(true, true, 2.0, true, true, false));    // a warp followed
-    CHECK(!WorldLampWarpFallback(false, true, 2.0, false, true, false));  // not a guest
+    CHECK(!WorldLampWarpFallback(false, true, 2.0, false, true, false));  // not in a party (a guest or the host)
     CHECK(!WorldLampWarpFallback(true, false, 2.0, false, true, false));  // in the Dream: headstones
     CHECK(!WorldLampWarpFallback(true, true, 2.0, false, true, true));    // once
     CHECK(!WorldLampWarpFallback(true, true, 9.6, false, true, false));   // past the own-use window

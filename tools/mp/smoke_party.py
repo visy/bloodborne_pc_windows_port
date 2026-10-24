@@ -1685,6 +1685,22 @@ def phase_gd(only):
     )
 
 
+# Phase gh (guest_dream_host, group `guest_dream`; mirror of gd): the guest picks the Hunter's Dream at the host's
+# lamp first and goes alone (the host stays); the lamp's warp event also runs on the host's game. Then the host,
+# still at that lamp, picks the Dream: it must warp (its own copy of the event was used up by the guest's trip?).
+def phase_gh(only):
+    return dict(
+        name="gh", seconds=300, count=2, headless=0,
+        env=[],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=" + GD_LAMP, "0:BB_PARTY_DIRECTOR_TEST=god", "0:BB_PARTY_SPLIT_TEST=no",
+              "0:BB_LAMP_TRAVEL_TEST=wait=70,lamp=%s,to=2102950" % GD_LAMP,
+              "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_SPLIT_TEST=no",
+              "1:BB_LAMP_TRAVEL_TEST=members,lamp=%s,to=2102950" % GD_LAMP],
+        watch=["--watch", r"chose the Hunter's Dream=ghchose@0,4"],
+        crash=[], until=[r"0:Lamp travel: arrived: lamp 2102950|0:no load within 60 s|0:test: FAILED"], until_hold=12,
+    )
+
+
 # Phase gm (guest_lamp, ~4 min, 2 players, group `guest_lamp`; 0.7.5 report: a guest could light a lamp in
 # the host's world only after a visit to the Hunter's Dream): the guest's OWN world is Old Yharnam (a lamp
 # warp before the join, as the reporter: A5 cross-map join from m23), not the Dream. Central Yharnam's
@@ -2282,6 +2298,43 @@ def phase_npa(only):
     )
 
 
+# Phase npd (npc_attack_doll, group `npc_attack`; 0.7.5 report "cannot hurt the Doll as guest"): in the host's
+# Dream the guest, then the host, R1 the Doll once each (192 HP: the second blow kills her) (entity 2100700); her HP must fall on both games for both.
+NPD_DOLL = 2100700
+
+
+def phase_npd(only):
+    host = ",".join(["god", "host_chr=%d:1.6@40%%m21" % NPD_DOLL] + ["host_press=0x800@1.5%m21!"] + ["host_press=0@4%m21!"])
+    g1 = ",".join(["god", "guest_chr=%d:1.6@14%%m21" % NPD_DOLL] + ["guest_press=0x800@1.5%m21!"] + ["guest_press=0@4%m21!"])
+    return dict(
+        name="npd", seconds=300, count=2, headless=0,
+        env=["BB_PARTY_CHR_DUMP=40", "BB_PARTY_TEST_COND_TIMEOUT=100"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"test: guest_press 0x800=npdhit@0.5"],
+        crash=[], until=[r"0:test: host_press 0x0 "], until_hold=8,
+    )
+
+
+def check_npd(v, L):
+    need(v, L, "npd join: 2 players", 0, r"cooperators 0 -> 1")
+    hh = L.all(0, r"test: host_press 0x800")
+    gh = L.all(1, r"test: guest_press 0x800")
+    if not (hh and gh):
+        v.step("npd the R1s ran", False, "host %d guest %d" % (len(hh), len(gh)))
+        check_common(v, L, "npd")
+        return
+    for who, hits in (("guest", gh), ("host", hh)):
+        t0 = hits[0][0]
+        for i, where in ((0, "host's"), (1, "guest's")):
+            before = [h for _, h, _ in nf_hp(L, i, NPD_DOLL, 0, t0)]
+            after = [h for _, h, _ in nf_hp(L, i, NPD_DOLL, t0, t0 + 8)]
+            v.step("npd the %s's R1 on the Doll hurt her on the %s game" % (who, where),
+                   bool(before) and bool(after) and min(after) < before[-1], "HP %s -> %s" % (before[-1:], after[:4]))
+    tm = sorted({t for _, _, t in nf_hp(L, 1, NPD_DOLL, gh[0][0], gh[-1][0] + 4)})
+    v.step("npd (info) the Doll's team on the guest's game during its blows", True, "%s" % tm)
+    check_common(v, L, "npd")
+
+
 # Phase pvd (pvpfix, ~10 min, 2 players, group `pvp_revive`; 0.7.5 "host unhittable after PvP deaths"): friendly
 # fire on, the guest R1s the host at 30 HP (test aid) in 12 cycles; each death is the host's in-place revive at
 # its lamp (no load, the Queen's Chamber fixture of npa). Every cycle must kill the host again (a player's report:
@@ -2493,14 +2546,14 @@ def check_sj(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gm": phase_gm, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_lamp": "gm",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd,gh", "guest_lamp": "gm",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
+          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2508,10 +2561,10 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ", "gather_ground": r"^gl ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iw ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_lamp": r"^gm ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iw ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^g[dh] ", "guest_lamp": r"^gm ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2572,6 +2625,7 @@ GROUP_UNTIL = {
     "npc_fights": [NF_UNTIL],
     "npc_alfred": [NFA_UNTIL],
     "npc_attack": [NPA_UNTIL],
+    "npc_doll": [r"0:test: host_press 0x0 "],
     "pvp_revive": [PVD_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
@@ -4895,13 +4949,24 @@ def check_gd(v, L, d: Path):
     check_common(v, L, "gd")
 
 
+def check_gh(v, L):
+    j = need(v, L, "gh join: the guest is in the host's world", 1, r"arrived in the host world")
+    g = need(v, L, "gh the guest picks the Hunter's Dream first", 1, r"warp menu: entry 1 chosen -> lamp 2102950", j or 0)
+    h = need(v, L, "gh the host then picks the Hunter's Dream", 0, r"warp menu: entry 1 chosen -> lamp 2102950", g or 0)
+    need(v, L, "gh the host's Dream flag is set", 0, r"chose the Hunter's Dream: lamp %s's Dream flag \d+ set" % GD_LAMP, h or 0)
+    need(v, L, "gh the host arrives in the Dream (the lamp's event, or the fallback)", 0, r"Lamp travel: arrived: lamp 2102950", h or 0,
+         what="the host's Dream choice did nothing (its copy of the lamp's event was used up by the guest's trip)")
+    none_of(v, L, "gh no stuck warp", r"no load within 60 s", insts=(0,))
+    check_common(v, L, "gh")
+
+
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gm": check_gm, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": lambda v, L, d: check_il(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": lambda v, L, d: check_il(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -4932,7 +4997,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "ld", "cl", "clg", "el", "lt", "bf", "ch",
-                                     "lp", "gd", "gm", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "eh", "bl", "sj")
+                                     "lp", "gd", "gh", "gm", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "eh", "bl", "sj")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

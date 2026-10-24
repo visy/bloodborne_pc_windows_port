@@ -603,16 +603,18 @@ void Tick(const GameSnapshot& s, party::PartyLink* link) {
         const u32 point = stayrules::WorldLampDreamPoint(flag);
         if (point && at >= 0 && at != done_for && Now() - at >= stayrules::kWorldLampFlagWait &&
             Now() - at < stayrules::kWorldLampGiveUp) {
+            // The host too: a guest's trip from the lamp ran the host's copy of event 7200 as well (live gh).
             const bool guest = PartyDirector::Get().Role() == PartyRole::Guest && SessionRole() == kRoleClient;
+            const bool host = PartyDirector::Get().Role() == PartyRole::Host && SessionRole() == kRoleHost;
             const bool world = s.world_up && !s.loading && s.map_id != 0xffffffffu && (s.map_id >> 24) != 21;
             bool on = false;
-            if (guest && world && ReadEventFlag(flag, &on) &&
-                stayrules::WorldLampWarpFallback(guest, world, Now() - at, g_warp_seen_at.load() >= at, on, false) &&
+            if ((guest || host) && world && ReadEventFlag(flag, &on) &&
+                stayrules::WorldLampWarpFallback(true, world, Now() - at, g_warp_seen_at.load() >= at, on, false) &&
                 ids::ReturnPointKnown(point) && LampEventFallbackOn()) {
                 done_for = at;
-                Log("lamp flag %u (guest): set %.1f s ago and still set, no warp followed (this lamp's event 7200 "
+                Log("lamp flag %u (%s): set %.1f s ago and still set, no warp followed (this lamp's event 7200 "
                     "already ran here for another member's use): flag cleared, the warp to %u runs now", flag,
-                    Now() - at, point);
+                    host ? "host" : "guest", Now() - at, point);
                 WriteEventFlag(flag, false);
                 RunLampWarp(point);
             }
