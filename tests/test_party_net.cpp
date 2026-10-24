@@ -7,6 +7,7 @@
 #include "net_stun.h"
 #include "netsim.h"
 #include "nr_outage.h"
+#include "party_discovery.h"
 #include "party_udp.h"
 #include "party_util.h"
 #include "json.h"
@@ -731,6 +732,80 @@ static std::uint32_t ipv4(const char* text) {
     return a;
 }
 // Host over a VPN (0.7.5): which adapter is "the VPN", for auto / off / a name; same-LAN-address homes.
+static void test_discovery() {
+    using namespace bbnet::disc;
+    using bbnet::LanAdapter;
+    Announce a;
+    a.id = 0xdeadbeef; a.port = 9307; a.level = 120; a.players = 2; a.max_players = 4; a.password = true;
+    a.build = "0.7.5-abc"; a.name = "Hunter_One"; a.area = "the Cathedral Ward";
+    const std::vector<std::uint8_t> pkt = encode(a);
+    CHECK(pkt.size() <= kMaxPacket && pkt[0] == 0xfa && pkt[2] == 1);
+    Announce b;
+    CHECK(parse(pkt.data(), pkt.size(), &b));
+    CHECK(b.id == a.id && b.port == 9307 && b.level == 120 && b.players == 2 && b.max_players == 4 && b.password);
+    CHECK(b.build == a.build && b.name == a.name && b.area == a.area);
+    // strictness: every truncation, a wrong magic / version, flags, trailing bytes, control characters
+    for (std::size_t n = 0; n < pkt.size(); ++n) CHECK(!parse(pkt.data(), n, &b));
+    auto mutated = [&](std::size_t i, std::uint8_t v) { auto m = pkt; m[i] = v; return parse(m.data(), m.size(), &b); };
+    CHECK(!mutated(0, 0) && !mutated(1, 'B') && !mutated(2, 2) && !mutated(3, 2));
+    { auto m = pkt; m[9] = 0; m[8] = 0; CHECK(!parse(m.data(), m.size(), &b)); }
+    { auto m = pkt; m[12] = 9; CHECK(!parse(m.data(), m.size(), &b)); }  // players > max
+    { auto m = pkt; m.push_back(0); CHECK(!parse(m.data(), m.size(), &b)); }
+    { auto m = pkt; m[15 + a.build.size()] = 0x07; CHECK(!parse(m.data(), m.size(), &b)); }  // control char in name
+    { auto m = pkt; m[14] = 200; CHECK(!parse(m.data(), m.size(), &b)); }  // length overruns
+    std::vector<std::uint8_t> big(kMaxPacket + 1, 'x');
+    CHECK(!parse(big.data(), big.size(), &b) && !parse(nullptr, 20, &b));
+    // junk never crashes or parses
+    unsigned seed = 12345;
+    for (int i = 0; i < 20000; ++i) {
+        std::vector<std::uint8_t> j(seed % 90);
+        for (auto& c : j) { seed = seed * 1664525u + 1013904223u; c = static_cast<std::uint8_t>(seed >> 24); }
+        seed = seed * 1664525u + 1013904223u;
+        if (j.size() > 3 && (seed & 1)) { j[0] = 0xfa; j[1] = 'A'; j[2] = 1; j[3] &= 1; }
+        Announce x;
+        if (parse(j.data(), j.size(), &x)) CHECK(x.port && x.players <= x.max_players && !x.name.empty());
+    }
+    // long / odd strings are cut and cleaned on the way out, never over the wire limit
+    Announce l = a;
+    l.name = std::string(40, 'n') + "Ã©"; l.area = std::string(100, 'a'); l.build = std::string(100, 'b');
+    const auto lp = encode(l);
+    CHECK(lp.size() <= kMaxPacket && parse(lp.data(), lp.size(), &b) && b.name.size() == 16 && b.area.size() == 32);
+    // the adapter filter: LAN and VPN only, never the Internet
+    auto ad = [](const char* name, const char* ip, const char* mask) {
+        LanAdapter x; x.name = name; x.ip = ipv4(ip); x.mask = ipv4(mask); x.physical = true; return x;
+    };
+    const LanAdapter lan = ad("Ethernet / Realtek PCIe", "192.168.1.20", "255.255.255.0");
+    const LanAdapter lan10 = ad("Wi-Fi / Intel", "10.1.2.3", "255.255.0.0");
+    const LanAdapter lan172 = ad("Ethernet 2 / Intel", "172.20.0.5", "255.255.0.0");
+    const LanAdapter pub = ad("Ethernet 3 / Intel", "203.0.113.9", "255.255.255.0");
+    const LanAdapter pub172 = ad("Ethernet 4 / Intel", "172.32.0.5", "255.255.0.0");  // outside 172.16/12
+    const LanAdapter radmin = ad("Radmin VPN / Famatech Radmin VPN Ethernet Adapter", "26.41.7.9", "255.0.0.0");
+    const LanAdapter hamachi = ad("Hamachi / LogMeIn Hamachi Virtual Ethernet Adapter", "25.4.5.6", "255.0.0.0");
+    const LanAdapter zt = ad("ZeroTier One / ZeroTier Virtual Port", "10.147.17.5", "255.255.0.0");
+    const LanAdapter tail = ad("Tailscale / Tailscale Tunnel", "100.101.102.103", "255.192.0.0");
+    const LanAdapter nord = ad("NordLynx / NordLynx Tunnel", "10.5.0.2", "255.255.255.0");
+    const LanAdapter hyperv = ad("vEthernet (Default Switch) / Hyper-V Virtual Ethernet Adapter", "172.28.80.1", "255.255.240.0");
+    const LanAdapter docker = ad("vEthernet (WSL) / Hyper-V Virtual Ethernet Adapter", "192.168.96.1", "255.255.240.0");
+    LanAdapter loop = ad("Loopback Pseudo-Interface 1", "127.0.0.1", "255.0.0.0"); loop.loopback = true;
+    const LanAdapter apipa = ad("Ethernet 5 / Intel", "169.254.3.4", "255.255.0.0");
+    LanAdapter tun = lan; tun.tunnel = true;
+    CHECK(adapter_discovery_ok(lan) && adapter_discovery_ok(lan10) && adapter_discovery_ok(lan172));
+    CHECK(adapter_discovery_ok(radmin) && adapter_discovery_ok(hamachi) && adapter_discovery_ok(zt));
+    CHECK(!adapter_discovery_ok(pub) && !adapter_discovery_ok(pub172));
+    CHECK(!adapter_discovery_ok(tail) && !adapter_discovery_ok(nord));
+    CHECK(!adapter_discovery_ok(hyperv) && !adapter_discovery_ok(docker));
+    CHECK(!adapter_discovery_ok(loop) && !adapter_discovery_ok(apipa) && !adapter_discovery_ok(tun));
+    // a public address on a Radmin-named adapter is still not used
+    CHECK(!adapter_discovery_ok(ad("Radmin VPN", "8.8.4.4", "255.255.255.0")));
+    const auto t = targets_for({lan, pub, radmin, tail, nord, hyperv, lan, loop});
+    CHECK(t.size() == 2);
+    CHECK(t[0].source == ipv4("192.168.1.20") && t[0].broadcast == ipv4("192.168.1.255"));
+    CHECK(t[1].source == ipv4("26.41.7.9") && t[1].broadcast == ipv4("26.255.255.255"));
+    LanAdapter nomask = lan; nomask.mask = 0;
+    CHECK(targets_for({nomask}).empty());
+    std::printf("party discovery: ok\n");
+}
+
 static void test_vpn_selection() {
     using bbnet::LanAdapter;
     using bbnet::VpnKind;
@@ -960,6 +1035,7 @@ int main() {
     test_local_address();
 
     test_vpn_selection();
+    test_discovery();
     set_env("BB_PARTY_LOOPBACK", "1");  // back to loopback-only sockets for the tests below
     test_stun();
     test_netsim();

@@ -591,6 +591,221 @@ def host_address_text(ip: str, port) -> str:
     return f"{ip}:{party_port(port) or PARTY_DEFAULT_PORT}"
 
 
+# ---- Party discovery (0.7.5, bbport.ini party_discovery): the Join page's list of parties found.
+# The game's host announces itself by UDP broadcast on its VPN / LAN adapters (gpu/shim/net/
+# party_discovery.h, same layout as parse_discovery_packet); Tailscale passes no broadcasts, so its
+# peers come from `tailscale status --json` instead.
+DISCOVERY_PORT = 9308
+DISCOVERY_TTL_S = 6.0          # an announcement older than this is gone from the list
+DISCOVERY_MAX_ENTRIES = 64     # a flood of ids cannot grow the list further
+DISCOVERY_MAX_PER_SEC = 20     # packets per source address per second, the rest is dropped
+DISCOVERY_MAX_PACKET = 160
+
+
+def parse_discovery_packet(data: bytes):
+    """A host announcement as a dict (id, port, level, players, max, password, build, name, area), or
+    None for anything that is not exactly a version 1 announcement (untrusted input: strict)."""
+    if not isinstance(data, (bytes, bytearray)) or not 17 <= len(data) <= DISCOVERY_MAX_PACKET:
+        return None
+    if data[0] != 0xFA or data[1] != 0x41 or data[2] != 1 or data[3] & ~1:
+        return None
+    port = (data[8] << 8) | data[9]
+    players, maxp = data[12], data[13]
+    if port == 0 or maxp == 0 or maxp > 8 or players > maxp:
+        return None
+    pos = 14
+    strings = []
+    for limit in (32, 16, 32):  # build, name, area
+        if pos >= len(data):
+            return None
+        n = data[pos]
+        pos += 1
+        if n > limit or pos + n > len(data):
+            return None
+        raw = bytes(data[pos:pos + n])
+        if any(c < 0x20 or c >= 0x7F for c in raw):
+            return None
+        strings.append(raw.decode("ascii"))
+        pos += n
+    if pos != len(data) or not strings[1]:
+        return None
+    return {"id": int.from_bytes(data[4:8], "big"), "port": port, "level": (data[10] << 8) | data[11],
+            "players": players, "max": maxp, "password": bool(data[3] & 1),
+            "build": strings[0], "name": strings[1], "area": strings[2]}
+
+
+def discovery_build_matches(host_build: str, my_version: str) -> bool:
+    """Same bbport version (the text before the first space: '0.7.5 (abc123)' -> '0.7.5'); the game
+    itself compares the whole build when it joins."""
+    return (host_build or "").split(" ")[0] == (my_version or "").split(" ")[0]
+
+
+class DiscoveryBook:
+    """The announcements heard, by (source address, id): expire after DISCOVERY_TTL_S, at most
+    DISCOVERY_MAX_ENTRIES, at most DISCOVERY_MAX_PER_SEC packets per source. Thread-safe."""
+
+    def __init__(self, own_ips=(), ttl=DISCOVERY_TTL_S):
+        self.own_ips = set(own_ips)
+        self.ttl = ttl
+        self._entries = {}
+        self._rate = {}
+        self._lock = threading.Lock()
+
+    def feed(self, data: bytes, ip: str, now: float) -> bool:
+        """True when the packet was a valid announcement and was taken into the list."""
+        if ip in self.own_ips:
+            return False
+        with self._lock:
+            sec, n = self._rate.get(ip, (int(now), 0))
+            if sec != int(now):
+                sec, n = int(now), 0
+            self._rate[ip] = (sec, n + 1)
+            if len(self._rate) > 4 * DISCOVERY_MAX_ENTRIES:
+                self._rate = {k: v for k, v in self._rate.items() if v[0] >= int(now) - 1}
+            if n >= DISCOVERY_MAX_PER_SEC:
+                return False
+            info = parse_discovery_packet(data)
+            if info is None:
+                return False
+            key = (ip, info["id"])
+            if key not in self._entries and len(self._entries) >= DISCOVERY_MAX_ENTRIES:
+                self._expire(now)
+                if len(self._entries) >= DISCOVERY_MAX_ENTRIES:
+                    return False
+            info["ip"] = ip
+            info["seen"] = now
+            self._entries[key] = info
+            return True
+
+    def _expire(self, now: float):
+        for key in [k for k, e in self._entries.items() if now - e["seen"] > self.ttl]:
+            del self._entries[key]
+
+    def snapshot(self, now: float) -> list:
+        with self._lock:
+            self._expire(now)
+            return sorted((dict(e) for e in self._entries.values()), key=lambda e: (e["name"].lower(), e["ip"]))
+
+
+class DiscoveryListener(threading.Thread):
+    """Listens on UDP DISCOVERY_PORT (shared with other listeners) and feeds a DiscoveryBook."""
+
+    def __init__(self, book: DiscoveryBook, port: int = DISCOVERY_PORT):
+        super().__init__(daemon=True)
+        self.book = book
+        self.port = port
+        self.stop_event = threading.Event()
+        self.error = ""
+
+    def run(self):
+        import socket
+        import time
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", self.port))
+            sock.settimeout(0.5)
+        except OSError as ex:
+            self.error = str(ex)
+            return
+        with sock:
+            while not self.stop_event.is_set():
+                try:
+                    data, addr = sock.recvfrom(512)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                self.book.feed(data, addr[0], time.monotonic())
+
+    def stop(self):
+        self.stop_event.set()
+
+
+def parse_tailscale_status(text: str) -> list:
+    """The peers of `tailscale status --json` as [{'name', 'ip', 'online'}], online ones first. Anything
+    unexpected gives []."""
+    try:
+        doc = json.loads(text)
+        peers = doc.get("Peer") or {}
+        out = []
+        for p in peers.values():
+            ips = [i for i in (p.get("TailscaleIPs") or []) if isinstance(i, str) and i.count(".") == 3]
+            if not ips:
+                continue
+            name = str(p.get("HostName") or p.get("DNSName") or ips[0]).split(".")[0][:16] or ips[0]
+            out.append({"name": name, "ip": ips[0], "online": bool(p.get("Online"))})
+        return sorted(out, key=lambda e: (not e["online"], e["name"].lower()))[:DISCOVERY_MAX_ENTRIES]
+    except (ValueError, AttributeError, TypeError):
+        return []
+
+
+def tailscale_peers() -> list:
+    """Tailscale peers via the CLI; [] without the CLI or when it fails (silently)."""
+    exe = shutil.which("tailscale")
+    if not exe:
+        for env in ("ProgramFiles", "ProgramFiles(x86)"):
+            cand = Path(os.environ.get(env, "")) / "Tailscale" / "tailscale.exe"
+            if os.environ.get(env) and cand.is_file():
+                exe = str(cand)
+                break
+    if not exe:
+        return []
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        r = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, timeout=4, creationflags=flags)
+        return parse_tailscale_status(r.stdout) if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
+def discovery_rows(found: list, peers: list, my_version: str) -> list:
+    """The Join list's rows: [{'iid', 'name', 'level', 'players', 'area', 'password', 'build', 'address',
+    'ok', 'kind'}]. A host of another bbport version is not ok (greyed out); a Tailscale peer
+    (kind 'tailscale') is only 'maybe hosting': no details, joined at the default port."""
+    rows = []
+    seen_ips = set()
+    for e in found:
+        seen_ips.add(e["ip"])
+        rows.append({"iid": f"{e['ip']}/{e['id']}", "name": e["name"], "level": str(e["level"] or "?"),
+                     "players": f"{e['players']}/{e['max']}", "area": e["area"] or "-",
+                     "password": "yes" if e["password"] else "no", "build": e["build"],
+                     "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
+                     "ok": discovery_build_matches(e["build"], my_version), "kind": "announce"})
+    for p in peers:
+        if p["ip"] in seen_ips or not p["online"]:
+            continue
+        rows.append({"iid": f"ts/{p['ip']}", "name": p["name"], "level": "?", "players": "?", "area": "Tailscale",
+                     "password": "?", "build": "?", "address": host_address_text(p["ip"], PARTY_DEFAULT_PORT),
+                     "password_set": None, "ok": True, "kind": "tailscale"})
+    return rows
+
+
+def discovery_own_ips() -> set:
+    """This PC's own IPv4 addresses (a host's own announcements are not listed). BB_PARTY_DISCOVERY_SELF=1
+    (tests: two games on one PC) keeps them."""
+    if os.environ.get("BB_PARTY_DISCOVERY_SELF") == "1":
+        return set()
+    import socket
+    ips = {"127.0.0.1"}
+    try:
+        ips.update(i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
+    except OSError:
+        pass
+    return ips
+
+
+def discovery_open_network_warning(mode: str, password: str, vpn_label: str) -> str:
+    """A warning for a host without a password over a network strangers can be on (Radmin VPN and
+    Hamachi networks may be public); '' when nothing to say."""
+    if mode != "host" or (password or "").strip():
+        return ""
+    if vpn_label in ("Radmin VPN", "Hamachi"):
+        return (f"No password while hosting over {vpn_label}: anyone in that network can join you from the "
+                "Join list. Public networks can contain strangers; set a Password.")
+    return ""
+
+
 # ---- Host over a VPN (0.7.5): the adapter choice of the game (gpu/shim/net/net_socket.cpp
 # vpn_adapter_score), repeated here so the launcher can show the address before the game runs.
 VPN_AUTO_RANK = {"Radmin VPN": 4, "Hamachi": 3, "Tailscale": 2, "ZeroTier": 1}
@@ -2417,6 +2632,13 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_adapters = []  # detect_vpn_adapters(), filled by a thread (refresh_vpn)
         self.party_vpn_var = tk.StringVar(value=vpn_choice_label(read_ini(bbport_ini_path()).get("party_vpn", "auto")))
         self.party_vpn_addr_var = tk.StringVar(value="")
+        # 0.7.5 party discovery (bbport.ini party_discovery, also System > Party network): the Join list
+        self.party_discovery = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_discovery"))
+        self.discovery_book = DiscoveryBook(own_ips=discovery_own_ips())
+        self.discovery_listener = None
+        self.discovery_peers = []
+        self.discovery_rows = {}
+        self.discovery_warn_var = tk.StringVar(value="")
         self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
         self.party_port_suffix_var = tk.StringVar(value="")
         self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
@@ -3230,6 +3452,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_code_var.trace_add("write", lambda *a: self.update_port_suffix())
         self.update_port_suffix()
         self.refresh_vpn()
+        self.build_discovery_section(tab)
         self.after(2000, self.party_code_tick)
 
     def build_party_settings_tab(self, title: str, intro: str, sections: list) -> ttk.Frame:
@@ -3370,6 +3593,9 @@ class BloodborneLauncher(tk.Tk):
             self.party_switch_vars[key].set(ini_flag_value(ini, key, default))
         self.party_insight_var.set(party_insight_label(ini))
         self.update_party_dependents()
+        if hasattr(self, "discovery_tree"):
+            self.party_discovery.set(ini_flag_value(ini, "party_discovery", True))
+            self.on_discovery_toggle(save=False)
 
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
@@ -3419,6 +3645,8 @@ class BloodborneLauncher(tk.Tk):
 
     def on_party_change(self):
         self.update_party_state()
+        if hasattr(self, "discovery_warn_var"):
+            self.update_discovery_warning()
         if hasattr(self, "party_vpn_combo"):
             self.update_vpn_address()
         self.save_settings()
@@ -3530,6 +3758,152 @@ class BloodborneLauncher(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
         self.after(300, poll)
 
+    def build_discovery_section(self, tab):
+        """The Join page's live list of parties announced on the VPN / LAN (and Tailscale peers)."""
+        sec = self._section(tab, 1, "Parties found (VPN / LAN)", row=1)
+        self._check(sec, "Party discovery", self.party_discovery,
+                    "Hosting: the game announces your party (name, level, players, area, whether it has a "
+                    "password, build; never the password) by broadcast on your VPN (Radmin, Hamachi, "
+                    "ZeroTier) and LAN adapters only, never the Internet. Joining: this list shows the "
+                    "parties heard; Tailscale passes no broadcasts, so its peers come from the tailscale "
+                    "command when it is installed. Default: on (bbport.ini party_discovery; in the game: "
+                    "System > Party network).", command=self.on_discovery_toggle)
+        cols = ("name", "level", "players", "area", "password", "build")
+        heads = {"name": "Host", "level": "Level", "players": "Players", "area": "Area", "password": "Password",
+                 "build": "Build"}
+        widths = {"name": 76, "level": 34, "players": 42, "area": 80, "password": 56, "build": 52}
+        holder = ttk.Frame(sec, style="Card.TFrame")
+        holder.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        self.discovery_tree = ttk.Treeview(holder, columns=cols, show="headings", height=5, selectmode="browse")
+        for c in cols:
+            self.discovery_tree.heading(c, text=heads[c])
+            self.discovery_tree.column(c, width=widths[c], stretch=False, anchor="w")
+        self.discovery_tree.tag_configure("mismatch", foreground="#7a7a7a")
+        self.discovery_tree.pack(side="left")
+        self.discovery_tree.bind("<Double-1>", lambda e: self.join_found_party())
+        row = ttk.Frame(sec, style="Card.TFrame")
+        row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        self.discovery_join_btn = ttk.Button(row, text="Join selected", style="Secondary.TButton",
+                                             command=self.join_found_party)
+        self.discovery_join_btn.pack(side="left")
+        Tooltip(self.discovery_join_btn, "Fills the party address of the selected host (and asks for its "
+                                         "password if it has one), then starts the game as a guest. Greyed "
+                                         "rows run another bbport version.")
+        self.discovery_info_var = tk.StringVar(value="")
+        ttk.Label(row, textvariable=self.discovery_info_var, style="Hint.TLabel").pack(side="left", padx=(8, 0))
+        warn = ttk.Label(sec, textvariable=self.discovery_warn_var, style="Hint.TLabel", wraplength=420,
+                         justify="left", foreground="#d98c1f")
+        warn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w")
+        sec.next_row += 1
+        self.party_password_var.trace_add("write", lambda *a: self.update_discovery_warning())
+        self.on_discovery_toggle(save=False)
+        self.after(1000, self.discovery_tick)
+
+    def on_discovery_toggle(self, save: bool = True):
+        if save:
+            try:
+                update_ini(bbport_ini_path(), {"party_discovery": "1" if self.party_discovery.get() else "0"})
+            except OSError as ex:
+                self.log(f"[PARTY] Could not save party_discovery to bbport.ini: {ex}")
+            self._ini_stamp = self.ini_stamp()
+        if self.party_discovery.get():
+            if self.discovery_listener is None:
+                self.discovery_listener = DiscoveryListener(self.discovery_book)
+                self.discovery_listener.start()
+        elif self.discovery_listener is not None:
+            self.discovery_listener.stop()
+            self.discovery_listener = None
+        self.update_discovery_warning()
+
+    def update_discovery_warning(self):
+        adapter = self.current_vpn()
+        label = vpn_adapter_label(adapter) if adapter else ""
+        text = discovery_open_network_warning(self.party_mode(), self.party_password_var.get(), label)
+        self.discovery_warn_var.set(text if self.party_discovery.get() else "")
+
+    def refresh_tailscale_peers(self):
+        """Tailscale peers (the CLI, in a thread) when a Tailscale adapter is up; nothing otherwise."""
+        if not any(vpn_kind(a["name"], a["ip"]) == "Tailscale" for a in self.vpn_adapters):
+            self.discovery_peers = []
+            return
+        if getattr(self, "_peers_busy", False):
+            return
+        self._peers_busy = True
+
+        def work():
+            peers = tailscale_peers()
+            self.discovery_peers = peers
+            self._peers_busy = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def discovery_tick(self):
+        """Once a second: the list from what was heard; Tailscale peers every 15 s."""
+        import time
+        try:
+            if self.party_discovery.get():
+                self._peer_clock = getattr(self, "_peer_clock", 0) + 1
+                if self._peer_clock % 15 == 1:
+                    self.refresh_tailscale_peers()
+                rows = discovery_rows(self.discovery_book.snapshot(time.monotonic()), self.discovery_peers,
+                                      PORT_VERSION)
+            else:
+                rows = []
+            self.show_discovery_rows(rows)
+        finally:
+            self.after(1000, self.discovery_tick)
+
+    def show_discovery_rows(self, rows: list):
+        tree = self.discovery_tree
+        selected = tree.selection()
+        want = {r["iid"]: r for r in rows}
+        for iid in list(tree.get_children()):
+            if iid not in want:
+                tree.delete(iid)
+        for idx, r in enumerate(rows):
+            values = (r["name"], r["level"], r["players"], r["area"], r["password"], r["build"].split(" ")[0])
+            tags = () if r["ok"] else ("mismatch",)
+            if r["iid"] in tree.get_children():
+                tree.item(r["iid"], values=values, tags=tags)
+            else:
+                tree.insert("", idx, iid=r["iid"], values=values, tags=tags)
+        self.discovery_rows = want
+        if selected and selected[0] in want:
+            tree.selection_set(selected[0])
+        err = self.discovery_listener.error if self.discovery_listener else ""
+        if not self.party_discovery.get():
+            self.discovery_info_var.set("Discovery is off.")
+        elif err:
+            self.discovery_info_var.set("Cannot listen for parties: " + err)
+        else:
+            self.discovery_info_var.set("" if rows else "Listening... no party found yet.")
+
+    def join_found_party(self):
+        sel = self.discovery_tree.selection()
+        row = self.discovery_rows.get(sel[0]) if sel else None
+        if not row:
+            messagebox.showinfo("Join a party", "Select a party in the list first.")
+            return
+        if not row["ok"] and not messagebox.askyesno(
+                "Other version", f"{row['name']} runs {row['build']}, you run {PORT_VERSION}. The game will "
+                                 "refuse to join. Try anyway?"):
+            return
+        password = ""
+        if row["password_set"] or row["password_set"] is None:
+            from tkinter import simpledialog
+            password = simpledialog.askstring(
+                "Password", f"{row['name']} party" + (" has a password." if row["password_set"] else
+                                                        " (Tailscale peer): password, if it has one."),
+                show="*", parent=self) or ""
+            if row["password_set"] and not password:
+                return
+        self.party_mode_var.set(PARTY_MODES[2][0])
+        self.party_code_var.set(row["address"])
+        self.party_password_var.set(password)
+        self.on_party_change()
+        self.launch_game()
+
     def on_vpn_adapters(self, adapters: list):
         self.vpn_adapters = adapters
         names = ["Auto", "Off"] + [a["name"].split(" / ")[0] for a in adapters
@@ -3559,6 +3933,8 @@ class BloodborneLauncher(tk.Tk):
                 if pref == "auto" else f"No adapter named '{pref}' is up: the usual address is used.")
 
     def on_vpn_change(self):
+        if hasattr(self, "discovery_warn_var"):
+            self.update_discovery_warning()
         try:
             update_ini(bbport_ini_path(), {"party_vpn": vpn_choice_pref(self.party_vpn_var.get())})
         except OSError as ex:

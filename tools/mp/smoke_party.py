@@ -369,7 +369,7 @@ RULES_PAGES = [
     # 0.7.5: host over a VPN (a game dropdown, Auto by default: the walk checks it is listed on host and
     # guest; the change is the relay toggle, a dropdown needs Cross / Down / Cross)
     ("Party network", ["Network", "Find via public DHT", "Relay for members", "IPv6", "Join via a member",
-                       "Host over a VPN"],
+                       "Party discovery", "Host over a VPN"],
      ("Relay for members", "down/down/", "left", "Off", "right", "party_member_relay=0", "party_member_relay=1", None)),
     # 0.7.1 / 0.7.3: the host's world rules
     ("Party rules: World", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
