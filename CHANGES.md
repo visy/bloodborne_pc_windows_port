@@ -4,6 +4,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.5 (unreleased)
 
+- **Fixed: the host is no longer unhittable in party PvP after dying** (player report: after a few deaths in friendly-fire duels the host could not be hurt until he teleported or travelled; once the friend too). When the host got up at his lamp without a loading screen, the guest's copy of him kept the collision of a dead body, so the guest's blows passed through him. That copy now gets its living collision back as soon as the host is up. `BB_PARTY_B2_REVIVE_HITBODY=0` switches the fix off (testing).
+
 - **Fixed: no more endless gray loading screen after a guest leaves the host's Chalice Dungeon** (player report: Exit Game inside the dungeon, another character, rejoin). A guest that ended up outside the party in the dungeon's empty space was sent again and again to the host's Chalice Dungeon lamp; it now goes to its own last lamp.
 
 - **Fixed: a guest's lamp no longer stops working after the host has used it** (player report: a guest could only use a lamp after visiting the Hunter's Dream, and "Return to the Hunter's Dream" at a world lamp did nothing until the guest had travelled to another lamp first). When the host went to the Dream from a lamp and the guests stayed behind, the lamp's own warp script also ran on the guest's game and was used up, so the guest's later choice of the Hunter's Dream at that lamp did nothing until some other load. Now, when a guest's Dream choice at a lamp brings no warp, the game does the warp itself after a moment (the usual "Travel with the party?" question follows). `BB_PARTY_LAMP_EVENT_FALLBACK=0` switches the fix off (testing).
