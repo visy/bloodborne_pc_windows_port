@@ -1720,7 +1720,7 @@ void start_host(LinkConfig cfg) {
         r.have_cfg = true;
     }
     // 0.7.5: party discovery - announce on the VPN / LAN adapters while the setting is on (live).
-    bbnet::disc::start([] {
+    bbnet::disc::start([](bbnet::disc::Announce* out) {
         if (!BbSettings::Get().party_discovery) return false;
         Runtime& rr = R();
         PartyLink* l;
@@ -1741,6 +1741,7 @@ void start_host(LinkConfig cfg) {
         const coop::GameSnapshot gs = coop::ReadGameState(false);
         a.level = static_cast<std::uint16_t>(std::clamp(gs.level, 0, 999));
         a.area = gs.world_up ? coop::splitnotice::AreaNameOf(gs.map_id) : "";
+        *out = a;
         return true;
     });
     if (!kept.empty()) link->restore_members(kept);
