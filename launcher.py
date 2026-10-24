@@ -159,6 +159,8 @@ PARTY_INI_SWITCHES = [
     # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
     # System > Deaths & revives)
     ("party_any_kidnap", "BB_PARTY_ANY_KIDNAP", True),
+    # 0.7.5: Party starts = skip the prologue (the host's rule; System > Party rules: Phantoms)
+    ("party_skip_prologue", "BB_PARTY_SKIP_PROLOGUE", False),
     # 0.7.5: level sync and the phantom health cut (the host's rules; System > Party rules: Phantoms)
     ("party_level_sync", "BB_PARTY_LEVEL_SYNC", True),
     ("party_phantom_hp", "BB_PARTY_PHANTOM_HP", True),
@@ -271,6 +273,14 @@ PARTY_RULES_TAB = [
          "As in Bloodborne's own co-op: hunters who join a party have 30 % less maximum health. "
          "The host's setting; guests follow it. Off: full maximum health for everyone. Default: on "
          "(bbport.ini party_phantom_hp; in the game: System > Party rules: Phantoms)."),
+        ("check", "party_skip_prologue", "Skip the prologue (new characters)",
+         "A NEW character (one that has not finished the prologue) skips the clinic and the first "
+         "Hunter's Dream visit: the prologue's story flags are set, the starting weapons are given "
+         "(Saw Cleaver and Hunter Pistol - no choice at the messengers), and the hunter appears at "
+         "the Central Yharnam lamp, ready for the party. Characters past the prologue are never "
+         "touched. The host's setting; guests follow it. Off: the prologue is played as in the "
+         "game. Default: off (bbport.ini "
+         "party_skip_prologue; in the game: System > Party rules: Phantoms)."),
     ]),
     (1, 1, "PvP & lamps", [
         ("check", "party_friendly_fire", "Friendly fire / PvP",
