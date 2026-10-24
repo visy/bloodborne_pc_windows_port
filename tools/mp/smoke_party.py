@@ -1090,6 +1090,43 @@ def phase_fwe(only):
     return fw_phase("fwe", "host", "guest")   # a guest on the car's edge, the host steps in
 
 
+# Phase fh (lifts2, ~2 min, 2 players, group `hemwick_lift`): Hemwick's shortcut lift 2201210 (pos flag
+# 12200125: 0 the car at the top, 1 at the bottom; busy 12200126), the report's other lift (both guests
+# sent each ride's end). The host steps into the car at the top (region 2202000: the ride down), out at
+# the bottom, back in (region 2202001: the ride up) and out at the top; the guest rides both ways on the
+# car's edge.
+FH_CAR, FH_POS, FH_BUSY = "2201210", "12200125", "12200126"
+FH_TOP_IN = "-211.25:-20.1:542.1:0"
+FH_BOT_IN = "-211.25:-29.4:542.1:0"
+FH_TOP_EDGE = "-210.4:-20.1:541.6:0"
+FH_TOP_OUT = "-215.3:-20.8:547.1:0"
+FH_BOT_OUT = "-207.7:-29.5:539.1:0"
+FH_LAMP = "-172.0:-22.05:485.5:2.094:native:pin=2"
+
+
+def phase_fh(only):
+    common = "god,log_pos=0.25,log_obj=%s,log_objanim=%s,log_flag=%s/%s" % (FH_CAR, FH_CAR, FH_POS, FH_BUSY)
+    host = [common, "host_move=" + FH_LAMP + "@4%m22",
+            "host_move=" + FH_TOP_IN + "@3%m22?near=" + ":".join(FH_TOP_EDGE.split(":")[:3]) + ":1.5",
+            "host_move=" + FH_BOT_OUT + "@2%m22?" + FH_POS + "=1",
+            "host_move=" + FH_BOT_IN + "@3%m22",
+            "host_move=" + FH_TOP_OUT + "@2%m22?" + FH_POS + "=0",
+            "host_press=0@6%m22!"]
+    g1 = [common, "guest_move=" + FH_LAMP + "@4%m22",
+          "guest_move=" + FH_TOP_EDGE + "@2%m22",
+          "guest_press=0@1%m22?" + FH_POS + "=1",
+          "guest_move=" + FH_LAMP + "@4%m22?" + FH_POS + "=0"]
+    return dict(
+        name="fh", seconds=240, count=2, headless=0, fps=60,
+        env=["BB_PARTY_TEST_COND_TIMEOUT=60", "BB_PARTY_TEST_START_LAMP=2202950", "BB_PARTY_EMEVD_TRACE=1",
+             "BB_PARTY_EMEVD_TRACE_ALL=12200120,12200121,12200122,12200123"] +
+            [e for e in os.environ.get("FW_ENV", "").split(";") if e],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)],
+        watch=RIDE_BURST(FH_CAR, "[0-9]+", "[0-9]+"),
+        crash=[], until=FW_UNTIL,
+    )
+
+
 # Phase rs (liftfix diagnosis, ~1.5 min, the host alone, group `research_solo`, 60 FPS): the Research
 # Hall lift with nobody else in the session (BB_PARTY_DIRECTOR_TEST_SOLO). Party runs 11 / 12: when the
 # host left the car at the bottom the car left upward at once, empty. Alone: the same ride and exit;
@@ -2297,12 +2334,12 @@ def check_sj(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "lamps": "lp",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
           "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
@@ -2312,7 +2349,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ", "gather_ground": r"^gl ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "research_solo": r"^rs ", "lamps": r"^lp ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
               "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
@@ -3793,25 +3830,33 @@ def check_rh(v, L):
     check_common(v, L, "rh")
 
 
-def check_fw(v, L, tag="fw", riders=(0,)):
-    """lifts2: each rider rides up and down (the ride down right after the ride up), never stands more
-    than 2.5 m over the car's top floor (y -77.9) in the shaft (the report: a foot at a time up to ~30 m
-    over the car), is put back through its car at most once, and leaves the car at the bottom."""
+def check_fw(v, L, tag="fw", riders=(0,), pos="12700134", busy="12700135", first="0", block="0x1b000000", car=(-217.2, 279.7),
+             top=-77.9, puts=1):
+    """lifts2: each rider rides one way and back, never stands more than 2.5 m over the car's top floor
+    (`top`) in the shaft (the report: a foot at a time up to ~30 m over the car going down), is put back
+    on its car at most `puts` times (BB_TEST_LIFT_RIDEBIT_OFF runs: FW_PUTS), and leaves the car."""
+    puts = int(os.environ.get("FW_PUTS", puts))
+    second = "1" if first == "0" else "0"
     need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
     for i in riders:
-        up = need(v, L, "%s inst%d: rode up (pos 0)" % (tag, i), i, r"test: flags 12700134=0")
-        if up is None:
+        go = need(v, L, "%s inst%d: a ride starts" % (tag, i), i, r"test: flags %s=\d %s=1" % (pos, busy))
+        if go is None:
             continue
-        down = need(v, L, "%s inst%d: rode down (pos 1)" % (tag, i), i, r"test: flags 12700134=1", after=up)
+        one = need(v, L, "%s inst%d: first ride (pos %s)" % (tag, i, first), i, r"test: flags %s=%s" % (pos, first),
+                   after=go)
+        if one is None:
+            continue
+        two = need(v, L, "%s inst%d: ride back (pos %s)" % (tag, i, second), i, r"test: flags %s=%s" % (pos, second),
+                   after=one)
         high = []
-        for t, line in L.all(i, r"test: pos area 0x1b000000 \(", up - 8.0, (down or up + 30.0) + 3.0):
+        for t, line in L.all(i, r"test: pos area %s \(" % block, one - 12.0, (two or one + 30.0) + 3.0):
             m = re.search(r"\((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)", line)
-            if m and math.hypot(float(m.group(1)) + 217.2, float(m.group(3)) - 279.7) < 3.0 and float(m.group(2)) > -75.4:
+            if m and math.hypot(float(m.group(1)) - car[0], float(m.group(3)) - car[1]) < 3.0 and                     float(m.group(2)) > top + 2.5:
                 high.append((t, float(m.group(2))))
         v.step("%s inst%d: never high over the car" % (tag, i), not high,
                "max y %.1f" % max(y for _, y in high) if high else "none")
-        thru = L.all(i, r"dropped through the moving car", up - 8.0, 1e9)
-        v.step("%s inst%d: at most one put-back on the car" % (tag, i), len(thru) <= 1,
+        thru = L.all(i, r"dropped through the moving car", one - 12.0, 1e9)
+        v.step("%s inst%d: at most %d put-back(s) on the car" % (tag, i, puts), len(thru) <= puts,
                "%d: %s" % (len(thru), thru[0][1][:150]) if thru else "none")
     check_common(v, L, tag)
 
@@ -4660,7 +4705,7 @@ def check_ie(v, L):
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)),
+          "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": lambda v, L, d: check_il(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
@@ -4694,7 +4739,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "ld", "cl", "clg", "el", "lt", "bf", "ch",
-                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "tv", "nf", "nfa", "eh", "bl", "sj")
+                                     "lp", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "eh", "bl", "sj")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
