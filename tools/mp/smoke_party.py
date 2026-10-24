@@ -380,38 +380,40 @@ RULES_PAGES = [
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
-    ("Party rules: Deaths", ["Host gets up, no load", "Up after boss kill", "Anyone can be abducted"],
+    # 0.7.5 (partyrules): the guests' deaths, travel and rewards are the host's rules too
+    ("Party rules: Deaths", ["Host gets up, no load", "Up after boss kill", "Anyone can be abducted",
+                             "Guest gets up, no load", "Respawn at host's lamp", "Refill vials, bullets"],
      ("Host gets up, no load", "", "left", "Off", "right", "party_host_revive=0", "party_host_revive=1",
       '"host_revive":false')),
+    ("Party rules: Travel", ["Guests use lamps", "Guests use Hunter's Mark", "Open world", "Stay in Chalice Dungeons",
+                             "Cutscenes live with host"],
+     ("Open world", "down/down/", "left", "Off", "right", "party_open_world=0", "party_open_world=1",
+      '"open_world":false')),
+    ("Party rules: Rewards", ["Full rewards for guests", "Insight for bosses"],
+     ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
     # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
     ("Party rules: Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
      ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
     ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
     # 0.7.5: level sync and the phantom health cut (on by default: the change turns level sync off and back on)
-    ("Party rules: Phantoms", ["Level sync", "Phantom health cut"],
+    ("Party rules: Phantoms", ["Level sync", "Phantom health cut", "Skip the prologue"],
      ("Level sync", "", "left", "Off", "right", "party_level_sync=0", "party_level_sync=1", '"level_sync":false')),
-    ("My party: Deaths", ["Guest gets up, no load", "Respawn at host's lamp", "Refill vials, bullets"],
-     ("Guest gets up, no load", "", "left", "Off", "right", "party_guest_revive_inplace=0",
-      "party_guest_revive_inplace=1", None)),
-    ("My party: World", ["Guests use lamps", "Guests use Hunter's Mark", "Open world", "Stay in Chalice Dungeons"],
-     ("Open world", "down/down/", "left", "Off", "right", "party_open_world=0", "party_open_world=1", None)),
-    ("My party: Story", ["Share NPC dialogue", "NPC dialogue range", "Share story progress", "Share NPC quests",
-                         "Share cutscenes, endings", "Cutscenes live with host"],
-     ("Share NPC dialogue", "", "left", "Off", "right", "party_npc_talk=0", "party_npc_talk=1", None)),
-    ("My party: Rewards", ["Full rewards for guests", "Host's item rewards", "Give the bells", "Own key items as guest",
-                           "Key items at once", "Insight for bosses"],
-     ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
+    ("My party: Your save", ["Share story progress", "Share NPC quests", "Share cutscenes, endings"],
+     ("Share story progress", "", "left", "Off", "right", "party_progress=0", "party_progress=1", None)),
+    ("My party: Your items", ["Host's item rewards", "Give the bells", "Own key items as guest", "Key items at once"],
+     ("Give the bells", "down/", "left", "Off", "right", "party_grant_bells=0", "party_grant_bells=1", None)),
     ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
                            "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
-    ("My party: Look & notices", ["No companion glow", "Ping in the party list", "Join/leave notices", "Party discovery"],
+    ("My party: Look & notices", ["No companion glow", "Ping in the party list", "Join/leave notices",
+                                  "Share NPC dialogue", "NPC dialogue range", "Party discovery"],
      ("Join/leave notices", "down/down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
 RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fire", "party_npc_talk", "party_full_rewards",
-                   "party_boss_hp", "party_pings", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
+                   "party_boss_hp", "party_pings", "party_progress", "party_grant_bells", "party_host_revive", "party_share_lamps", "party_guests_bring_lamps",
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
@@ -3135,6 +3137,11 @@ def check_rules(v, L):
            and "Party votes on travel=Off" in sw[1] and "Covenants per player=On" in sw[1]
            and "NPC hunters fight all=On" in sw[1],  # 0.7.3 defaults
            sw[1][:250] if sw else "no Party rules: World rows line on the guest")
+    # 0.7.5 partyrules: the guests' travel rules are the host's too, read-only on the guest
+    tr = L.find(1, r"Game menu: page \d+ rows \(\d+\): Guests use lamps=")
+    v.step("rules guest: sees the host's Party rules: Travel (read-only)",
+           bool(tr) and "Guests use lamps=On" in tr[1] and "Guests use Hunter's Mark=On" in tr[1],
+           tr[1][:250] if tr else "no Party rules: Travel rows line on the guest")
     # guestrules (0.7.3): the enemy scaling is the host's: read-only lines with the host's values on
     # the guest ("150 %", the host's default), no slider position (a host's row shows "5")
     es = L.find(1, r"Game menu: page \d+ rows \(\d+\): Boss health=")

@@ -341,7 +341,7 @@ before anyone is in the game):
   between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's
   lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A guest who dies
   in the dungeon gets up beside the party; a guest pulled out by a death or a forced trip is summoned
-  back in automatically, one who chose to leave returns with *Party > Rejoin* (System > My party: World).
+  back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party rules: Travel).
 
 **Bosses, cutscenes and endings**
 
@@ -395,7 +395,7 @@ before anyone is in the game):
   host's world (Oedon Tomb Key, badges, workshop tools, chalices, umbilical cords) are given at once,
   and checked again when its own world loads and given again if missing; one you already hold is
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
-  Both are your own switches on *System → My party: Rewards* (*Own key items as guest*, *Key items at once*).
+  Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
@@ -422,7 +422,7 @@ before anyone is in the game):
   party (the covenant quests of Annalise, Alfred and Valtr stay each player's own), and NPCs look
   solid for guests. When a companion near you talks to an NPC you see the
   subtitles and hear the NPC, with a small "[Hunter talking to Iosefka]" caption (range in *System →
-  My party: Story → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
+  My party: Look & notices → NPC dialogue range*, default 25 m). The workbench, the Bath Messengers' shops and
   headstones show no caption. One-time NPC gifts go to every party member;
   repeatable ones (Blood of Arianna, Iosefka's vials, ...) and Valtr's League gifts to whoever asked.
 - **Change your appearance at the Dream's mirror.** The workshop mirror opens the appearance editor
@@ -463,11 +463,12 @@ before anyone is in the game):
 - **Every party setting in the game's own menu, in two groups.** *Party rules* holds what the host
   decides for the whole party: *Party rules: World* (enemies the party killed stay dead, gathering the
   party, NPCs as in the host's world, covenants, voting on travel, NPC hunters), *PvP & lamps*,
-  *Deaths* (the host getting up without a loading screen), *Rot* and *Enemies* (scaling); guests see
-  the host's values read-only. *My party* holds what each player chooses for itself: *My party:
-  Deaths* (getting up and respawning as a guest), *World* (lamps and Hunter's Mark for guests, open
-  world, Chalice Dungeons), *Story*, *Rewards* (also your key items as a guest), *Display* and
-  *Look & notices*. The launcher's *Party Rules* and *My Party* tabs show the same settings
+  *Deaths* (getting up and respawning, also for guests), *Travel* (lamps and Hunter's Mark for guests,
+  open world, Chalice Dungeons, cutscenes with the host), *Rewards* (guests' echoes and drops, boss
+  Insight), *Phantoms*, *Rot* and *Enemies* (scaling); guests see the host's values read-only, so the
+  whole party plays one way. *My party* holds what each player chooses for itself: *Your save* (what
+  the party brings into your own character), *Your items* (item rewards, your key items as a guest),
+  *Display* and *Look & notices*. The launcher's *Party Rules* and *My Party* tabs show the same settings
   (`bbport.ini`); its *Party* tab is for hosting, joining and the connection.
 
 **Safety and recovery**
