@@ -2201,14 +2201,16 @@ IL_UNTIL = [r"1:test: levelup: done[\s\S]*test: levelup: done", r"1:catch-up bat
 
 
 def phase_il(only):
-    host = ",".join(["god", "log_flag=5910/5508/70009300/70009310"])
+    # 0.7.6: the Chalice boss unlocks of the Insight shop (5090 Bone Ash, 5091 Madman) are progress without a
+    # lot: the host's event sets them, the guest's own save must get them (group shop_sync)
+    host = ",".join(["god", "log_flag=5910/5508/70009300/70009310/5090/5091", "set_flag=5090:5091"])
     g1 = ",".join(["god", "goods=4000:0", "goods=4001:0", "goods=4114:0", "log_flag=5910/5508/5500/5521"])
     return dict(
         name="il", seconds=240, count=2, headless=0,
         env=["BB_PARTY_START=immediate"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host,
               "0:BB_PARTY_PROGRESS_TEST_READ=5910,70009300,70009310,70009320,70009330,70009260",
-              "1:BB_PARTY_PROGRESS_TEST_CLEAR=12411800,12401800,12411700,5910,52410920,50001915,52411000,70009300,70009310,70009320,70009330",
+              "1:BB_PARTY_PROGRESS_TEST_CLEAR=12411800,12401800,12411700,5910,5090,5091,52410920,50001915,52411000,70009300,70009310,70009320,70009330",
               "1:BB_PARTY_PROGRESS_TEST_READ=5910,12411800,5508,5160",
               # A/B for the shop screenshots: IL_NOFIX=1 runs the guest without the shop-gate fix
               ("1:BB_PARTY_SHOP_GATES=0" if os.environ.get("IL_NOFIX") else "1:BB_PARTY_SHOP_GATES=1"),
@@ -2561,7 +2563,7 @@ GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
+          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2572,7 +2574,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iw ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2639,6 +2641,7 @@ GROUP_UNTIL = {
     "valtr_rune": CV_UNTIL,
     "items_every": IE_UNTIL,
     "items_leak": IL_UNTIL,
+    "shop_sync": [r"0:host flag 5091 = 1 \(world_state\)"],
     "travel_vote": TV_UNTIL,
     "limbo_leave": BL_UNTIL,
     "seam_rejoin": SJ_UNTIL,
@@ -4887,7 +4890,7 @@ def check_cv(v, L, d: Path):
     check_common(v, L, "cv")
 
 
-def check_il(v, L):
+def check_il(v, L, d=None):
     """Phase il: the quiet catch-up batch and the guest's shop gates (0.7.5)."""
     j = need(v, L, "il join: the guest is in", 0, r"cooperators 0 -> 1")
     need(v, L, "il catch-up: the host's list reaches the guest", 1, r"guest got \d+ grants from the host", 0)
@@ -4905,6 +4908,15 @@ def check_il(v, L):
     need(v, L, "il shop: the host's shared gate 5910 (Gascoigne's attire) shows on the guest whose own save has it clear", 1,
          r"test read \(load mode 1, own save / visible\): 5910=0/1", 0)
     need(v, L, "il shop: the guest's own Gascoigne flag cleared", 1, r"test: cleared in the own save.*12411800", 0)
+    # 0.7.6 (group shop_sync): shop unlocks from shared progress reach the guest's own save
+    need(v, L, "il sync: the host's Chalice boss unlock flags 5090 / 5091 are progress", 0,
+         r"host flag 5090 = 1 \(world_state\)", j or 0)
+    need(v, L, "il sync: ... 5091", 0, r"host flag 5091 = 1 \(world_state\)", j or 0)
+    gs = need(v, L, "il sync: the guest applies the host's flags in its own save", 1,
+              r"guest applied [1-9]\d* flags in load mode 1", j or 0)
+    g = lp_save_flags(d, 1, ["5090", "5091"]) if d else None
+    v.step("il sync: the guest's save holds the Bone Ash and Madman unlocks",
+           g is not None and g["5090"] and g["5091"], "guest save %s" % g)
     check_common(v, L, "il")
 
 
@@ -4973,7 +4985,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": lambda v, L, d: check_il(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 

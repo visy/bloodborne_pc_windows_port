@@ -2,6 +2,10 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.7.6 (unreleased)
+
+- **Fixed: shop items unlocked by beating a Chalice Dungeon boss now unlock for every party member** (player report: after the host beat the Keeper of the Old Lords only the host's Insight shop (Bath Messenger) offered the Bone Ash set; the guest never got it). The unlock flags of the Bone Ash set and the Madman set were filed with the item pickups, which only reach a guest together with an item, and no item carries them. They are now shared progress like the other shop unlocks (Gascoigne's, Henryk's, the blood stones): they come to guests when the host sets them, in the guest's own save too.
+
 ## 0.7.5
 
 - **Changed: the game asks Windows for much less memory** (about 5 GB less in the Hunter's Dream, 10.7 GB reserved but only about 5.5 GB committed): the game memory is reserved at start and each part is committed when the game uses it, instead of all of it at once. PCs with 8 to 16 GB of RAM and a small page file no longer run out of memory so soon. Speed is unchanged. If you ever see a memory problem, set `BB_GUEST_COMMIT_ON_MAP=0` to get the old behaviour.
