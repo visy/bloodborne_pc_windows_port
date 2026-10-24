@@ -1547,7 +1547,7 @@ void DefineAll() {
         "The host's cutscenes, time of day and ending reach your save too. Host and guests. Next start",
         "Ролики хоста, время суток и концовка попадают и в ваше сохранение. Хост и гости. Со след. запуска");
 
-    AddPage("My party: Your items", "Моя группа: ваши предметы",
+    AddPage("My party: Your items", "Моя группа: предметы",
             "Yours: what the party brings into your own save: the host's item rewards, bells, key items (bbport)",
             "Ваше: что группа приносит в ваше сохранение: предметы хоста, колокольчики, ключи (bbport)");
     own(&Values::party_items, "Host's item rewards", "Предметы хоста гостям",
