@@ -196,7 +196,10 @@ One host and two guests, from nothing to playing together. Do the steps in this 
 3. Same **Max players** (3) and the same **Password** as the host.
 4. Click **Launch Bloodborne** **after** the host's game is already running.
 5. Play the start of the game (the prologue) in your own world. After that the host's game summons you
-   automatically.
+   automatically. Short of time? The host can turn on *Skip the prologue* (*System > Party rules:
+   Phantoms* or the launcher's Party Rules tab): a brand-new character then starts at the Central
+   Yharnam lamp with the Saw Cleaver, the Hunter Pistol and Iosefka's Blood Vial, ready to be summoned.
+   Characters past the clinic are never touched.
 
 **4. The guests stay at *Connecting*?**
 
@@ -210,6 +213,8 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   type the host's VPN address into **Party code** (the port 9307 is added if left out). The host's
   launcher finds the VPN adapter by itself and shows the address to copy (*Host over a VPN*: Auto / Off
   / adapter name). Or let a player with an open port host.
+  The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
+  *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
 - **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 

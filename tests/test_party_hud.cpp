@@ -243,6 +243,9 @@ static void OverheadBar() {
     assert(!hud::OverheadBarShown(3, false, 100));
     assert(!hud::OverheadBarShown(3, true, 0));
     assert(hud::OverheadBarRed(true) && !hud::OverheadBarRed(false));
+    assert(!hud::GameEnemyBarHidden(1000, 0));      // no bar of ours: the game's stays (tags off)
+    assert(hud::GameEnemyBarHidden(1000, 800));     // drawn this frame or two ago: hidden
+    assert(!hud::GameEnemyBarHidden(1000, 600));    // tags went off 400 ms ago: back
 }
 
 static void Tags() {

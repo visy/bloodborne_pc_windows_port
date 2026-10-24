@@ -250,6 +250,9 @@ struct Values {
     /// auto|off|<adapter name>; env BB_PARTY_VPN overrides. The host's choice; read when the game
     /// starts (the address is chosen once). The name itself lives in bbnet (set_vpn_preference).
     std::atomic<int> party_vpn{0};
+    /// 0.7.5: party discovery (net/party_discovery.h): the host announces itself on the VPN and LAN adapters
+    /// only; the launcher's Join page lists what it hears. ini party_discovery, env BB_PARTY_DISCOVERY. Live.
+    std::atomic<bool> party_discovery{true};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,
@@ -288,6 +291,9 @@ struct Values {
     /// 0.7.3: a party travel by lamp, headstone or Hunter's Mark runs only once every member voted
     /// YES (party_vote.h). The host's rule; OFF by default.
     std::atomic<bool> party_travel_vote{false};
+    /// 0.7.5: Party starts = skip the prologue (party_start.h StartMode::SkipPrologue): a NEW character
+    /// begins as after the prologue. The host's rule; OFF by default.
+    std::atomic<bool> party_skip_prologue{false};
     std::atomic<bool> party_npc_fights{true};   ///< D11 (0.7.3): NPC hunters fight the whole party (party_npcfight_rules.h)
     std::atomic<bool> party_any_kidnap{true};   ///< 0.7.3: a Snatcher grabbing a guest takes the party to the Gaol (party_kidnap_rules.h)
     /// 0.7.5 (levelsync, party_levelsync_rules.h): the host's rules, both ON = Bloodborne's own co-op.

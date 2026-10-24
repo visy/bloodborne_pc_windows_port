@@ -1407,6 +1407,14 @@ void DefineAll() {
                "Правило хоста: у присоединившихся охотников на 30 % меньше максимального здоровья"},
               {"The host decides; off: hunters who join keep their full maximum health",
                "Решает хост; выкл.: присоединившиеся охотники сохраняют полное максимальное здоровье"});
+    host_rule(&Values::party_skip_prologue, "Skip the prologue", "Пропустить пролог",
+              AddText("A NEW character skips the clinic and first Dream visit: weapons, Yharnam lamp. Party rule",
+                      "НОВЫЙ персонаж пропускает клинику и первый Сон: оружие, фонарь Ярнама. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::SkipPrologue); },
+              {"The host's rule: a new character skips the prologue (Saw Cleaver, Hunter Pistol, Central Yharnam lamp)",
+               "Правило хоста: новый персонаж пропускает пролог (Пила-тесак, Охотничий пистолет, фонарь Центрального Ярнама)"},
+              {"The host decides; off: every new character plays the prologue. A character past it is never touched",
+               "Решает хост; выкл.: каждый новый персонаж проходит пролог. Прошедшего пролог это не затрагивает"});
 
     // ---- My party: Deaths (party_b2, party_phantom): while you are a guest ----
     AddPage("My party: Deaths", "Моя группа: смерти", "Yours: getting up and respawning while you are a guest (bbport)",
@@ -1548,6 +1556,10 @@ void DefineAll() {
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    // 0.7.5: party discovery (net/party_discovery.h; the Join list is in the launcher).
+    AddRow(Flag(&Values::party_discovery), "Party discovery", "Поиск групп",
+           "Host: announce the party on your VPN / LAN (never the Internet) for the launcher's Join list",
+           "Хост: объявлять группу в VPN и LAN (не в Интернет) для списка лаунчера", toggle, Kind::Toggle);
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

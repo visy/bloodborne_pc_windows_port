@@ -49,6 +49,7 @@ const PartySwitch PartySwitches[] = {
     // 0.7.3: lamp travel voting (party_vote.h reads it live; the host's rule, off by default).
     {"party_travel_vote", "BB_PARTY_TRAVEL_VOTE", &Values::party_travel_vote, false},
     {"party_npc_fights", "BB_PARTY_NPC_FIGHTS", &Values::party_npc_fights, false},  // 0.7.3, D11
+    {"party_skip_prologue", "BB_PARTY_SKIP_PROLOGUE", &Values::party_skip_prologue, false},  // 0.7.5
     {"party_any_kidnap", "BB_PARTY_ANY_KIDNAP", &Values::party_any_kidnap, false},  // 0.7.3, kidnapall
     // 0.7.5 (levelsync): the host's rules for what a joined hunter keeps of its stats
     {"party_level_sync", "BB_PARTY_LEVEL_SYNC", &Values::party_level_sync, false},
@@ -228,6 +229,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_toasts = i != 0;
     } else if (key == "party_hud") {
         v.party_hud = i != 0;
+    } else if (key == "party_discovery") {
+        v.party_discovery = i != 0;
     } else if (key == "party_guest_lamps") {
         v.party_guest_lamps = i != 0;
     } else if (key == "party_rot") {
@@ -417,7 +420,7 @@ void Load() {
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
         {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
-        {"BB_PARTY_VPN", "party_vpn"},
+        {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
@@ -749,6 +752,7 @@ void Save() {
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
+    put("party_discovery", flag(v.party_discovery));
     put("party_name_tags", flag(v.party_name_tags));
     put("party_glow_off", flag(v.party_glow_off));
     put("party_npc_talk", flag(v.party_npc_talk));

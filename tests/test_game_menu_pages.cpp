@@ -485,7 +485,7 @@ static void RulesPages() {
     const V rot = {u"Rot on death", u"Rot: boss kill cleanses", u"Rot: kill your killer", u"Rot: echoes back"};
     const V world = {u"Friendly fire / PvP", u"Shared lamps", u"Guests bring their lamps"};
     const V my_world = {u"Guests use lamps", u"Guests use Hunter's Mark", u"Open world", u"Stay in Chalice Dungeons"};
-    const V look = {u"No companion glow", u"Ping in the party list", u"Join/leave notices"};
+    const V look = {u"No companion glow", u"Ping in the party list", u"Join/leave notices", u"Party discovery"};
     const V story = {u"Share NPC dialogue", u"NPC dialogue range", u"Share story progress", u"Share NPC quests",
                      u"Share cutscenes, endings", u"Cutscenes live with host"};
     const V shared = {u"Enemies stay dead", u"Host can gather", u"NPCs as in host's world", u"Covenants per player",
@@ -634,6 +634,7 @@ static void RulesPages() {
           std::tuple{u"Party rules: World", u"NPC hunters fight all", "party_npc_fights", &BbSettings::Values::party_npc_fights},
           std::tuple{u"Party rules: Deaths", u"Anyone can be abducted", "party_any_kidnap",
                      &BbSettings::Values::party_any_kidnap},
+          std::tuple{u"Party rules: Phantoms", u"Skip the prologue", "party_skip_prologue", &BbSettings::Values::party_skip_prologue},
           std::tuple{u"Party rules: Phantoms", u"Level sync", "party_level_sync", &BbSettings::Values::party_level_sync},
           std::tuple{u"Party rules: Phantoms", u"Phantom health cut", "party_phantom_hp",
                      &BbSettings::Values::party_phantom_hp},
