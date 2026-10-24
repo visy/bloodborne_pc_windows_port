@@ -397,7 +397,7 @@ RULES_PAGES = [
     ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
     # 0.7.5: level sync and the phantom health cut (on by default: the change turns level sync off and back on)
-    ("Party rules: Phantoms", ["Level sync", "Phantom health cut"],
+    ("Party rules: Phantoms", ["Level sync", "Phantom health cut", "Skip the prologue"],
      ("Level sync", "", "left", "Off", "right", "party_level_sync=0", "party_level_sync=1", '"level_sync":false')),
     ("My party: Your save", ["Share story progress", "Share NPC quests", "Share cutscenes, endings"],
      ("Share story progress", "", "left", "Off", "right", "party_progress=0", "party_progress=1", None)),

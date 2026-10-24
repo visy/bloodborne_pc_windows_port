@@ -202,8 +202,9 @@ PARTY_INI_FLAGS = [
 PARTY_RULES_TAB_TITLE = "Party Rules"
 PARTY_RULES_TAB_INTRO = ("The host's rules for the whole party: they apply when you host. When you join a party, "
                          "the host's settings count and yours are kept for when you host (in the game a guest "
-                         "sees the host's read-only, System > Party rules). Enemy scaling: in the game, "
-                         "System > Party rules: Enemies.")
+                         "sees the host's read-only, System > Party rules). Lamps, Hunter's Mark, full rewards, "
+                         "boss Insight and Party starts are read once at start: they must match the host's. "
+                         "Enemy scaling: in the game, System > Party rules: Enemies.")
 PARTY_RULES_TAB = [
     (0, 1, "World", [
         ("check", "party_kill_record", "Enemies stay dead",
@@ -376,8 +377,8 @@ PARTY_RULES_TAB = [
     ]),
 ]
 MY_PARTY_TAB_TITLE = "My Party"
-MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what you get as a guest, story sync "
-                      "and saves. Each player chooses them for itself (in the game: System > My party).")
+MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what the party brings into your own save "
+                      "and items, and your saves. Each player chooses them for itself (in the game: System > My party).")
 MY_PARTY_TAB = [
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
