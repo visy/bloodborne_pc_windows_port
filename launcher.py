@@ -565,6 +565,138 @@ def party_port(value, default: int = PARTY_DEFAULT_PORT):
     return port if 1024 <= port <= 65535 else None
 
 
+PARTY_BARE_HOST_RE = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}|[A-Za-z][A-Za-z0-9.-]*)$")
+
+
+def is_bare_address(text: str) -> bool:
+    """True for an IPv4 address (or a host name) without a port: what a friend pastes from a VPN app.
+    Party codes (BBP...) and host:port are not bare."""
+    t = (text or "").strip()
+    if not t or t.upper().startswith(PARTY_CODE_PREFIXES) or not PARTY_BARE_HOST_RE.match(t):
+        return False
+    if re.fullmatch(r"[\d.]+", t):
+        return all(0 <= int(x) <= 255 for x in t.split(".")) and t.count(".") == 3
+    return "." in t  # a host name needs a dot (a lone word is a typo)
+
+
+def with_party_port(text: str, port=PARTY_DEFAULT_PORT) -> str:
+    """The join address with the party port: a bare IP / host gets ':<port>' (the host's party_port,
+    9307 by default); an explicit ip:port, a party code or anything else is returned as it was."""
+    t = (text or "").strip()
+    return f"{t}:{port}" if is_bare_address(t) else t
+
+
+def host_address_text(ip: str, port) -> str:
+    """The address a host copies for a friend: 'ip:port', always with the host's actual party port."""
+    return f"{ip}:{party_port(port) or PARTY_DEFAULT_PORT}"
+
+
+# ---- Host over a VPN (0.7.5): the adapter choice of the game (gpu/shim/net/net_socket.cpp
+# vpn_adapter_score), repeated here so the launcher can show the address before the game runs.
+VPN_AUTO_RANK = {"Radmin VPN": 4, "Hamachi": 3, "Tailscale": 2, "ZeroTier": 1}
+VPN_VIRTUAL_MARKS = ("hyper-v", "vethernet", "wsl", "virtualbox", "vbox", "vmware", "vmnet", "virtual", "docker",
+                     "tap-windows", "tap adapter", "tap-", "openvpn", "wintun", "wireguard", "tailscale",
+                     "zerotier", "hamachi", "radmin", "nordlynx", "vpn", "anyconnect", "fortinet", "pangp",
+                     "loopback", "bluetooth")
+
+
+def vpn_pref_normalize(pref) -> str:
+    """party_vpn: 'auto' (also empty), 'off', or an adapter name (part of it, any case)."""
+    t = str(pref or "").strip()
+    low = t.lower()
+    if low in ("", "auto", "on", "1"):
+        return "auto"
+    if low in ("off", "0", "none", "no"):
+        return "off"
+    return t
+
+
+def vpn_choice_label(pref) -> str:
+    """The Host over a VPN combo's text for an ini value."""
+    p = vpn_pref_normalize(pref)
+    return {"auto": "Auto", "off": "Off"}.get(p, p)
+
+
+def vpn_choice_pref(label: str) -> str:
+    """The ini value for the combo's text."""
+    return vpn_pref_normalize(label)
+
+
+def vpn_kind(name: str, ip: str) -> str:
+    """'Radmin VPN' / 'Hamachi' / 'Tailscale' / 'ZeroTier' by the adapter name, else (a virtual adapter)
+    by the address range; 'other' for other VPN-like adapters; '' for none."""
+    n = (name or "").lower()
+    for mark, label in (("radmin", "Radmin VPN"), ("hamachi", "Hamachi"), ("zerotier", "ZeroTier"),
+                        ("tailscale", "Tailscale")):
+        if mark in n:
+            return label
+    if not any(m in n for m in VPN_VIRTUAL_MARKS):
+        return ""
+    try:
+        a, b = (int(x) for x in ip.split(".")[:2])
+    except ValueError:
+        return ""
+    if a == 26:
+        return "Radmin VPN"
+    if a == 25:
+        return "Hamachi"
+    if a == 100 and 64 <= b <= 127:
+        return "Tailscale"
+    if any(m in n for m in ("vpn", "tap", "wintun", "wireguard", "nordlynx", "anyconnect", "fortinet", "pangp")):
+        return "other"
+    return ""
+
+
+def vpn_usable_ip(ip: str) -> bool:
+    return bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip or "")) and not ip.startswith(("127.", "169.254.", "0."))
+
+
+def select_vpn_adapter(adapters: list, pref="auto"):
+    """The adapter to host over: {'name', 'ip'} from `adapters` (up adapters with an IPv4), or None.
+    auto: the best of Radmin, Hamachi, Tailscale, ZeroTier (a commercial VPN is never taken unasked);
+    off: none; else the first whose name contains `pref` (any case)."""
+    pref = vpn_pref_normalize(pref)
+    if pref == "off":
+        return None
+    best, best_score = None, -1
+    for a in adapters:
+        if not vpn_usable_ip(a.get("ip", "")):
+            continue
+        if pref == "auto":
+            score = VPN_AUTO_RANK.get(vpn_kind(a.get("name", ""), a["ip"]), -1)
+        else:
+            score = 0 if pref.lower() in a.get("name", "").lower() else -1
+        if score > best_score:
+            best, best_score = a, score
+    return best
+
+
+def vpn_adapter_label(adapter: dict) -> str:
+    kind = vpn_kind(adapter.get("name", ""), adapter.get("ip", ""))
+    return kind if kind and kind != "other" else str(adapter.get("name", "")).split(" / ")[0]
+
+
+def detect_vpn_adapters() -> list:
+    """The up IPv4 adapters of this PC as [{'name': 'friendly / description', 'ip'}] (Windows; PowerShell,
+    about a second: call it from a thread). [] when it cannot be asked."""
+    if os.name != "nt":
+        return []
+    script = ("Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { $n=$_; "
+              "Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+              "ForEach-Object { [pscustomobject]@{name=($n.Name + ' / ' + $n.InterfaceDescription); ip=$_.IPAddress} } } "
+              "| ConvertTo-Json -Compress")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                             capture_output=True, text=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
+        data = json.loads(out) if out else []
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    if isinstance(data, dict):
+        data = [data]
+    return [{"name": str(d.get("name", "")), "ip": str(d.get("ip", ""))} for d in data if isinstance(d, dict)]
+
+
 def party_code_problem(code: str) -> str:
     """'' when `code` is a party code (BBP3- / BBP2- / BBP1-...) or host:port, else what is wrong with it."""
     code = (code or "").strip()
@@ -574,6 +706,8 @@ def party_code_problem(code: str) -> str:
         if not PARTY_CODE_RE.match(code):
             return f"a party code looks like {PARTY_CODE_EXAMPLE} (0-9 and A-Z without U, in groups)"
         return "" if party_code_flags(code) is not None else "this party code has a typo (checksum mismatch)"
+    if is_bare_address(code):
+        return ""  # the party port is added
     m = PARTY_HOSTPORT_RE.match(code)
     if m:
         port = int(m.group(2))
@@ -854,7 +988,7 @@ def party_env(s: dict) -> dict:
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
             "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS",
-            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6"]
+            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     # bbport.ini's (unset here, so a stale variable never overrides the ini; BB_PARTY_GUEST_INSIGHT too)
     keys += [env_name for _, env_name, _ in PARTY_INI_SWITCHES]
@@ -873,6 +1007,7 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_PORT"] = str(port or PARTY_DEFAULT_PORT)
     if mode == "join":
         code = str(s.get("party_code", "") or "").strip()
+        code = with_party_port(code)  # a bare IP gets the party port
         env["BB_PARTY_CODE"] = (code.upper() if code.upper().startswith(PARTY_CODE_PREFIXES) else code) or None
     env["BB_PARTY_PASSWORD"] = password or None
     env["BB_PARTY_UPNP"] = "1" if s.get("party_upnp", True) else "0"
@@ -2279,6 +2414,11 @@ class BloodborneLauncher(tk.Tk):
         self.party_upnp = tk.BooleanVar(value=self.settings.get("party_upnp", True))
         self.party_rendezvous = tk.BooleanVar(value=bool(self.settings.get("party_rendezvous", False)))
         self.party_member_relay = tk.BooleanVar(value=bool(self.settings.get("party_member_relay", True)))
+        self.vpn_adapters = []  # detect_vpn_adapters(), filled by a thread (refresh_vpn)
+        self.party_vpn_var = tk.StringVar(value=vpn_choice_label(read_ini(bbport_ini_path()).get("party_vpn", "auto")))
+        self.party_vpn_addr_var = tk.StringVar(value="")
+        self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
+        self.party_port_suffix_var = tk.StringVar(value="")
         self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
         self.party_public_var = tk.StringVar(value=str(self.settings.get("party_public_addr", "") or ""))
         self.party_stun_var = tk.StringVar(value=str(self.settings.get("party_stun", PARTY_DEFAULT_STUN) or ""))
@@ -2982,6 +3122,33 @@ class BloodborneLauncher(tk.Tk):
                                PARTY_MEMBER_RELAY_TIP, command=self.save_settings)
         ipv6_cb = self._check(sec, "Use IPv6 when both PCs have it", self.party_ipv6, PARTY_IPV6_TIP,
                               command=self.save_settings)
+        vpn_tip = ("Host: put your VPN address (Radmin VPN, Hamachi, ZeroTier, Tailscale) into the party "
+                   "code, so friends in the same VPN network join with it. Auto (default): when such an "
+                   "adapter is up; otherwise nothing changes. Off: never. Or pick one adapter by name. "
+                   "The host's choice, read when the game starts. Also in the game: System > Party "
+                   "network. bbport.ini party_vpn=auto|off|<adapter name>, BB_PARTY_VPN.")
+        vpn_lbl = ttk.Label(sec, text="Host over a VPN:", style="Card.TLabel")
+        vpn_lbl.grid(row=sec.next_row, column=0, sticky="w", pady=3, padx=(0, 8))
+        vpn_row = ttk.Frame(sec, style="Card.TFrame")
+        vpn_row.grid(row=sec.next_row, column=1, sticky="w", pady=3)
+        sec.next_row += 1
+        self.party_vpn_combo = ttk.Combobox(vpn_row, textvariable=self.party_vpn_var, values=["Auto", "Off"],
+                                            state="readonly", width=24)
+        self.party_vpn_combo.pack(side="left")
+        self.party_vpn_combo.bind("<<ComboboxSelected>>", lambda e: self.on_vpn_change())
+        Tooltip(vpn_lbl, vpn_tip)
+        Tooltip(self.party_vpn_combo, vpn_tip)
+        vpn_addr_lbl, self.party_vpn_addr_entry, vpn_copy_btn, _ = self._entry(
+            sec, "VPN address\n(friends in your VPN):", self.party_vpn_addr_var,
+            "Your address in the VPN network with the party port, like 26.12.34.56:9307. Copy it and send it "
+            "to a friend in the same VPN: they paste it as the party code (the port is added if they leave "
+            "it out). The LAN code holds the same address while the game hosts.",
+            width=20, button=("Copy", self.copy_vpn_address, "Copies the VPN address and the party port."))
+        self.party_vpn_addr_entry.state(["readonly"])
+        self.party_vpn_info_lbl = ttk.Label(sec, textvariable=self.party_vpn_info_var, style="Hint.TLabel",
+                                            wraplength=340, justify="left")
+        self.party_vpn_info_lbl.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        sec.next_row += 1
         public_lbl, self.party_public_entry, _, _ = self._entry(
             sec, "Public address:", self.party_public_var,
             "Host only: the address put into the party code. Empty (recommended) = found automatically "
@@ -3006,6 +3173,11 @@ class BloodborneLauncher(tk.Tk):
         code_lbl, self.party_code_entry, paste_btn, _ = self._entry(
             sec, "Party code:", self.party_code_var, code_tip, width=20,
             button=("Paste", self.paste_party_code, "Pastes the party code from the clipboard."))
+        self.party_port_suffix = ttk.Label(self.party_code_entry.master, textvariable=self.party_port_suffix_var,
+                                           style="Hint.TLabel")
+        self.party_port_suffix.pack(side="left", padx=(4, 0), before=paste_btn)
+        Tooltip(self.party_port_suffix, "The party port that is added to a bare address (like 26.12.34.56). "
+                                        "Type host:port to use another port.")
         host_tip = (f"Your party code for friends elsewhere, like {PARTY_CODE_EXAMPLE} (3 characters "
                     "longer without a password); they paste it with Join a party. It appears after the "
                     "game starts hosting (user\\party_code.txt). Players on your own network can use it "
@@ -3046,13 +3218,18 @@ class BloodborneLauncher(tk.Tk):
                                  port_lbl, self.party_port_entry, upnp_cb, rdv_cb, relay_cb, ipv6_cb, stun_lbl,
                                  self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
-        self.party_widgets_host = [public_lbl, self.party_public_entry,
+        self.party_widgets_host = [vpn_lbl, self.party_vpn_combo, vpn_addr_lbl, self.party_vpn_addr_entry,
+                                   vpn_copy_btn, public_lbl, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
         for var in (self.party_name_var, self.party_port_var, self.party_code_var, self.party_password_var,
                     self.feat_tracing):
             var.trace_add("write", lambda *a: self.update_party_hints())
+        self.party_port_var.trace_add("write", lambda *a: self.update_vpn_address())
+        self.party_code_var.trace_add("write", lambda *a: self.update_port_suffix())
+        self.update_port_suffix()
+        self.refresh_vpn()
         self.after(2000, self.party_code_tick)
 
     def build_party_settings_tab(self, title: str, intro: str, sections: list) -> ttk.Frame:
@@ -3181,6 +3358,9 @@ class BloodborneLauncher(tk.Tk):
         self.frame_generation_var.set(frame_generation_label(ini))
         self.reflex_var.set(reflex_label(ini))
         self.prompt_style_var.set(prompt_style_label(ini))
+        if hasattr(self, "party_vpn_combo"):
+            self.party_vpn_var.set(vpn_choice_label(ini.get("party_vpn", "auto")))
+            self.update_vpn_address()
         self.hdr_var.set(str(ini.get("hdr", "0")).strip() not in ("", "0"))
         self.hdr_peak_var.set(hdr_peak_label(ini))
         self.hdr_paper_var.set(hdr_paper_white_label(ini))
@@ -3239,6 +3419,8 @@ class BloodborneLauncher(tk.Tk):
 
     def on_party_change(self):
         self.update_party_state()
+        if hasattr(self, "party_vpn_combo"):
+            self.update_vpn_address()
         self.save_settings()
 
     def update_party_state(self):
@@ -3332,6 +3514,71 @@ class BloodborneLauncher(tk.Tk):
         self.clipboard_append(code)
         self.log(f"[PARTY] {what} copied to the clipboard.")
 
+    # ---- host over a VPN (0.7.5) ----
+    def refresh_vpn(self):
+        """Looks for the VPN adapters in a thread (PowerShell, about a second), then updates the row."""
+        box = []
+
+        def work():
+            box.append(detect_vpn_adapters())  # tkinter is touched by the main thread only
+
+        def poll():
+            if box:
+                self.on_vpn_adapters(box[0])
+            else:
+                self.after(300, poll)
+        threading.Thread(target=work, daemon=True).start()
+        self.after(300, poll)
+
+    def on_vpn_adapters(self, adapters: list):
+        self.vpn_adapters = adapters
+        names = ["Auto", "Off"] + [a["name"].split(" / ")[0] for a in adapters
+                                   if vpn_kind(a["name"], a["ip"]) and vpn_usable_ip(a["ip"])]
+        current = self.party_vpn_var.get()
+        if current not in names:
+            names.append(current)
+        self.party_vpn_combo.config(values=names)
+        self.update_vpn_address()
+
+    def current_vpn(self):
+        return select_vpn_adapter(self.vpn_adapters, vpn_choice_pref(self.party_vpn_var.get()))
+
+    def update_vpn_address(self):
+        """The VPN row: 'Hosting over Radmin VPN: 26.x.y.z' and the address to copy."""
+        pref = vpn_choice_pref(self.party_vpn_var.get())
+        adapter = self.current_vpn()
+        if adapter:
+            self.party_vpn_addr_var.set(host_address_text(adapter["ip"], self.party_port_var.get()))
+            verb = "Hosting over" if self.party_mode() == "host" else "Hosting would use"
+            self.party_vpn_info_var.set(f"{verb} {vpn_adapter_label(adapter)}: {adapter['ip']}")
+        else:
+            self.party_vpn_addr_var.set("")
+            self.party_vpn_info_var.set(
+                "Not hosting over a VPN (off)." if pref == "off" else
+                "No VPN adapter is up (Radmin VPN, Hamachi, ZeroTier, Tailscale): the usual address is used."
+                if pref == "auto" else f"No adapter named '{pref}' is up: the usual address is used.")
+
+    def on_vpn_change(self):
+        try:
+            update_ini(bbport_ini_path(), {"party_vpn": vpn_choice_pref(self.party_vpn_var.get())})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save the VPN setting to bbport.ini: {ex}")
+        self.update_vpn_address()
+
+    def copy_vpn_address(self):
+        text = self.party_vpn_addr_var.get()
+        if not text:
+            messagebox.showinfo("No VPN address", self.party_vpn_info_var.get())
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.log(f"[PARTY] VPN address {text} copied to the clipboard.")
+
+    def update_port_suffix(self):
+        """The join box's fixed ':port' suffix, shown while the text is a bare address."""
+        bare = is_bare_address(self.party_code_var.get())
+        self.party_port_suffix_var.set(f":{PARTY_DEFAULT_PORT}" if bare else "")
+
     def copy_lan_code(self):
         self.copy_party_code(lan=True)
 
@@ -3363,7 +3610,7 @@ class BloodborneLauncher(tk.Tk):
             return
         text = " ".join(str(text).split())  # one line, no surrounding spaces
         if text:
-            self.party_code_var.set(text)
+            self.party_code_var.set(with_party_port(text))  # a bare IP from a VPN app gets the port
             self.save_settings()
 
     def show_party_help(self):

@@ -207,7 +207,9 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   outside address starts with `100.64` to `100.127`, and opening the port on the router does not help.
   The *Party* page's *Network* line tells you when this is the case. The easiest fix is a free VPN
   that all three players install, such as **Radmin VPN**, **Tailscale** or **ZeroTier**; the guests then
-  type the host's VPN address as `VPN-IP:9307` into **Party code**. Or let a player with an open port host.
+  type the host's VPN address into **Party code** (the port 9307 is added if left out). The host's
+  launcher finds the VPN adapter by itself and shows the address to copy (*Host over a VPN*: Auto / Off
+  / adapter name). Or let a player with an open port host.
 - **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 

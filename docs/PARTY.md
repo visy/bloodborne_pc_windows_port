@@ -218,6 +218,16 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
 - **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
   virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
   `address:9307` (or sets it as *Public address*, so the code contains it).
+- **Hosting over a VPN (0.7.5).** With Radmin VPN, Hamachi, ZeroTier or Tailscale running, the
+  game finds the VPN adapter by itself (setting *Host over a VPN*: **Auto**, **Off**, or an adapter
+  picked by name; launcher *Party* tab, *System > Party network*, bbport.ini `party_vpn`,
+  `BB_PARTY_VPN`; the host's choice, read when the game starts). The party code's LAN code then holds
+  your VPN address (Radmin 26.x, Hamachi 25.x, Tailscale 100.64/10, ZeroTier whatever its network
+  assigns); the Internet code is unchanged. The *Party* tab shows *Hosting over Radmin VPN:
+  26.x.y.z* and a *VPN address* line with **Copy** (always `address:port`, your party port). A friend
+  in the same VPN pastes that into **Party code**; a bare address without `:port` gets the
+  party port (9307) added. Commercial VPNs (NordVPN, ...) are never picked in Auto, only by name.
+  `BB_PARTY_LOCAL_IP` still overrides everything.
 - Guests talk to each other directly when they can; when a direct path does not work, their game
   traffic goes through the host automatically.
 

@@ -366,6 +366,11 @@ def phase_sc(only):
 RULES_PAGES = [
     # 0.7.3: the host's rules (Party rules: ..., read-only lines on a guest), then each player's own
     # (My party: ...), in the System menu's order.
+    # 0.7.5: host over a VPN (a game dropdown, Auto by default: the walk checks it is listed on host and
+    # guest; the change is the relay toggle, a dropdown needs Cross / Down / Cross)
+    ("Party network", ["Network", "Find via public DHT", "Relay for members", "IPv6", "Join via a member",
+                       "Host over a VPN"],
+     ("Relay for members", "down/down/", "left", "Off", "right", "party_member_relay=0", "party_member_relay=1", None)),
     # 0.7.1 / 0.7.3: the host's world rules
     ("Party rules: World", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
                             "Party votes on travel", "NPC hunters fight all"],
@@ -410,7 +415,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_vpn", "party_member_relay", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -3098,9 +3103,11 @@ def check_rules(v, L):
                 v.step("rules %s: %s rows" % (who, page), False, "no rows line after the page opened")
                 continue
             shown = [r.rsplit("=", 1)[0] for r in line[1].split("): ", 1)[1].split(" | ")]
-            ok = shown == labels and len(shown) <= 6 and "(CUT)" not in line[1]
+            # the host has no "Join via a member" row (a guest's button)
+            want = [x for x in labels if not (i == 0 and x == "Join via a member")]
+            ok = shown == want and len(shown) <= 6 and "(CUT)" not in line[1]
             v.step("rules %s: %s rows" % (who, page), ok, line[1][:300] if ok else
-                   "expected %s, got %s" % (labels, line[1][:300]))
+                   "expected %s, got %s" % (want, line[1][:300]))
         t = need(v, L, "rules host: %s changed (%s -> %s)" % (page, row, value), 0,
                  r"Game menu: row '%s' -> %s$" % (re.escape(row), re.escape(value)))
         if t is None:
