@@ -765,8 +765,12 @@ def discovery_rows(found: list, peers: list, my_version: str) -> list:
     (kind 'tailscale') is only 'maybe hosting': no details, joined at the default port."""
     rows = []
     seen_ips = set()
+    seen_ids = set()
     for e in found:
         seen_ips.add(e["ip"])
+        if e["id"] in seen_ids:  # one game announcing on several adapters: listed once
+            continue
+        seen_ids.add(e["id"])
         rows.append({"iid": f"{e['ip']}/{e['id']}", "name": e["name"], "level": str(e["level"] or "?"),
                      "players": f"{e['players']}/{e['max']}", "area": e["area"] or "-",
                      "password": "yes" if e["password"] else "no", "build": e["build"],
@@ -801,8 +805,8 @@ def discovery_open_network_warning(mode: str, password: str, vpn_label: str) -> 
     if mode != "host" or (password or "").strip():
         return ""
     if vpn_label in ("Radmin VPN", "Hamachi"):
-        return (f"No password while hosting over {vpn_label}: anyone in that network can join you from the "
-                "Join list. Public networks can contain strangers; set a Password.")
+        return (f"No password over {vpn_label}: anyone in that network can join you. "
+                "Public networks can contain strangers: set a Password.")
     return ""
 
 
@@ -2385,6 +2389,11 @@ class BloodborneLauncher(tk.Tk):
         style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground="#888888", background=bg_dark)
         style.configure("Section.TLabel", font=("Segoe UI", 8, "bold"), foreground="#c5a059", background=bg_card)
         style.configure("Hint.TLabel", font=("Segoe UI", 8), foreground="#888888", background=bg_card)
+        # The parties list (party discovery)
+        style.configure("Treeview", background=bg_input, fieldbackground=bg_input, foreground=fg_text,
+                        rowheight=22, borderwidth=0)
+        style.configure("Treeview.Heading", background="#2a2a2c", foreground="#c5a059", font=("Segoe UI", 8, "bold"))
+        style.map("Treeview", background=[("selected", accent)], foreground=[("selected", "#ffffff")])
         style.map("Card.TCheckbutton", background=[("active", "#2d2d30")],
                   foreground=[("disabled", "#666666")])
 
@@ -3760,7 +3769,9 @@ class BloodborneLauncher(tk.Tk):
 
     def build_discovery_section(self, tab):
         """The Join page's live list of parties announced on the VPN / LAN (and Tailscale peers)."""
-        sec = self._section(tab, 1, "Parties found (VPN / LAN)", row=1)
+        sec = self._section(tab, 0, "Parties found (VPN / LAN)", row=1)
+        for w in tab.grid_slaves(row=0, column=1):  # Connection spans both rows: the list sits under Party, not under it
+            w.grid_configure(rowspan=2)
         self._check(sec, "Party discovery", self.party_discovery,
                     "Hosting: the game announces your party (name, level, players, area, whether it has a "
                     "password, build; never the password) by broadcast on your VPN (Radmin, Hamachi, "
@@ -3769,17 +3780,17 @@ class BloodborneLauncher(tk.Tk):
                     "command when it is installed. Default: on (bbport.ini party_discovery; in the game: "
                     "System > Party network).", command=self.on_discovery_toggle)
         cols = ("name", "level", "players", "area", "password", "build")
-        heads = {"name": "Host", "level": "Level", "players": "Players", "area": "Area", "password": "Password",
+        heads = {"name": "Host", "level": "Lvl", "players": "Slots", "area": "Area", "password": "Pass",
                  "build": "Build"}
-        widths = {"name": 76, "level": 34, "players": 42, "area": 80, "password": 56, "build": 52}
+        widths = {"name": 76, "level": 36, "players": 44, "area": 84, "password": 40, "build": 56}
         holder = ttk.Frame(sec, style="Card.TFrame")
         holder.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
         sec.next_row += 1
-        self.discovery_tree = ttk.Treeview(holder, columns=cols, show="headings", height=5, selectmode="browse")
+        self.discovery_tree = ttk.Treeview(holder, columns=cols, show="headings", height=4, selectmode="browse")
         for c in cols:
             self.discovery_tree.heading(c, text=heads[c])
             self.discovery_tree.column(c, width=widths[c], stretch=False, anchor="w")
-        self.discovery_tree.tag_configure("mismatch", foreground="#7a7a7a")
+        self.discovery_tree.tag_configure("mismatch", foreground="#6c6c6c")
         self.discovery_tree.pack(side="left")
         self.discovery_tree.bind("<Double-1>", lambda e: self.join_found_party())
         row = ttk.Frame(sec, style="Card.TFrame")
@@ -3793,7 +3804,7 @@ class BloodborneLauncher(tk.Tk):
                                          "rows run another bbport version.")
         self.discovery_info_var = tk.StringVar(value="")
         ttk.Label(row, textvariable=self.discovery_info_var, style="Hint.TLabel").pack(side="left", padx=(8, 0))
-        warn = ttk.Label(sec, textvariable=self.discovery_warn_var, style="Hint.TLabel", wraplength=420,
+        warn = ttk.Label(sec, textvariable=self.discovery_warn_var, style="Hint.TLabel", wraplength=330,
                          justify="left", foreground="#d98c1f")
         warn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w")
         sec.next_row += 1
@@ -3913,6 +3924,8 @@ class BloodborneLauncher(tk.Tk):
             names.append(current)
         self.party_vpn_combo.config(values=names)
         self.update_vpn_address()
+        if hasattr(self, "discovery_warn_var"):
+            self.update_discovery_warning()
 
     def current_vpn(self):
         return select_vpn_adapter(self.vpn_adapters, vpn_choice_pref(self.party_vpn_var.get()))

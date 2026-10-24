@@ -136,6 +136,10 @@ class Discovery(unittest.TestCase):
         self.assertEqual((rows[0]["address"], rows[0]["players"], rows[0]["password"], rows[0]["ok"]),
                          ("26.1.2.3:9307", "2/4", "yes", True))
         self.assertEqual((rows[1]["password"], rows[1]["ok"]), ("no", False))  # greyed: other build
+        # the same game heard on two adapters (same id) is one row
+        both = [dict(L.parse_discovery_packet(packet()), ip="192.168.1.5"),
+                dict(L.parse_discovery_packet(packet()), ip="26.1.2.3")]
+        self.assertEqual(len(L.discovery_rows(both, [], "0.7.5")), 1)
 
     def test_tailscale(self):
         L = self.L
