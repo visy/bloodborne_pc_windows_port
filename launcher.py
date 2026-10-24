@@ -261,6 +261,19 @@ PARTY_RULES_TAB = [
          "grabbed host takes the party there, a grabbed guest just dies. The waking scene plays "
          "for everyone either way. Default: on (bbport.ini party_any_kidnap; in the game: "
          "System > Party rules: Deaths)."),
+        ("check", "party_guest_revive_inplace", "Get up without a loading screen",
+         "A guest who dies gets up at the host's lamp right away, with no loading screen (after a "
+         "fall: the respawn load). Off: every death takes the respawn loading screen. Applies to "
+         "you while you are a guest. Default: on (bbport.ini party_guest_revive_inplace; in the "
+         "game: System > Party rules: Deaths)."),
+        ("check", "party_guest_respawn", "Respawn at the host's lamp",
+         "A guest who dies comes back at the host's last lamp and is summoned again, instead of "
+         "being sent home to their own world. The host's rule: guests follow it. "
+         "Default: on (bbport.ini party_guest_respawn; in the game: System > Party rules: Deaths)."),
+        ("check", "party_guest_refill", "Refill vials and bullets",
+         "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
+         "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
+         "guest. Default: on (bbport.ini party_guest_refill; in the game: System > Party rules: Deaths)."),
     ]),
     (0, 3, "Phantoms", [
         ("check", "party_level_sync", "Level sync",
@@ -321,6 +334,46 @@ PARTY_RULES_TAB = [
          "second time if your killer already died). Needs Rot on death. Default: on "
          "(bbport.ini party_rot_cleanse_echoes; in the game: System > Party rules: Rot).", "party_rot"),
     ]),
+    (1, 3, "Travel", [
+        ("check", "party_guest_lamps", "Guests use lamps",
+         "Guests may use lamps and the Dream's headstones; the host leads and the whole party "
+         "travels. After a restart. Default: on (bbport.ini party_guest_lamps; in the game: "
+         "System > Party rules: Travel)."),
+        ("check", "party_guest_mark", "Guests can use Hunter's Mark",
+         "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
+         "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
+         "Off: guests cannot use it, as in the normal game. Default: on (bbport.ini party_guest_mark; "
+         "in the game: System > Party rules: Travel)."),
+        ("check", "party_open_world", "Open world (no co-op area walls)",
+         "Removes the walls the game puts on area borders while a helper is in your world, "
+         "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
+         "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > Party rules: Travel)."),
+        ("check", "party_chalice_rejoin", "Stay in the host's Chalice Dungeon",
+         "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
+         "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
+         "could not follow) goes back to their own world and is summoned into the dungeon again "
+         "automatically. A guest who chose to leave (\"alone\" at a lamp, their own Hunter's Mark) "
+         "stays out until they press Party > Rejoin. The host's rule: guests follow it. Default: on "
+         "(bbport.ini party_chalice_rejoin; in the game: System > Party rules: Travel)."),
+        ("check", "party_story_mirror", "    Play them live with the host",
+         "A guest in the host's world watches the cutscene at the same time as the "
+         "host. Off: the guest sees it later, back in their own world. The host's "
+         "rule (a guest also needs Share cutscenes and endings on). Default: on (bbport.ini party_story_mirror; "
+         "in the game: System > Party rules: Travel)."),
+    ]),
+    (1, 4, "Rewards", [
+        ("check", "party_full_rewards", "Full rewards for guests",
+         "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
+         "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
+         "to you while you are a guest. Default: on (bbport.ini party_full_rewards; in the game: "
+         "System > Party rules: Rewards)."),
+        ("combo", "party_insight_var", "Insight for bosses:", [c[0] for c in PARTY_INSIGHT_CHOICES],
+         "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
+         "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "
+         "+1. Game's own: only the +1 the game gives a helper. "
+         "Default: Same as the host (bbport.ini party_guest_insight=parity|full|0; in the game: "
+         "System > Party rules: Rewards).", 24),
+    ]),
 ]
 MY_PARTY_TAB_TITLE = "My Party"
 MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what you get as a guest, story sync "
@@ -363,6 +416,11 @@ MY_PARTY_TAB = [
         ("check", "party_toasts", "Join/leave notices",
          "A short notice in a top corner when a hunter joins or leaves the party. Also in the game: "
          "System > My party: Look & notices. Default: on (bbport.ini party_toasts)."),
+        ("check", "party_npc_talk", "Share NPC dialogue",
+         "When a companion near you talks to an NPC you get the conversation too: "
+         "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
+         "no menu opens). Range: in the game, System > My party: Look & notices > NPC dialogue "
+         "range (default 25 m). Default: on (bbport.ini party_npc_talk)."),
     ]),
     (0, 4, "Start & saves", [
         ("combo", "party_start_var", "Party starts:", [c[0] for c in PARTY_START_CHOICES],
@@ -385,100 +443,42 @@ MY_PARTY_TAB = [
          "save and rejoins the party (the host keeps your place for 60 s). At most 5 restarts "
          "in 10 minutes. Default: on (BB_PARTY_RESTART)."),
     ]),
-    (0, 3, "Story", [
-        ("check", "party_npc_talk", "Share NPC dialogue",
-         "When a companion near you talks to an NPC you get the conversation too: "
-         "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
-         "no menu opens). Range: in the game, System > My party: Story > NPC dialogue "
-         "range (default 25 m). Default: on (bbport.ini party_npc_talk)."),
+    (0, 3, "Your save", [
         ("check", "party_progress", "Share story progress",
          "The host's progress - bosses killed, lamps lit, shortcuts and doors opened, key "
          "events - is copied into each guest's own save, so the guests' worlds keep up with "
          "the host's. Needs to be on for the host and for each guest. "
-         "Default: on (bbport.ini party_progress; in the game: System > My party: Story)."),
+         "Default: on (bbport.ini party_progress; in the game: System > My party: Your save)."),
         ("check", "party_progress_npc", "    Also NPC quests",
          "NPC quest choices are shared: the first choice anyone makes (Eileen, Alfred, "
          "Djura ...) applies to the host's world and every player's save. Guest's setting. "
-         "Default: on (bbport.ini party_progress_npc; in the game: System > My party: Story).", "party_progress"),
+         "Default: on (bbport.ini party_progress_npc; in the game: System > My party: Your save).", "party_progress"),
         ("check", "party_story", "Share cutscenes and endings",
          "Every guest also sees the cutscenes the host triggers (shown again in the guest's own "
          "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
          "the ending the host gets plays for everyone. Needs to be on for the host and for "
-         "each guest. Default: on (bbport.ini party_story; in the game: System > My party: Story)."),
-        ("check", "party_story_mirror", "    Play them live with the host",
-         "A guest in the host's world watches the cutscene at the same time as the "
-         "host. Off: the guest sees it later, back in their own world. Guest's "
-         "setting. Default: on (bbport.ini party_story_mirror; in the game: System > My party: Story).",
-         "party_story"),
+         "each guest. Default: on (bbport.ini party_story; in the game: System > My party: Your save)."),
     ]),
-    (1, 1, "Deaths", [
-        ("check", "party_guest_revive_inplace", "Get up without a loading screen",
-         "A guest who dies gets up at the host's lamp right away, with no loading screen (after a "
-         "fall: the respawn load). Off: every death takes the respawn loading screen. Applies to "
-         "you while you are a guest. Default: on (bbport.ini party_guest_revive_inplace; in the "
-         "game: System > My party: Deaths)."),
-        ("check", "party_guest_respawn", "Respawn at the host's lamp",
-         "A guest who dies comes back at the host's last lamp and is summoned again, instead of "
-         "being sent home to their own world. Applies to you while you are a guest. "
-         "Default: on (bbport.ini party_guest_respawn; in the game: System > My party: Deaths)."),
-        ("check", "party_guest_refill", "Refill vials and bullets",
-         "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
-         "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
-         "guest. Default: on (bbport.ini party_guest_refill; in the game: System > My party: Deaths)."),
-    ]),
-    (1, 2, "World", [
-        ("check", "party_guest_lamps", "Guests use lamps",
-         "Guests may use lamps and the Dream's headstones; the host leads and the whole party "
-         "travels. After a restart. Default: on (bbport.ini party_guest_lamps; in the game: "
-         "System > My party: World)."),
-        ("check", "party_guest_mark", "Guests can use Hunter's Mark",
-         "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
-         "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
-         "Off: guests cannot use it, as in the normal game. Default: on (bbport.ini party_guest_mark; "
-         "in the game: System > My party: World)."),
-        ("check", "party_open_world", "Open world (no co-op area walls)",
-         "Removes the walls the game puts on area borders while a helper is in your world, "
-         "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
-         "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > My party: World)."),
-        ("check", "party_chalice_rejoin", "Stay in the host's Chalice Dungeon",
-         "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
-         "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
-         "could not follow) goes back to their own world and is summoned into the dungeon again "
-         "automatically. A guest who chose to leave (\"alone\" at a lamp, their own Hunter's Mark) "
-         "stays out until they press Party > Rejoin. Applies to you while you are a guest. Default: on "
-         "(bbport.ini party_chalice_rejoin; in the game: System > My party: World)."),
-    ]),
-    (1, 3, "Rewards", [
-        ("check", "party_full_rewards", "Full rewards for guests",
-         "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
-         "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
-         "to you while you are a guest. Default: on (bbport.ini party_full_rewards; in the game: "
-         "System > My party: Rewards)."),
+    (1, 1, "Your items", [
         ("check", "party_items", "Share the host's item rewards",
          "Boss drops, key items and gifts the host receives (which guests never get in the "
          "normal game) are given to each guest too, in their own world, once each. "
-         "Default: on (bbport.ini party_items; in the game: System > My party: Rewards)."),
+         "Default: on (bbport.ini party_items; in the game: System > My party: Your items)."),
         ("check", "party_grant_bells", "Give the bells",
          "Gives each player the Beckoning Bell and the Small Resonant Bell once the prologue is "
          "done, so nobody has to buy or find them. Automatic summoning does not need them; they "
          "are for ringing by hand. Default: on (bbport.ini party_grant_bells; in the game: "
-         "System > My party: Rewards)."),
+         "System > My party: Your items)."),
         ("check", "party_key_view", "Own key items as a guest",
          "While you are a guest in the host's world, your Key Items tab shows your own keys, "
          "badges and tools. Off: the game's view for a visiting hunter (an empty list; your save "
          "keeps them). Applies to you while you are a guest; at the next start. "
-         "Default: on (bbport.ini party_key_view; in the game: System > My party: Rewards)."),
+         "Default: on (bbport.ini party_key_view; in the game: System > My party: Your items)."),
         ("check", "party_key_items_summoned", "    Key items at once",
          "A key item the host's world gives you (Oedon Tomb Key, a badge) is yours "
          "right away, while you are still in the host's world. Off: it waits until "
          "you are back in your own world. Needs Own key items. Default: on "
-         "(bbport.ini party_key_items_summoned; in the game: System > My party: Rewards).", "party_key_view"),
-        ("combo", "party_insight_var", "Insight for bosses:", [c[0] for c in PARTY_INSIGHT_CHOICES],
-         "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
-         "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "
-         "+1. Game's own: only the +1 the game gives a helper. "
-         "Default: Same as the host (bbport.ini party_guest_insight=parity|full|0; in the game: "
-         "System > My party: Rewards).", 24),
+         "(bbport.ini party_key_items_summoned; in the game: System > My party: Your items).", "party_key_view"),
     ]),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.

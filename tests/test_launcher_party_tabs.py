@@ -54,8 +54,11 @@ class Tables(unittest.TestCase):
                     | {k for k, _ in L.PARTY_INI_FLAGS})
         self.assertEqual(set(every), expected)
         combos = [row[1] for _, row in rows(L.MY_PARTY_TAB) if row[0] == "combo"]
-        self.assertEqual(sorted(combos), sorted(["party_start_var", "party_insight_var",
-                                                 "party_backup_minutes_var", "party_backup_keep_var"]))
+        self.assertEqual(sorted(combos), sorted(["party_start_var", "party_backup_minutes_var",
+                                                 "party_backup_keep_var"]))
+        # 0.7.5: Insight for bosses is the host's rule (join check), so on the Party Rules tab
+        self.assertEqual([row[1] for _, row in rows(L.PARTY_RULES_TAB) if row[0] == "combo"],
+                         ["party_insight_var"])
 
     def test_host_rules_tab_is_exactly_the_hosts_rules(self):
         """A new bool in party_balance Rules needs its row in PARTY_RULES_TAB (and never in My Party)."""
@@ -192,10 +195,6 @@ class Window(unittest.TestCase):
         L.update_ini(self.ini, {"party_glow_off": "0", "party_story": "0"})
         w.refresh_game_settings(force=True)
         self.assertFalse(mine["party_glow_off"][1].get())
-        self.assertIn("disabled", mine["party_story_mirror"][0].state())
-        L.update_ini(self.ini, {"party_story": "1"})
-        w.refresh_game_settings(force=True)
-        self.assertNotIn("disabled", mine["party_story_mirror"][0].state())
 
     def test_tab_bar_fits(self):
         """The tab bar fits the window's width: no tab title is cut."""
