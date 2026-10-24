@@ -31,6 +31,7 @@
 #include "party_status_bridge.h"
 #include "party_spectate.h"
 #include "party_director.h"
+#include "party_pvp_rules.h"
 #include "party_death_rules.h"
 #include "party_split_notice.h"
 #include "party_kidnap_rules.h"
@@ -8454,8 +8455,13 @@ void HostRevivedTick(const GameSnapshot& s) {
                 const u64 chr = PlayerForPeer(t.task + kTaskPeer);
                 DeathFields d;
                 ReadDeathFields(chr, &d);
-                Log("guest: revived host chr watch: %s, %s", chr ? DescribeChr(chr).c_str() : "none",
-                    DescribeDeathFields(d).c_str());
+                const u32 filt = Field<u32>(Field<u64>(Field<u64>(chr, 0x58), 0x20), 0xa8);
+                Log("guest: revived host chr watch: %s, %s, hit filter %08x", chr ? DescribeChr(chr).c_str() : "none",
+                    DescribeDeathFields(d).c_str(), filt);
+                // pvpfix: the host's copy here kept its dead hit bodies (layer 0x36), which attacks do not
+                // collide with: a guest's blows passed through the revived host (party PvP "invincible").
+                if (chr && coop::pvp::DeadHitBodiesOnLiving(ChrHp(chr), filt) && ReviveHitBodyOn())
+                    RestoreHitBodies(chr, false);
             }
         }
         if (now >= watch_until) {
@@ -8465,7 +8471,7 @@ void HostRevivedTick(const GameSnapshot& s) {
     if (!g_host_revived_note.load() || !s.world_up || s.loading) {
         return;
     }
-    watch_until = now + 6.0;
+    watch_until = now + 10.0;
     next_watch = now + 1.0;
     g_host_revived_note = false;
     if (Role() != RoleClient) {
