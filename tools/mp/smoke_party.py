@@ -405,8 +405,8 @@ RULES_PAGES = [
     ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
                            "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
-    ("My party: Look & notices", ["No companion glow", "Join/leave notices", "Party discovery"],
-     ("Join/leave notices", "down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
+    ("My party: Look & notices", ["No companion glow", "Ping in the party list", "Join/leave notices", "Party discovery"],
+     ("Join/leave notices", "down/down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
@@ -2381,7 +2381,8 @@ def phase_eh(only):
         "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01", "host_kill=2410202@1%m24_01",
     ] + ["host_press=0@20%m24_01!"] * 12)
     g1 = ",".join(
-        ["echoes=15000"] + _rt_killed_by(2410247) +                  # killed beside it: the stain there
+        ["echoes=15000", "guest_chr=2410247@3%m24_01"] + ["guest_press=0x800@1.5%m24_01!"] * 2 +
+        ["guest_press=0@8%m24_01", "guest_press=0@8%m24_01"] +      # killed beside it (two draws only: three killed IT in eh r1 / r4)
         ["guest_move=%s@3%%m24_01" % RT_LAMP,                        # up at the lamp (invincible from here)
          "guest_press=0@20%m24_01!",                                 # the enemy takes the echoes
          "guest_chr=2410247@2%m24_01",                               # back beside it (the lamp is 142 m off)

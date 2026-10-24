@@ -663,6 +663,13 @@ int main() {
     CHECK(!RestoreHold(true, 1, true));
     CHECK(!RestoreHold(true, 0, false));                               // nobody has them: the ground stain stays
     CHECK(!RestoreHold(false, 0, true));                               // another record
+    CHECK(RetakeHold(true, 0, true, 0.4, false));                       // echohold: the game let it go, it is alive
+    CHECK(!RetakeHold(true, 1, true, 0.4, false));                      // still held
+    CHECK(!RetakeHold(true, 0, false, 0.4, false));                     // the holder died / unloaded
+    CHECK(!RetakeHold(true, 0, true, 5.0, false));                      // seen long ago (a new holder is the game's)
+    CHECK(!RetakeHold(true, 0, true, -1.0, false));                     // never seen holding
+    CHECK(!RetakeHold(true, 0, true, 0.4, true));                       // we let it go (death, pickup)
+    CHECK(!RetakeHold(false, 0, true, 0.4, false));                     // another record
     // A second death before recovery: the old holder lets go (the old echoes are lost).
     CHECK(ReleaseHoldAtDeath(true, 1));
     CHECK(!ReleaseHoldAtDeath(true, 0));
