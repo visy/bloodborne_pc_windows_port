@@ -1,10 +1,12 @@
 """launcher.py party bits: both host codes from party_code.txt, and Stop closing the game normally
 before the process-tree kill."""
+from pathlib import Path
 from paths import ROOT
 import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -576,6 +578,26 @@ class RevokeCode(unittest.TestCase):
             left = json.loads((u / "party.json").read_text())
             self.assertEqual(left, {"name": "Hunter", "role": "host", "password_protected": "AAAA"})
             self.assertEqual(self.L.revoke_party_code(u), [])  # nothing left to forget
+
+
+class DiagnosticsAndPingToggles(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("bb_launcher_ping", ROOT / "launcher.py")
+        cls.L = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.L)
+
+    def test_heap_watch_env_off_by_default(self):
+        self.assertEqual(self.L.settings_env({}).get("BB_HEAP_WATCH_LOG"), "0")
+        self.assertEqual(self.L.settings_env({"feat_heap_watch_log": True}).get("BB_HEAP_WATCH_LOG"), "1")
+
+    def test_hud_ping_flag_default_on(self):
+        self.assertIn(("party_hud_ping", True), self.L.PARTY_INI_FLAGS)
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertTrue(self.L.ini_flag(ini, "party_hud_ping"))
+            self.L.update_ini(ini, {"party_hud_ping": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_hud_ping"))
 
 
 if __name__ == "__main__":
