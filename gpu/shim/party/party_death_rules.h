@@ -547,6 +547,12 @@ constexpr std::uint16_t kDeathBitsHp200 = 0x7800;
 inline bool FallDeathState(std::uint64_t f1e1, std::uint16_t /*hp200*/) {
     return (f1e1 & kFallFlags1e1) != 0;
 }
+/// [ChrCtrl +0x38] +0x48 on a revive: the game's own revive (0x13CBAD0) does `& 0xFC`. Bit 0 is the death
+/// bit; bit 1 is set by a fall death and, left set, killed the revived chr again a frame later (player
+/// report cainhurst_death_loop). `both` false = the old bit-0-only clear (BB_PARTY_REVIVE_BIT1=0).
+inline std::uint8_t ReviveCtrl38Clear(std::uint8_t v, bool both = true) {
+    return std::uint8_t(v & ~(both ? 3u : 1u));
+}
 enum class GuestRevive { InPlace, LoadFall, LoadFallState };
 inline const char* GuestReviveName(GuestRevive g) {
     return g == GuestRevive::InPlace    ? "in place"

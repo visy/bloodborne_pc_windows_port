@@ -3404,6 +3404,19 @@ bool ClientIntroSkip(int event_id, int bank, int id, std::uint64_t event, std::u
         Log("client: event %d's 2002[%d] skipped: its cutscene already played as the live mirror", event_id, id);
         return true;
     }
+    // illusion_wall / annalise_missing: the guest's copy of a display event waits for a condition only the
+    // triggering player meets; once the host's scene was mirrored it passes the wait (party_story.h).
+    static const bool pass_wait = !EnvOff("BB_PARTY_SCENE_PASS_WAIT");
+    if (event_id > 0 && (bank == 1000 || bank == 0) &&
+        StoryScenePassWait(pass_wait, bank, id, event_id, Role() == RoleClient,
+                           StoryMirroredEvent(static_cast<std::uint32_t>(event_id)), StoryMirrorPlaying())) {
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 3) {
+            Log("client: event %d's wait passed: the host's scene already played here as the live mirror (its "
+                "map parts / display step runs now)", event_id);
+        }
+        return true;
+    }
     // D10 race (player report 2026-10-22): this game's own copy of a boss intro the host plays
     // (its event ran here at the same moment as the host's, before the host's EVENT "story" came)
     // waits for the host's copy, which plays as the live mirror (party_story OwnSceneHold).
@@ -5478,7 +5491,12 @@ void ReviveLocal(const GameSnapshot& s, const LampSpot& sp, bool host) {
         SafeWrite(ctrl + 0x114, &c, 4);
         g_ctrl_cleared_for = p;
         if (const u64 c38 = Field<u64>(ctrl, 0x38)) {
-            const u8 b = u8(Field<u8>(c38, 0x48) & ~1u);
+            // The game's own revive (0x13CBAD0, Lua) clears bits 0 AND 1 (`& 0xFC`). Bit 1 is set by a fall
+            // death (ctrl38+0x48 03 at HP 0, 02 after our old bit-0-only clear) and left set it killed the
+            // revived chr again a frame later, at its lamp, for good (player report cainhurst_death_loop,
+            // live repro: smoke phase cd). BB_PARTY_REVIVE_BIT1=0 restores the old clear (test switch).
+            static const bool bit1 = !EnvOff("BB_PARTY_REVIVE_BIT1");
+            const u8 b = deathrules::ReviveCtrl38Clear(Field<u8>(c38, 0x48), bit1);
             SafeWrite(c38 + 0x48, &b, 1);
         }
     }

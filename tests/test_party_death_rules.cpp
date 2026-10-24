@@ -777,6 +777,11 @@ int main() {
     }
     // Issue #4 item 7: a guest's respawn at a lamp of the loaded map.
     // Fall state only (user decision): the distance no longer decides.
+    // cainhurst_death_loop: a fall death's ChrCtrl bit 1 is cleared by the revive too (03 -> 00, not 02)
+    CHECK(ReviveCtrl38Clear(0x03) == 0x00);
+    CHECK(ReviveCtrl38Clear(0x01) == 0x00);
+    CHECK(ReviveCtrl38Clear(0x03, false) == 0x02);  // the old clear, the failure
+    CHECK(ReviveCtrl38Clear(0x84) == 0x84);
     // fallcam: the fall-death camera latch is released by every revive / in-world warp that finds it
     // set; the camera is reset behind the chr whenever it was moved or the latch was on.
     {
