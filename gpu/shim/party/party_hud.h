@@ -280,6 +280,9 @@ bool TagVisible(const Companion& c, std::int64_t board_age_ms, const char** why)
 /// colour (OverheadBarRed): the bar stays, red (0.7.5, user spec for the PvP double bar).
 bool OverheadBarShown(int overhead, bool have_hp, int max_hp);
 bool OverheadBarRed(bool pvp_active);
+/// Whether the game's own enemy HP bar over a chr is hidden: our bar was drawn over it within the
+/// last 300 ms (`drawn_ms` 0: never). Name tags off / no bar of ours: the game's bar stays.
+bool GameEnemyBarHidden(long long now_ms, long long drawn_ms);
 /// The game's own phantom plate (FrpgMenuDlgFloatingPCGauge: role line, name, thin HP bar) is
 /// turned off in party mode (party_hud_game.cpp: its per-entry visible flag, written by
 /// FUN_0176cfa0 into MenuMan+0x900+i*0x90+0xc, is stored as 0) and ours, drawn in its style,
@@ -363,6 +366,9 @@ void PartyHudSpectating(bool on, const float body[3]);
 /// Any thread: the party member's name the last HUD tick matched to the remote PlayerIns `chr`
 /// (empty when none; C5 spectate notice).
 std::string PartyHudChrName(std::uint64_t chr);
+/// The overlay (present thread): our overhead health bar was drawn over the remote PlayerIns `chr`
+/// this frame; the game's own enemy bar over it is hidden for the next 300 ms (0.7.5 PvP double bar).
+void PartyHudNoteBarDrawn(std::uint64_t chr);
 /// The overlay (present thread), once a frame, for the performance HUD: whether the game's
 /// full-screen menu is up (the party tick's GameMenu() while it runs, else the same read here:
 /// solo play has no party tick) and whether the area-name banner may be up (AreaBannerWatch).
