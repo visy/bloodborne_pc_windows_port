@@ -2811,7 +2811,7 @@ class BloodborneLauncher(tk.Tk):
                     "After each party travel or join load: whether the 3D world drew, where the camera is "
                     "and the video memory state, 3 s and 10 s after arriving. Two lines per arrival. "
                     "Default: off (BB_ARRIVAL_LOG).")
-        self._check(sec, "Online memory watch (Transaction failed crash)", self.feat_heap_watch_log,
+        self._check(sec, "Online memory watch (crash)", self.feat_heap_watch_log,
                     "Every 20 s: which parts of the game hold the memory the online code uses (server "
                     "requests, the other players' character sync), and each request that fails. For reports of "
                     "a crash with the game's own 'Transaction failed' panic. Default: off (BB_HEAP_WATCH_LOG).")
