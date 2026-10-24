@@ -236,6 +236,16 @@ static void OwnBodyCover() {
 
 // Overhead tags: only a live chr here, alive, on our map, from a fresh board (user report: health
 // bars floating in midair).
+// The overhead health bar: only "Name and health" with data, and not while PvP is in force (the game
+// draws its own red-name bar on a hostile member: one bar, not two).
+static void OverheadBar() {
+    assert(hud::OverheadBarShown(3, true, 100, false));
+    assert(!hud::OverheadBarShown(3, true, 100, true));
+    assert(!hud::OverheadBarShown(1, true, 100, false));
+    assert(!hud::OverheadBarShown(3, false, 100, false));
+    assert(!hud::OverheadBarShown(3, true, 0, false));
+}
+
 static void Tags() {
     hud::Companion c;
     c.connected = c.same_world = c.local_read = c.have_pos = c.same_map = true;
@@ -524,6 +534,7 @@ int main() {
     GameMenuRule();
     StaleChr();
     Tags();
+    OverheadBar();
     OwnBodyCover();
     GamePlate();
     SameWorldRules();
