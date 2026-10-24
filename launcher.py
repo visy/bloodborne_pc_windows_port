@@ -3778,7 +3778,7 @@ class BloodborneLauncher(tk.Tk):
                     "ZeroTier) and LAN adapters only, never the Internet. Joining: this list shows the "
                     "parties heard; Tailscale passes no broadcasts, so its peers come from the tailscale "
                     "command when it is installed. Default: on (bbport.ini party_discovery; in the game: "
-                    "System > Party network).", command=self.on_discovery_toggle)
+                    "System > My party: Look & notices).", command=self.on_discovery_toggle)
         cols = ("name", "level", "players", "area", "password", "build")
         heads = {"name": "Host", "level": "Lvl", "players": "Slots", "area": "Area", "password": "Pass",
                  "build": "Build"}

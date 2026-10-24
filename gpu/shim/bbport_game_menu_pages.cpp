@@ -1141,11 +1141,6 @@ void DefineAll() {
                    "Гость: скопируйте гостевой код участника (BBG1-...) и нажмите: его ретранслятор, если хост недоступен"),
            {AddText("Paste", "Вставить")}, Kind::Button,
            [] { return party::status::Snapshot().role == party::status::Role::Guest; });
-    // 0.7.5: party discovery (net/party_discovery.h). A toggle: before the VPN list (its pop-up covers the rows below).
-    AddRow(Flag(&Values::party_discovery), AddText("Party discovery", "Поиск групп"),
-           AddText("Host: announce this party on your VPN and LAN so friends see it in the launcher's Join list. Never the Internet",
-                   "Хост: объявлять группу в VPN и локальной сети, чтобы друзья видели её в списке лаунчера. Не в Интернет"),
-           toggle, Kind::Toggle);
     // 0.7.5: host over a VPN. A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_vpn.load(), 0, 2); },
@@ -1550,6 +1545,10 @@ void DefineAll() {
     AddRow(Flag(&Values::party_toasts), "Join/leave notices", "Уведомления",
            "A short notice in a top corner when a hunter joins or leaves",
            "Короткое уведомление в углу, когда охотник входит или выходит", toggle, Kind::Toggle);
+    // 0.7.5: party discovery (net/party_discovery.h; the Join list is in the launcher).
+    AddRow(Flag(&Values::party_discovery), "Party discovery", "Поиск групп",
+           "Host: announce the party on your VPN / LAN (never the Internet) for the launcher's Join list",
+           "Хост: объявлять группу в VPN и LAN (не в Интернет) для списка лаунчера", toggle, Kind::Toggle);
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

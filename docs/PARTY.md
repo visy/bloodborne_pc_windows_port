@@ -239,7 +239,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   and asks for the password only when the entry says there is one. Tailscale passes no broadcasts: with
   a Tailscale adapter up, the launcher lists the online peers of `tailscale status --json` instead
   (silently nothing without the CLI), joined at the default port. Setting `party_discovery` (bbport.ini,
-  `BB_PARTY_DISCOVERY`; launcher checkbox; System > Party network; default on) switches both the
+  `BB_PARTY_DISCOVERY`; launcher checkbox; System > My party: Look & notices; default on) switches both the
   announcing and the listing. Hosting with no password over Radmin VPN / Hamachi shows a warning in the
   launcher (strangers can be in those networks). `BB_PARTY_DISCOVERY_LOOPBACK=1` (host) and
   `BB_PARTY_DISCOVERY_SELF=1` (launcher) are test aids: announce to 127.0.0.1, keep own packets.
