@@ -3631,7 +3631,14 @@ void FallRecoveryTick(const GameSnapshot& s, double now) {
             }
             const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
             const u32 host = GuestDeathRedirectLamp();
-            const bool use_host = bb_party_enabled() && host != kTravelNone && host != 0;
+            // chaliceloop: only inside a live party session, and never a Chalice Dungeon lamp (m29: this
+            // game has no such dungeon). A guest that left the session from the host's dungeon without it
+            // (idle, falling in the void) used to warp to the host's chalice lamp again and again: an
+            // endless gray loading loop. It goes to its own last lamp instead. BB_PARTY_CHALICE_FALL_LOOP=0
+            // restores the old choice.
+            static const bool loop_guard = !EnvOff("BB_PARTY_CHALICE_FALL_LOOP");
+            const bool host_ok = !loop_guard || (SessionUp() && host / 100000 != 29);
+            const bool use_host = bb_party_enabled() && host != kTravelNone && host != 0 && host_ok;
             const u32 lamp = use_host ? host : own;
             Log("recovery: falling for 6 s at (%.1f, %.1f, %.1f); warping to %s last lamp %u", p[0], p[1], p[2],
                 use_host ? "the host's" : "the own", lamp);
