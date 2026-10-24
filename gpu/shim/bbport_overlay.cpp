@@ -2878,7 +2878,8 @@ void PartyHud() {
         const party::hud::PlateLayout pl =
             party::hud::LayoutPlate(sp.x + shift * display.x, sp.y, display.x, display.y, sp.depth, pp);
         const bool with_bar = party::hud::OverheadBarShown(overhead, c.have_hp, c.max_hp);
-        const bool red = party::hud::OverheadBarRed(coop::pvp::Active());;
+        const bool red = party::hud::OverheadBarRed(coop::pvp::Active());
+        if (with_bar) coop::PartyHudNoteBarDrawn(c.chr);
         // pl.font is the em size (as the plate was measured); ImGui sizes a font by its line
         // height (ascent - descent), smaller per em: convert through the cap height of 'H' (live
         // 2026-10-12: without this our name came out at 0.6 of the game's).
