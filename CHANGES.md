@@ -4,6 +4,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.5 (unreleased)
 
+- **Fixed: an enemy that took a fallen guest's Blood Echoes keeps them until it is killed** (the glowing-eyed enemy let go 2-4 seconds after taking them, so the echoes lay on the ground again and the enemy's kill paid nothing): the party takes the echoes back to that enemy when the game lets go on its own. Off switch for testing: `BB_PARTY_STAIN_RETAKE=0`.
 - **Added: each companion's ping (connection delay, ms) in the party list** (bottom left, after the name), green under 80 ms, yellow under 160, red above. On by default; turn it off in System > My party: Look & notices > Ping in the party list or the launcher (Party > "Ping in the party list"). The name tags can show it too (Above companions > Name and ping).
 - **Added: a launcher checkbox for the online memory watch** (Advanced / Debug > Diagnostics > "Online memory watch (crash)"), off by default: the diagnostic for the game's "Transaction failed" crashes, so players can switch it on without environment variables.
 
