@@ -159,13 +159,13 @@ inline std::uint32_t WorldLampDreamPoint(std::uint32_t flag) {
 /// Live (0.7.5 report, repro `gd`): after the host's Dream trip from a lamp (alone: the guests stay) the
 /// guest's own copy of that lamp's event 7200 ran from the host's flag and ended (split travel dropped its
 /// warp as "another member's lamp"); the guest's later "Hunter's Dream" choice at that lamp set the flag
-/// again and nothing warped, until a load. The event clears its flag in its first instructions, so a
+/// again and nothing warped, until a load. The same for the host after a guest's trip (live gh). The event clears its flag in its first instructions, so a
 /// guest's own lamp flag still set kWorldLampFlagWait s later means no event is waiting: the warp runs here.
 constexpr double kWorldLampFlagWait = 1.5;
 constexpr double kWorldLampGiveUp = 9.5;  // inside split travel's own-use window (kLampOriginWindow 10 s)
-inline bool WorldLampWarpFallback(bool guest_client, bool in_world, double since_flag, bool warp_since_flag,
+inline bool WorldLampWarpFallback(bool party_member, bool in_world, double since_flag, bool warp_since_flag,
                                   bool flag_still_set, bool done) {
-    return guest_client && in_world && flag_still_set && !warp_since_flag && !done &&
+    return party_member && in_world && flag_still_set && !warp_since_flag && !done &&
            since_flag >= kWorldLampFlagWait && since_flag < kWorldLampGiveUp;
 }
 
