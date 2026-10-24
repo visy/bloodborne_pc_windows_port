@@ -3419,6 +3419,8 @@ class BloodborneLauncher(tk.Tk):
 
     def on_party_change(self):
         self.update_party_state()
+        if hasattr(self, "party_vpn_combo"):
+            self.update_vpn_address()
         self.save_settings()
 
     def update_party_state(self):
@@ -3515,10 +3517,18 @@ class BloodborneLauncher(tk.Tk):
     # ---- host over a VPN (0.7.5) ----
     def refresh_vpn(self):
         """Looks for the VPN adapters in a thread (PowerShell, about a second), then updates the row."""
+        box = []
+
         def work():
-            adapters = detect_vpn_adapters()
-            self.after(0, lambda: self.on_vpn_adapters(adapters))
+            box.append(detect_vpn_adapters())  # tkinter is touched by the main thread only
+
+        def poll():
+            if box:
+                self.on_vpn_adapters(box[0])
+            else:
+                self.after(300, poll)
         threading.Thread(target=work, daemon=True).start()
+        self.after(300, poll)
 
     def on_vpn_adapters(self, adapters: list):
         self.vpn_adapters = adapters
@@ -3539,7 +3549,8 @@ class BloodborneLauncher(tk.Tk):
         adapter = self.current_vpn()
         if adapter:
             self.party_vpn_addr_var.set(host_address_text(adapter["ip"], self.party_port_var.get()))
-            self.party_vpn_info_var.set(f"Hosting over {vpn_adapter_label(adapter)}: {adapter['ip']}")
+            verb = "Hosting over" if self.party_mode() == "host" else "Hosting would use"
+            self.party_vpn_info_var.set(f"{verb} {vpn_adapter_label(adapter)}: {adapter['ip']}")
         else:
             self.party_vpn_addr_var.set("")
             self.party_vpn_info_var.set(
