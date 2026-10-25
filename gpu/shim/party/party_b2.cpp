@@ -3485,72 +3485,35 @@ void KidnapAskHost(std::int32_t event_id, const char* how) {
     party::status::SetLastEvent("Grabbed by a Snatcher: the party goes to the Hypogean Gaol");
 }
 
-/// 0.7.6 (illusion wall, natural Crown trigger): the guest's copy of the castle display event waits in the
-/// engine's condition list, never dispatched again; once the host's scene was mirrored and ended, its wait group is
-/// forced true here, before the interpreter looks at the event (0x12ECDC0, once per event and frame; party_story.h
-/// StoryWaitForce). BB_PARTY_SCENE_PASS_WAIT=0: off.
+/// BB_PARTY_TEST_FORCE_WAIT=S (test aid, the host; smoke iwn): the castle display event's wait (12500810: Logarius dead,
+/// region 2502806, the Crown on) counts as met S s after the event first ran in the world, so the host's real scene plays
+/// (the test save has no Crown trigger): the conditions' nodes are forced true. The waiting event is never dispatched
+/// again, so this runs before the interpreter's per-event step (0x12ECDC0). Layout: event+0x38 list of condition groups
+/// (linked +0x20, id byte +8, nodes +0x10 linked +8; node +0x18 bits 0/1 = forced / forced value).
 BB_COOP_SYSV void EventStepPre(u64 event, u64, u64, u64, u64, u64) {
-    static const bool pass_wait = !EnvOff("BB_PARTY_SCENE_PASS_WAIT");
-    // BB_PARTY_EMEVD_WAIT_LOG=1 (test aid, any role): the result / override bytes of the wait's condition nodes every 2 s.
-    static const bool wait_log = EnvOn("BB_PARTY_EMEVD_WAIT_LOG");
-    // Every event, every frame: one plain read first (the interpreter's own event object, always mapped).
-    if (!event || *reinterpret_cast<const volatile int*>(event + 0x28) != 12500810) {
+    if (!event || *reinterpret_cast<const volatile int*>(event + 0x28) != 12500810 || Role() != RoleHost) {
         return;
     }
-    if (wait_log) {
-        static double next = 0;
-        const double now = Now();
-        if (now >= next) {
-            next = now + 2.0;
-            std::string t;
-            u64 g = Field<u64>(event, 0x38);
-            for (int gi = 0; g && gi < 16; ++gi, g = Field<u64>(g, 0x20)) {
-                char b[48];
-                std::snprintf(b, sizeof b, " g%d[", int(Field<std::int8_t>(g, 8)));
-                t += b;
-                u64 n = Field<u64>(g, 0x10);
-                for (int ni = 0; n && ni < 16; ++ni, n = Field<u64>(n, 8)) {
-                    std::snprintf(b, sizeof b, "%02x/%02x ", unsigned(Field<u8>(n, 0x10)), unsigned(Field<u8>(n, 0x18)));
-                    t += b;
-                }
-                t += "]";
-            }
-            Log("event 12500810 wait nodes (result/override):%s", t.c_str());
-        }
-    }
-    // BB_PARTY_TEST_FORCE_WAIT=S (test aid, the host): the Crown's conditions count as met S s after this event
-    // first ran in the world (the test save has no Crown trigger spot / equipment): the host's real scene plays.
-    static const double force_after = [] {
+    static const double after = [] {
         const char* v = std::getenv("BB_PARTY_TEST_FORCE_WAIT");
         return v && *v ? std::atof(v) : 0.0;
     }();
-    if (force_after > 0 && Role() == RoleHost) {
-        static double first = 0;
-        static u64 first_event = 0;
-        if (first_event != event) {
-            first_event = event;
-            first = Now();
+    static double first = 0;
+    static u64 first_event = 0;
+    if (after <= 0) return;
+    if (first_event != event) {
+        first_event = event;
+        first = Now();
+    }
+    if (Now() - first < after) return;
+    u64 g = Field<u64>(event, 0x38);
+    for (int gi = 0; g && gi < 32; ++gi, g = Field<u64>(g, 0x20)) {
+        if (Field<std::int8_t>(g, 8) != 1) continue;
+        u64 n = Field<u64>(g, 0x10);
+        for (int ni = 0; n && ni < 64; ++ni, n = Field<u64>(n, 8)) {
+            const u8 ov = Field<u8>(n, 0x18) | 3;
+            SafeWrite(n + 0x18, &ov, 1);
         }
-        if (Now() - first >= force_after) {
-            StoryForceWaitGroup(
-                event, kEmevdGroupOfWait, [](u64 a, u64* v) { return SafeGet(a, v); },
-                [](u64 a, u8* v) { return SafeGet(a, v); }, [](u64 a, u8 v) { return SafeWrite(a, &v, 1); });
-        }
-        return;
-    }
-    if (!pass_wait || Role() != RoleClient) {
-        return;
-    }
-    if (!StoryWaitForce(true, 12500810, true, StoryMirroredEvent(12500810u), StoryMirrorPlaying())) {
-        return;
-    }
-    const int n = StoryForceWaitGroup(
-        event, kEmevdGroupOfWait, [](u64 a, u64* v) { return SafeGet(a, v); },
-        [](u64 a, u8* v) { return SafeGet(a, v); }, [](u64 a, u8 v) { return SafeWrite(a, &v, 1); });
-    static std::atomic<int> logged{0};
-    if (n > 0 && logged.fetch_add(1) < 3) {
-        Log("client: event 12500810 waits for the Crown: the host's scene already played here as the live mirror, its "
-            "wait group is forced (%d condition node(s))", n);
     }
 }
 
@@ -11433,9 +11396,9 @@ void Init() {
     }
     InstallEmptyStainSkip();
     SetEmevdSkipPredicate(&ClientIntroSkip);
-    // The interpreter's per-event step (0x12ECDC0: push rbp; mov rbp, rsp; push r15, r14, r13, r12, rbx).
-    if (!HookPrologue(0x12ecdc0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53},
-                      &EventStepPre, "EMEVD event step (castle display event wait)")) {
+    if (std::getenv("BB_PARTY_TEST_FORCE_WAIT") &&
+        !HookPrologue(0x12ecdc0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53}, &EventStepPre,
+                      "EMEVD event step (test aid BB_PARTY_TEST_FORCE_WAIT)")) {
         Log("EMEVD event step hook: NOT installed (bytes differ)");
     }
     SetSameMapWarp(&SameMapLampWarp);

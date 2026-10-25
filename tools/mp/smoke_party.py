@@ -1353,12 +1353,15 @@ IWN_SPOT = "47.9:112.0:-352.0:0:native:pin=3"  # inside region 2502806 (a real h
 
 def phase_iwn(only):
     host = ",".join(["log_pos=2", "armor=250000:keep", "host_move=%s@6%%m25" % IWN_SPOT, "host_press=0@20%m25!"])
-    g1 = ",".join(["log_pos=2", "guest_move=%s@7%%m25" % IWN_SPOT, "guest_press=0@20%m25!"])
+    # IWN_NEAR=1: the guest stands in the Crown's region too (its own wait passes: the phantom check must not end its
+    # copy); default: it stays at the lamp, so only the mirror's force can pass the wait
+    g1 = ",".join(["log_pos=2"] + (["guest_move=%s@7%%m25" % IWN_SPOT] if os.environ.get("IWN_NEAR") else [])
+                   + ["guest_press=0@20%m25!"])
     return dict(
         name="iwn", seconds=170, count=2, headless=0,
         env=["BB_PARTY_TEST_START_LAMP=2502950", "BB_PARTY_PROGRESS_TEST_SET=12501800,12501802,12501803,12500000",
              "BB_PARTY_PROGRESS_TEST_CLEAR=12500810", "BB_PARTY_PROGRESS_TEST_READ=12500810",
-             "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_WAIT_LOG=1", "BB_PARTY_EMEVD_TRACE_ALL=12500810"],
+             "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12500810"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "0:BB_PARTY_TEST_FORCE_WAIT=45"],
         watch=[], crash=[], until=IW_UNTIL, until_hold=5,
     )
@@ -1367,8 +1370,8 @@ def phase_iwn(only):
 def check_iwn(v, L):
     need(v, L, "iwn join: 2 players", 0, r"cooperators 0 -> 1")
     need(v, L, "iwn host: its event played the scene (flag 12500810 on)", 0, r"12500810=1")
-    need(v, L, "iwn guest: the display event's wait passed (live mirror only)", 1,
-         r"client: event 12500810 (waits for the Crown: .*wait group is forced|'s wait passed)")
+    need(v, L, "iwn guest: the phantom check (1000[2]) of the display event is passed", 1,
+         r"EMEVD event 12500810 \[91\] 1000\[02\].*SKIPPED")
     need(v, L, "iwn guest: the display event's enable step ran (the chamber's parts on)", 1,
          r"EMEVD event 12500810 \[(9[7-9]|1[0-7]\d)\]")
     check_common(v, L, "iwn")

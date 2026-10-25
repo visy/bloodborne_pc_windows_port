@@ -396,46 +396,12 @@ int GuestEndingType(int host_ending, bool own_three_cords);
 /// end-by-condition (1000[2], instruction 91: the phantom check) are passed. BB_PARTY_SCENE_PASS_WAIT=0: off.
 inline bool StoryScenePassWait(bool enabled, int bank, int id, int event_id, bool client, bool mirrored,
                                bool mirror_playing) {
-    return enabled && client && mirrored && !mirror_playing && ((bank == 0 && id == 0) || (bank == 1000 && id == 2)) && event_id == 12500810;
-}
-/// 0.7.6 (player report: the wall of illusions still closed for guests after the Crown is worn on the roof):
-/// the 0.7.5 pass above only runs when the engine DISPATCHES the wait instruction, and it does that once, when
-/// the guest's copy of the event reaches it (at the map's load, long before the host's scene). The wait then
-/// sits in the event's condition list and the interpreter (0x12ECDC0, once per event and frame) checks the
-/// list itself, so the mirror that comes later never passes it (smoke iwn: [89] 0[00] "call #1" only, 30 s
-/// on). Layout (0x12ECDC0 / 0x12EC380 decompiled): event+0x30 is the condition manager, +8 of it the list of
-/// condition groups (linked through +0x20); a group's +8 byte is its id (1..15, negative: an "any" group),
-/// +0x10 its first node (nodes linked through +8); a node's +0x10 byte bit 0 is its result and +0x18 bit 0 /
-/// bit 1 an override ("forced" / the forced value) that every reader honours. The wait of 12500810 is group 1
-/// (chr type, Logarius dead, region 2502806, equipment 250000). Forcing its nodes true once the host's scene
-/// was mirrored and ended lets the event go on to its enable step. BB_PARTY_SCENE_PASS_WAIT=0: off.
-inline bool StoryWaitForce(bool enabled, int event_id, bool client, bool mirrored, bool mirror_playing) {
-    return enabled && client && mirrored && !mirror_playing && event_id == 12500810;
-}
-constexpr int kEmevdGroupOfWait = 1;
-/// Forces every node of condition group `group` of the event at `event` true; returns the nodes forced.
-/// ReadU64(addr, &v) / ReadU8 / WriteU8 return false on an unreadable address (bounded walk, no loops).
-template <class ReadU64, class ReadU8, class WriteU8>
-inline int StoryForceWaitGroup(std::uint64_t event, int group, ReadU64 read64, ReadU8 read8, WriteU8 write8) {
-    std::uint64_t g = 0;
-    if (!read64(event + 0x38, &g)) return 0;
-    int forced = 0;
-    for (int gi = 0; g && gi < 32; ++gi) {
-        std::uint8_t id = 0;
-        std::uint64_t node = 0, next = 0;
-        if (!read8(g + 8, &id) || !read64(g + 0x10, &node) || !read64(g + 0x20, &next)) break;
-        if (static_cast<std::int8_t>(id) == group) {
-            for (int ni = 0; node && ni < 64; ++ni) {
-                std::uint64_t nn = 0;
-                if (!read64(node + 8, &nn)) break;
-                std::uint8_t ov = 0;
-                if (read8(node + 0x18, &ov) && (ov & 3) != 3 && write8(node + 0x18, static_cast<std::uint8_t>(ov | 3))) ++forced;
-                node = nn;
-            }
-        }
-        g = next;
-    }
-    return forced;
+    // 0.7.6 (smoke iwn): a guest that stands where the host does passes the wait by itself a few ms before the host's
+    // scene arrives, and the phantom check right after it (1000[2]) then ended its copy for good: that check is
+    // always passed on a client (the copy's scene is held for / dropped by the live mirror anyway).
+    if (!(enabled && client && event_id == 12500810)) return false;
+    if (bank == 1000 && id == 2) return true;
+    return mirrored && !mirror_playing && bank == 0 && id == 0;
 }
 inline bool StoryDedupeSkip(bool enabled, int bank, int id, int event_id, bool client, bool mirrored) {
     return enabled && client && bank == 2002 && id >= 1 && id <= 7 && event_id > 0 && mirrored;
