@@ -3518,6 +3518,26 @@ BB_COOP_SYSV void EventStepPre(u64 event, u64, u64, u64, u64, u64) {
             Log("event 12500810 wait nodes (result/override):%s", t.c_str());
         }
     }
+    // BB_PARTY_TEST_FORCE_WAIT=S (test aid, the host): the Crown's conditions count as met S s after this event
+    // first ran in the world (the test save has no Crown trigger spot / equipment): the host's real scene plays.
+    static const double force_after = [] {
+        const char* v = std::getenv("BB_PARTY_TEST_FORCE_WAIT");
+        return v && *v ? std::atof(v) : 0.0;
+    }();
+    if (force_after > 0 && Role() == RoleHost) {
+        static double first = 0;
+        static u64 first_event = 0;
+        if (first_event != event) {
+            first_event = event;
+            first = Now();
+        }
+        if (Now() - first >= force_after) {
+            StoryForceWaitGroup(
+                event, kEmevdGroupOfWait, [](u64 a, u64* v) { return SafeGet(a, v); },
+                [](u64 a, u8* v) { return SafeGet(a, v); }, [](u64 a, u8 v) { return SafeWrite(a, &v, 1); });
+        }
+        return;
+    }
     if (!pass_wait || Role() != RoleClient) {
         return;
     }
