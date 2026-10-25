@@ -10,6 +10,13 @@ replies with a plain-words diagnosis:
   minutes around it (the reply is private).
 - DM: send log files to the bot in a direct message; it answers privately, with names and
   addresses (the commands work in DMs too).
+- In a bug thread: mention the bot with a word like `@Net Doctor Iosefka analyse` (also check, look,
+  update, diagnose, run, again, or just the mention). It reads every log posted in the thread/channel,
+  groups them into sessions (same host, overlapping times) and posts one analysis per session. Mention
+  it again after more logs arrive, even hours later: a session that already has a post gets that post
+  edited, a new session gets a new post. The bot remembers who/when of each posted log and which post
+  belongs to which session in a small SQLite file (`~/.config/netdoctor/netdoctor.db`, 30 days); the
+  log files themselves are not kept, they are downloaded from Discord again for each analysis.
 - Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
   default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 

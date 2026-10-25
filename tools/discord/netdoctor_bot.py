@@ -29,6 +29,7 @@ import io
 import os
 import sys
 import tempfile
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -93,9 +94,47 @@ def split_message(text, limit=DISCORD_LIMIT):
     return fixed
 
 
+MENTION_WORDS = ("analyse", "analyze", "analysis", "check", "look", "update", "diagnose", "doctor", "run",
+                 "again", "rerun", "logs", "redo")
+DB_PATH = Path(os.environ.get("NETDOCTOR_DB", Path.home() / ".config" / "netdoctor" / "netdoctor.db"))
+
+
+def wants_analysis(content, bot_id):
+    """A message that mentions the bot asks for a (re)analysis: one of the keywords, or only the mention."""
+    text = content.replace(f"<@{bot_id}>", " ").replace(f"<@!{bot_id}>", " ").lower()
+    words = [w.strip(".,!?:;()") for w in text.split()]
+    words = [w for w in words if w]
+    return not words or any(w in MENTION_WORDS for w in words)
+
+
+def log_info(nd, path):
+    """Who and when of one log (for grouping logs into sessions)."""
+    import re
+    lg = nd.parse(path)
+    host = lg.name if lg.role == "host" else None
+    if host is None:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.search(r"roster: ([^(\s]+)\(slot 0,", line)
+                if m:
+                    host = m.group(1)
+                    break
+    peers = set(lg.guests) | set(lg.pings) | ({host} if host else set())
+    peers.discard(lg.name)
+    return {"name": lg.name, "role": lg.role, "host": host,
+            "start": nd._minutes(*lg.started) if lg.started else None,
+            "end": getattr(lg, "ended", None), "day": lg.started[0] if lg.started else "", "peers": peers}
+
+
 def main():
     import discord
     from discord import app_commands
+    sys.path.insert(0, str(HERE))
+    import netdoctor_store as ns
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    store = ns.Store(DB_PATH)
+    store.prune()
 
     token = os.environ.get("NETDOCTOR_TOKEN")
     if not token:
@@ -201,10 +240,102 @@ def main():
             await send_text(lambda *a, ephemeral=False, **k: channel.send(*a, **k),
                             await run_on(atts, redact=not dm), False)
 
+    async def record_logs(message):
+        """Remember who/when of every party log file in a message (downloaded once, then deleted)."""
+        new = 0
+        for idx, a in enumerate(message.attachments):
+            if not is_log_name(a.filename) or a.size > MAX_BYTES or \
+                    store.has_log(message.channel.id, message.id, idx):
+                continue
+            with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
+                p = Path(tmp) / (Path(a.filename).name or "log.log")
+                await a.save(p)
+                try:
+                    info = log_info(load_doctor(), p)
+                except Exception as e:  # a broken file must not stop the others
+                    print(f"cannot read {a.filename}: {e}", flush=True)
+                    continue
+            if info["role"] is None:
+                continue  # not a party log
+            store.add_log(message.channel.id, message.id, idx, a.filename, info)
+            new += 1
+        return new
+
+    async def analyse_channel(trigger):
+        """(Re)analyse every party log posted in this channel / thread: one post per session; a session
+        that already has a post gets it edited, a new session gets a new post."""
+        channel = trigger.channel
+        async for msg in channel.history(limit=1000, oldest_first=True):
+            if msg.attachments and not msg.author.bot:
+                await record_logs(msg)
+        infos = store.logs(channel.id)
+        if not infos:
+            await trigger.reply("No party logs here yet. Post the logs of one session (the host's and every "
+                                "guest's), then mention me again.", mention_author=False)
+            return
+        changed = 0
+        for group in ns.group_sessions(infos):
+            key = ns.session_key(infos, group)
+            members = [(infos[i]["message_id"], infos[i]["att_index"]) for i in group]
+            found = store.find_session(channel.id, key, members)
+            if found and found[2] == len(members):
+                continue  # nothing new for this session
+            with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
+                paths = []
+                for n, (mid, idx) in enumerate(members):
+                    try:
+                        att = (await channel.fetch_message(mid)).attachments[idx]
+                    except (discord.HTTPException, IndexError):
+                        continue  # deleted meanwhile
+                    d = Path(tmp) / str(n)
+                    d.mkdir()
+                    p = d / (Path(att.filename).name or "log.log")
+                    await att.save(p)
+                    paths.append(p)
+                if not paths:
+                    continue
+                text = diagnose(paths, redact=True)
+            stamp = int(time.time())
+            footer = f"\n-# {len(paths)} log(s) of this session · updated <t:{stamp}:R> · mention me again " \
+                     f"after more logs are posted"
+            files = []
+            body = text + footer
+            if len(body) > DISCORD_LIMIT:
+                body = text[:DISCORD_LIMIT - len(footer) - 60].rsplit("\n", 1)[0] + \
+                    "\n… (full analysis attached)" + footer
+                files = [discord.File(io.BytesIO(text.encode()), "netdoctor.md")]
+            old = None
+            if found and found[1]:
+                try:
+                    old = await channel.fetch_message(found[1])
+                except discord.HTTPException:
+                    old = None
+            if old:
+                await old.edit(content=body, attachments=files)
+                bot_msg = old
+            else:
+                bot_msg = await channel.send(body, files=files)
+            store.set_session(channel.id, key, bot_msg.id, members, old_key=found[0] if found else None)
+            changed += 1
+        try:
+            await trigger.add_reaction("\N{WHITE HEAVY CHECK MARK}" if changed else "\N{SLEEPING SYMBOL}")
+        except discord.HTTPException:
+            pass
+
     @client.event
     async def on_message(message):
-        if message.author.bot or not any(is_log_name(a.filename) for a in message.attachments):
+        if message.author.bot:
             return
+        if client.user in message.mentions and message.guild is not None and \
+                wants_analysis(message.content, client.user.id):
+            if not guild or message.guild.id == guild.id:
+                async with message.channel.typing():
+                    await analyse_channel(message)
+            return
+        if not any(is_log_name(a.filename) for a in message.attachments):
+            return
+        if message.guild is not None and (not guild or message.guild.id == guild.id):
+            asyncio.create_task(record_logs(message))  # remembered for a later "@bot update"
         if message.guild is None:  # a DM with the bot
             old = pending.get(message.channel.id)
             if old:
