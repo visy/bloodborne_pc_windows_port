@@ -780,6 +780,15 @@ std::uint64_t LocalChannel() {
     return g_local.load();
 }
 
+std::uint64_t CurrentDungeon() {
+    std::uint64_t net = 0, ch = 0;
+    const std::uint64_t at = Guest(0x553b120);
+    if (at && SafeGet(at, &net) && net && SafeGet(net + 0xa88, &ch)) {
+        return ChannelFromDwords(static_cast<std::uint32_t>(ch), static_cast<std::uint32_t>(ch >> 32));
+    }
+    return 0;
+}
+
 bool PopHostGoods(std::vector<std::uint32_t>* out) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_host_dirty) {
