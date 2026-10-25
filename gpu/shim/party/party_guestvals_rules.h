@@ -146,13 +146,14 @@ struct Stain {
 /// (area 29) only in the same dungeon (`dungeon`, the game's current ChannelId there; 0 unknown
 /// never matches): another dungeon has another layout, so the spot means nothing there.
 inline bool InMap(const Stain& s, std::uint32_t map, std::uint64_t dungeon = 0) {
-    if (!s.live || s.echoes <= 0 || map == 0xffffffffu || (s.map & 0xffff0000u) != (map & 0xffff0000u)) {
+    if (!s.live || s.echoes <= 0 || map == 0xffffffffu) {
         return false;
     }
     if ((map >> 24) != 29) {
-        return true;
+        return (s.map & 0xffff0000u) == (map & 0xffff0000u);
     }
-    return s.dungeon != 0 && s.dungeon == dungeon;
+    // A dungeon's pieces are blocks of one layout: the area and the dungeon id decide, not the block.
+    return (s.map >> 24) == 29 && s.dungeon != 0 && s.dungeon == dungeon;
 }
 
 /// What the guest does with its party stain in the world it is in (`map`, `dungeon` as for InMap).

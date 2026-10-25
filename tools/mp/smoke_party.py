@@ -2474,16 +2474,16 @@ def phase_clg(only):
 # inside the dungeon guest 1 stands in) must be followed by the dead guest at once (0.7.5: "not
 # followed: the host enters chalice dungeon N, this game has 0": the guest waited in limbo for the
 # host's trip to the Dream).
-CLW_UNTIL = r"1:guest: held death goes with the host's travel|1:guest travel \S+ host_death .* not followed"
+CLW_UNTIL = r"1:guest: held death goes with the host's travel|1:guest: host travels \(#\d+ host_death .*\); waiting"
 
 
 def phase_clw(only):
     host = ",".join(["log_pos", "host_move=-49.4:30.6:-91.0@4%m29!",
-                     "host_die@16%m29~",                            # 4 s after the guest's death: a wipe
+                     "host_die@16%m29",                            # 4 s after the guest's death: a wipe
                      "host_press=0@40%m29!"])
     g1 = ",".join(["log_pos=0.5", "echoes=15000",
                    "guest_move=-48.0:30.6:-91.0@4%m29!",
-                   "guest_die@12%m29~", "guest_press=0@40%m29!"])
+                   "guest_die@12%m29", "guest_press=0@40%m29!"])
     return dict(
         name="clw", seconds=300, count=2, headless=0, prep=prep_chalamp, post=post_chalamp,
         env=["BB_PARTY_TRAVEL_CHOICE=party", "BB_PARTY_TEST_INVINCIBLE=1"],
@@ -2491,19 +2491,26 @@ def phase_clw(only):
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
         crash=[],
         until=[CLW_UNTIL],
-        until_hold=20,
+        until_hold=75,   # the respawn load (15 s), the arrival and a look around (screenshots)
     )
 
 
 def check_clw(v, L):
     need(v, L, "clw join: guest 1 in the host's dungeon", 1, r"map .* -> m29_00")
     died = need(v, L, "clw guest 1 down", 1, r"guest: own death in the host's world held")
-    hd = need(v, L, "clw the host's respawn travel reaches the guest", 1, r"guest travel \S+ host_death", died or 0)
+    hd = need(v, L, "clw the host's respawn travel reaches the guest", 1, r"guest: host travels \(#\d+ host_death", died or 0)
     if hd:
-        none_of(v, L, "clw the host's respawn in its own dungeon is followed (never 'not followed')",
-                r"guest travel \S+ host_death .* not followed", hd - 1, hd + 3, (1,))
+        none_of(v, L, "clw the host's respawn in the dungeon the guest stands in is followed (never 'not followed')",
+                r"host_death .* not followed", hd - 3, hd + 3, (1,))
         need(v, L, "clw the dead guest goes with the host's load", 1,
-             r"guest: held death goes with the host's travel|guest: dead at the host's travel", hd)
+             r"guest: held death goes with the host's travel", hd)
+        rp = need(v, L, "clw the guest replays the respawn (lamp warp)", 1, r"replay now #\d+ host_death", hd)
+        if rp:
+            back = need(v, L, "clw the guest is back in the dungeon after the load", 1, r"map .* -> m29_00", rp)
+            if back:
+                need(v, L, "clw the respawn load builds the host's dungeon again (not the guest's own slot's)", 1,
+                     r"chalice: load mode 1: slot \d+'s record \(dungeon \d+, .*\) carried over again", rp)
+                none_of(v, L, "clw no fall death after the respawn", r"local death: HP 0 at", back, 1e9, (1,))
     none_of(v, L, "clw no GPU device lost / guest fault",
             r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
     check_common(v, L, "clw")

@@ -977,6 +977,9 @@ BB_COOP_SYSV u64 FlagApplyHook(u64 man, u64 blob) {
     using Mode = void(BB_COOP_SYSV*)(u64, u32);
     const int mode = Field<int>(man, 0x80, -1);
     if (g_on.load() && g_rejoin.load() && Role() == RoleClient && mode == 1) {
+        if ((ReadGameState(false).map_id >> 24) == 29) {
+            chalice::KeepDungeonCarry();  // inside the host's dungeon: not a trip home (chaliceechoes)
+        }
         reinterpret_cast<Mode>(Guest(0x13bb590))(man, 0);
         const u64 r = reinterpret_cast<Apply>(Guest(0x13beca0))(man, blob);
         Log("K11: host flag snapshot applied in load mode 0 (was 1) -> %llu", ull(r));

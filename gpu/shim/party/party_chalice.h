@@ -123,6 +123,10 @@ std::uint64_t LocalChannel();
 /// a summoned member's is the host's (InDungeonSlotHook), at home its own slot's. Only meaningful
 /// while the map is a Chalice Dungeon (elsewhere the game leaves the last load's value). 0 none.
 std::uint64_t CurrentDungeon();
+/// A B2 re-join of a guest inside the host's dungeon is about to set load mode 0 and 1 again (the flag
+/// snapshot's K11 step): the carried dungeon stays and is carried into the next load mode 1 (60 s).
+/// No-op when no dungeon is carried.
+void KeepDungeonCarry();
 #endif
 
 } // namespace coop::chalice
