@@ -10,6 +10,7 @@
 #include "party/world_warper.h"
 #include "party/coop_hooks.h"
 #include "party/game_state.h"
+#include "party/party_b2.h"
 #include "net/bbnet_internal.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
@@ -411,6 +412,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
     coop::mirror::Install();  // the Dream mirror's editor in character creation's frame (H5)
     coop::warper::Install(image, size);  // the world warper (BB_WORLD_WARPER, solo shader-cache builder)
+    coop::b2::InstallOwnWorldTypeGuard();  // own-world chr type repair, every mode (party save played offline)
     if (coop::PartyRequested()) {
         coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
     }

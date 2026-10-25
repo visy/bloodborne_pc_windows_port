@@ -391,6 +391,9 @@ before anyone is in the game):
   open for everyone, in the host's world and in each guest's own save; a lift ridden or a ladder
   lowered by anyone is in the same place for everyone, also for a player who was far away. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
+- **Boss drops for guests.** The item a boss drops for the host (Kin Coldblood from Rom, ...) is also given to every guest
+  who is there when it dies, once per kill, in their own save (like the Chalice Dungeon boss rewards). The host's rule *Boss item
+  drops for guests* (*System → Party rules: Rewards*, on by default); guests see it read-only.
 - **Key items are never lost.** A summoned guest sees its own key items in the host's world too
   (the game alone shows a visiting hunter an empty Key Items tab). Key items a guest earns in the
   host's world (Oedon Tomb Key, badges, workshop tools, chalices, umbilical cords) are given at once,
@@ -469,7 +472,7 @@ before anyone is in the game):
   party, NPCs as in the host's world, covenants, voting on travel, NPC hunters), *PvP & lamps*,
   *Deaths* (getting up and respawning, also for guests), *Travel* (lamps and Hunter's Mark for guests,
   open world, Chalice Dungeons, cutscenes with the host), *Rewards* (guests' echoes and drops, boss
-  Insight), *Phantoms*, *Rot* and *Enemies* (scaling); guests see the host's values read-only, so the
+  Insight, boss item drops for guests), *Phantoms*, *Rot* and *Enemies* (scaling); guests see the host's values read-only, so the
   whole party plays one way. *My party* holds what each player chooses for itself: *Your save* (what
   the party brings into your own character), *Your items* (item rewards, your key items as a guest),
   *Display* and *Look & notices*. The launcher's *Party Rules* and *My Party* tabs show the same settings

@@ -2814,7 +2814,13 @@ void LastLampGuardTick(const GameSnapshot& s) {
                          (me[2] - sp[2]) * (me[2] - sp[2]));
     }
     const bool by_guest = g_guest_lit_rp.load() == now_rp && Now() - g_guest_lit_at.load() <= lampshare::kLitWindowS + 3.0;
-    const bool restore = lampshare::RestoreLastLamp(std::uint32_t(was.lamp), now_rp, pending_lit_ago, dist, false, by_guest);
+    // BB_PARTY_LAMP_ARRIVAL_COUNTS=0: the 0.7.2 guard as it was (test A/B of the mensislamp fix).
+    static const bool arrival_counts = [] {
+        const char* v = std::getenv("BB_PARTY_LAMP_ARRIVAL_COUNTS");
+        return !(v && v[0] == '0');
+    }();
+    const bool restore =
+        lampshare::RestoreLastLamp(std::uint32_t(was.lamp), now_rp, pending_lit_ago, dist, false, by_guest, arrival_counts);
     if (!restore) {
         pending = false;
         base = cur;
