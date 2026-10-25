@@ -2152,7 +2152,7 @@ def phase_ef(only):
               "1:BB_PARTY_STORY_TEST_DELAY=30", "1:BB_PARTY_ENDING_TEST=yes",
               "1:BB_TEST_REMO_SKIP_AFTER=20"],
         watch=["--watch", r"ending 3: question open=efask@1,3",
-               "--watch", r"replay: remo 21000030=efremo@3,10",
+               "--watch", r"replay: remo 2100[01]030=efremo@3,10",
                "--watch", r"ending: staff roll / ending step t=10 s=efcredits@1,4"],
         crash=[], until=[EF_UNTIL], until_hold=6,
     )
@@ -4880,7 +4880,7 @@ def check_ef(v, L):
     a = need(v, L, "ef the guest answers YES", 1, r"ending 3: answer YES", q or 0)
     need(v, L, "ef the guest's ending is the host's (type 3, no cords needed)", 1,
          r"this player's ending type 3 \(host 3", a or 0)
-    r = need(v, L, "ef the guest plays Childhood's Beginning (remo 21000030)", 1, r"replay: remo 21000030 mode 0", a or 0)
+    r = need(v, L, "ef the guest plays Childhood's Beginning (remo 21000030, +1000 by sex)", 1, r"replay: remo 2100[01]030 mode 0", a or 0)
     none_of(v, L, "ef never the other ending's cutscene (Honoring Wishes 21000020)", r"remo 2100(0020|1020) ", a or 0, insts=(1,))
     ng = L.all(1, r"Party story: NG cycle 0 -> 1", a or 0)
     v.step("ef the next cycle once", len(ng) == 1, "%d NG step(s)" % len(ng))
