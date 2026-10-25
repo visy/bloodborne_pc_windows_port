@@ -1,0 +1,12 @@
+[Unit]
+Description=netdoctor Discord bot (co-op connection doctor)
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/netdoctor/env
+ExecStart=%h/netdoctor-venv/bin/python %h/bbport/tools/discord/netdoctor_bot.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
