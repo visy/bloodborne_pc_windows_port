@@ -97,17 +97,17 @@ def split_message(text, limit=DISCORD_LIMIT):
     return fixed
 
 
-MENTION_WORDS = ("analyse", "analyze", "analysis", "check", "look", "update", "diagnose", "doctor", "run",
-                 "again", "rerun", "logs", "redo")
+SMALL_TALK = ("thanks", "thank", "you", "thx", "ty", "tysm", "hi", "hello", "hey", "nice", "great", "good",
+              "bot", "<3", ":)", "ok", "okay")
 DB_PATH = Path(os.environ.get("NETDOCTOR_DB", Path.home() / ".config" / "netdoctor" / "netdoctor.db"))
 
 
 def wants_analysis(content, bot_id):
-    """A message that mentions the bot asks for a (re)analysis: one of the keywords, or only the mention."""
+    """Any message that mentions the bot asks for a (re)analysis, unless it is only thanks / a greeting."""
     text = content.replace(f"<@{bot_id}>", " ").replace(f"<@!{bot_id}>", " ").lower()
     words = [w.strip(".,!?:;()") for w in text.split()]
     words = [w for w in words if w]
-    return not words or any(w in MENTION_WORDS for w in words)
+    return not words or not all(w in SMALL_TALK for w in words)
 
 
 def log_info(nd, path):

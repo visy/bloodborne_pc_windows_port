@@ -78,7 +78,9 @@ def test_wants_analysis():
     assert bot.wants_analysis("<@42> analyse", 42)
     assert bot.wants_analysis("<@42>", 42)
     assert bot.wants_analysis("hey <@!42> can you check these logs?", 42)
+    assert bot.wants_analysis("<@42> testing iosefka unique hash", 42)
     assert not bot.wants_analysis("<@42> thanks!", 42)
+    assert not bot.wants_analysis("thank you <@42>", 42)
 
 
 def test_store_size_cap(tmp_path):
