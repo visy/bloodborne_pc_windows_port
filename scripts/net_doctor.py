@@ -390,7 +390,7 @@ def diagnose(logs, show_ips):
                    f"many users, so nobody can connect in directly, and the connection drops often.",
                 f"Host from a home internet connection if anyone can. Otherwise everyone uses a VPN "
                 f"(Tailscale, Radmin or Hamachi) and the host's VPN address.")
-        if host.nat and "no open port" in host.nat and not host.upnp_ok and not host.local_forced:
+        if host.nat and "no open port" in host.nat and not host.upnp_ok and not host.local_forced                 and not (host.local and is_vpn_ip(host.local)):  # over a VPN the open port does not matter
             add(2, f"**{hn} has no open port** (UPnP not available on the router). Guests can only get in by "
                    f"hole punching, which fails if a guest's router is strict.",
                 f"{hn}: turn on UPnP in the router, or forward UDP + TCP 9307 to the PC, or use a VPN.")

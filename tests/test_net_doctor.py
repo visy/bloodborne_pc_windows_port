@@ -112,3 +112,12 @@ def test_host_port_silent_to_guest_udp(tmp_path, capsys):
     assert nd.main([str(h), str(g)]) == 0
     out = capsys.readouterr().out
     assert "HostA's party port does not answer GuestB's UDP" in out and "INBOUND" in out
+
+
+def test_no_open_port_warning_on_vpn_host(tmp_path, capsys):
+    h = tmp_path / "host.log"
+    h.write_text(HOST.replace("local address 192.168.50.4 on", "local address 26.121.14.68 from BB_PARTY_LOCAL_IP (adapter Radmin VPN) x on")
+                 .replace("cone (port open); port 9307 open: guests connect directly",
+                          "cone (no open port); x"), encoding="utf-8")
+    assert nd.main([str(h)]) == 0
+    assert "has no open port" not in capsys.readouterr().out
