@@ -2451,6 +2451,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             (BbSettings::Get().*(sw.member)).store(on);
             Log("test: host_rule: %s %d -> %d", sw.key, was ? 1 : 0, on ? 1 : 0);
         }
+        if (!found && key == "party_friendly_fire") {  // 0.7.6 (pvphp): the PvP switch is not in PartySwitches
+            found = true;
+            const bool was = BbSettings::Get().party_friendly_fire.load();
+            BbSettings::Get().party_friendly_fire.store(on);
+            Log("test: host_rule: %s %d -> %d", key.c_str(), was ? 1 : 0, on ? 1 : 0);
+        }
         if (!found) Log("test: host_rule: no party switch %s", key.c_str());
     } else if (step.kind == TravelStep::HostPoise) {
         // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the

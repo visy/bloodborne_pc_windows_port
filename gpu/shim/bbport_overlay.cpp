@@ -1996,6 +1996,22 @@ void PartyTab() {
                  "уведомление при изменении. По умолчанию: выкл."),
                on);
     }
+    // 0.7.6 (pvphp): full health in PvP, the host's rule; a guest sees it.
+    if (b.role == ps::Role::Guest) {
+        Note(ps::HostRuleOn(ps::HostRule::PvpFullHp)
+                 ? T("Full health in PvP: ON (the host's rule) - no phantom health cut while friendly fire is on",
+                     "Полное здоровье в PvP: ВКЛ (правило хоста) - без штрафа здоровья призрака при огне по своим")
+                 : T("Full health in PvP: off (the host decides) - the phantom health cut stays in PvP",
+                     "Полное здоровье в PvP: выкл. (решает хост) - штраф здоровья призрака действует и в PvP"),
+             Dim());
+    } else {
+        Toggle("party_pvp_full_hp", T("Full health in PvP", "Полное здоровье в PvP"), s.party_pvp_full_hp,
+               T("While friendly fire is on, hunters who joined keep their full maximum health (no 30 % phantom "
+                 "cut); the switch keeps each hunter's health fraction. The host's setting. Default: on.",
+                 "При огне по своим присоединившиеся охотники сохраняют полное максимальное здоровье (без штрафа "
+                 "30 %); переключение сохраняет долю здоровья. Настройка хоста. По умолчанию: вкл."),
+               on);
+    }
     // Statsaudit finding 5: shared lamps, the host's rule; a guest sees it.
     if (b.role == ps::Role::Guest) {
         Note(ps::ShareLamps() ? T("Shared lamps: on (the host's rule) - every lamp lit in the party is lit for you too",

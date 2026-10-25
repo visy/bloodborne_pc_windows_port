@@ -164,6 +164,8 @@ PARTY_INI_SWITCHES = [
     # 0.7.5: level sync and the phantom health cut (the host's rules; System > Party rules: Phantoms)
     ("party_level_sync", "BB_PARTY_LEVEL_SYNC", True),
     ("party_phantom_hp", "BB_PARTY_PHANTOM_HP", True),
+    # 0.7.6: full health in PvP (the host's rule; System > Party rules: PvP & lamps)
+    ("party_pvp_full_hp", "BB_PARTY_PVP_FULL_HP", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -303,6 +305,14 @@ PARTY_RULES_TAB = [
          "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
          "when you switch it. Also in the game: System > Party rules: PvP & lamps (live). Default: off "
          "(bbport.ini party_friendly_fire)."),
+        ("check", "party_pvp_full_hp", "    Full health in PvP",
+         "Host only: while friendly fire is on, hunters who joined your world keep their full "
+         "maximum health (the game's 30 % phantom health cut is lifted), so a duel is fair. "
+         "Switching friendly fire on or off keeps each hunter's health at the same fraction of the "
+         "new maximum (half stays half, full stays full; nobody is healed or hurt by the switch). "
+         "Needs Friendly fire / PvP. Off: the Phantom health cut applies in PvP too. Your setting is "
+         "the party's rule. Also in the game: System > Party rules: PvP & lamps. Default: on "
+         "(bbport.ini party_pvp_full_hp).", "party_friendly_fire"),
         ("check", "party_share_lamps", "Shared lamps",
          "Host only: a lamp any party member lights in your world is lit for everyone, in "
          "each member's own save too, and your lamps reach the guests' saves. Your setting "
