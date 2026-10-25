@@ -57,6 +57,9 @@ journalctl --user -u netdoctor -f   # log
 No systemd lingering (e.g. no polkit, `loginctl enable-linger` fails)? Use cron instead of the
 service: `crontab -e` and add the two lines from the top of `tools/discord/keepalive.sh`.
 
+Housekeeping (hourly): `17 * * * * sh $HOME/bbport/tools/discord/cleanup.sh` in `crontab -e` removes
+upload folders a crash left in /tmp and trims the bot log past 10 MB.
+
 Update the doctor's rules: `git -C ~/bbport pull` (the bot loads `net_doctor.py` fresh on every
 command, no restart needed; restart after a change to the bot itself:
 `systemctl --user restart netdoctor`).
