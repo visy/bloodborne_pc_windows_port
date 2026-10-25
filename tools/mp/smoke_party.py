@@ -376,7 +376,7 @@ RULES_PAGES = [
                             "Party votes on travel", "NPC hunters fight all"],
      ("Enemies stay dead", "", "left", "Off", "right", "party_kill_record=0", "party_kill_record=1",
       '"kill_record":false')),
-    ("Party rules: PvP & lamps", ["Friendly fire / PvP", "Shared lamps", "Guests bring their lamps"],
+    ("Party rules: PvP & lamps", ["Friendly fire / PvP", "Full health in PvP", "Shared lamps", "Guests bring their lamps"],
      # set back at the end of the walk: the guest checks the host's value meanwhile
      ("Friendly fire / PvP", "", "right", "On", None, "party_friendly_fire=1", "party_friendly_fire=0",
       '"friendly_fire":true')),
@@ -417,7 +417,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_vpn", "party_member_relay", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_vpn", "party_member_relay", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -2946,6 +2946,35 @@ def phase_pvd(only):
     )
 
 
+# Phase pvh (pvphp, ~6 min, 2 players, group `pvp_full_hp`; 0.7.6 "Full health in PvP"): the party at the Queen's
+# Chamber lamp (pvd's spot). The guest sets its own HP to 250 of its 503 (the 30 % cut of 719), then the host flips
+# friendly fire on / off / on (host_rule, live), the rule off and on while PvP is on, and PvP off at the end. On
+# every flip the guest's game must log `phantom health: lifted: full health in PvP` / `on, the game's 30 % cut`
+# and `HP kept at its fraction: a/b -> c/d` with c = a * d / b rounded (260/503 -> 372/719 and back; the game
+# alone had 476/719: it adds the max difference when the max grows and keeps the points when it shrinks); the
+# host's own HP is never touched; the host's copy of the guest (BB_PARTY_LEVELSYNC_LOG, every 5 s) shows the
+# guest's bar. Screenshots (--every 5): the guest's HP bar before and after each flip.
+PVH_FLIPS = [("party_friendly_fire", 1), ("party_friendly_fire", 0), ("party_friendly_fire", 1),
+             ("party_pvp_full_hp", 0), ("party_pvp_full_hp", 1), ("party_friendly_fire", 0)]
+PVH_GAP = 30
+PVH_UNTIL = r"0:test: host_rule: party_friendly_fire 1 -> 0[\s\S]*test: host_rule: party_friendly_fire 1 -> 0"
+
+
+def phase_pvh(only):
+    host = ",".join(["host_warp=2502951@8^1"] +
+                    ["host_rule=%s:%d@%d%%m25" % (k, v, 35 if i == 0 else PVH_GAP) for i, (k, v) in enumerate(PVH_FLIPS)] +
+                    ["host_press=0@60%m25!"] * 3)
+    gsteps = ["log@12", "hp=250@6", "log@1"] + ["log@%d" % PVH_GAP] * len(PVH_FLIPS)
+    clear = ",".join(str(f) for f in list(range(1340, 1348)) + list(range(1349, 1360)) + [12500051, 12500052, 12500053, 12500054] + list(range(72500350, 72500360)))
+    return dict(
+        name="pvh", seconds=35 + PVH_GAP * len(PVH_FLIPS) + 200, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + clear, "BB_PARTY_PROGRESS_TEST_SET=" + NFA_FIXTURE_SET,
+             "BB_PARTY_TEST_COND_TIMEOUT=100", "BB_PARTY_LEVELSYNC_LOG=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_PVP_TEST=" + ",".join(gsteps)],
+        watch=[], crash=[], until=[PVH_UNTIL], until_hold=25,
+    )
+
+
 # Phase eh (echodup, ~5 min, 2 players, group `echo_hold`): Blood Echoes an enemy took are paid once
 # (player report for 0.7.3: 15k from the glowing-eyed enemy and 15k again from the bloodstain the
 # marker pointed to). Guest 1 (15000 echoes, frail) is killed by 2410247 beside it and gets up at
@@ -3509,14 +3538,14 @@ def check_fp(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "sm": phase_sm, "ef": phase_ef, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "ba": phase_ba, "hg": phase_hg, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "sm": phase_sm, "ef": phase_ef, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "pvh": phase_pvh, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "ba": phase_ba, "hg": phase_hg, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_altar": "cpa", "chalice_wipe": "clw", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl",
           "rot": "rt", "boss_rooms": "br", "rom_fog": "rf", "scene_mirror": "sm", "ending_flow": "ef", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "fourp_nat": "fp", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "boss_ai": "ba", "boss_late": "hg", "lone_ai": "la,lc"}
+          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "fourp_nat": "fp", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "boss_ai": "ba", "boss_late": "hg", "lone_ai": "la,lc"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -3527,7 +3556,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iwn? ", "cainhurst_annalise": r"^an ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_altar": r"^cpa ", "chalice_wipe": r"^clw ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "headstone_split": r"^hs ", "ngplus_rejoin": r"^ngj ", "npc_lamp": r"^nl ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "rom_fog": r"^rf ", "scene_mirror": r"^sm ", "ending_flow": r"^ef ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj ", "outage_short": r"^ou ", "guest_mesh": r"^mesh ", "fourp_nat": r"^fp ", "phantom_own": r"^po ", "phantom_save": r"^pos ", "shop_repair": r"^sg ", "shop_repair2": r"^sg2 ", "boss_ai": r"^ba ", "boss_late": r"^hg ", "lone_ai": r"^la |^lc "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "pvp_full_hp": r"^pvh ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj ", "outage_short": r"^ou ", "guest_mesh": r"^mesh ", "fourp_nat": r"^fp ", "phantom_own": r"^po ", "phantom_save": r"^pos ", "shop_repair": r"^sg ", "shop_repair2": r"^sg2 ", "boss_ai": r"^ba ", "boss_late": r"^hg ", "lone_ai": r"^la |^lc "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -3599,6 +3628,7 @@ GROUP_UNTIL = {
     "npc_attack": [NPA_UNTIL],
     "npc_doll": [r"0:test: host_press 0x0 "],
     "pvp_revive": [PVD_UNTIL],
+    "pvp_full_hp": [PVH_UNTIL],
     "covenant": CV_UNTIL,
     "valtr_rune": CV_UNTIL,
     "items_every": IE_UNTIL,
@@ -5861,6 +5891,66 @@ def check_pvd(v, L):
     check_common(v, L, "pvd")
 
 
+def pvh_hp(L, i, local, after=0.0, before=1e9):
+    """(t, hp, max) of the local (or the first other) player chr from BB_PARTY_LEVELSYNC_LOG lines on inst i."""
+    out = []
+    for t, line in L.all(i, r"level sync: .*chr [0-9a-f]+", after, before):
+        is_local = " (local)" in line
+        if is_local != local:
+            continue
+        m = re.search(r"HP (-?\d+)/(-?\d+)", line)
+        if m:
+            out.append((t, int(m.group(1)), int(m.group(2))))
+    return out
+
+
+def check_pvh(v, L):
+    """Phase pvh: full health in PvP keeps the guest's HP fraction across every flip (0.7.6)."""
+    need(v, L, "pvh join: 2 players", 0, r"cooperators 0 -> 1")
+    need(v, L, "pvh the guest's HP set to 250 (the test aid)", 1, r"test: step \d+: own HP \d+ -> 250")
+    flips = []
+    at = 0.0
+    for k, (key, val) in enumerate(PVH_FLIPS):
+        hit = L.find(0, r"test: host_rule: %s %d -> %d" % (key, 1 - val, val), at)
+        v.step("pvh flip %d: the host's %s -> %d" % (k + 1, key, val), bool(hit), ("+%.1f s" % hit[0]) if hit else "missing")
+        if not hit:
+            break
+        at = hit[0] + 0.5
+        flips.append((hit[0], key, val))
+    for k, (t, key, val) in enumerate(flips):
+        # The cut in force after this flip: PvP on and the rule on lifts it.
+        pvp = [f for f in flips[:k + 1] if f[1] == "party_friendly_fire"][-1][2]
+        rule = ([f for f in flips[:k + 1] if f[1] == "party_pvp_full_hp"] or [(0, "", 1)])[-1][2]
+        lifted = bool(pvp and rule)
+        want = r"phantom health: lifted: full health in PvP" if lifted else r"phantom health: on, the game's 30 % cut"
+        for i, who in ((1, "guest"), (0, "host")):
+            need(v, L, "pvh flip %d: the %s's game sets the phantom rate (%s)" % (k + 1, who, "lifted" if lifted else "cut"), i, want, t - 1, t + 12)
+        kept = L.find(1, r"phantom health: HP kept at its fraction: (\d+)/(\d+) -> (\d+)/(\d+)", t - 1, t + 12)
+        if not kept:
+            same = L.find(1, r"phantom health: HP (\d+)/(\d+) -> (\d+)/(\d+), the fraction is kept already", t - 1, t + 12)
+            v.step("pvh flip %d: the guest's HP kept at its fraction" % (k + 1), bool(same), same[1][:120] if same else "no keep line within 12 s")
+            continue
+        m = re.search(r"(\d+)/(\d+) -> (\d+)/(\d+)", kept[1])
+        a, b, c, d = (int(x) for x in m.groups())
+        expect = (a * d * 2 + b) // (2 * b) if 0 < a < b else (d if a >= b else 0)
+        v.step("pvh flip %d: the guest's HP %d/%d -> %d/%d keeps the fraction (expected %d) and the max %s" %
+               (k + 1, a, b, c, d, expect, "grew" if lifted else "shrank"),
+               c == expect and (d > b if lifted else d < b), kept[1][:140])
+        # The host's copy of the guest: its max after the flip is the guest's own within 1 % (the game's player
+        # sync carries it with a few points of noise: 719 shows as 719-723, 503 as 503-506; live 2026-10-25) and
+        # its HP the guest's within 2 % (the two logs are up to 0.5 s apart), so the HUD bars agree.
+        hv = [x for x in pvh_hp(L, 0, False, t + 1, t + PVH_GAP - 2)]
+        gv = [x for x in pvh_hp(L, 1, True, t + 1, t + PVH_GAP - 2)]
+        close = bool(hv) and bool(gv) and abs(hv[-1][2] - gv[-1][2]) <= gv[-1][2] // 100 + 1 and \
+            abs(hv[-1][1] - gv[-1][1]) <= gv[-1][2] // 50 + 1
+        v.step("pvh flip %d: the host's view of the guest's HP bar is the guest's (host %s, guest %s)" %
+               (k + 1, ["%d/%d" % (x[1], x[2]) for x in hv][-1:], ["%d/%d" % (x[1], x[2]) for x in gv][-1:]),
+               close, "host sees %s, guest has %s" % (hv[-1:], gv[-1:]))
+    none_of(v, L, "pvh the host's own HP never written by the keeper", r"phantom health: HP kept at its fraction", insts=(0,))
+    none_of(v, L, "pvh no failed HP write", r"phantom health: HP kept.*WRITE FAILED")
+    check_common(v, L, "pvh")
+
+
 def check_npa(v, L):
     """Phase npa: a guest's blows on a friendly NPC of the host's world land (0.7.5)."""
     need(v, L, "npa join: 2 players", 0, r"cooperators 0 -> 1")
@@ -6066,7 +6156,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "iwn": lambda v, L, d: check_iwn(v, L), "an": lambda v, L, d: check_an(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "hs": lambda v, L, d: check_hs(v, L), "ngj": lambda v, L, d: check_ngj(v, L), "nl": lambda v, L, d: check_nl(v, L), "br": lambda v, L, d: check_br(v, L), "rf": lambda v, L, d: check_rf(v, L), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "ba": lambda v, L, d: check_ba(v, L), "hg": lambda v, L, d: check_hg(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"), "lc": lambda v, L, d: check_lc(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "hs": lambda v, L, d: check_hs(v, L), "ngj": lambda v, L, d: check_ngj(v, L), "nl": lambda v, L, d: check_nl(v, L), "br": lambda v, L, d: check_br(v, L), "rf": lambda v, L, d: check_rf(v, L), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "pvh": lambda v, L, d: check_pvh(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "ba": lambda v, L, d: check_ba(v, L), "hg": lambda v, L, d: check_hg(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"), "lc": lambda v, L, d: check_lc(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L), "ou": lambda v, L, d: check_ou(v, L), "mesh": lambda v, L, d: check_mesh(v, L), "fp": lambda v, L, d: check_fp(v, L), "po": lambda v, L, d: check_po(v, L), "pos": lambda v, L, d: check_pos(v, L), "sg": lambda v, L, d: check_sg(v, L), "sg2": lambda v, L, d: check_sg2(v, L)}
 
@@ -6097,7 +6187,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cpr", "cpa", "el", "lt", "bf", "ch",
-                                     "lp", "gd", "gh", "gm", "hs", "ngj", "nl", "rt", "br", "rf", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "eh", "bl", "sj", "ou", "mesh", "fp", "po", "pos", "sg", "sg2", "ba", "hg", "la", "lb", "lc")
+                                     "lp", "gd", "gh", "gm", "hs", "ngj", "nl", "rt", "br", "rf", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "pvh", "eh", "bl", "sj", "ou", "mesh", "fp", "po", "pos", "sg", "sg2", "ba", "hg", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

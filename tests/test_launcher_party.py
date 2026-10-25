@@ -400,6 +400,7 @@ class PartyRules071Settings(unittest.TestCase):
             "party_npc_mirror": "BB_PARTY_NPC_MIRROR", "party_npc_fights": "BB_PARTY_NPC_FIGHTS",
             "party_key_view": "BB_PARTY_KEY_VIEW", "party_any_kidnap": "BB_PARTY_ANY_KIDNAP",
             "party_level_sync": "BB_PARTY_LEVEL_SYNC", "party_phantom_hp": "BB_PARTY_PHANTOM_HP",
+            "party_pvp_full_hp": "BB_PARTY_PVP_FULL_HP",
             "party_key_items_summoned": "BB_PARTY_KEY_ITEMS_SUMMONED"}
 
     @classmethod
