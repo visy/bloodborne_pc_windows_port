@@ -476,7 +476,8 @@ SF_STAY = 30  # s guest 2 must stay in the host's world after its join (an unrea
 def phase_summonfail(only):
     return dict(
         name="summonfail", seconds=360, count=3, headless=1,
-        env=[], ienv=["1:BB_PARTY_PORT={hold}"],
+        env=["BB_PARTY_CONNWARN_UDP_N=1"],  # 0.7.6: one failed report is enough for the notice (the host gets one in this run)
+        ienv=["1:BB_PARTY_PORT={hold}"],
         hold_ports=16,
         start_when=["2/1:" + SF_FAILED],
         until_hold=SF_STAY + 5,  # guest 2 must stay in the host's world this long
@@ -3291,12 +3292,9 @@ def check_summonfail(v, L):
     # 0.7.6 connection warnings: the host names the guest whose UDP is not heard once it failed twice
     fails = L.all(0, r"slot 1 \(.*\) reports a failure: its UDP is not heard", f - 5)
     warn = L.find(0, r"connection warning: .* is in the party but its game is not heard", f - 5)
-    if len(fails) >= 2:
-        v.step("summonfail: the host warns about the guest whose UDP is not heard (%d failure reports)" % len(fails), warn,
-               warn[1][:200] if warn else "no 'connection warning' line")
-    else:
-        v.step("summonfail: connection warning (info: %d failure report(s), 2 needed)" % len(fails), True,
-               warn[1][:200] if warn else "none")
+    # the phase sets BB_PARTY_CONNWARN_UDP_N=1: the guest's one failure report raises the notice
+    v.step("summonfail: the host warns about the guest whose UDP is not heard (%d failure report(s))" % len(fails),
+           warn if fails else True, (warn[1][:200] if warn else "no 'connection warning' line") if fails else "no failure report")
     stuck = L.all(0, r"refused \(the host's game is summoning a sign", f)
     v.step("summonfail: sign-summon refusals after the failure (info)", True, "%d" % len(stuck))
     check_common(v, L, "summonfail")

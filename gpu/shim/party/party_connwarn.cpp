@@ -107,7 +107,15 @@ std::mutex g_mu;
 FirewallQuery g_query;
 bool (*g_enabled)() = nullptr;
 void (*g_log)(const char*) = nullptr;
-Tracker g_tracker;
+
+// Test aids: BB_PARTY_CONNWARN_UDP_N (failures in a row per guest), BB_PARTY_CONNWARN_NOGUEST_S (seconds).
+Thresholds EnvThresholds() {
+    Thresholds t;
+    if (const char* v = std::getenv("BB_PARTY_CONNWARN_UDP_N")) t.guest_udp_n = std::max(1, std::atoi(v));
+    if (const char* v = std::getenv("BB_PARTY_CONNWARN_NOGUEST_S")) t.no_guest_s = std::max(1, std::atoi(v));
+    return t;
+}
+Tracker g_tracker(EnvThresholds());
 }  // namespace
 
 void SetFirewallQuery(FirewallQuery q) {
@@ -358,7 +366,7 @@ void GuestOwnSummonJoined() {
 }
 void ResetForTest() {
     std::lock_guard<std::mutex> lk(g_mu);
-    g_tracker = Tracker();
+    g_tracker = Tracker(EnvThresholds());
     g_query = nullptr;
     g_enabled = nullptr;
     g_log = nullptr;
