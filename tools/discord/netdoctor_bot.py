@@ -388,7 +388,6 @@ def main():
         except discord.HTTPException:
             pass
 
-    @client.event
     def small_place(channel):
         """Threads, DMs and channels listed in NETDOCTOR_CHANNELS: the bot answers mentions and reacts there.
         Big ordinary channels are left alone (slash commands still work everywhere)."""
