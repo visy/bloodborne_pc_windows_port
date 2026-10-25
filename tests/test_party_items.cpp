@@ -1276,6 +1276,37 @@ static void test_chalice_award() {
     CHECK(std::string(ItemSourceName(ItemSource::Chalice)) == "chalice");
 }
 
+static void test_boss_drop() {
+    // Rom's reward lot (Kin Coldblood, a consumable): a world boss lot in map area 32, not shared by the key / unique rules.
+    CHECK(BossDropArea(51001900) == 32 && BossDropArea(31000) == 24 && BossDropArea(2410000) == -1);
+    CHECK(ItemLotDenied(51001900, ItemLotFlag(51001900)) && !ClassifyAward(51001900, true));
+    GrantItem kin;  // Kin Coldblood x3
+    kin.category = 4;
+    kin.id = 1591;
+    kin.count = 3;
+    CHECK(!MakeBossDropGrant(51001900, {}, 1));   // the host's items are required
+    CHECK(!MakeBossDropGrant(2410000, {kin}, 1)); // not a boss lot
+    const std::optional<ItemGrant> a = MakeBossDropGrant(51001900, {kin}, 1), b = MakeBossDropGrant(51001900, {kin}, 2);
+    CHECK(a && b && a->source == ItemSource::BossDrop && a->DoneFlag() < 0 && a->flag == kItemNone);
+    CHECK(a->Key() == kBossDropKeyBase + 1 && b->Key() == kBossDropKeyBase + 2 && kBossDropKeyBase > kChaliceKeyBase);
+    HostItems h;  // NG+ cycles: a second kill is a second grant
+    CHECK(h.Offer(*a) && h.Offer(*b) && !h.Offer(*a));
+    std::vector<ItemGrant> out;
+    std::string err;
+    CHECK(ItemsFromJsonText(ItemsToJsonText({*a}), &out, &err) && out.size() == 1 &&
+          out[0].source == ItemSource::BossDrop && out[0].items.size() == 1 && out[0].items[0].id == 1591);
+    CHECK(ItemGrantFromPeerAllowed(out[0]));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,51001900,-1,-1,"boss"]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,51001900,52900100,-1,"boss",[[4,1591,3]]]]})", &out, &err));
+    CHECK(!ItemsFromJsonText(R"({"items":[[1,2410000,-1,-1,"boss",[[4,1591,3]]]]})", &out, &err));
+    // Only a summoned guest in the boss's map area (present at the kill) takes it.
+    CHECK(BossDropAccepted(true, 0x20000000, 51001900));
+    CHECK(!BossDropAccepted(false, 0x20000000, 51001900));  // at home
+    CHECK(!BossDropAccepted(true, 0x18000000, 51001900));   // summoned elsewhere in the host's world
+    CHECK(!BossDropAccepted(true, 0xffffffffu, 51001900));
+    CHECK(std::string(ItemSourceName(ItemSource::BossDrop)) == "boss");
+}
+
 static void test_messenger_own() {
     CHECK(MessengerGiftLot(10050) && MessengerGiftLot(10010) && MessengerGiftLot(10000));
     CHECK(!MessengerGiftLot(10011) && !MessengerGiftLot(31000));
@@ -1374,6 +1405,7 @@ int main() {
     test_messenger_own();
     test_repeat_gift();
     test_chalice_award();
+    test_boss_drop();
     test_key_catchup();
     std::printf("party-items-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

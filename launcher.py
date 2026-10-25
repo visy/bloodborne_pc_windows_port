@@ -166,6 +166,8 @@ PARTY_INI_SWITCHES = [
     ("party_phantom_hp", "BB_PARTY_PHANTOM_HP", True),
     # 0.7.6: full health in PvP (the host's rule; System > Party rules: PvP & lamps)
     ("party_pvp_full_hp", "BB_PARTY_PVP_FULL_HP", True),
+    # 0.7.6: a world boss's item drop also goes to the guests (the host's rule; System > Party rules: Rewards)
+    ("party_boss_drops", "BB_PARTY_BOSS_DROPS", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
@@ -378,6 +380,12 @@ PARTY_RULES_TAB = [
          "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
          "to you while you are a guest. Default: on (bbport.ini party_full_rewards; in the game: "
          "System > Party rules: Rewards)."),
+        ("check", "party_boss_drops", "Boss drops for guests",
+         "Host only: the item a world boss drops for you (Kin Coldblood from Rom, ...) is given to "
+         "every guest who is there when the boss dies, too, once, in their own save. Key and unique "
+         "items already reach every guest and are not given twice. Your setting is the party's rule; "
+         "guests see it. Off: guests get only what the game gives them. Default: on "
+         "(bbport.ini party_boss_drops; in the game: System > Party rules: Rewards)."),
         ("combo", "party_insight_var", "Insight for bosses:", [c[0] for c in PARTY_INSIGHT_CHOICES],
          "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
          "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "

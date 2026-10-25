@@ -97,12 +97,12 @@ int main() {
     // nothing is put into the environment (the modules read the setting live).
     const char* const new_envs[] = {"BB_PARTY_KILL_RECORD", "BB_PARTY_NPC_MIRROR", "BB_PARTY_GATHER",
                                     "BB_PARTY_KEY_VIEW", "BB_PARTY_KEY_ITEMS_SUMMONED", "BB_PARTY_NPC_FIGHTS",
-                                    "BB_PARTY_ANY_KIDNAP"};
+                                    "BB_PARTY_ANY_KIDNAP", "BB_PARTY_BOSS_DROPS"};
     for (const char* e : new_envs) assert(bb_test_setenv(e, "") == 0);
     BbSettings::Load();
     assert(s.party_kill_record && s.party_npc_mirror && s.party_gather && s.party_key_view &&
            s.party_key_items_summoned && s.party_npc_fights && s.party_any_kidnap && s.party_level_sync && s.party_phantom_hp &&
-           s.party_pvp_full_hp);
+           s.party_pvp_full_hp && s.party_boss_drops);
     for (const char* e : new_envs) assert(!std::getenv(e) || !std::getenv(e)[0]);  // not exported
     s.party_kill_record = false;
     s.party_key_items_summoned = false;
