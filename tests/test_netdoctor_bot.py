@@ -126,3 +126,15 @@ def test_event_handlers_are_coroutines():
             for d in node.decorator_list:
                 if ast.unparse(d) == "client.event":
                     assert isinstance(node, ast.AsyncFunctionDef), node.name
+
+
+def test_pack_in_thread_store_in_owner(tmp_path):
+    import threading
+    ns = _store_mod()
+    st = ns.Store(tmp_path / "db.sqlite")
+    data = b"[coop] Party: x\n" * 1000
+    box = {}
+    t = threading.Thread(target=lambda: box.setdefault("p", ns.pack(data)))
+    t.start(); t.join()
+    sha = st.put_logdata(data, "a.log", box["p"])
+    assert st.get_logdata(sha)[1] == data

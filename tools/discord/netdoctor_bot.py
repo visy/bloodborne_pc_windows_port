@@ -170,7 +170,8 @@ def main():
     async def keep(path, filename):
         """Store the log compressed (off the event loop: LZMA takes a moment on big logs)."""
         data = path.read_bytes()
-        return await asyncio.get_running_loop().run_in_executor(None, store.put_logdata, data, filename)
+        packed = await asyncio.get_running_loop().run_in_executor(None, ns.pack, data)
+        return store.put_logdata(data, filename, packed)  # the database only from this thread
 
     last_hashes = {}
 
