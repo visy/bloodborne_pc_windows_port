@@ -294,12 +294,14 @@ def main():
             await send_text(lambda *a, ephemeral=False, **k: channel.send(*a, **k), text, False,
                             remember(channel, file_recs(found, last_hashes.pop(id(atts), ())), text))
 
-    async def record_logs(message):
-        """Remember who/when of every party log file in a message (downloaded once, then deleted)."""
+    async def record_logs(message, channel_id=None):
+        """Remember who/when of every party log file in a message (downloaded once, then deleted).
+        channel_id: file it under this channel (a thread's starter post lives in the parent channel)."""
+        channel_id = channel_id or message.channel.id
         new = 0
         for idx, a in enumerate(message.attachments):
             if not is_log_name(a.filename) or a.size > MAX_BYTES or \
-                    store.has_log(message.channel.id, message.id, idx):
+                    store.has_log(channel_id, message.id, idx):
                 continue
             with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
                 p = Path(tmp) / (Path(a.filename).name or "log.log")
@@ -313,7 +315,7 @@ def main():
             if info["role"] is None:
                 continue  # not a party log
             info["sha1"] = sha
-            store.add_log(message.channel.id, message.id, idx, a.filename, info)
+            store.add_log(channel_id, message.id, idx, a.filename, info)
             new += 1
         return new
 
@@ -321,6 +323,15 @@ def main():
         """(Re)analyse every party log posted in this channel / thread: one post per session; a session
         that already has a post gets it edited, a new session gets a new post."""
         channel = trigger.channel
+        if isinstance(channel, discord.Thread) and channel.parent is not None:
+            # a thread started from a post: the post (and its logs) lives in the parent channel and has
+            # the thread's id; forum posts are inside the thread already (the fetch then just fails)
+            try:
+                starter = await channel.parent.fetch_message(channel.id)
+                if starter.attachments and not starter.author.bot:
+                    await record_logs(starter, channel.id)
+            except (discord.HTTPException, AttributeError):
+                pass
         async for msg in channel.history(limit=1000, oldest_first=True):
             if msg.attachments and not msg.author.bot:
                 await record_logs(msg)
@@ -348,9 +359,16 @@ def main():
                         p.write_bytes(kept[1])
                         paths.append(p)
                         continue
-                    try:
-                        att = (await channel.fetch_message(mid)).attachments[idx]
-                    except (discord.HTTPException, IndexError):
+                    att = None
+                    for where in (channel, getattr(channel, "parent", None)):  # starter post: in the parent
+                        if where is None:
+                            continue
+                        try:
+                            att = (await where.fetch_message(mid)).attachments[idx]
+                            break
+                        except (discord.HTTPException, IndexError, AttributeError):
+                            pass
+                    if att is None:
                         continue  # deleted meanwhile and never stored
                     p = d / (Path(att.filename).name or "log.log")
                     await att.save(p)
