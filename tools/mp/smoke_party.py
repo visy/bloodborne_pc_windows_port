@@ -2065,7 +2065,7 @@ def phase_lk(only):
 def check_lk(v, L):
     j = need(v, L, "lk join: 2 players", 0, r"cooperators 0 -> 1")
     need(v, L, "lk the host awards the Lunarium Key", 0, r"award lot 3200810", j or 0)
-    need(v, L, "lk the guest receives it", 1, r"lot 3200810|Lunarium Key|4013", j or 0)
+    need(v, L, "lk the guest receives it", 1, r"gave .*goods 4013|key goods changed: 4013 0 -> 1", j or 0)
     check_common(v, L, "lk")
 
 
@@ -6476,7 +6476,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cpr", "cpa", "el", "lt", "bf", "ch",
-                                     "lp", "gd", "gh", "gm", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "rt", "br", "rf", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "pvh", "eh", "bl", "sj", "ou", "mesh", "fp", "po", "pos", "sg", "sg2", "ba", "hg", "lw", "la", "lb", "lc")
+                                     "lp", "gd", "gh", "gm", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "pvh", "eh", "bl", "sj", "ou", "mesh", "fp", "po", "pos", "sg", "sg2", "ba", "hg", "lw", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
