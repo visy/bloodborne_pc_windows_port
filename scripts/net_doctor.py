@@ -424,6 +424,10 @@ def diagnose(logs, show_ips):
         for g, cnt in host.not_heard.items():
             if cnt < 2:
                 continue
+            if host.in_world.get(g):
+                add(4, f"{g}'s first summons failed ({cnt}x, game traffic not heard), then {g} got into the "
+                       f"host's world.", None)
+                continue
             add(1, f"**{g} connects to the party but the game's own traffic never reaches the host** "
                    f"({cnt} failed summons). Shared progress works, the summon does not.",
                 f"{host.name or 'Host'} and {g}: if you play over a VPN, each sets `BB_PARTY_LOCAL_IP` to "

@@ -62,3 +62,13 @@ def test_different_sessions(tmp_path, capsys):
     g.write_text(GUEST.replace("engine x", "engine x, 2026-10-24 20:54:08"), encoding="utf-8")
     assert nd.main([str(h), str(g)]) == 0
     assert "different sessions" in capsys.readouterr().out
+
+
+def test_not_heard_then_joined(tmp_path, capsys):
+    h = tmp_path / "host.log"
+    h.write_text(HOST + "[coop] Party: roster: HostA(slot 0, home, map 1, 0 ms), GuestB(slot 1, in_host_world, map 1, 60 ms)\n",
+                 encoding="utf-8")
+    assert nd.main([str(h)]) == 0
+    out = capsys.readouterr().out
+    assert "never reaches the host" not in out
+    assert "then GuestB got into the host's world" in out
