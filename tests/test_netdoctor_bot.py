@@ -138,3 +138,10 @@ def test_pack_in_thread_store_in_owner(tmp_path):
     t.start(); t.join()
     sha = st.put_logdata(data, "a.log", box["p"])
     assert st.get_logdata(sha)[1] == data
+
+
+
+def test_wants_rerun():
+    assert bot.wants_rerun("<@42> rerun please")
+    assert bot.wants_rerun("<@42> check again")
+    assert not bot.wants_rerun("<@42> analyse")

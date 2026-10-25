@@ -112,6 +112,15 @@ def wants_analysis(content, bot_id):
     return not words or not all(w in SMALL_TALK for w in words)
 
 
+FORCE_WORDS = ("rerun", "redo", "again", "update", "refresh", "force", "reanalyse", "reanalyze")
+
+
+def wants_rerun(content):
+    """'@bot rerun' (again, update, refresh, ...): analyse again even with no new logs (new doctor rules)."""
+    words = [w.strip(".,!?:;()").lower() for w in content.split()]
+    return any(w in FORCE_WORDS for w in words)
+
+
 def log_info(nd, path):
     """Who and when of one log (for grouping logs into sessions)."""
     import re
@@ -319,7 +328,7 @@ def main():
             new += 1
         return new
 
-    async def analyse_channel(trigger):
+    async def analyse_channel(trigger, force=False):
         """(Re)analyse every party log posted in this channel / thread: one post per session; a session
         that already has a post gets it edited, a new session gets a new post."""
         channel = trigger.channel
@@ -345,7 +354,7 @@ def main():
             key = ns.session_key(infos, group)
             members = [(infos[i]["message_id"], infos[i]["att_index"]) for i in group]
             found = store.find_session(channel.id, key, members)
-            if found and found[2] == len(members):
+            if found and found[2] == len(members) and not force:
                 continue  # nothing new for this session
             with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
                 paths = []
@@ -431,7 +440,7 @@ def main():
             print(f"mention in {type(message.channel).__name__} {message.channel.id}", flush=True)
             try:
                 async with message.channel.typing():
-                    await analyse_channel(message)
+                    await analyse_channel(message, force=wants_rerun(message.content))
             except discord.Forbidden as e:
                 print(f"no access in {message.channel.id}: {e}", flush=True)
                 try:
