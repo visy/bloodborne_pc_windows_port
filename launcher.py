@@ -892,16 +892,106 @@ def vpn_usable_ip(ip: str) -> bool:
     return bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip or "")) and not ip.startswith(("127.", "169.254.", "0."))
 
 
+# ---- Is the VPN really online? (0.7.6) The same evidence as the game (gpu/shim/net/net_socket.cpp
+# vpn_decide_online): Windows keeps an overlay VPN's adapter Up with its address while the VPN app is off.
+VPN_ONLINE_KINDS = ("Radmin VPN", "Hamachi", "Tailscale", "ZeroTier")
+
+
+def vpn_state_from_radmin_log(text: str) -> str:
+    """'online' / 'offline' / '' from the tail of Radmin VPN's service.log (the last server event wins)."""
+    state = ""
+    for line in text.splitlines():
+        if "Connected to server" in line:
+            state = "online"
+        elif "Disconnected from server" in line or "Switched Off" in line or "Service starting" in line:
+            state = "offline"
+    return state
+
+
+def vpn_state_from_tailscale_json(text: str) -> str:
+    m = re.search(r'"BackendState"\s*:\s*"([^"]*)"', text or "")
+    if not m:
+        return ""
+    if m.group(1) == "Running":
+        return "online"
+    return "offline" if m.group(1) in ("Stopped", "NeedsLogin", "NeedsMachineAuth", "NoState") else ""
+
+
+def vpn_state_from_zerotier_info(text: str) -> str:
+    text = text or ""
+    if "200 info" not in text:
+        return ""
+    if "OFFLINE" in text:
+        return "offline"
+    return "online" if ("ONLINE" in text or "TUNNELED" in text) else ""
+
+
+def vpn_decide_online(vendor: str, rx1, rx2, counters_trusted=True) -> bool:
+    """True when the VPN is online or cannot be told. vendor: 'online' / 'offline' / '' (the VPN app's own
+    status, wins); rx1 / rx2: the adapter's receive counters (bytes, unicast, non-unicast) at two moments
+    (None when unknown); counters that did not rise mean offline, unless the user named the adapter."""
+    if vendor == "online":
+        return True
+    if vendor == "offline":
+        return False
+    if not rx1 or not rx2:
+        return True
+    if any(b > a for a, b in zip(rx1, rx2)):
+        return True
+    return not counters_trusted
+
+
+def vpn_vendor_state(kind: str) -> str:
+    """The VPN app's own local status (a file or its CLI talking to its own daemon; no network call)."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    def run(args):
+        try:
+            return subprocess.run(args, capture_output=True, text=True, timeout=4, creationflags=flags).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    try:
+        if kind == "Radmin VPN":
+            p = Path(os.environ.get("ProgramData", "")) / "Famatech" / "Radmin VPN" / "service.log"
+            with open(p, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                fh.seek(max(0, fh.tell() - 64 * 1024))
+                raw = fh.read()
+            # the log is UTF-16: dropping the zero bytes keeps the ASCII event names, wherever the read began
+            return vpn_state_from_radmin_log(raw.replace(b"\x00", b"").decode("utf-8", "replace"))
+        if kind == "Tailscale":
+            exe = Path(os.environ.get("ProgramFiles", "")) / "Tailscale" / "tailscale.exe"
+            return vpn_state_from_tailscale_json(run([str(exe), "status", "--json"])) if exe.is_file() else ""
+        if kind == "ZeroTier":
+            pf = os.environ.get("ProgramFiles(x86)") or os.environ.get("ProgramFiles", "")
+            bat = Path(pf) / "ZeroTier" / "One" / "zerotier-cli.bat"
+            return vpn_state_from_zerotier_info(run(["cmd.exe", "/c", str(bat), "info"])) if bat.is_file() else ""
+    except OSError:
+        return ""
+    return ""
+
+
+def vpn_adapter_offline(adapter: dict, pref="auto") -> bool:
+    """True for an overlay VPN adapter the evidence says is not connected (detect_vpn_adapters fills
+    'vendor' and 'rx1' / 'rx2'); False for anything else or without evidence."""
+    kind = vpn_kind(adapter.get("name", ""), adapter.get("ip", ""))
+    if kind not in VPN_ONLINE_KINDS:
+        return False
+    return not vpn_decide_online(adapter.get("vendor", ""), adapter.get("rx1"), adapter.get("rx2"),
+                                 vpn_pref_normalize(pref) == "auto")
+
+
 def select_vpn_adapter(adapters: list, pref="auto"):
     """The adapter to host over: {'name', 'ip'} from `adapters` (up adapters with an IPv4), or None.
     auto: the best of Radmin, Hamachi, Tailscale, ZeroTier (a commercial VPN is never taken unasked);
-    off: none; else the first whose name contains `pref` (any case)."""
+    off: none; else the first whose name contains `pref` (any case). A VPN that is installed but not
+    connected is skipped."""
     pref = vpn_pref_normalize(pref)
     if pref == "off":
         return None
     best, best_score = None, -1
     for a in adapters:
-        if not vpn_usable_ip(a.get("ip", "")):
+        if not vpn_usable_ip(a.get("ip", "")) or vpn_adapter_offline(a, pref):
             continue
         if pref == "auto":
             score = VPN_AUTO_RANK.get(vpn_kind(a.get("name", ""), a["ip"]), -1)
@@ -922,20 +1012,44 @@ def detect_vpn_adapters() -> list:
     about a second: call it from a thread). [] when it cannot be asked."""
     if os.name != "nt":
         return []
-    script = ("Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { $n=$_; "
+    # rx: the adapter's receive counters (bytes, unicast, non-unicast), read twice 2 s apart for an overlay VPN
+    # whose app has no status we can read (the evidence of last resort that it is online).
+    script = ("function Rx($i){ $x=[Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() | "
+              "Where-Object { $_.Supports([Net.NetworkInformation.NetworkInterfaceComponent]::IPv4) -and "
+              "$_.GetIPProperties().GetIPv4Properties().Index -eq $i } | Select-Object -First 1; "
+              "if($x){ $s=$x.GetIPv4Statistics(); @([long]$s.BytesReceived,[long]$s.UnicastPacketsReceived,"
+              "[long]$s.NonUnicastPacketsReceived) } } "
+              "$r=@(Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { $n=$_; "
               "Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-              "ForEach-Object { [pscustomobject]@{name=($n.Name + ' / ' + $n.InterfaceDescription); ip=$_.IPAddress} } } "
-              "| ConvertTo-Json -Compress")
+              "ForEach-Object { [pscustomobject]@{name=($n.Name + ' / ' + $n.InterfaceDescription); ip=$_.IPAddress; "
+              "idx=$n.ifIndex; rx1=$null; rx2=$null} } }); "
+              "if($env:BB_VPN_RX -ne '0'){ $v=@($r | Where-Object { $_.name -match 'radmin|hamachi|zerotier|tailscale' }); "
+              "foreach($a in $v){ $a.rx1=Rx $a.idx }; if($v.Count){ Start-Sleep -Seconds 2 }; "
+              "foreach($a in $v){ $a.rx2=Rx $a.idx } }; "
+              "ConvertTo-Json -Compress -InputObject $r")
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                             capture_output=True, text=True, timeout=15,
+                             capture_output=True, text=True, timeout=25,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
         data = json.loads(out) if out else []
     except (OSError, subprocess.SubprocessError, ValueError):
         return []
     if isinstance(data, dict):
         data = [data]
-    return [{"name": str(d.get("name", "")), "ip": str(d.get("ip", ""))} for d in data if isinstance(d, dict)]
+    found = []
+    for d in data:
+        if not isinstance(d, dict):
+            continue
+        a = {"name": str(d.get("name", "")), "ip": str(d.get("ip", ""))}
+        kind = vpn_kind(a["name"], a["ip"])
+        if kind in VPN_ONLINE_KINDS and os.environ.get("BB_PARTY_VPN_PROBE", "1") != "0":
+            a["vendor"] = vpn_vendor_state(kind)
+            for key in ("rx1", "rx2"):
+                v = d.get(key)
+                if isinstance(v, list) and len(v) == 3 and all(isinstance(x, int) for x in v):
+                    a[key] = v
+        found.append(a)
+    return found
 
 
 def party_code_problem(code: str) -> str:
@@ -3971,8 +4085,13 @@ class BloodborneLauncher(tk.Tk):
             self.party_vpn_info_var.set(f"{verb} {vpn_adapter_label(adapter)}: {adapter['ip']}")
         else:
             self.party_vpn_addr_var.set("")
+            offline = [vpn_adapter_label(a) for a in self.vpn_adapters
+                       if vpn_usable_ip(a.get("ip", "")) and vpn_adapter_offline(a, pref)
+                       and (pref == "auto" or pref.lower() in a.get("name", "").lower())]
             self.party_vpn_info_var.set(
                 "Not hosting over a VPN (off)." if pref == "off" else
+                f"{', '.join(offline)} installed but offline (connect it in its app): the usual address is used."
+                if offline else
                 "No VPN adapter is up (Radmin VPN, Hamachi, ZeroTier, Tailscale): the usual address is used."
                 if pref == "auto" else f"No adapter named '{pref}' is up: the usual address is used.")
 
