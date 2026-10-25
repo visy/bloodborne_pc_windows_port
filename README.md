@@ -302,7 +302,9 @@ before anyone is in the game):
   travel", on by default).
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
-  itself after 30 s. A guest's own save keeps its own spot for solo play later.
+  itself after 30 s. A guest's own save keeps its own spot for solo play later. A guest who travels
+  alone into a map the host is not in has that map's enemies awake: the guest's own game runs them
+  (they used to stand still until the host came).
 - **Vote on travel** (host's switch, off by default: *Party votes on travel* on *System → Party rules:
   World*, or the launcher). The party then travels only when everyone agrees: after *Yes* to
   "Travel with the party?" every other player gets the game's *Yes* / *No* question with who wants

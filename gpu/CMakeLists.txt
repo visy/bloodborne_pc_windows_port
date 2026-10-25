@@ -648,6 +648,11 @@ add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-death-rules-test PRIVATE shim)
 set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Who runs an enemy's AI on a guest's game, the limbo boss target (party_enemyai_rules.h). ninja -C out/gpu party-enemyai-rules-test
+add_executable(party-enemyai-rules-test EXCLUDE_FROM_ALL ../tests/test_party_enemyai_rules.cpp)
+target_compile_options(party-enemyai-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-enemyai-rules-test PRIVATE shim)
+set_target_properties(party-enemyai-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Chalice Dungeon progress brought home (party_chalice_merge.h). ninja -C out/gpu party-chalice-merge-test
 add_executable(party-chalice-merge-test EXCLUDE_FROM_ALL ../tests/test_party_chalice_merge.cpp)
 target_compile_options(party-chalice-merge-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
