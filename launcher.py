@@ -425,7 +425,8 @@ MY_PARTY_TAB = [
          "A notice on the screen, with the fix, when the Windows Firewall, the router or a wrong address "
          "keeps the party from working: nobody reaches your party after a few minutes, a guest's game is "
          "not heard, or you cannot reach the host. Each at most once per session; the log has the same "
-         "line. Your own setting, not a host rule. Also in the game: System > Party members. "
+         "line. Your own setting, not a host rule. In the game: System > Party members (the other notices are on "
+         "System > My party: Look & notices). "
          "Default: on (bbport.ini party_conn_warnings)."),
         ("check", "party_npc_talk", "Share NPC dialogue",
          "When a companion near you talks to an NPC you get the conversation too: "
