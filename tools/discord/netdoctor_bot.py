@@ -214,10 +214,18 @@ def main():
 
     @client.event
     async def on_ready():
-        if guild:
-            await tree.sync(guild=guild)
-        else:
-            await tree.sync()
+        print("in servers: " + (", ".join(f"{g.name} ({g.id})" for g in client.guilds) or "none - invite the "
+              "bot with the OAuth2 URL (scopes bot + applications.commands)"), flush=True)
+        try:
+            if guild:
+                await tree.sync(guild=guild)
+            else:
+                await tree.sync()
+        except discord.Forbidden:
+            print(f"cannot register commands in server {guild.id if guild else '(global)'}: the bot is not in it "
+                  f"or was invited without the applications.commands scope; check NETDOCTOR_GUILD and re-invite",
+                  flush=True)
+            return
         print(f"netdoctor bot ready as {client.user} (script {SCRIPT})", flush=True)
 
     client.run(token)
