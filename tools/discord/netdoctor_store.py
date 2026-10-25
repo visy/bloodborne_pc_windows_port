@@ -81,15 +81,14 @@ class Store:
                          json.dumps(sorted(f"{m}:{i}" for m, i in members))))
         self.db.commit()
 
-    def put_logdata(self, data, filename):
-        """Store one log file compressed; returns its content hash (the key)."""
-        import lzma
-        sha = hashlib.sha1(data).hexdigest()
+    def put_logdata(self, data, filename, packed=None):
+        """Store one log file compressed; returns its content hash (the key). `packed` = pack(data) made
+        elsewhere (e.g. in a worker thread: this connection must only be used from its own thread)."""
+        sha, blob = packed or pack(data)
         if self.db.execute("SELECT 1 FROM logdata WHERE sha1=?", (sha,)).fetchone():
             self.db.execute("UPDATE logdata SET created=? WHERE sha1=?", (time.time(), sha))
         else:
-            self.db.execute("INSERT INTO logdata VALUES (?,?,?,?,?)",
-                            (sha, filename, len(data), lzma.compress(data, preset=6), time.time()))
+            self.db.execute("INSERT INTO logdata VALUES (?,?,?,?,?)", (sha, filename, len(data), blob, time.time()))
         self.db.commit()
         return sha
 
@@ -157,6 +156,12 @@ class Store:
             self.db.commit()
             self.db.execute("VACUUM")
         return self.size_bytes()
+
+
+def pack(data):
+    """(content hash, LZMA-compressed bytes) of a log file. Pure: safe in any thread."""
+    import lzma
+    return hashlib.sha1(data).hexdigest(), lzma.compress(data, preset=6)
 
 
 def new_ref():

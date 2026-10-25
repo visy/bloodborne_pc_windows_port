@@ -170,7 +170,8 @@ def main():
     async def keep(path, filename):
         """Store the log compressed (off the event loop: LZMA takes a moment on big logs)."""
         data = path.read_bytes()
-        return await asyncio.get_running_loop().run_in_executor(None, store.put_logdata, data, filename)
+        packed = await asyncio.get_running_loop().run_in_executor(None, ns.pack, data)
+        return store.put_logdata(data, filename, packed)  # the database only from this thread
 
     last_hashes = {}
 
@@ -293,12 +294,14 @@ def main():
             await send_text(lambda *a, ephemeral=False, **k: channel.send(*a, **k), text, False,
                             remember(channel, file_recs(found, last_hashes.pop(id(atts), ())), text))
 
-    async def record_logs(message):
-        """Remember who/when of every party log file in a message (downloaded once, then deleted)."""
+    async def record_logs(message, channel_id=None):
+        """Remember who/when of every party log file in a message (downloaded once, then deleted).
+        channel_id: file it under this channel (a thread's starter post lives in the parent channel)."""
+        channel_id = channel_id or message.channel.id
         new = 0
         for idx, a in enumerate(message.attachments):
             if not is_log_name(a.filename) or a.size > MAX_BYTES or \
-                    store.has_log(message.channel.id, message.id, idx):
+                    store.has_log(channel_id, message.id, idx):
                 continue
             with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
                 p = Path(tmp) / (Path(a.filename).name or "log.log")
@@ -312,7 +315,7 @@ def main():
             if info["role"] is None:
                 continue  # not a party log
             info["sha1"] = sha
-            store.add_log(message.channel.id, message.id, idx, a.filename, info)
+            store.add_log(channel_id, message.id, idx, a.filename, info)
             new += 1
         return new
 
@@ -320,6 +323,15 @@ def main():
         """(Re)analyse every party log posted in this channel / thread: one post per session; a session
         that already has a post gets it edited, a new session gets a new post."""
         channel = trigger.channel
+        if isinstance(channel, discord.Thread) and channel.parent is not None:
+            # a thread started from a post: the post (and its logs) lives in the parent channel and has
+            # the thread's id; forum posts are inside the thread already (the fetch then just fails)
+            try:
+                starter = await channel.parent.fetch_message(channel.id)
+                if starter.attachments and not starter.author.bot:
+                    await record_logs(starter, channel.id)
+            except (discord.HTTPException, AttributeError):
+                pass
         async for msg in channel.history(limit=1000, oldest_first=True):
             if msg.attachments and not msg.author.bot:
                 await record_logs(msg)
@@ -347,9 +359,16 @@ def main():
                         p.write_bytes(kept[1])
                         paths.append(p)
                         continue
-                    try:
-                        att = (await channel.fetch_message(mid)).attachments[idx]
-                    except (discord.HTTPException, IndexError):
+                    att = None
+                    for where in (channel, getattr(channel, "parent", None)):  # starter post: in the parent
+                        if where is None:
+                            continue
+                        try:
+                            att = (await where.fetch_message(mid)).attachments[idx]
+                            break
+                        except (discord.HTTPException, IndexError, AttributeError):
+                            pass
+                    if att is None:
                         continue  # deleted meanwhile and never stored
                     p = d / (Path(att.filename).name or "log.log")
                     await att.save(p)
@@ -388,6 +407,12 @@ def main():
         except discord.HTTPException:
             pass
 
+    def mentioned(message):
+        """The bot itself, or its own managed role (Discord offers both when you type @Net Doctor...)."""
+        if client.user in message.mentions:
+            return True
+        return any(getattr(r.tags, "bot_id", None) == client.user.id for r in message.role_mentions if r.tags)
+
     def small_place(channel):
         """Threads, DMs and channels listed in NETDOCTOR_CHANNELS: the bot answers mentions and reacts there.
         Big ordinary channels are left alone (slash commands still work everywhere)."""
@@ -402,9 +427,20 @@ def main():
         ours = message.guild is None or not guild or message.guild.id == guild.id
         if not ours or not small_place(message.channel):
             return
-        if client.user in message.mentions and wants_analysis(message.content, client.user.id):
-            async with message.channel.typing():
-                await analyse_channel(message)
+        if mentioned(message) and wants_analysis(message.content, client.user.id):
+            print(f"mention in {type(message.channel).__name__} {message.channel.id}", flush=True)
+            try:
+                async with message.channel.typing():
+                    await analyse_channel(message)
+            except discord.Forbidden as e:
+                print(f"no access in {message.channel.id}: {e}", flush=True)
+                try:
+                    await message.reply("I can't read this place's history or post here. A server admin needs "
+                                        "to give me View Channel, Read Message History, Send Messages and Send "
+                                        "Messages in Threads here (channel/forum permissions).",
+                                        mention_author=False)
+                except discord.HTTPException:
+                    pass
             return
         if not any(is_log_name(a.filename) for a in message.attachments):
             return

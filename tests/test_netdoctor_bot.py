@@ -116,3 +116,25 @@ def test_logdata_compressed(tmp_path):
     name, back = st.get_logdata(sha)
     assert back == data and name == "nightwatch-20261025_120000.log"
     assert st.size_bytes() < len(data) // 10                       # stored compressed
+
+
+def test_event_handlers_are_coroutines():
+    import ast
+    tree = ast.parse((ROOT / "tools" / "discord" / "netdoctor_bot.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for d in node.decorator_list:
+                if ast.unparse(d) == "client.event":
+                    assert isinstance(node, ast.AsyncFunctionDef), node.name
+
+
+def test_pack_in_thread_store_in_owner(tmp_path):
+    import threading
+    ns = _store_mod()
+    st = ns.Store(tmp_path / "db.sqlite")
+    data = b"[coop] Party: x\n" * 1000
+    box = {}
+    t = threading.Thread(target=lambda: box.setdefault("p", ns.pack(data)))
+    t.start(); t.join()
+    sha = st.put_logdata(data, "a.log", box["p"])
+    assert st.get_logdata(sha)[1] == data

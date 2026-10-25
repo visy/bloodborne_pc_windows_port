@@ -48,7 +48,9 @@ The file holds player names and logs: it is readable only by the bot's user (060
 3. Bot -> Privileged Gateway Intents: turn on **Message Content Intent** (needed to read log files
    posted in ordinary messages). The other two privileged intents stay off.
 4. OAuth2 -> URL Generator: scopes `bot` and `applications.commands`; bot permissions `View Channels`,
-   `Read Message History`, `Send Messages`, `Attach Files`, `Add Reactions`, `Use Slash Commands`. Open the generated URL and add the bot to the server (a server
+   `Read Message History`, `Send Messages`, `Send Messages in Threads`, `Attach Files`, `Add Reactions`,
+   `Use Slash Commands`. Forum / bug channels with their own permission overrides must allow the bot's
+   role there too. Open the generated URL and add the bot to the server (a server
    admin has to do this).
 5. Optional: Discord settings -> Advanced -> Developer Mode, right-click the server -> Copy Server ID
    (makes the command appear at once instead of after up to an hour).
