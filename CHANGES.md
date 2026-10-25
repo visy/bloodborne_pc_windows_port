@@ -4,6 +4,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.6 (unreleased)
 
+- **Fixed: the LAN code and the LAN discovery now carry the address the game really uses** (a host on a phone tether with Hamachi or Radmin got a LAN code with the tether address, so guests only got in through a fallback search): the code, the discovery reply and the UPnP request follow `BB_PARTY_LOCAL_IP`, then the VPN adapter the launcher shows, then the best adapter.
+- **Fixed: a guest and a host on a VPN (Radmin, Hamachi) keep talking over the VPN address** (a guest's home address could be picked as the "local" path over the VPN one, so the host's replies left by the normal internet route and the host reported that it heard nothing on the party port). A peer that already answers on an address inside one of our own networks keeps that path; a peer that reports our own VPN address as its local one is ignored.
+- **Changed: clearer network messages**: a symmetric NAT result now says "strict NAT (a strict router or your ISP's carrier NAT)" with what to try (UPnP, forwarding UDP+TCP 9307, compare the router's WAN IP with the public IP). A guest joining a host without a password by plain address is told to use the host's party code (or to ask for a password).
 - **Fixed: shop items unlocked by beating a Chalice Dungeon boss now unlock for every party member** (player report: after the host beat the Keeper of the Old Lords only the host's Insight shop (Bath Messenger) offered the Bone Ash set; the guest never got it). The unlock flags of the Bone Ash set and the Madman set were filed with the item pickups, which only reach a guest together with an item, and no item carries them. They are now shared progress like the other shop unlocks (Gascoigne's, Henryk's, the blood stones): they come to guests when the host sets them, in the guest's own save too.
 
 ## 0.7.5
