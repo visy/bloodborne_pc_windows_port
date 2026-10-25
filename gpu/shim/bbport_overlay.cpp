@@ -1833,6 +1833,14 @@ void PartyTab() {
              "Короткое уведомление в верхнем углу, когда охотник входит или выходит или группа "
              "перемещается. Не перехватывает ввод."),
            on);
+    Toggle("party_conn_warnings", T("Connection warnings", "Предупреждения о связи"), s.party_conn_warnings,
+           T("A notice with the fix when the Windows Firewall, the router or a wrong address keeps the party "
+             "from working (nobody reaches your party, a guest's game is not heard, the host cannot be "
+             "reached). Each at most once per session. Your own setting, not a host rule.",
+             "Уведомление с решением, когда брандмауэр Windows, роутер или неверный адрес мешают группе "
+             "(никто не доходит до вашей группы, игра гостя не слышна, хост недоступен). Каждое не чаще "
+             "раза за сессию. Ваша настройка, не правило хоста."),
+           on);
     Toggle("party_hud", T("Party HUD", "Панель группы"), s.party_hud,
            T("Your companions' names and health in the bottom left corner, greyed while they are not "
              "in your world; on the same map the distance, a direction arrow and a name tag above them.",
