@@ -52,6 +52,9 @@ loginctl enable-linger "$USER"      # keep it running when you are logged out
 journalctl --user -u netdoctor -f   # log
 ```
 
+No systemd lingering (e.g. no polkit, `loginctl enable-linger` fails)? Use cron instead of the
+service: `crontab -e` and add the two lines from the top of `tools/discord/keepalive.sh`.
+
 Update the doctor's rules: `git -C ~/bbport pull` (the bot loads `net_doctor.py` fresh on every
 command, no restart needed; restart after a change to the bot itself:
 `systemctl --user restart netdoctor`).
