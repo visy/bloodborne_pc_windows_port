@@ -339,7 +339,7 @@ before anyone is in the game):
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared
   between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's
-  lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A guest who dies
+  lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest who dies
   in the dungeon gets up beside the party; a guest pulled out by a death or a forced trip is summoned
   back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party rules: Travel).
 
