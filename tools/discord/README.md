@@ -8,6 +8,8 @@ replies with a plain-words diagnosis:
   60), by anyone - players post their halves of a session in separate messages.
 - Right-click a message -> Apps -> **Diagnose logs**: that message's logs plus the logs posted 30
   minutes around it (the reply is private).
+- DM: send log files to the bot in a direct message; it answers privately, with names and
+  addresses (the commands work in DMs too).
 - Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
   default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 
