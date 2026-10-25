@@ -10,6 +10,8 @@ replies with a plain-words diagnosis:
   minutes around it (the reply is private).
 - DM: send log files to the bot in a direct message; it answers privately, with names and
   addresses (the commands work in DMs too).
+- Mentions and the automatic reaction work only in **threads and DMs** (big channels are left alone;
+  `NETDOCTOR_CHANNELS=<id,id>` in the env file adds ordinary channels). Slash commands work everywhere.
 - In a bug thread: mention the bot, e.g. `@Net Doctor Iosefka analyse` (any message mentioning her
   counts, except a plain thanks/hello). It reads every log posted in the thread/channel,
   groups them into sessions (same host, overlapping times) and posts one analysis per session. Mention

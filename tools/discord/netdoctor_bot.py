@@ -20,6 +20,8 @@ Environment:
                        appear)
   NETDOCTOR_MAX_MB     largest attachment accepted, MiB (default 40)
   NETDOCTOR_AUTO       off | react | reply (default react)
+  NETDOCTOR_CHANNELS   ids of ordinary channels where mentions/reactions work too (default: none - only
+                       threads and DMs; slash commands work everywhere)
   NETDOCTOR_DB         memory file (default ~/.config/netdoctor/netdoctor.db; rows older than 30 days
                        are dropped hourly)
   NETDOCTOR_DB_MAX_MB  size cap of that file, MiB (default 256, never above 1024): oldest rows go first
@@ -161,6 +163,8 @@ def main():
     tree = app_commands.CommandTree(client)
     guild = discord.Object(id=int(os.environ["NETDOCTOR_GUILD"])) if os.environ.get("NETDOCTOR_GUILD") else None
     auto = os.environ.get("NETDOCTOR_AUTO", "react").lower()  # off | react | reply
+    allowed_channels = {int(x) for x in os.environ.get("NETDOCTOR_CHANNELS", "").replace(",", " ").split()
+                        if x.isdigit()}
     pending = {}  # channel id -> asyncio task (reply mode debounce)
 
     async def keep(path, filename):
@@ -385,29 +389,37 @@ def main():
             pass
 
     @client.event
+    def small_place(channel):
+        """Threads, DMs and channels listed in NETDOCTOR_CHANNELS: the bot answers mentions and reacts there.
+        Big ordinary channels are left alone (slash commands still work everywhere)."""
+        if isinstance(channel, (discord.Thread, discord.DMChannel, discord.GroupChannel)):
+            return True
+        return channel.id in allowed_channels
+
+    @client.event
     async def on_message(message):
         if message.author.bot:
             return
-        if client.user in message.mentions and message.guild is not None and \
-                wants_analysis(message.content, client.user.id):
-            if not guild or message.guild.id == guild.id:
-                async with message.channel.typing():
-                    await analyse_channel(message)
+        ours = message.guild is None or not guild or message.guild.id == guild.id
+        if not ours or not small_place(message.channel):
+            return
+        if client.user in message.mentions and wants_analysis(message.content, client.user.id):
+            async with message.channel.typing():
+                await analyse_channel(message)
             return
         if not any(is_log_name(a.filename) for a in message.attachments):
             return
-        if message.guild is not None and (not guild or message.guild.id == guild.id):
-            asyncio.create_task(record_logs(message))  # remembered for a later "@bot update"
-        if message.guild is None:  # a DM with the bot
+        asyncio.create_task(record_logs(message))  # remembered for a later "@bot update"
+        if message.guild is None:  # a DM with the bot: answer on its own
             old = pending.get(message.channel.id)
             if old:
                 old.cancel()
             pending[message.channel.id] = asyncio.create_task(auto_reply(message.channel, dm=True))
             return
-        if auto == "off" or (guild and message.guild.id != guild.id):
+        if auto == "off":
             return
         try:
-            await message.add_reaction("\N{STETHOSCOPE}")
+            await message.add_reaction("🩺")
         except discord.HTTPException:
             pass
         if auto == "reply":
