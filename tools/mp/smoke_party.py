@@ -2834,7 +2834,7 @@ MESH_CUT_AFTER_S, MESH_CUT_S, MESH_AFTER_S = 25, 40, 45
 class BlockDriver:
     """Writes the block file (1 = the guest pair is cut, 0 = open) once guest 2 is in the party."""
 
-    def __init__(self, root, harness_log, join_rx=r"cooperators 1 -> 2", log_inst=0, after_s=MESH_CUT_AFTER_S, cut_s=MESH_CUT_S):
+    def __init__(self, root, harness_log, join_rx=r"cooperators \d -> 2", log_inst=0, after_s=MESH_CUT_AFTER_S, cut_s=MESH_CUT_S):
         import threading
         self.stop = False
         self.root, self.harness_log = Path(root), Path(harness_log)
@@ -2891,7 +2891,7 @@ def _last_chrs(L, i, before):
 
 
 def check_mesh(v, L):
-    j = need(v, L, "mesh join: 3 players", 0, r"cooperators 1 -> 2")
+    j = need(v, L, "mesh join: 3 players", 0, r"cooperators \d -> 2")
     if j is None:
         check_common(v, L, "mesh")
         return
