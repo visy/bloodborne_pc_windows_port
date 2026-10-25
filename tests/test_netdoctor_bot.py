@@ -116,3 +116,13 @@ def test_logdata_compressed(tmp_path):
     name, back = st.get_logdata(sha)
     assert back == data and name == "nightwatch-20261025_120000.log"
     assert st.size_bytes() < len(data) // 10                       # stored compressed
+
+
+def test_event_handlers_are_coroutines():
+    import ast
+    tree = ast.parse((ROOT / "tools" / "discord" / "netdoctor_bot.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for d in node.decorator_list:
+                if ast.unparse(d) == "client.event":
+                    assert isinstance(node, ast.AsyncFunctionDef), node.name
