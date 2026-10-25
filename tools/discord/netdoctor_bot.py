@@ -20,6 +20,9 @@ Environment:
                        appear)
   NETDOCTOR_MAX_MB     largest attachment accepted, MiB (default 40)
   NETDOCTOR_AUTO       off | react | reply (default react)
+  NETDOCTOR_DB         memory file (default ~/.config/netdoctor/netdoctor.db; rows older than 30 days
+                       are dropped hourly)
+  NETDOCTOR_DB_MAX_MB  size cap of that file, MiB (default 256, never above 1024): oldest rows go first
 Needs the privileged Message Content intent (Developer Portal -> Bot) to read ordinary messages.
 """
 import asyncio
@@ -134,7 +137,13 @@ def main():
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     store = ns.Store(DB_PATH)
-    store.prune()
+    try:
+        os.chmod(DB_PATH, 0o600)  # player names inside
+    except OSError:
+        pass
+    db_max = int(float(os.environ.get("NETDOCTOR_DB_MAX_MB", "256")) * 1024 * 1024)
+    store.prune(max_bytes=db_max)
+    pruner = []
 
     token = os.environ.get("NETDOCTOR_TOKEN")
     if not token:
@@ -354,8 +363,16 @@ def main():
                 old.cancel()
             pending[message.channel.id] = asyncio.create_task(auto_reply(message.channel))
 
+    async def prune_hourly():
+        while True:
+            await asyncio.sleep(3600)
+            size = store.prune(max_bytes=db_max)
+            print(f"db pruned: {size // 1024} KiB", flush=True)
+
     @client.event
     async def on_ready():
+        if not pruner:
+            pruner.append(asyncio.create_task(prune_hourly()))
         print("in servers: " + (", ".join(f"{g.name} ({g.id})" for g in client.guilds) or "none - invite the "
               "bot with the OAuth2 URL (scopes bot + applications.commands)"), flush=True)
         try:

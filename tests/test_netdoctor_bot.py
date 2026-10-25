@@ -79,3 +79,14 @@ def test_wants_analysis():
     assert bot.wants_analysis("<@42>", 42)
     assert bot.wants_analysis("hey <@!42> can you check these logs?", 42)
     assert not bot.wants_analysis("<@42> thanks!", 42)
+
+
+def test_store_size_cap(tmp_path):
+    ns = _store_mod()
+    st = ns.Store(tmp_path / "db.sqlite")
+    for i in range(3000):
+        st.add_log(1, i, 0, "x" * 200 + ".log", _info("G%d" % i, "guest", "H", 600, peers=("P" * 100,)))
+    before = st.size_bytes()
+    after = st.prune(days=30, max_bytes=before // 2)
+    assert after <= before // 2 * 0.8 + 65536
+    assert 0 < len(st.logs(1)) < 3000          # oldest dropped, newest kept

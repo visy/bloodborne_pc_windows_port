@@ -69,11 +69,31 @@ class Store:
                          json.dumps(sorted(f"{m}:{i}" for m, i in members))))
         self.db.commit()
 
-    def prune(self, days=30):
+    def size_bytes(self):
+        pages = self.db.execute("PRAGMA page_count").fetchone()[0]
+        return pages * self.db.execute("PRAGMA page_size").fetchone()[0]
+
+    def prune(self, days=30, max_bytes=256 * 1024 * 1024):
+        """Drop rows older than `days`; if the file is still over `max_bytes` (hard ceiling 1 GiB), drop
+        the oldest rows until it is under 80% of it, then compact the file. A row is ~200 bytes, so the
+        size cap is a safety net, not the normal path."""
+        max_bytes = min(max_bytes, 1024 * 1024 * 1024)
         cut = time.time() - days * 86400
         self.db.execute("DELETE FROM logs WHERE posted < ?", (cut,))
         self.db.execute("DELETE FROM sessions WHERE updated < ?", (cut,))
         self.db.commit()
+        while self.size_bytes() > max_bytes * 0.8:
+            n = self.db.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+            m = self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+            if n == 0 and m == 0:
+                break
+            self.db.execute("DELETE FROM logs WHERE rowid IN (SELECT rowid FROM logs ORDER BY posted LIMIT ?)",
+                            (max(1, n // 4),))
+            self.db.execute("DELETE FROM sessions WHERE rowid IN "
+                            "(SELECT rowid FROM sessions ORDER BY updated LIMIT ?)", (max(1, m // 4),))
+            self.db.commit()
+            self.db.execute("VACUUM")
+        return self.size_bytes()
 
 
 def same_session(a, b):
