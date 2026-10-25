@@ -648,6 +648,11 @@ add_executable(party-death-rules-test EXCLUDE_FROM_ALL ../tests/test_party_death
 target_compile_options(party-death-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-death-rules-test PRIVATE shim)
 set_target_properties(party-death-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Chalice Dungeon progress brought home (party_chalice_merge.h). ninja -C out/gpu party-chalice-merge-test
+add_executable(party-chalice-merge-test EXCLUDE_FROM_ALL ../tests/test_party_chalice_merge.cpp)
+target_compile_options(party-chalice-merge-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-chalice-merge-test PRIVATE shim)
+set_target_properties(party-chalice-merge-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Split travel notice text + rate limit (party_split_notice.h). ninja -C out/gpu party-split-notice-test
 add_executable(party-split-notice-test EXCLUDE_FROM_ALL ../tests/test_party_split_notice.cpp)
 target_compile_options(party-split-notice-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -750,6 +755,12 @@ set_target_properties(party-host-harness PROPERTIES INTERPROCEDURAL_OPTIMIZATION
 if (WIN32)
     target_link_libraries(party-host-harness PRIVATE ws2_32 iphlpapi synchronization ole32 oleaut32)
 endif()
+# Connection warnings (shim/party/party_connwarn.cpp): firewall rule classification, thresholds, seam.
+add_executable(party-connwarn-test EXCLUDE_FROM_ALL ../tests/test_party_connwarn.cpp shim/party/party_connwarn.cpp
+    shim/party/party_status.cpp)
+target_compile_options(party-connwarn-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-connwarn-test PRIVATE shim)
+set_target_properties(party-connwarn-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Party status board (shim/party/party_status.cpp; in bbgpu through SHIM_SOURCES): the overlay's
 # Party tab <-> director snapshot and command queue. ninja -C out/gpu party-status-test
 add_executable(party-status-test EXCLUDE_FROM_ALL ../tests/test_party_status.cpp shim/party/party_status.cpp)
