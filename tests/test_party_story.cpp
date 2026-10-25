@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -729,6 +730,37 @@ static void test_persistence() {
     CHECK(h.QueueSize() == 2); // untouched on error
 }
 
+// 0.7.6: the castle display event's wait is forced from the condition list (party_story.h StoryWaitForce).
+static void test_wait_force() {
+    CHECK(StoryWaitForce(true, 12500810, true, true, false));
+    CHECK(!StoryWaitForce(false, 12500810, true, true, false));  // switch off
+    CHECK(!StoryWaitForce(true, 12500810, false, true, false));  // host
+    CHECK(!StoryWaitForce(true, 12500810, true, false, false));  // the scene was not mirrored
+    CHECK(!StoryWaitForce(true, 12500810, true, true, true));    // the scene still plays
+    CHECK(!StoryWaitForce(true, 12601802, true, true, false));   // another event
+    // A fake event: manager groups 0x1000 (id 2, one node) -> 0x2000 (id 1, nodes 0x3000, 0x3100, 0x3200) -> 0x4000
+    // (id 15, one node). Only group 1's nodes get the override bits.
+    std::map<std::uint64_t, std::uint64_t> q;
+    std::map<std::uint64_t, std::uint8_t> b;
+    const std::uint64_t ev = 0x100;
+    q[ev + 0x38] = 0x1000;
+    q[0x1000 + 0x10] = 0x5000; q[0x1000 + 0x20] = 0x2000; b[0x1000 + 8] = 2;
+    q[0x2000 + 0x10] = 0x3000; q[0x2000 + 0x20] = 0x4000; b[0x2000 + 8] = 1;
+    q[0x3000 + 8] = 0x3100; q[0x3100 + 8] = 0x3200; q[0x3200 + 8] = 0;
+    for (std::uint64_t n : {0x3000ull, 0x3100ull, 0x3200ull}) b[n + 0x18] = 0;
+    b[0x3100 + 0x18] = 1;  // already "forced" bit set without the value
+    q[0x4000 + 0x10] = 0x6000; q[0x4000 + 0x20] = 0; b[0x4000 + 8] = 15;
+    q[0x5000 + 8] = 0; b[0x5000 + 0x18] = 0; q[0x6000 + 8] = 0; b[0x6000 + 0x18] = 0;
+    auto r64 = [&](std::uint64_t a, std::uint64_t* v) { auto it = q.find(a); if (it == q.end()) return false; *v = it->second; return true; };
+    auto r8 = [&](std::uint64_t a, std::uint8_t* v) { auto it = b.find(a); if (it == b.end()) return false; *v = it->second; return true; };
+    auto w8 = [&](std::uint64_t a, std::uint8_t v) { b[a] = v; return true; };
+    CHECK(StoryForceWaitGroup(ev, kEmevdGroupOfWait, r64, r8, w8) == 3);
+    CHECK(b[0x3000 + 0x18] == 3 && b[0x3100 + 0x18] == 3 && b[0x3200 + 0x18] == 3);
+    CHECK(b[0x5000 + 0x18] == 0 && b[0x6000 + 0x18] == 0);  // the other groups stay
+    CHECK(StoryForceWaitGroup(ev, kEmevdGroupOfWait, r64, r8, w8) == 0);  // nothing left to force
+    CHECK(StoryForceWaitGroup(0x9999, kEmevdGroupOfWait, r64, r8, w8) == 0);  // an unreadable event
+}
+
 static void test_dedupe_skip() {
     // On by default; only "0" turns it off.
     CHECK(StoryDedupeEnabled(nullptr));
@@ -1224,6 +1256,7 @@ int main() {
     test_endings();
     test_persistence();
     test_dedupe_skip();
+    test_wait_force();
     test_own_world_scene_not_replayed();
     test_host_story_up_guard();
     test_guest_intro_once_on_host();

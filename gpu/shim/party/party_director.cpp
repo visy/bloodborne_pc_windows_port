@@ -261,6 +261,9 @@ struct Test {
     // the peers rebuild this chr from its new record (the mirror's path). Distinct-looking players
     // for the visual tests (all instances share one test save).
     std::uint32_t armor = 0;
+    // armor=SET:keep (0.7.6, Crown of Illusions on the roof): put on again in every later world (a map load)
+    std::uint32_t armor_keep = 0;
+    Clock::time_point armor_world{};
     // approach=X:Z:R[:BUTTON]: walk (pad file sticks, camera-relative, closed loop on the position)
     // until within R m of (X, Z), facing it; then BUTTON (cross / triangle / square / circle) once.
     bool approach = false, approach_done = false, ap_faced = false;
@@ -3297,6 +3300,10 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         Log("test: Blood Echoes -> %d %s", t.echoes, ok ? "written" : "NOT written (no player record)");
         t.echoes = -1;
     }
+    if (!t.armor && t.armor_keep && st.world_at != t.armor_world && Seconds(st.world_at, now) >= 3.0 && s.world_up &&
+        !s.loading) {
+        t.armor = t.armor_keep;  // a new world: the set goes on again
+    }
     if (t.armor && Seconds(st.world_at, now) >= 3.0 && s.world_up && !s.loading) {
         int ok = 0, all = 0;
         for (int k = 0; k < 4; ++k) {
@@ -3306,6 +3313,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             ok += EquipSlotItem(8 + k, kItemProtector, piece) ? 1 : 0;  // head .. legs (slots 8..11)
         }
         Log("test: armor set %u put on: %d of %d pieces", t.armor, ok, all);
+        t.armor_world = st.world_at;
         t.armor = 0;
         if (ok > 0) b2::NoteOwnAppearanceChanged();
     }
@@ -3974,6 +3982,7 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.echoes = std::atoi(item.c_str() + 7);
             } else if (item.rfind("armor=", 0) == 0) {
                 st.test.armor = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 6, nullptr, 10));
+                if (item.find(":keep") != std::string::npos) st.test.armor_keep = st.test.armor;
             } else if (item.rfind("bell_guest@", 0) == 0) {
                 st.test.bell = kGuestBell;
                 st.test.bell_area = std::atoi(item.c_str() + 11);
