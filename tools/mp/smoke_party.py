@@ -5481,7 +5481,7 @@ def check_gd(v, L, d: Path):
              r"lamp 2102\d+ \(guest\): held for the choice|lamp: request 2102950 sent", f or 0,
              what="the Dream flag was set but the lamp's warp never ran (0.7.5 guest Dream report)")
     need(v, L, "gd the guest's own copy of the lamp's event was used up by the host's trip (the repro's start)", 1,
-         r"lamp 2102\d+ \(guest\): not this player's use", j or 0)
+         r"lamp 2102\d+ \(guest\): not this player's use|Lamp warp: event 7200's state from another player not applied", j or 0)
     need(v, L, "gd the guest arrives in the Dream", 1, r"Lamp travel: arrived: lamp 2102950", w or 0)
     none_of(v, L, "gd no stuck warp", r"no load within 60 s", insts=(1,))
     check_common(v, L, "gd")
