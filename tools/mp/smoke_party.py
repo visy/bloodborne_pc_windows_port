@@ -1622,6 +1622,62 @@ def phase_cl(only):
     )
 
 
+# Phase cpr (chalprog, ~3 min, 2 players, group `chalice_progress`; 0.7.6): a guest with no dungeon of its
+# own plays the host's Pthumeru dungeon (fixture chalice_pthumeru_inside; the host lights the boss room's
+# lamp 2901952), then leaves the party: back in its own world the dungeon is at its altar (a free slot)
+# with the lamp lit. The guest's save is kept in <agent>/smoke/cpr_guest_save for the decode check
+# and for the altar screenshots (docs/party/test_saves.md chalice_guest_brought).
+CPR_KEEP = AGENT_ROOT / "smoke" / "cpr_guest_save"
+
+
+def prep_chalprog(root: Path):
+    if not CL_FIXTURE.is_dir():
+        sys.exit("chalprog: the fixture %s is missing (docs/party/test_saves.md)" % CL_FIXTURE)
+    _cl_saves(root, CL_FIXTURE)
+    _cl_saves(root, CL_DEFAULT, 1)
+
+
+def post_chalprog(root: Path):
+    src = root / "inst1" / "user" / "savedata_party"
+    if src.is_dir():
+        if CPR_KEEP.exists():
+            shutil.rmtree(CPR_KEEP)
+        shutil.copytree(src, CPR_KEEP)
+    post_chalamp(root)
+
+
+def phase_cpr(only):
+    host = ",".join(["log_pos", "host_obj=%s:1.2:0@12%%m29" % CL_LAMP_OBJ, "host_press=0x4000@2%m29!",
+                     "host_press=0@60%m29!"])
+    g1 = ",".join(["guest_leave@30%m29", "guest_press=0@25%m21&"])
+    return dict(
+        name="cpr", seconds=300, count=2, headless=0, prep=prep_chalprog, post=post_chalprog,
+        env=["BB_PARTY_TRAVEL_CHOICE=party"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        crash=[],
+        until=[r"1:travel step (\d+)/: "],
+    )
+
+
+# Phase cpa (chalaltar, 1 player, group `chalice_altar`): the fixture chalice_guest_brought (a guest
+# that played the host's dungeon, then left) walks to the First Ritual Altar in its own Dream and opens
+# its menu; the screenshots show what the altar offers (docs/party/chalice.md 9).
+CPA_FIXTURE = Path(r"E:/games/bbport/test_saves/chalice_guest_brought/savedata")
+
+
+def prep_chalaltar(root: Path):
+    _cl_saves(root, CPA_FIXTURE, 0)
+
+
+def phase_cpa(only):
+    host = ("log_pos,place=0x15000000:-15.5:-5.43:-16.9:0,approach=-17.0:-16.9:0.35,face=-18.27:-16.88,prompt=First Ritual Altar,"
+            "seq=cross/?cross@Use the Ritual Altar/wait/wait/wait/wait/wait/wait")
+    return dict(
+        name="cpa", seconds=130, count=1, headless=0, prep=prep_chalaltar, post=post_chalamp, pad=1,
+        env=[], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host], crash=[], until=[],
+    )
+
+
 # Phase lp (lamprule, ~3 min, 2 players, group `lamps`; user decision 2026-10-21: "host state saves
 # lamps, anybody can light them", Guests bring their lamps off by default). Fixture: the host's save
 # without Old Yharnam's lamp (2302950: the guest's has it) and both saves without Central Yharnam's
@@ -2605,12 +2661,12 @@ def check_sj(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "chalice_wipe": "clw", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm",
+          "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_altar": "cpa", "chalice_wipe": "clw", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
           "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
@@ -2620,7 +2676,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "gather": r"^ga ", "gather_ground": r"^gl ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iw ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_wipe": r"^clw ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iw ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_altar": r"^cpa ", "chalice_wipe": r"^clw ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
               "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
@@ -2676,6 +2732,7 @@ GROUP_UNTIL = {
     "chalamp": [CL_UNTIL, CL_UNTIL_G],
     "chalice_guest": [CLG_UNTIL, CLG_UNTIL_G],
     "chalice_wipe": [CLW_UNTIL],
+    "chalice_progress": [r"1:travel step (\d+)/: "],
     "fight_load": BF_UNTIL,
     "rot": [RT_UNTIL],
     "echo_hold": [EH_UNTIL],
@@ -4367,6 +4424,10 @@ def check_cl(v, L):
             if own:
                 need(v, L, "cl guest 1 in its own dungeon (m29)", 1, r"map .* -> m29_00", own)
                 need(v, L, "cl guest 1's +0xa88 its own dungeon again", 1, r"chalice: FrpgNetMan ChannelId %s " % CL_GUEST_CH, own)
+        # 0.7.6: the host's dungeon came home with it, into a free slot next to its own (slot 1), once
+        need(v, L, "cl guest 1 brought the host's dungeon home (slot 2, its own slot 1 kept)", 1,
+             r"progress home: dungeon 1110692594440089 added to the altar in slot 2", first)
+        none_of(v, L, "cl guest 1 never added a dungeon over its own", r"progress home: dungeon \d+ added to the altar in slot 1,", 0, 1e9, (1,))
     # A re-summon into the dungeon whose layer boss is dead never pays it again (cl6 / cl8: PREY
     # SLAUGHTERED, +1995 echoes and +1 Insight at every re-summon).
     none_of(v, L, "cl no second paid kill of 2900100 after a re-summon",
@@ -4375,6 +4436,35 @@ def check_cl(v, L):
     none_of(v, L, "cl no GPU device lost / guest fault",
             r"(?i)device lost|GPU fault|Guest fault|Dantelion2 Panic|exited with code [1-9]")
     check_common(v, L, "cl")
+
+
+def check_cpr(v, L):
+    join = need(v, L, "cpr join: guest 1 in the host's dungeon", 1, r"map .* -> m29_00")
+    need(v, L, "cpr host lit the boss room's lamp", 0, r"lamp spot: Chalice Dungeon lamp %s lit / used" % CL_LAMP)
+    left = need(v, L, "cpr guest 1 left the party", 1, r"guest_leave: Party > Leave pressed", join or 0)
+    need(v, L, "cpr the host's dungeon added to the guest's altar (slot 1, nothing else there)", 1,
+         r"progress home: dungeon 1110692594440089 added to the altar in slot 1, ([4-9]|\d\d+) of \d+", left or 0)
+    none_of(v, L, "cpr no second add of the dungeon", r"progress home: dungeon \d+ added to the altar in slot (?!1,)", 0, 1e9, (1,))
+    keep = CPR_KEEP / "1" / "CUSA00207" / "SPRJ0005" / "userdata0000"
+    if keep.is_file():
+        sys.path.insert(0, str(REPO / "tools" / "party"))
+        import save_decode as sd
+        s = sd.Save.read(keep)
+        def val(base, off, bits=32):
+            x = 0
+            for b in range(bits):
+                x = (x << 1) | (1 if s.flag(base + off + b) else 0)
+            return x
+        base = 94100000
+        ok = val(base, 32) == 0x458bd799 and val(base, 64) == 0x3f22b and (val(base, 96) >> 24) == 0x1d
+        v.step("cpr the guest's save: slot 1 holds the host's dungeon", ok,
+               "record %x %x %x" % (val(base, 32), val(base, 64), val(base, 96)))
+        lamp = [s.flag(i) for i in (14107840, 14107850, 14107851, 74100202)]
+        v.step("cpr the guest's save: the lit lamp 2902952's flags in slot 1", all(lamp), str(lamp))
+        v.step("cpr the guest's save: lamp 2902950 (not reached) stays unlit in slot 1", not s.flag(74100200), "")
+    else:
+        v.step("cpr the guest's save was kept", False, "missing %s" % keep)
+    check_common(v, L, "cpr")
 
 
 def check_clg(v, L):
@@ -5043,7 +5133,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -5073,7 +5163,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "ld", "cl", "clg", "clw", "el", "lt", "bf", "ch",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "ld", "cl", "clg", "clw", "cpr", "cpa", "el", "lt", "bf", "ch",
                                      "lp", "gd", "gh", "gm", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "eh", "bl", "sj")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
