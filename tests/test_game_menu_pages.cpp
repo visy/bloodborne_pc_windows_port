@@ -412,7 +412,7 @@ static void Party() {
     // Run-time texts are cut to their limits.
     ps::SetLastEvent(std::string(300, 'x'));
     Advance(300);
-    const P::Row& event = members.rows.back();
+    const P::Row& event = RowNamed(members, u"Last event");
     assert(std::u16string(P::Text(event.name, false)) == u"Last event");
     assert(Length(event.choices[0], false) == P::MaxValueLength);
     assert(std::u16string(P::Text(event.choices[0], false)).substr(P::MaxValueLength - 3) == u"...");
@@ -423,7 +423,7 @@ static void Party() {
     P::Load();
     visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    assert(visible == 2 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
+    assert(visible == 3 && std::u16string(P::Text(members.rows[0].name, false)) == u"No one yet");
 
     // A full party (host + three, A7): the four members and the last event.
     ps::SetMembers({{"Hunter0", true, true, -1, 0, "", true},
@@ -433,7 +433,7 @@ static void Party() {
     P::Load();
     std::vector<const P::Row*> full;
     for (const P::Row& row : members.rows) if (!row.visible || row.visible()) full.push_back(&row);
-    assert(full.size() == 5 && full.size() <= P::RowsPerPage);
+    assert(full.size() == 6 && full.size() <= P::RowsPerPage);
     assert(std::u16string(P::Text(full[3]->name, false)) == u"Hunter3");
     assert(std::u16string(P::Text(full[3]->choices[0], false)) == u"In world, 13 ms");
     assert(std::u16string(P::Text(full[2]->choices[0], false)) == u"In own world, 12 ms");
