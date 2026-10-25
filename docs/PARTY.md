@@ -1,20 +1,18 @@
 # Party co-op (playing together)
 
-> **Status: in development.** Party co-op is new. Its parts have been tested on one PC only:
-> unit tests, several copies of the game connecting to each other, and single-copy checks in
-> the game. It has **not been tested between two PCs** yet, a guest summoned into a host's world
-> by the party layer has not been seen end to end, and no playthrough together has been done.
-> Expect bugs; keep the save backups (below) and report problems with the logs.
+> **Status (0.7.6):** party co-op has been played for real: on one PC with several game copies, on
+> a LAN between two PCs, and over the Internet in two long sessions between homes, plus many
+> reports from players with 3 and 4 player parties and VPNs. Every report so far was fixed in the
+> next release. It is still young software: keep the save backups (below) and report problems
+> with the logs. What is still open is listed under [Known limitations](#known-limitations).
 
 Party co-op lets 2 to 4 players play the Bloodborne campaign together, from character creation
 to the ending. One player **hosts**: their game acts as the server, so there is no account, no
 PSN and no central server. The others **join** with a short **party code** the host sends them.
 
-Every player keeps their own character and save. Guests are summoned into the host's world as
-in the normal game's co-op, but the party layer removes most of co-op's limits: guests are
-summoned automatically, stay through boss kills and area changes, follow the host when the host
-travels, and the host's story progress, item rewards and cutscenes are carried over into each
-guest's own save.
+Every player keeps their own character and save. Guests are brought into the host's world
+automatically, stay through boss kills and area changes, travel with the host, and the party's
+story progress, key items, rewards and cutscenes are carried over into each player's own save.
 
 ## Contents
 
@@ -22,25 +20,28 @@ guest's own save.
 2. [Starting a party game in the game (no launcher)](#starting-a-party-game-in-the-game-no-launcher)
 3. [Hosting](#hosting)
 4. [Joining](#joining)
-5. [The party code](#the-party-code)
+5. [The party code and the password](#the-party-code-and-the-password)
 6. [Ports, UPnP, firewall, VPN](#ports-upnp-firewall-vpn)
 7. [What happens in the game](#what-happens-in-the-game)
-8. [What is shared, and what is not](#what-is-shared-and-what-is-not)
-9. [Settings (Party Rules and My Party tabs)](#settings-party-rules-and-my-party-tabs)
-10. [Saves and backups](#saves-and-backups)
-11. [Crashes and disconnects](#crashes-and-disconnects)
-12. [Four players](#four-players)
-13. [Troubleshooting](#troubleshooting)
-14. [Known limitations](#known-limitations)
+8. [Deaths, wipes and limbo](#deaths-wipes-and-limbo)
+9. [What is shared, and what is not](#what-is-shared-and-what-is-not)
+10. [After an ending: New Game+](#after-an-ending-new-game)
+11. [Settings (Party rules and My party)](#settings-party-rules-and-my-party)
+12. [Saves and backups](#saves-and-backups)
+13. [Crashes and disconnects](#crashes-and-disconnects)
+14. [Four players](#four-players)
+15. [Troubleshooting](#troubleshooting)
+16. [Known limitations](#known-limitations)
 
 ## What you need
 
 - Every player: this port, set up and working single-player, with the **1.09** game files.
+- The **same build** of the port (the newest release). An older build is refused with a message
+  that says so.
 - The **same gameplay patches and gameplay mods** on every PC. Graphics, FPS, resolution and
   other cosmetic patches and texture / sound mods do not matter; anything that changes gameplay
   must be the same, or joining is refused (the message says which patch or mod differs).
 - The **same Max players** setting on every PC (Party tab).
-- Ideally the same build of the port: an older build may use another party protocol version.
 - The Old Hunters DLC on all PCs or on none (the port turns it on automatically when the game
   files contain it, so this normally matches).
 
@@ -48,30 +49,30 @@ guest's own save.
 
 The launcher's Party tab is optional: a party game can be started, joined and continued from the
 game's own title screen. The title menu has a **Party** item right after *New Game* (the same page
-as *System → Party*). Rows are pressed with left/right; the ones that restart the game need a
+as *System > Party*). Rows are pressed with left/right; the ones that restart the game need a
 second press.
 
 **The first session (fresh characters for everyone):**
 
-- **Host**: *Party → New party game*. The game restarts by itself (a few seconds) into the party
+- **Host**: *Party > New party game*. The game restarts by itself (a few seconds) into the party
   game: the party saves (`user\savedata_party`), the online title, hosting. Choose **New Game** and
-  make your hunter. The party code is under *System → Party → Copy party code* (and in
+  make your hunter. The party code is under *System > Party > Copy party code* (and in
   `user\party_code.txt`); send it to your friends. It stays the same in later sessions and
-  launches until the host makes a new one (*System → Party mode → New party code*, or **New code** in
+  launches until the host makes a new one (*System > Party mode > New party code*, or **New code** in
   the launcher's Party tab while the game is closed); setting or removing a password also gives a
   new code once.
-- **Friends**: *Party → Host address* (type the host's party code, or `address:port`; **Ctrl+V**
-  pastes; Enter confirms), *Password* if the host set one (the host sets it on the same page before
-  *New party game*), then *Join party game*. The game restarts, joined to the host: choose
-  **New Game** and make your hunter. A plain `address:port` (instead of the code) works only when
-  the host uses a password.
-- Everyone plays the prologue on their own; once ready, the party gathers by itself (below).
+- **Friends**: *Party > Host address* (type the host's party code; **Ctrl+V** pastes; Enter
+  confirms), *Password* if the host set one (the host sets it on the same page before *New party
+  game*), then *Join party game*. The game restarts, joined to the host: choose **New Game** and
+  make your hunter.
+- Everyone plays the prologue on their own, then the party gathers by itself (below). If you are
+  short of time, the host can turn on *Skip the prologue* (below).
 
-**Later sessions:** host and friends alike: *Party → Continue party game*. The game restarts, loads
+**Later sessions:** host and friends alike: *Party > Continue party game*. The game restarts, loads
 your party character by itself and hosts or joins (your last role) with the saved address and
 password; the summons follow automatically.
 
-**In the world** (party game), *System → Party* also has **Host party** / **Join party** (switch
+**In the world** (party game), *System > Party* also has **Host party** / **Join party** (switch
 role: a quick restart, your character continues) and **Single player** (back to the
 single-player game and saves). With a single-player character loaded there are no party actions:
 party games always start from the title screen, so co-op can never write into a single-player save.
@@ -88,99 +89,111 @@ have a party character. Details: [party/ingame_flow.md](party/ingame_flow.md).
    it in the game).
 3. Pick **Max players** (3 is the game's normal co-op size; 4 is experimental).
 4. Leave **Automatic summoning** and **Seamless party rules** on (*Separate party saves* is always on).
-5. Optional: a **Password** (every player must then enter the same one).
-6. Click **Launch Bloodborne**. Party play always uses its own saves; the first time the launcher
-   offers to copy your single-player save into the party save folder (or start with an empty
-   one for a new character).
+5. Optional: a **Password** (every player must then enter the same one; see
+   [the password rule](#the-party-code-and-the-password)).
+6. Click **Launch Bloodborne**. Allow the Windows Firewall prompt (see
+   [firewall](#ports-upnp-firewall-vpn)). Party play always uses its own saves; the first time the
+   launcher offers to copy your single-player save into the party save folder (or start with an
+   empty one for a new character).
 7. Once the game runs, your two **party codes** appear (the launcher log shows them too):
-   **Internet code** for friends elsewhere and **LAN code** for players on your own network.
-   Click **Copy** next to one and send it (chat, mail ...).
+   **Internet code** for friends elsewhere and **LAN code** for players on your own network (or on
+   your VPN, see below). Click **Copy** next to one and send it (chat, mail ...).
 8. Play. In party mode the game confirms **Continue** on the title screen by itself a few
    seconds after the party is up, so your last character loads without input (with an empty
-   party save, create a character as usual). The others are summoned into your world
+   party save, create a character as usual). The others are brought into your world
    automatically when they are ready.
 
-The code stays the same when the game restarts after a crash; it changes when your public
-address or port changes.
+The code stays the same when the game restarts after a crash and from one launch to the next; it
+changes when your public address or port changes, when you make a new code, or once when you set
+or remove a password.
+
+**Skip the prologue.** The host rule *Skip the prologue* (*System > Party rules: Phantoms*, or the
+launcher's Party Rules tab) lets a brand-new character start at the Central Yharnam lamp with the
+Saw Cleaver, the Hunter Pistol and Iosefka's Blood Vial, ready to be summoned. A character that
+already left the clinic is never touched.
 
 ## Joining
 
 1. **Party** tab, **Mode: Join a party**, enter **Your name** (must differ from the other
    players' names).
 2. Paste the host's code into **Party code** (the **Paste** button takes it from the clipboard).
+   On a VPN or LAN you can also pick the host from the **Parties found** list and press **Join
+   selected** (see [party discovery](#ports-upnp-firewall-vpn)).
 3. Set **Max players** (and the **Password**, if the host uses one) to the same values as the host.
 4. Start the game **after the host's game is running**. Once connected, the game confirms
    **Continue** on the title screen by itself (with an empty party save, create a character).
-5. Play the prologue in your own world (see below). Once you are ready, the host's game summons
-   you; you appear as a helper in the host's world.
+5. Play the prologue in your own world (see below). Once you are ready, the host's game brings
+   you in; you appear beside the host.
 
-The launcher shows a ✓ or ✗ hint under the code field if the name, port or code look wrong.
+The launcher shows a check mark or a cross under the code field if the name, port or code look
+wrong.
 
 In the game, the game's own menu has two party pages under **System** (on the title
 screen and in the pause menu, after *Environment* (Screen/Sound)): **Party** (the state and your role, *Copy party
-code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, plus the party flow's
+code* to the clipboard, *Rejoin* / *Summon again*, *Leave the party*, *Gather the party* for the host, plus the party flow's
 rows to start or join a party game) and **Party members** (each hunter with their state and ping and
-the last event; the join / leave notices switch is on *My party: Look & notices*; the host kicks a
-hunter by pressing left/right twice on their row). *Leave* also asks for a second press. The
-bottom line of each row explains it (the party code is shown there too). The overlay menu
-(**Insert**, or **L3 + R3** if enabled) still has the same **Party** tab. Players joining and
-leaving are shown as short messages.
+the last event; the host kicks a hunter by pressing left/right twice on their row; the
+connection warnings switch is here too). *Leave* also asks for a second press. The
+bottom line of each row explains it. The overlay menu (**Insert**, or **L3 + R3** if enabled) has
+the same **Party** tab. Players joining and leaving are shown as short messages.
 
 **Party HUD.** In party mode a small panel in the bottom left corner lists your companions: name,
-a thin HP bar (stamina under it) and, while they are on the same map, how far away they are and an
-arrow pointing their way (relative to the camera). Companions who are not in your world (at home,
-loading, in their prologue, disconnected) are greyed and say where they are. Companions in your
-world and in view also get a small name tag with their HP above their head. The numbers come from
-the game itself when the companion stands in your world, otherwise from their own game (sent about
-4 times a second through the host). Switch it in the game (**System > My party: Display > Party HUD**),
-the overlay's Party tab or the launcher's My Party tab (bbport.ini `party_hud`, default on; never shown
-in single-player). The panel stays clear of the game's HUD and stacks above the performance HUD
-when that sits in the bottom left; join / leave notices appear above the panel.
+a thin HP bar (stamina under it), their ping in ms (green under 80, yellow under 160, red above)
+and, while they are on the same map, how far away they are and an arrow pointing their way.
+Companions who are not in your world (at home, loading, in their prologue, disconnected) are
+greyed and say where they are. Companions in your world also get a name tag above their head
+(with level, health, deaths or ping, as you choose). Switch it in the game (**System > My party:
+Display > Party HUD**, and *Name tags*), the overlay's Party tab or the launcher's My Party tab
+(on by default; never shown in single player).
 
-## The party code
+**Hotkeys.** A **ping** (a marker everyone in your world sees through walls for 10 seconds): hold
+the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: `V`). **Gather the party**
+(host): hold the touchpad and press L3 (Xbox pads: Back + L3; keyboard: `H`).
 
-A code looks like `BBP3-NJR0-E43N-WWN9-2C2P` (Internet code of a host with a password) or `BBP3-PAJY-EAMH-7TD` (LAN
-code). It holds the host's address, the port (only when it is not 9307) and a secret; the secret is
-what lets a guest in, so share the code only with the people you play with. Letters are not
-case-sensitive, I/L count as 1 and O as 0, and a checksum catches a mistyped character. The LAN
-code carries only the last number of the host's address: the guest takes the first three from its
-own address (same home network), or searches the LAN when it has none.
+## The party code and the password
+
+A code looks like `BBP3-NJR0-E43N-WWN9-2C2P` (Internet code of a host with a password) or
+`BBP3-PAJY-EAMH-7TD` (LAN code). It holds the host's address, the port (only when it is not
+9307) and a secret; the secret is what lets a guest in, so share the code only with the people
+you play with. Letters are not case-sensitive, I/L count as 1 and O as 0, and a checksum catches a
+mistyped character. The LAN code carries only the last number of the host's address: the guest
+takes the first three from its own address (same home network), or searches the LAN when it has
+none. Older `BBP2-...` and `BBP1-...` codes still work.
 
 | Code (port 9307) | With a password | Without |
 |---|---|---|
-| Internet | 16 characters after `BBP3-`, e.g. `BBP3-NJR0-E43N-WWN9-2C2P` | 19, e.g. `BBP3-HJR0-E43N-WWN9-2F28-VCA` |
-| LAN | 11, e.g. `BBP3-PAJY-EAMH-7TD` | 14 |
+| Internet | 16 characters after `BBP3-` | 19 |
+| LAN | 11 | 14 |
 
-Another port adds 3 characters. Older `BBP2-...` and `BBP1-...` codes still work.
+Another port adds 3 characters.
 
-**Why a password makes the code shorter.** Without a password the code's secret (48 bits) is the
-only thing that keeps strangers out, so it stays that long: guessing it would take about 2^48
-tries. With a password the password does that job (a guest who knows the password and the host's
-address gets in even without the code), so the code carries only a 32-bit secret. The party is
-then exactly as safe as its password: pick one that is not easy to guess. The host's code changes
-once when a password is set or removed. Details: `gpu/shim/party/party_code.h`. The host has two codes (`user\party_code.txt`, the launcher, *System → Party*
-and the overlay's Party tab):
+**The password rule.**
+
+- **Host without a password:** only the **party code** gets a guest in. A plain `address:port`
+  is refused (*"this host has no password: join with its party code"*), so the code is the only
+  key. Guests who use a code ignore a password saved in their launcher.
+- **Host with a password:** the guest needs the **password**; with it, a plain `address:port`
+  works too (this is how the *Parties found* list and VPN addresses join). The code is shorter,
+  because the password does the securing: the party is exactly as safe as its password, so pick
+  one that is not easy to guess. Setting or removing a password gives the host a new code once,
+  so send the new one.
+- Five wrong passwords within a minute: the host ignores that address for a while.
+
+**Two codes.** The host has two codes (`user\party_code.txt`, the launcher, *System > Party* and
+the overlay's Party tab):
 
 | Code | Holds | Use it for |
 |---|---|---|
-| **Internet code** | Your public address (STUN or the router's UPnP) | Friends elsewhere |
-| **LAN code** | Your address on your home network | Players on the same network (same router) |
+| **Internet code** | Your public address (found automatically) | Friends elsewhere |
+| **LAN code** | Your address on your home network, or your VPN address when you host over a VPN | Players on the same network (same router) or the same VPN |
 
-Most home routers cannot reach their own public address from inside (no "hairpin NAT"). A guest on
-your network who uses the Internet code therefore searches the LAN when the public address does not
-answer within 1.5 s (or its own public address is yours): it broadcasts a small probe on the party
-port, your game answers with its LAN address, and the guest joins that (log: `LAN fallback: found
-host at ...`). This adds about 2 s. The probe carries only a hash made from the code's secret, never
-the secret; the host answers only probes for its own party, at most 5 a second.
-`BB_PARTY_LAN_DISCOVERY=0` turns it off. With `host:port` it works only when a password is set.
+Most home routers cannot reach their own public address from inside. A guest on your network who
+uses the Internet code therefore searches the LAN by itself when the public address does not
+answer (adds about 2 s). The search sends only a hash made from the code's secret, never the
+secret.
 
 The code's secret is new for each hosting session, except when the game restarts after a crash or
-the party is started again from the title screen's *Party* page. A guest using a code without a
-password ignores a password saved in its launcher or *Party* page (log: `code needs no password;
-saved password ignored`).
-
-Instead of a code, a guest can also enter the host's address directly as `host:port`, e.g.
-`192.168.1.20:9307` on a LAN or `100.64.1.5:9307` over a VPN.
+the party is started again from the title screen's *Party* page.
 
 ## Ports, UPnP, firewall, VPN
 
@@ -191,151 +204,269 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   9307 to this PC in your router"*. Then forward the port by hand in the router's settings
   (UDP and TCP, to the host PC's LAN address).
 - **Windows Firewall**: the first time you host, Windows may ask whether `bbport.exe` may use the
-  network. Allow it (at least on *Private* networks; also *Public* if Windows calls your home
-  network public). If you clicked *Cancel*, allow the program in *Windows Security > Firewall >
-  Allow an app through firewall*.
+  network. Click **Allow** (at least on *Private* networks; also *Public* if Windows calls your
+  home network public). If you clicked *Cancel*, allow the program in *Windows Security > Firewall
+  > Allow an app through firewall*. Every player does this, host and guest: the host needs it for
+  guests to get in, the guest for the host's replies. The game never changes your firewall; since
+  0.7.6 it checks the rules at start and shows a **connection warning** with the shortest fix if
+  there is no rule or it is blocked.
 - **Public address**: normally found automatically (STUN server `stun.l.google.com:19302`, or
   UPnP). For a fixed IP, a DNS name or a VPN address, enter it in *Public address* (host only).
   *STUN server* `off` turns the lookup off (LAN / VPN only).
+- **Which NAT do I have?** The *Party* page's *Network* line (and the log's `NAT:` line) says it.
+  A "cone" NAT can be punched. A **strict NAT** (the game says *"a strict router or your ISP's
+  carrier NAT"*) cannot: a strict router is fixed with UPnP or by forwarding UDP+TCP 9307; a
+  provider's carrier NAT cannot be fixed on your side. To tell them apart, compare the router's WAN
+  address (in the router's status page) with your public address (any "what is my IP" site): if
+  they differ, or the router's address starts with `100.64` to `100.127`, it is the provider.
+- **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
+  virtual network (Radmin VPN, Hamachi, ZeroTier, Tailscale), or let a player with an open port
+  host.
 - **No UPnP and no port forward: guest codes.** Each guest's overlay *Party* page shows *Your
   guest code* (`BBG1-XXXX-XXXX-XXXX`, its public UDP address; also `user/party_guest_code.txt`).
   The guest copies it and sends it to the host; the host copies it and presses *Add a guest code
-  (paste)* (or sets `BB_PARTY_GUEST_CODES`). The host then punches a path through its router
-  towards that guest, and the party link switches to UDP when TCP gets no answer. Works with most
-  home routers; not with symmetric NAT (see next point). Details:
-  [party/network_robustness.md](party/network_robustness.md) §4.
-  Since 0.6.1 this can happen **by itself**, opt-in: with *Find each other through the public
-  DHT* on (launcher *Party* tab or *System > Party network*; **both** host and guest must turn it on;
-  `BB_PARTY_RENDEZVOUS=1`, bbport.ini `party_rendezvous=1`), a guest that cannot reach the host
-  leaves its address in the public BitTorrent DHT under a hash only the party can compute, and the
-  host finds it there and opens the way (no guest code to pass on). It is **off by default**: DHT
-  nodes see your IP address, as with any torrent client. Off, the *Network* line and the guest's
-  failure message say "automatic punching is off: send the host your guest code, or turn on the
-  DHT option on both PCs".
-- **Which NAT do I have?** The *Party* page's *Network* line (and the log's `NAT:` line) says it:
-  a *cone* NAT can be punched; a *symmetric* ("strict") NAT cannot (some home routers, and mobile or ISP carrier NAT; compare the router's WAN IP with your public IP to tell them apart; UPnP or forwarding UDP+TCP 9307 fixes a router), and
-  the line tells you what to do instead.
-- **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
-  virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
-  `address:9307` (or sets it as *Public address*, so the code contains it).
-- **Hosting over a VPN (0.7.5).** With Radmin VPN, Hamachi, ZeroTier or Tailscale running, the
-  game finds the VPN adapter by itself (setting *Host over a VPN*: **Auto**, **Off**, or an adapter
-  picked by name; launcher *Party* tab, *System > Party network*, bbport.ini `party_vpn`,
-  `BB_PARTY_VPN`; the host's choice, read when the game starts). The party code's LAN code then holds
-  your VPN address (Radmin 26.x, Hamachi 25.x, Tailscale 100.64/10, ZeroTier whatever its network
-  assigns); the Internet code is unchanged. The *Party* tab shows *Hosting over Radmin VPN:
-  26.x.y.z* and a *VPN address* line with **Copy** (always `address:port`, your party port). A friend
-  in the same VPN pastes that into **Party code**; a bare address without `:port` gets the
-  party port (9307) added. Commercial VPNs (NordVPN, ...) are never picked in Auto, only by name.
-  `BB_PARTY_LOCAL_IP` still overrides everything.
-- **Party discovery (0.7.5).** While a game hosts it broadcasts a small announcement (UDP port 9308, every
-  1.5 s) on its Radmin / Hamachi / ZeroTier adapters and on private-LAN adapters (10/8, 172.16/12,
-  192.168/16, real adapters only): host name, level, players / max, whether a password is set, the bbport
-  build, the area name, the party port. Never the Internet, a commercial VPN, Tailscale or a virtual
-  switch (Hyper-V, WSL, Docker). It carries no password and no party code; the guest takes the host's
-  address from the datagram. The launcher's *Parties found* list (Party tab) listens on the same port,
-  ignores its own PC's announcements, caps the list and rate-limits each sender, and parses every packet
-  strictly (version, lengths, printable ASCII). **Join selected** fills *Party code* with `address:port`
-  and asks for the password only when the entry says there is one. Tailscale passes no broadcasts: with
-  a Tailscale adapter up, the launcher lists the online peers of `tailscale status --json` instead
-  (silently nothing without the CLI), joined at the default port. Setting `party_discovery` (bbport.ini,
-  `BB_PARTY_DISCOVERY`; launcher checkbox; System > My party: Look & notices; default on) switches both the
-  announcing and the listing. Hosting with no password over Radmin VPN / Hamachi shows a warning in the
-  launcher (strangers can be in those networks). `BB_PARTY_DISCOVERY_LOOPBACK=1` (host) and
-  `BB_PARTY_DISCOVERY_SELF=1` (launcher) are test aids: announce to 127.0.0.1, keep own packets.
+  (paste)*. The host then punches a path through its router towards that guest, and the party
+  link switches to UDP when TCP gets no answer. Works with most home routers; not with a strict
+  NAT. Details: [party/network_robustness.md](party/network_robustness.md).
+  This can also happen **by itself**, opt-in: with *Find each other through the public DHT* on
+  (launcher *Party* tab or *System > Party network*; **both** host and guest must turn it on), a
+  guest that cannot reach the host leaves its address in the public BitTorrent DHT under a hash
+  only the party can compute, and the host finds it there and opens the way. It is **off by
+  default**: DHT nodes see your IP address, as with any torrent client.
+- **IPv6** (off by default; *Party* tab or *System > Party network*, both PCs): the party tries it
+  before any relay, and a host without an open port then has a longer code that contains its IPv6
+  address.
+- **Through a member**: if the host cannot be reached but another member can, a guest can join
+  through that member (*Join through a member* on its *Party* page; on by default).
 - Guests talk to each other directly when they can; when a direct path does not work, their game
   traffic goes through the host automatically.
 
+### Hosting over a VPN (Radmin VPN, Hamachi, ZeroTier, Tailscale)
+
+1. Everyone installs the same VPN and joins the same VPN network.
+2. **Host:** start the game as usual. With *Host over a VPN* on **Auto** (default; launcher
+   *Party* tab, *System > Party network*), the game finds the VPN adapter by itself (Radmin VPN,
+   Hamachi, ZeroTier, Tailscale; commercial VPNs such as NordVPN are never picked in Auto, only
+   by name). The launcher shows *Hosting over Radmin VPN: 26.x.y.z* and a **VPN address** line
+   with **Copy** (always `address:port`). The **LAN code** now holds the VPN address.
+3. **Guests** in the same VPN paste the VPN address or the LAN code into **Party code**. A bare
+   address without `:port` gets the party port (9307) added. Without a host password, use the
+   host's LAN code, not the bare address.
+4. Everyone allows the game in the Windows Firewall (above).
+
+If the game keeps using your home address instead of the VPN one (the log says so; `net_doctor`
+reports "a VPN running but not used"), force the address with `BB_PARTY_LOCAL_IP`, on **both**
+the host and the guests, each with their **own** VPN address (shown in the VPN app):
+
+1. Press the **Windows key**, type `cmd` and press Enter.
+2. Type `setx BB_PARTY_LOCAL_IP 26.12.34.56` (your own VPN address) and press Enter. It says
+   *SUCCESS*.
+3. **Close that window.**
+4. **Close the launcher and the game completely**, then start the launcher again. Windows hands a
+   new setting only to programs started afterwards; if unsure, restart the PC.
+5. Check: open a new `cmd` window and type `echo %BB_PARTY_LOCAL_IP%`. It must show your address.
+
+To remove it again: open `cmd` and run `reg delete HKCU\Environment /v BB_PARTY_LOCAL_IP /f`,
+then restart the launcher.
+
+### Party discovery on a VPN or LAN
+
+While a game hosts, it announces the party every second or two by broadcast on your Radmin /
+Hamachi / ZeroTier adapters and on home-network adapters, never over the Internet, a commercial
+VPN or a virtual switch (Hyper-V, WSL, Docker). It carries the host's name, level, players,
+area, whether there is a password, and the version. The password and the party code are never
+sent. The launcher's **Parties found** list (Party tab) shows what it hears (greyed out when the
+host runs another version); **Join selected** (or double-click) fills in the address, asks for
+the password only if the party has one, and starts the game as a guest. Tailscale passes no
+broadcasts: with Tailscale up, its online friends are listed from the `tailscale` command (when it
+is installed) as "maybe hosting". Hosting without a password over Radmin VPN or Hamachi shows a
+warning in the launcher, because strangers can be in those networks. Switch it off with *Party
+discovery* (launcher, or *System > My party: Look & notices*).
+
+### Connection doctor (`net_doctor.bat`)
+
+When players cannot join or keep dropping, collect the logs of **one session** from the host and
+every guest (the game's `logs\last_session.log`, or `previous_session.log` if you restarted) and
+**drop them all onto `net_doctor.bat`** in the port's folder. It explains in plain words what is
+wrong and what each player should do, and copies the reply to the clipboard, ready to paste into
+Discord. It recognises, among others: different game files or versions, a refusal and its
+reason, a phone hotspot, no open port, a strict NAT, a VPN running but not used, a game talking
+to its own address, game traffic that never reaches the host, dropouts and high ping, a player
+stuck in the prologue, and different New Game+ cycles.
+
+Before you post the reply publicly, run it with `--redactnames` (names become Host / Guest 1 ...)
+and `--redactips` (public addresses hidden, VPN and LAN ones shortened to their first number),
+for example from a command window: `net_doctor.bat --redactnames --redactips host.log guest.log`.
+
 ## What happens in the game
 
-1. **Prologue, each player alone.** Everyone creates their character (or loads one) and plays the
-   short prologue in their own world: the opening, the clinic, the first visit to the Hunter's
-   Dream and taking a weapon. Until then the others see *(prologue)* next to your name. The
-   party gives each player the Beckoning Bell and the Small Resonant Bell when the prologue is done.
-2. **Summons.** When a guest is ready and in their own world, their game rings the Small
-   Resonant Bell and the host's game rings the Beckoning Bell, every 30 seconds, until the guest
-   is in the host's world. No Insight is needed or spent, and it works in areas where the normal
-   game forbids co-op (including after the area's boss is dead and in the Hunter's Dream).
-3. **Together.** Guests keep their full HP (the normal game gives helpers 70 %), are not sent home
-   when a boss dies, and keep the session when the map reloads.
-4. **Travel.** When the host uses a lamp, goes to the Hunter's Dream, dies or uses a Hunter's
-   Mark, the guests follow: they travel to the same place in their own world and are summoned
-   again. This is "follow and rejoin", not a seamless shared loading screen - expect a short
-   moment alone after each trip.
-5. **A guest dies.** The guest comes back at the host's last lamp and is summoned again (instead
-   of being sent home), and gets the vials and bullets refilled.
-6. **Bosses.** Anyone may walk through a boss fog first (a guest's walk-through starts the fight for everyone); a first fight with an intro cutscene still starts with the host.
+1. **Prologue, each player alone** (unless the host skips it). Everyone creates their character
+   (or loads one) and plays the short prologue in their own world: the opening, the clinic, the
+   first visit to the Hunter's Dream and taking a weapon. Until then the others see *(prologue)*
+   next to your name. The party gives each player the Beckoning Bell and the Small Resonant Bell
+   when the prologue is done.
+2. **Joining.** There are no bell, beckoner or summon-sign waits: when a guest is ready, it stands
+   beside the host within seconds (about 5 s in the same area; a join that stalls restarts by
+   itself). *Continue party game*, or joining from another map (the Hunter's Dream, say), takes
+   one loading screen. No Insight is needed or spent, and it works in areas where the normal game
+   forbids co-op, including after the area's boss is dead. If the host is in a boss fight or a
+   cutscene, your join waits in your own world until it is over (the Party status says why).
+3. **Together.** There are no multiplayer walls and no leash: the party can split up, and each can
+   play on in another part of the city for minutes. Players in different maps see only those in
+   their own map; meeting again shows them at once. Nobody is sent home when a boss dies; the
+   session never ends by itself. Every player can use lamps (the normal game disables them in
+   co-op), and **lamps are shared** (below).
+4. **Travel.** Lamps, headstones and the Hunter's Mark ask **"Travel with the party?"**: *Yes*
+   moves the whole party with one loading screen, *No* moves only you. A lamp offers the Hunter's
+   Dream and every lit lamp, straight from any lamp to any lamp. A host's trip inside its current
+   map is an instant warp. The host can turn on **voting** (*Party votes on travel*): the party
+   then travels only when everyone agrees, and one *No* or no answer within 20 seconds cancels it.
+   **Resting** at a lamp resets the world for the party (enemies respawn; everyone's HP, vials
+   and bullets refill).
+5. **Gather the party.** The host's *System > Party > Gather the party* (or the hotkey above)
+   brings every guest to the host after the guest says *Yes*: no loading screen in the host's map,
+   one from another map. A guest who is dead, in a menu, in a cutscene or in a boss fight is not
+   moved, and the host cannot gather in its own boss fight or cutscene, on a ladder, in mid-air,
+   or more than once in 30 s. The host can turn gathering off.
+6. **Bosses.** Anyone may walk through a boss fog first, a first fight included: the fight starts
+   for everyone and the others follow through the fog (a first fight plays the intro cutscene on
+   every screen). A few bosses start only with what the host does in their room (Ebrietas, Lady
+   Maria, Laurence); a guest at that fog is told what starts it. A guest who travelled alone
+   cannot start a boss fight where the host is not.
+7. **Cutscenes.** Story cutscenes play for everyone, also one a guest triggers (the Blood Moon,
+   the Cathedral Ward door, Gehrman's scenes, the ending). After the Blood Moon the host is asked
+   "Travel with the party?" and everyone goes to Yahar'gul together. A Snatcher's kidnap, host or
+   guest, wakes the whole party up together in the Hypogean Gaol (the host can turn this off in
+   *Party rules: Deaths*).
+8. **Any level can play together.** Nobody is turned away for their level. As in the game's own
+   co-op, a hunter far above the host's level is scaled down in the host's world (*Level sync*),
+   and everyone who joins has **30 % less maximum health** (*Phantom health cut*). The host can
+   turn both off. Enemies and bosses scale up with the number of hunters.
+9. **Chalice Dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss and
+   the lifts work for the whole party, layer after layer. Any player can perform the ritual: the
+   host's altar then offers *Enter the party's dungeon*. Chalices are shared between all players
+   (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's lamps work with a
+   party. A guest who dies there gets up beside the party; one pulled out by a death or a forced trip
+   is brought back in automatically, one who chose to leave returns with *Party > Rejoin*.
+   Gathering inside a dungeon moves a member in place beside the host.
+10. **NPCs.** Guests can talk to NPCs in the host's world (Gehrman too), and guests' blows hurt the
+    NPCs the host could hurt. NPC hunters fight the whole party. The first quest choice anyone
+    makes counts for everyone (the covenant quests stay each player's own).
+11. **Appearance.** The workshop mirror in the Hunter's Dream opens the appearance editor, in
+    single player and in a party.
+
+## Deaths, wipes and limbo
+
+| Who dies | What happens |
+|---|---|
+| A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (otherwise a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell; the others keep playing. After a **fall** off a ledge or out of the world it gets up at its lamp or the host's, never in the Hunter's Dream, and its echoes wait on the last solid ground before the fall |
+| The host | Gets up at its lamp with no loading screen while the guests play on (a lamp in another area: the host loads it alone); its echoes stay in a bloodstain. A death that takes the host somewhere by the story (a Snatcher's kidnap) takes the whole party along |
+| Anyone, during a boss fight ("limbo") | Watches a living party member fight (the right stick turns the camera; press Cross for the next one) until the boss dies, everyone dies, or someone travels. When the boss dies, everyone who died in the fight gets up right there in the arena, with their echoes still in their bloodstain (host rule *Up after boss kill*) |
+| Everyone (a wipe) | Everyone respawns together at the host's lamp with one loading screen; the session stays |
+| In a Chalice Dungeon | A guest's Blood Echoes stay in a bloodstain that belongs to the dungeon and can be picked up whenever the party is in that dungeon again. After a wipe in the host's dungeon, the dead guests get up with the host |
+
+A death brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them. An enemy
+killed by anyone in the party stays dead for everyone.
+
+**Optional rot.** With "rot" on (host rule, off by default), each death stacks a penalty, up to 5,
+cleared by a lamp, levelling up, a boss kill or recovering your echoes. **Friendly fire / PvP** is
+also a host rule, off by default.
 
 ## What is shared, and what is not
 
-**Shared from the host to every guest (into the guest's own save):**
+**Shared between all players (into each player's own save):**
 
 - **Progress**: bosses killed, lamps lit, shortcuts, doors, elevators and ladders opened, key
-  story events. A guest's world catches up with the host's when the guest goes home.
-- **Items**: boss drops, key items, keys and gifts the host receives, which helpers never get in
-  the normal game, are given to each guest once, in their own world.
-- **Rewards**: guests get the full Blood Echoes for kills and boss kills and full enemy drops
-  (the normal game halves echoes and drops almost nothing for helpers), and the same Insight
-  for a boss as the host.
-- **Cutscenes**: each cutscene the host triggers is also shown to every guest - live if the guest
-  is in the host's world, otherwise later in the guest's own world. The **time of day** (evening,
+  story events, in both directions: a door or lever anyone opens is open for everyone, and a
+  player who is behind catches up. Shop unlocks (Gascoigne's, Henryk's, Chalice boss attire sets
+  and the like) come with it.
+- **Key items and unique items** the host or a guest receives (boss drops, keys, tools, quest
+  items found lying around, chalices, umbilical cords), once per player; weapons, armour and
+  rings found by one player are shared too. Consumables and stacks (Pebbles, Blood Vials from the
+  world, bullets, blood gems and so on) stay with whoever found them. A key item you already hold
+  or used up is never handed out twice. Gestures learned by anyone are learned by everyone.
+- **Rewards**: full Blood Echoes for every kill, whoever made it; each player rolls their own
+  copy of each enemy's drop; the same Insight for bosses as the host.
+- **Chalice progress comes home with the guest** (0.7.6): the dungeon a guest played in the host's
+  world is added to a free dungeon slot of the guest's own altar, with the lamps and shortcuts the
+  party reached, and nothing is ever taken away. Chalice boss kills and shop unlocks are shared
+  progress.
+- **Cutscenes, time of day and endings**: each cutscene the host triggers is also shown to every
+  guest, live in the host's world or later in the guest's own world. The time of day (evening,
   night, Blood Moon) follows the host.
-- **Endings**: the ending the host gets is played for every guest too.
+- **NPC quests**: shared (My party: *Also NPC quests*), except the covenant quests of Annalise,
+  Alfred and Valtr, which stay each player's own.
+- **Lamps**: a lamp anyone lights in the host's world is lit for everyone. A guest's lamps from its
+  own world stay there unless the host turns on *Guests bring their lamps*. The host can turn
+  sharing off (*Shared lamps*).
 
-**Not shared (each player's own):**
+**Per player (not shared):**
 
 - Character level, stats, inventory, equipment, Blood Echoes and Insight you already have.
-- Shop purchases, the Doll, Hunter's Dream upgrades, runes, chalices.
-- **NPC quests** are shared (on by default, My Party tab: *Also NPC quests*): the first choice
-  anyone makes - host or guest, guests can talk to NPCs in the host's world - applies to the
-  host's world and to every player's save. Gifts an NPC gives in dialogue go to whoever talked.
-- **Chalice Dungeons** are played together: guests join the host's dungeon (see the README's party section). Checked live with the fixed Pthumeru dungeon (layers 1-2); Root (randomly generated) and glyph dungeons use the host's dungeon id too but have not been checked live yet.
-- World treasure a guest picks up while in the host's world does not exist for guests in the
-  normal game; the host's pickups are handed to guests through the item sharing above.
-  Enemy drops are per player: every player's game rolls each enemy's drop and keeps the whole of
-  its own roll, guests included. World treasure is per player too (on by default,
-  `BB_PARTY_GUEST_PICKUP=0` turns it off): every player picks up their own copy into their own
-  save, and the host's treasure pickups are not handed to the guests.
+- **World treasure**: every player picks up their own copy into their own save. **Chalice weapon
+  pickups** are per player too.
+- **Shop stock** is per player: one-of-a-kind items (armour sets) bought by one player stay in
+  stock for the others. The Doll, Hunter's Dream upgrades, runes and storage are your own.
+- Repeatable NPC gifts go to whoever asked; one-time gifts go to every player.
 
-## Settings (Party Rules and My Party tabs)
+## After an ending: New Game+
+
+When the host reaches an ending, every guest is asked first: *Yes* plays that ending in your own
+save (end credits, then New Game+), *No* takes you home with your save as it was. A guest who
+used three Umbilical Cords gets Childhood's Beginning when the host refused Gehrman. One party
+ending moves a guest's save forward exactly one New Game+ cycle.
+
+**Mixed cycles.** In the host's world everyone plays at the host's New Game+ cycle; your own save
+keeps its own. If your save and the host's world are in different cycles, the game tells you when
+you are brought in (*"Your save is in NG+2, the host's world is NG+1: you play the host's world at
+its NG+1; your own save keeps NG+2"*). This is normal, not a bug. To play at the same difficulty,
+everyone should finish the same endings together. In a new cycle, the host's first Hunter's Dream
+visit counts as over once the host is out of the Dream, so the party can summon again right away.
+
+## Settings (Party rules and My party)
 
 The launcher's **Party** tab is for hosting, joining and the connection. The party's settings
 are on two more tabs, and on the same pages of the game's *System* menu:
 
-- **Party Rules** (*System > Party rules: ...*): what the **host** decides for the whole party -
-  enemies stay dead, gathering, NPCs as in the host's world, covenants per player, travel votes,
-  NPC hunters fighting everyone, friendly fire, shared lamps, the host's deaths, rot. They apply
-  when you host; as a guest you follow the host's (the game shows them read-only).
-- **My Party** (*System > My party: ...*): what **each player** chooses for itself - the table
-  below, plus what you see on your screen (party HUD, name tags, pings, glow, notices).
+- **Party rules** (*System > Party rules: ...*, launcher *Party Rules* tab): what the **host**
+  decides for the whole party. They apply when you host; as a guest you follow the host's and the
+  game shows them **read-only**, so the whole party plays one way. A few rules are read only when
+  the game starts and must match the host's, otherwise the host refuses the join with *"set ...
+  like the host"*.
+- **My party** (*System > My party: ...*, launcher *My Party* tab): what **each player** chooses
+  for itself.
 
 The defaults are the recommended settings; hover any option in the launcher for details.
-Settings marked *guest* only matter on the PC of a player while they are a guest; *both* need
-to be on for the host and the guest.
 
-| Option | Default | What it does |
-|---|---|---|
-| Party starts | After the prologue | When a player can be summoned. *Right away* = right after the opening cutscene (inside the clinic, experimental). Keep it the same for everyone. |
-| Give the bells | on | Gives each player both bells after the prologue (for ringing by hand). |
-| Open world | on | Removes the co-op walls on area borders. Keep it the same for everyone. |
-| Respawn at the host's lamp | on | *Guest*: after death, back at the host's last lamp and summoned again. Off: sent home as in the normal game. |
-| Refill vials and bullets | on | *Guest*: refilled when the host rests, dies or goes to the Dream, and after the guest's own respawn. |
-| Guests can use Hunter's Mark | off | *Guest*: a Mark takes the guest to the host's last lamp. |
-| Full rewards for guests | on | *Guest*: full echoes and drops. |
-| Share the host's item rewards | on | *Both*: boss drops, keys and gifts given to each guest. |
-| Insight for bosses | Same as the host | *Guest*: Insight for a host boss kill. *Full bonus* = that much on top of the game's +1; *Game's own* = only +1. |
-| Share story progress | on | *Both*: progress copied into the guests' saves. |
-| Also NPC quests | on | *Guest*: NPC quest steps too (shared NPC quest choices). |
-| Share cutscenes and endings | on | *Both*: cutscenes, time of day and endings. |
-| Play them live with the host | on | *Guest*: watch with the host while in the host's world. |
-| Back up every (min) | 10 | Save backup period during a party session (0 = only at start). |
-| Backups to keep | 10 | Number of backups kept. |
-| Restart the game after a crash | on | Restart, continue and rejoin automatically. |
+**Party rules pages (the host's):**
 
-Party tab options: **Automatic summoning** (off: ring the bells yourself), **Seamless party
-rules** (off: the normal game's co-op rules; the host's setting counts), **Separate party
-saves** (always on), **Max players**, connection settings. The environment variables behind each option are
-listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
+| Page | What it holds |
+|---|---|
+| World | Enemies the party killed stay dead, gathering, NPCs as in the host's world, covenants per player, voting on travel, NPC hunters fighting everyone |
+| PvP & lamps | Friendly fire, shared lamps, guests bring their lamps |
+| Deaths | Guests respawn at the host's lamp, refill vials and bullets, up after a boss kill, anyone can be abducted |
+| Travel | Lamps and Hunter's Mark for guests, open world (no co-op walls), stay in the host's Chalice Dungeon, cutscenes live with the host |
+| Rewards | Full echoes and drops for guests, boss Insight (same as the host / full bonus / game's own) |
+| Phantoms | Level sync, phantom health cut, skip the prologue |
+| Rot | Death penalties and what clears them (off by default) |
+| Enemies | How much bosses and enemies scale with the party |
+
+**My party pages (yours):**
+
+| Page | What it holds |
+|---|---|
+| Your save | What the party brings into your own character: story progress, NPC quests, cutscenes and endings |
+| Your items | Item rewards from the host, the bells, your own key items as a guest, key items at once |
+| Display | Party HUD, name tags, pings, show the party through walls, bloodstain marker |
+| Look & notices | Companion glow, join / leave notices, ping in the party list, NPC dialogue range, party discovery |
+
+Also on your side: **Party starts** (*After the prologue*, or *Right away*, experimental; keep it
+the same for everyone), **Back up every (min)** (10) and **Backups to keep** (10), **Restart the
+game after a crash** (on), **Connection warnings** (*System > Party members*, on). Party tab
+options: **Automatic summoning**, **Seamless party rules** (off: the normal game's co-op rules; the
+host's setting counts), **Separate party saves** (always on), **Max players**, and the connection
+settings. The environment variables behind each option are listed in
+[party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
 
 ## Saves and backups
 
@@ -343,27 +474,28 @@ listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
   `user\savedata_party`; your single-player save in `user\savedata` is never written by it, so the
   party's progress and item sync can never reach a single-player character. The launcher offers
   to copy your single-player save the first time, and the **Copy single-player save to party
-  save** button does it any time (an existing party save is backed up first). The old *shared*
-  choice (`BB_PARTY_SAVE=shared`) is gone.
-- Progress the host shares is written into **each guest's own save**, so after a session your
+  save** button does it any time (an existing party save is backed up first).
+- Progress the party shares is written into **each player's own save**, so after a session your
   character's world has the bosses, lamps and shortcuts of the party's progress.
 - **Backups**: during every party session the game copies the save folder to
   `user\save_backups\savedata_party\` at the start, after a crash restart and
   every 10 minutes. The newest 10 are kept; a copy identical to the last one is skipped. The game
   checks the save at every start (*"Saves: check OK"* in the log); a backup that fails the check
   is named `...-suspect` and never pushes good backups out.
-- **Undo last party session** (0.6.2, launcher *Party* tab): right before every party session
+- **Undo last party session** (launcher *Party* tab): right before every party session
   (host or guest; not a crash restart, which continues the same session) the game copies
   `user\savedata` and `user\savedata_party` to
-  `user\save_backups\party_sessions\<date>-<time>-host` (or `-guest`); the newest 5 are kept
-  (`BB_SAVE_SESSION_KEEP`). The button shows what it will replace (per folder, per character: name,
-  level, NG cycle, play time now and then), copies your current saves to a `...-before-undo`
-  snapshot (pressing the button again brings them back) and restores the snapshot byte for byte.
-  After a party session (when the game closes, or at the next launcher start) the launcher checks
-  the party save: every character loads, its NG cycle only changes when an ending was played, no
-  boss kill or lit lamp from before the session is gone, level and play time did not go down, no
-  character vanished. On a problem it says what and offers the undo. Details:
-  [party/save_safety.md](party/save_safety.md).
+  `user\save_backups\party_sessions\<date>-<time>-host` (or `-guest`); the newest 5 are kept.
+  The button shows what it will replace (per folder, per character: name, level, NG cycle, play
+  time now and then), copies your current saves to a `...-before-undo` snapshot (pressing the
+  button again brings them back) and restores the snapshot byte for byte. After a party session
+  (when the game closes, or at the next launcher start) the launcher checks the party save: every
+  character loads, its NG cycle only changes when an ending was played, no boss kill or lit lamp
+  from before the session is gone, level and play time did not go down, no character vanished. On
+  a problem it says what and offers the undo. Details: [party/save_safety.md](party/save_safety.md).
+- **Save editors**: a save the game made while you were a guest in someone else's world cannot be
+  read by save editors. The launcher's *Party* tab has **Export for save editor** and **Import
+  from save editor** for that (your save is backed up first).
 - **Restoring a backup**:
   1. Close the game.
   2. Rename the save folder, e.g. `user\savedata_party` to `user\savedata_party.broken` (keep it
@@ -377,15 +509,16 @@ listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
 ## Crashes and disconnects
 
 - **Your game crashes**: it restarts by itself after 3 seconds, presses *Continue* on the title
-  screen, loads your save and rejoins the party. The host keeps your place for 60 seconds. At
-  most 5 restarts in 10 minutes (My Party tab: *Restart the game after a crash*).
-- **The host's game crashes**: guests return to their own worlds and keep trying to reconnect.
-  The host's game restarts with the **same party code** and the same member list, and the guests
-  are summoned again.
-- **Connection lost**: the same as a host crash for the guest; it reconnects automatically
-  (after 1, 2, 4, 8 seconds, then every 8 seconds).
+  screen, loads your save and rejoins the party next to the host. The host keeps your place for 60
+  seconds. At most 5 restarts in 10 minutes (My party: *Restart the game after a crash*).
+- **The host's game crashes**: guests go to their own world and wait ("Waiting for the host to
+  come back"). The host's game restarts with the **same party code** and the same member list, and
+  the guests are brought back. After 3 minutes a guest plays on alone.
+- **Network drops**: an outage of up to about 2 minutes keeps the session; everyone carries on
+  where they stood once the network is back. After a longer one a guest goes home and is
+  brought back by itself (it reconnects after 1, 2, 4, 8 seconds, then every 8 seconds).
 - Progress made while someone was away is caught up when they are back.
-- *System → Party* (or the overlay's Party tab) has **Rejoin** (try again now) and **Leave** (stop;
+- *System > Party* (or the overlay's Party tab) has **Rejoin** (try again now) and **Leave** (stop;
   the game no longer reconnects). A kicked player cannot rejoin that session.
 
 ## Four players
@@ -393,18 +526,21 @@ listed in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
 **Max players 4** (host + 3 guests) is experimental: the game was made for at most 3 players.
 The party patches the game to allow a third helper and to scale boss HP for it. **Every player
 must set Max players to 4**, the host and everyone joining; a different value is refused with
-*"party rules differ"*. With 4 players there is no free slot for an invader. Four players
-connecting has been checked (on one PC); a third helper actually summoned into a world has not been tested yet.
+*"party rules differ"*. With 4 players there is no free slot for an invader. Players have run 3 and
+4 player parties and sent reports, which were fixed; expect more rough edges than with 2 or 3.
 
 ## Troubleshooting
 
-The launcher log (and `launcher.log`) shows the game's `Party:` lines. *System → Party* in the
-game's menu (and the overlay's Party tab) shows the state and the last error. When the host
-refuses a guest (wrong or missing password, old code, full party, different version), the guest
-gets one message box saying why and what to do, and its game stays online alone in its own world
-(no *Failed to acquire Bloodborne server information* box). Fix the cause, then *System → Party →
-Rejoin the host*: it sends the password currently set in *System → Party → Password* (when you
-changed it there; otherwise the one you started with). A changed party code or address still
+**First, run [`net_doctor.bat`](#connection-doctor-net_doctorbat)** on the logs of the host and the
+guests: it names the cause and the fix for most connection problems. The game also shows a
+**connection warning** (in the middle of the screen, with the shortest fix) when the firewall,
+the router or a wrong address keeps the party from working. The launcher log (and `launcher.log`)
+shows the game's `Party:` lines; *System > Party* shows the state and the last error.
+
+When the host refuses a guest (wrong or missing password, old code, full party, different
+version), the guest gets one message box saying why and what to do, and its game stays online
+alone in its own world. Fix the cause, then *System > Party > Rejoin the host*: it sends the
+password currently set in *System > Party > Password*. A changed party code or address still
 needs *Join party* (restart).
 
 | Message / symptom | Cause | Fix |
@@ -412,48 +548,60 @@ needs *Join party* (restart).
 | *version mismatch with the host: eboot.bin differs* | Another game version or dump | Everyone needs the 1.09 `eboot.bin`. |
 | *... gameplay patches differ (host only: X; yours only: Y)* | Different XML patches that change gameplay | Enable the same patches (Game tab, *All XML Patches...*). Cosmetic patches do not count. |
 | *... gameplay mods differ* | Different mods in `mods\` | Use the same gameplay mods, or turn mods off on all PCs. |
-| *... party rules differ (host max 4 players ...; yours max 3 ...)* | Different *Max players* (or 4-player switches) | Set the same Max players everywhere. |
+| *... party rules differ (host max 4 players ...; yours max 3 ...)* | Different *Max players* | Set the same Max players everywhere. |
+| *set ... like the host* | A start-time rule differs from the host's | Open the named rule in Party rules / launcher and match the host. |
 | *different party protocol version ...: update the port* | Different builds of the port | Everyone updates to the same build. |
-| *Old party code: ask the host for the current one* | The host made a new code (*New party code*, or it set / removed a password), or the code is from an older build (every launch made a new code then) | Ask the host for the current code. The host's code otherwise stays the same from one launch to the next. |
-| *UDP to the guest is blocked* / *UDP to the host is blocked* (notice) | The guest's game has no public UDP address: the STUN on the host's party port gave it no answer, so the host knows only its private LAN address | Nothing at first: neither side rings until the guest's game gets an answer (it retries every 40 s) and the summon then starts by itself. If it stays blocked, restart the guest's game, or use a VPN (Tailscale) / let the other player host. |
-| *This party needs a password* (launcher hint, or in the game) | The host set a password; yours is empty | Enter the host's password (launcher *Password*, or *Party → Password* on the title screen). |
-| *Wrong party password (or an old party code ...)* | Your password differs from the host's | Same Password on all sides; copy the current code again. |
-| *Wrong or missing party password* | Joined by `host:port` and the password differs | Same Password on all sides. |
-| *Failed to acquire Bloodborne server information* when joining a host on the same network with the Internet code | The router cannot loop back to its own public address | Update the port (the guest now finds the host on the LAN by itself), or use the host's **LAN code**. |
+| *this host has no password: join with its party code* | You entered a plain `address:port` and the host has no password | Use the host's party code (or LAN code on a VPN), or ask the host to set a password. |
+| *This party needs a password* | The host set a password; yours is empty | Enter the host's password (launcher *Password*, or *Party > Password* on the title screen). |
+| *Wrong party password (or an old party code ...)* / *Wrong or missing party password* | Password differs, or the code is from an earlier hosting session | Same password on all sides; ask for the current code. After 5 wrong tries in a minute the host ignores you for a while. |
+| *Old party code: ask the host for the current one* | The host made a new code, or set / removed a password | Ask the host for the current code. |
 | *the name X is already in the party* / *invalid name* | Duplicate or invalid name | Pick another name (1-16 of A-Z a-z 0-9 _ -). |
 | *the party is full* | Max players reached | Raise Max players (on everyone's PC) or wait. |
 | *kicked by the host* | The host kicked you | Ask the host. |
-| Guest stays at *Connecting* | The host's port is not reachable | Host: check UPnP in the log, forward UDP+TCP 9307, allow the firewall prompt; or use the LAN code / a VPN. |
-| LAN: connected, the bell join times out (~48 s) again and again | 0.5.7 and older: the guest sent game traffic to the host's public address, which the router does not loop back | Update. Workaround for 0.5.7: the host sets *STUN server* to `off` and unchecks *UPnP* (or sets *Public address* to its LAN IP) for LAN play. |
-| Connected, but never summoned | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight | Finish the prologue; wait for the next bell (every 30 s); use *Rejoin* (*System → Party*). |
+| Guest stays at *Connecting* | The host's port is not reachable | Host: check UPnP in the log, forward UDP+TCP 9307, allow the firewall prompt on both PCs; strict router / provider NAT: use a VPN or let another player host. |
+| Connection warning: Windows Firewall has no rule / blocks the game | The firewall stops the party port | Allow `bbport.exe` for UDP and TCP on the network type you use (*Windows Security > Firewall > Allow an app through firewall*), on host and guests. |
+| Connection warning: nobody reached your party after 3 minutes | Host: no open port and no VPN in use | Forward UDP+TCP 9307 on the router, or host over a VPN. |
+| Connection warning: a guest is in the party but its game is not heard | Firewall on one side, or the VPN address is not the one used | Allow the game in the firewall on both PCs; on a VPN both set `BB_PARTY_LOCAL_IP` to their own VPN address ([steps](#hosting-over-a-vpn-radmin-vpn-hamachi-zerotier-tailscale)). |
+| Connection warning: you cannot reach the host | Wrong address, host not hosting, different VPN network, or the host's firewall | Check the host is running, the same VPN network, the address or code, and the host's firewall. |
+| *strict NAT (a strict router or your ISP's carrier NAT)* | Hole punching cannot reach you | Turn on UPnP or forward UDP+TCP 9307 on the router; if the router's WAN address differs from your public address, it is the provider: use a VPN or let another player host. |
+| *UDP to the guest is blocked* / *UDP to the host is blocked* | The guest's game has no public UDP address yet | Nothing at first: it retries every 40 s and the join then starts by itself. If it stays blocked, restart the guest's game, or use a VPN. |
+| *Failed to acquire Bloodborne server information* when joining a host on the same network with the Internet code | The router cannot loop back to its own public address | Use the host's **LAN code**, or update (the guest then finds the host on the LAN by itself). |
+| Friends on a VPN cannot join, or see each other frozen | The game uses the home address instead of the VPN one | Update to 0.7.6, or set `BB_PARTY_LOCAL_IP` ([steps](#hosting-over-a-vpn-radmin-vpn-hamachi-zerotier-tailscale)). |
+| Connected, but never brought in | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight / cutscene | Finish the prologue (or host turns on *Skip the prologue*); wait; use *Rejoin* (*System > Party*). |
+| Brought in, but the worlds look different ("Your save is in NG+..." notice) | Players are in different New Game+ cycles | Normal: you play the host's world at its cycle; see [New Game+](#after-an-ending-new-game). |
 | No code under *Internet code* / *LAN code* | The game has not started hosting yet | Wait until the game is at the title screen; check the log for `Party:` errors. |
-| Save looks wrong after a session | - | Restore a backup (above) and report it with the logs. |
+| Save looks wrong after a session | - | Use *Undo last party session*, or restore a backup ([above](#saves-and-backups)), and report it with the logs. |
 
-When reporting a problem, include `launcher.log` (and `out\run.log` if present) from every
-player, and say who was the host.
+When reporting a problem, include the net_doctor reply (with `--redactnames --redactips` if you
+post publicly), and the logs: launcher *Advanced / Debug* > **Save support bundle** on every
+player's PC (passwords, codes and addresses are removed), and say who was the host and which
+step each player reached. Before playing, *Party logging: Verbose* helps; press **F9** at the
+moment it happens to mark the logs.
 
 ## Known limitations
 
-- **2-PC LAN (first real session, 0.5.7):** worked with the host's STUN server `off` and UPnP off.
-  The summon took ~63 s from the host opening the party to the cooperator arriving (~20-30 s on
-  one PC). Open item.
-
-- **Not tested between two PCs.** Everything so far ran on one PC with several game copies; real
-  Internet connections, routers and firewalls have not been tried.
-- A full campaign has not been played through as a party. Several parts (guest respawn, open
-  world, refills, the progress and item sharing during a real session, endings for guests) are
-  built and unit-tested but have not run in a real two-player session yet.
-- Travel is "follow and rejoin": guests load separately and are summoned again after the host's
-  lamp trips, deaths and area changes. A shared seamless loading screen is not planned for now.
-- A first boss fight with an intro cutscene starts with the host; otherwise anyone may enter a boss fog first. In the host's Hunter's Dream a guest can level up at the
-  Doll and use the Bath Messengers' shops, the Insight shop, the workbench and storage on its own
-  character; lamps and headstones stay host-only for now (experimental opt-in `BB_PARTY_GUEST_LAMPS=1`).
-- NPC quests are not shared by default; dialogue gifts from NPCs are not handled.
-- Chalice Dungeons: checked live only with the fixed Pthumeru dungeon; Root and glyph dungeons are expected to work but are untested.
-- 4 players: experimental, no slot for invaders.
-- An item a guest picks up in the host's world just before a crash may be given twice.
-- The online play of the original game (PSN messages, bloodstains, invasions from strangers) is
-  not available; the party only connects the players who have the code.
+- **Four players is experimental.** The game was made for three; there is no slot for invaders,
+  and it has had less testing than 2 and 3 players.
+- **Chalice Dungeons**: the fixed Pthumeru dungeons have been played together; **Root (randomly
+  generated) and glyph dungeons use the host's dungeon the same way but have not been checked in
+  a real session yet.** Bringing a dungeon home to a guest's altar is proven for the first layers; deeper
+  layers and a guest whose altar is full (six dungeons) are not.
+- **Mixed New Game+ cycles**: in the host's world everyone plays at the host's cycle, while each
+  save keeps its own. The game tells you; it is not something to fix.
+- **Strict NAT / carrier NAT**: two players behind strict or provider NATs, with no IPv6 and no
+  reachable member, cannot connect directly. Use a VPN (Radmin VPN, Hamachi, ZeroTier,
+  Tailscale) or let a player with an open port host. The Windows Firewall must allow the game on
+  every PC; the game warns but never changes your firewall.
+- **Real-network testing is limited.** Two long Internet sessions and a growing number of player
+  reports; the fixes since the last long session were tested on one PC and on LANs. Please send
+  support bundles when something goes wrong.
+- A first boss fight with Ebrietas, Lady Maria or Laurence starts only with what the host does in
+  their room. Brador and the Fishing Hamlet's hunters are not tried in a real session.
+- Travel is "follow and rejoin"-style: a trip takes a loading screen, and guests that load
+  separately arrive a moment later. A shared seamless loading screen is not planned.
+- The Bath Messengers can pop in and out for a player watching while another browses their shop.
+- The online play of the original game (PSN messages, bloodstains of strangers, invasions) is not
+  available; the party only connects the players who have the code.
 
 For developers: the design and status are in [PARTY_COOP_PLAN.md](PARTY_COOP_PLAN.md) and
 [party/](party); test and debug switches in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).
