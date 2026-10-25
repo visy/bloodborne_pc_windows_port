@@ -4553,6 +4553,7 @@ def check_cpr(v, L):
         lamp = [s.flag(i) for i in (14107840, 14107850, 14107851, 74100202)]
         v.step("cpr the guest's save: the lit lamp 2902952's flags in slot 1", all(lamp), str(lamp))
         v.step("cpr the guest's save: lamp 2902950 (not reached) stays unlit in slot 1", not s.flag(74100200), "")
+        v.step("cpr the guest's save: the layer 1 boss flag 12901686 set in slot 1 (the host's kill)", s.flag(14101686), "")
     else:
         v.step("cpr the guest's save was kept", False, "missing %s" % keep)
     check_common(v, L, "cpr")
