@@ -2783,9 +2783,10 @@ def phase_pvd(only):
 # Chamber lamp (pvd's spot). The guest sets its own HP to 250 of its 503 (the 30 % cut of 719), then the host flips
 # friendly fire on / off / on (host_rule, live), the rule off and on while PvP is on, and PvP off at the end. On
 # every flip the guest's game must log `phantom health: lifted: full health in PvP` / `on, the game's 30 % cut`
-# and `HP kept at its fraction: a/b -> c/d` with c = a * d / b rounded (250/503 -> 357/719, back to 250/503); the
+# and `HP kept at its fraction: a/b -> c/d` with c = a * d / b rounded (260/503 -> 372/719 and back; the game
+# alone had 476/719: it adds the max difference when the max grows and keeps the points when it shrinks); the
 # host's own HP is never touched; the host's copy of the guest (BB_PARTY_LEVELSYNC_LOG, every 5 s) shows the
-# guest's max. Screenshots (every 10 s): the guest's HP bar before and after each flip.
+# guest's bar. Screenshots (--every 5): the guest's HP bar before and after each flip.
 PVH_FLIPS = [("party_friendly_fire", 1), ("party_friendly_fire", 0), ("party_friendly_fire", 1),
              ("party_pvp_full_hp", 0), ("party_pvp_full_hp", 1), ("party_friendly_fire", 0)]
 PVH_GAP = 30
@@ -5765,13 +5766,16 @@ def check_pvh(v, L):
         v.step("pvh flip %d: the guest's HP %d/%d -> %d/%d keeps the fraction (expected %d) and the max %s" %
                (k + 1, a, b, c, d, expect, "grew" if lifted else "shrank"),
                c == expect and (d > b if lifted else d < b), kept[1][:140])
-        # The host's copy of the guest: its max after the flip is the guest's own (the HUD bars agree).
+        # The host's copy of the guest: its max after the flip is the guest's own within 1 % (the game's player
+        # sync carries it with a few points of noise: 719 shows as 719-723, 503 as 503-506; live 2026-10-25) and
+        # its HP the guest's within 2 % (the two logs are up to 0.5 s apart), so the HUD bars agree.
         hv = [x for x in pvh_hp(L, 0, False, t + 1, t + PVH_GAP - 2)]
         gv = [x for x in pvh_hp(L, 1, True, t + 1, t + PVH_GAP - 2)]
-        v.step("pvh flip %d: the host's view of the guest's max HP is the guest's (%s vs %s)" %
-               (k + 1, [x[2] for x in hv][-2:], [x[2] for x in gv][-2:]),
-               bool(hv) and bool(gv) and hv[-1][2] == gv[-1][2] and hv[-1][1] == gv[-1][1],
-               "host sees %s, guest has %s" % (hv[-1:], gv[-1:]))
+        close = bool(hv) and bool(gv) and abs(hv[-1][2] - gv[-1][2]) <= gv[-1][2] // 100 + 1 and \
+            abs(hv[-1][1] - gv[-1][1]) <= gv[-1][2] // 50 + 1
+        v.step("pvh flip %d: the host's view of the guest's HP bar is the guest's (host %s, guest %s)" %
+               (k + 1, ["%d/%d" % (x[1], x[2]) for x in hv][-1:], ["%d/%d" % (x[1], x[2]) for x in gv][-1:]),
+               close, "host sees %s, guest has %s" % (hv[-1:], gv[-1:]))
     none_of(v, L, "pvh the host's own HP never written by the keeper", r"phantom health: HP kept at its fraction", insts=(0,))
     none_of(v, L, "pvh no failed HP write", r"phantom health: HP kept.*WRITE FAILED")
     check_common(v, L, "pvh")

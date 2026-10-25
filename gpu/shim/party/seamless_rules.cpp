@@ -922,8 +922,9 @@ std::uint64_t EmevdInstructionArgs(std::uint64_t event, std::uint64_t instr, std
 }
 
 // 0.7.6 (pvphp): the local hunter's HP across a phantom-rate change. The game recomputes the max HP from
-// the SpEffect rows (0x17e46e0) but keeps the HP points, so a guest at 490/490 would stand at 490/700 the
-// moment PvP lifts the cut, and 700/700 is clamped to 490/490 when it comes back. The keeper (pure:
+// the SpEffect rows (0x17e46e0) within a frame and adds the max difference to the HP when the max grows
+// (a guest at 245/490 stands at 455/700 the moment PvP lifts the cut; live: 260/503 -> 476/719) but keeps
+// the points when it shrinks (700/700 is clamped to 490/490, 350/700 stays 350/490). The keeper (pure:
 // party_levelsync_rules.h HpRatioKeeper) remembers the HP before the write and, once the max moved, writes
 // the HP at the same fraction (245/490 -> 350/700 and back). Local chr only: a remote hunter's HP is its own
 // game's, sent over the game's own player sync. BB_PARTY_PVP_HP_KEEP=0 leaves the points as the game has

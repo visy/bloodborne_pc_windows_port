@@ -73,8 +73,9 @@ inline int HpAtRatio(int hp, int max, int new_max) {
 }
 
 /// Keeps the local hunter's HP fraction across the max-HP change a maxHpRate write brings. The game itself
-/// keeps the HP points: with the cut lifted 490/490 becomes 490/700 (a hunter at 70 %), with it back 700/700
-/// is clamped to 490/490 but 350/700 stays 350/490. Arm with the HP before the write; Track with the HP
+/// adds the max difference when the max grows (245/490 becomes 455/700, 65 %; live 2026-10-25: 260/503 ->
+/// 476/719) and keeps the points when it shrinks (700/700 is clamped to 490/490, 350/700 stays 350/490, 70 %):
+/// a switch would heal or hurt. Arm with the HP before the write; Track with the HP
 /// every frame after it: when the max changes, Track gives the HP to write (the last HP seen with the old
 /// max, at the same fraction of the new one) and disarms; a max that never changes (the host's own chr has
 /// no phantom effect; a reload) disarms after `kWindow` s. Pure (tests/test_party_levelsync.cpp).
