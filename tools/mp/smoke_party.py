@@ -2718,15 +2718,207 @@ def check_sj(v, L):
     check_common(v, L, "sj")
 
 
+# ---- Phase ou (0.7.6, guestmesh): short outages keep the session ----
+# A phone hotspot or a Hamachi relay freezes the link for 4-10 s now and then (player report
+# 2026-10-24: the guest's game ended the session and went home, rejoined, and again). Two players;
+# a symmetric total outage (BB_NET_SIM_OUTAGE_FILE: both games silent) of 4, 6, 8, 10 and 6 s with
+# 18 s of play between. Nobody may leave the room or be sent home, the party shows its short
+# "connection unstable" notice, and the guest still sees the host afterwards.
+OU_LENGTHS = [4000, 6000, 8000, 10000, 6000]
+OU_GAP_S = 18
+
+
+class OutageDriver:
+    """Writes the outage file (one shared by every instance) once the guest is in the host's world."""
+
+    def __init__(self, root, harness_log, lengths=OU_LENGTHS, gap_s=OU_GAP_S, first_s=20, join_rx="cooperators 0 -> 1",
+                 log_inst=0):
+        import threading
+        self.stop = False
+        self.harness_log = Path(harness_log)
+        self.root, self.lengths, self.gap_s, self.first_s = Path(root), lengths, gap_s, first_s
+        threading.Thread(target=self.run, args=(join_rx, log_inst), daemon=True).start()
+
+    def run(self, join_rx, log_inst):
+        f = self.root / "outage.txt"
+        f.unlink(missing_ok=True)
+        log = self.root / ("inst%d" % log_inst) / "run.log"
+        while not self.stop:  # the games started (their old run.log moved away), then the join
+            try:
+                if "instance 0 started" in self.harness_log.read_text(errors="replace"):
+                    break
+            except OSError:
+                pass
+            time.sleep(1)
+        while not self.stop:
+            try:
+                if join_rx.encode() in log.read_bytes():
+                    break
+            except OSError:
+                pass
+            time.sleep(1)
+        end = time.time() + self.first_s
+        for k, ms in enumerate(self.lengths):
+            while time.time() < end and not self.stop:
+                time.sleep(0.5)
+            if self.stop:
+                return
+            f.write_text("%d o%d" % (ms, k + 1))
+            end = time.time() + ms / 1000.0 + self.gap_s
+
+    def terminate(self):
+        self.stop = True
+
+
+def phase_ou(only):
+    return dict(
+        name="ou", seconds=330, count=2, headless=0,
+        env=["BB_NET_SIM=lat=20", "BB_NET_SIM_OUTAGE_FILE={root}/outage.txt", "BB_PARTY_HOLD_LOG=1"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_DIRECTOR_TEST=god"],
+        driver=lambda root, hl: OutageDriver(root, hl),
+        until=[r"0:outage file .*: %d o%d" % (OU_LENGTHS[-1], len(OU_LENGTHS))], until_hold=OU_GAP_S + 12,
+        crash=[],
+    )
+
+
+def check_ou(v, L):
+    j = need(v, L, "ou join: 2 players", 0, r"cooperators 0 -> 1")
+    if j is None:
+        check_common(v, L, "ou")
+        return
+    outs = L.all(0, r"outage file .*: \d+ o\d+", j)
+    v.step("ou %d outages ran" % len(OU_LENGTHS), len(outs) == len(OU_LENGTHS), "%d of %d" % (len(outs), len(OU_LENGTHS)))
+    none_of(v, L, "ou nobody leaves the room", r"left room|\(leave_room\)|LeaveRoom req", j, insts=(0, 1))
+    none_of(v, L, "ou the guest is not sent home", r"funnel: guest_sent_home|send-home|host lost .*home now|sent home", j, insts=(1,))
+    none_of(v, L, "ou the guest's game ends no session", r"notify_multi_play_error|session over|room_closed", j, insts=(1,))
+    need(v, L, "ou the party link held or came back", 1, r"back in the party after|outage over: the game session survived", j)
+    need(v, L, "ou short notice 'connection unstable'", 1, r"connection to .* unstable", j)
+    # (the host's chr being up after the last outage is read from the screenshots: the remote chrs line is only logged on changes)
+    check_common(v, L, "ou")
+
+
+# ---- Phase mesh (0.7.6, guestmesh): two guests that cannot reach each other keep seeing each other ----
+# Three players. Once both guests are in, the pair guest 1 <-> guest 2 is cut at the network (BB_NET_SIM
+# block=<the other guest's party port>, switched by BB_NET_SIM_BLOCK_FILE; the host's port stays open) for
+# 40 s, then opened. Each guest's path to the other must go through the host relay while it is cut,
+# both must still see the other (chr up, a position that is not the origin placeholder) at the end of the
+# cut, and the pair goes direct again some time after the path is back.
+MESH_CUT_AFTER_S, MESH_CUT_S, MESH_AFTER_S = 25, 40, 45
+
+
+class BlockDriver:
+    """Writes the block file (1 = the guest pair is cut, 0 = open) once guest 2 is in the party."""
+
+    def __init__(self, root, harness_log, join_rx=r"cooperators 1 -> 2", log_inst=0, after_s=MESH_CUT_AFTER_S, cut_s=MESH_CUT_S):
+        import threading
+        self.stop = False
+        self.root, self.harness_log = Path(root), Path(harness_log)
+        self.join_rx, self.log_inst, self.after_s, self.cut_s = join_rx, log_inst, after_s, cut_s
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def run(self):
+        f = self.root / "block.txt"
+        f.write_text("0")
+        log = self.root / ("inst%d" % self.log_inst) / "run.log"
+        while not self.stop:
+            try:
+                if "instance 0 started" in self.harness_log.read_text(errors="replace"):
+                    break
+            except OSError:
+                pass
+            time.sleep(1)
+        rx = re.compile(self.join_rx.encode())
+        while not self.stop:
+            try:
+                if rx.search(log.read_bytes()):
+                    break
+            except OSError:
+                pass
+            time.sleep(1)
+        for wait, val in ((self.after_s, "1"), (self.cut_s, "0")):
+            end = time.time() + wait
+            while time.time() < end and not self.stop:
+                time.sleep(0.5)
+            if self.stop:
+                return
+            f.write_text(val)
+
+    def terminate(self):
+        self.stop = True
+
+
+def phase_mesh(only):
+    return dict(
+        name="mesh", seconds=420, count=3, headless=1,
+        env=["BB_NET_SIM_BLOCK_FILE={root}/block.txt", "BB_PARTY_PEER_RELAY_HOLD_MS=12000",
+             "BB_PARTY_PEER_RELAY_STABLE_MS=4000", "BB_PARTY_PLACEHOLDER_HEAL=1", "BB_PARTY_HOLD_LOG=1"],
+        ienv=["0:BB_NET_SIM=lat=20", "1:BB_NET_SIM=lat=20,block={p2}", "2:BB_NET_SIM=lat=20,block={p1}",
+              "0:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_DIRECTOR_TEST=god", "2:BB_PARTY_DIRECTOR_TEST=god"],
+        driver=lambda root, hl: BlockDriver(root, hl),
+        until=[r"1:the block= ports are cut[\s\S]*direct again \(probes answered\)", r"2:the block= ports are cut[\s\S]*direct again \(probes answered\)"],
+        until_hold=MESH_AFTER_S - 20, crash=[],
+    )
+
+
+def _last_chrs(L, i, before):
+    hits = L.all(i, r"remote chrs: ", 0.0, before)
+    return hits[-1] if hits else None
+
+
+def check_mesh(v, L):
+    j = need(v, L, "mesh join: 3 players", 0, r"cooperators 1 -> 2")
+    if j is None:
+        check_common(v, L, "mesh")
+        return
+    for g, other in ((1, 2), (2, 1)):
+        cut = L.find(g, r"block file .*: the block= ports are cut", j)
+        v.step("mesh guest %d: the pair was cut" % g, cut, "+%.1f s" % cut[0] if cut else "no block file line")
+        if not cut:
+            continue
+        opened = L.find(g, r"block file .*: the block= ports are open", cut[0])
+        end = opened[0] if opened else 1e9
+        rel = need(v, L, "mesh guest %d: the path to guest %d moves to the host relay" % (g, other), g,
+                   r"path to .*through the host relay", cut[0], end)
+        last = _last_chrs(L, g, end)
+        ok = bool(last) and "no chr" not in last[1] and len(re.findall(r"\[mode \d 0x[0-9a-f]+ \(", last[1])) >= 2 and \
+            not re.search(r"\(-?0\.\d, -?0\.\d, -?0\.\d\)", last[1])
+        v.step("mesh guest %d: sees both others (chrs up, none at the origin) at the end of the cut" % g, ok,
+               last[1][:200] if last else "no remote chrs line")
+        need(v, L, "mesh guest %d: the pair goes direct again after the cut" % g, g, r"direct again \(probes answered\)", end)
+    none_of(v, L, "mesh nobody leaves the room", r"left room|\(leave_room\)", j, insts=(0,))
+    check_common(v, L, "mesh")
+
+
+# ---- Phase fp (0.7.6, guestmesh): a 4-player lobby with one guest behind a simulated NAT ----
+# Max players 4 on all four; guest 3 sits behind a simulated port-restricted NAT (BB_NET_SIM nat=1:
+# nothing gets in unsolicited). Player report 2026-10-25: two of three guests stuck loading with
+# "its UDP is not heard on the party port". All three must end up in the host's world.
+def phase_fp(only):
+    return dict(
+        name="fp", seconds=420, count=4, headless=2,
+        env=["BB_PARTY_MAX=4", "BB_PARTY_HOLD_LOG=1"],
+        ienv=["0:BB_NET_SIM=lat=20", "1:BB_NET_SIM=lat=20", "2:BB_NET_SIM=lat=20", "3:BB_NET_SIM=lat=20,nat=1"],
+        until=[r"0:cooperators 2 -> 3"], until_hold=15, crash=[],
+    )
+
+
+def check_fp(v, L):
+    need(v, L, "fp join: 4 players (host counts 3 cooperators)", 0, r"cooperators \d -> 3")
+    for g in (1, 2, 3):
+        need(v, L, "fp guest %d is in the host's world" % g, g, r"guest services: open: guest in the host's")
+    none_of(v, L, "fp no 'UDP is not heard'", r"its UDP is not heard|direct summon: FAILED", insts=(0, 1, 2, 3))
+    check_common(v, L, "fp")
+
+
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "nl": phase_nl, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "nl": phase_nl, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_altar": "cpa", "chalice_wipe": "clw", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "npc_lamp": "nl",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj"}
+          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "fourp_nat": "fp"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -2737,7 +2929,7 @@ GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest d
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iw ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_altar": r"^cpa ", "chalice_wipe": r"^clw ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "npc_lamp": r"^nl ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "scene_mirror": r"^sm ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "items_every": r"^ie ", "items_leak": r"^il ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "seam_rejoin": r"^sj ", "outage_short": r"^ou ", "guest_mesh": r"^mesh ", "fourp_nat": r"^fp "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -2811,6 +3003,9 @@ GROUP_UNTIL = {
     "travel_vote": TV_UNTIL,
     "limbo_leave": BL_UNTIL,
     "seam_rejoin": SJ_UNTIL,
+    "fourp_nat": [r"0:cooperators 2 -> 3"],
+    "guest_mesh": [r"1:the block= ports are cut[\s\S]*direct again \(probes answered\)", r"2:the block= ports are cut[\s\S]*direct again \(probes answered\)"],
+    "outage_short": [r"0:outage file .*: %d o%d" % (OU_LENGTHS[-1], len(OU_LENGTHS))],
 }
 # --only: seconds the run goes on after the group's lines (screenshots of the state they reach)
 GROUP_HOLD = {"host_death": 10, "wipe_late": 10}  # wipe_late: the fight opened by the walk-in on every screen  # the spectate on every screen (the guests' panels: "Spectating")
@@ -2872,7 +3067,7 @@ def run_phase(a, ph, out: Path):
             keep += ["%s=%s" % kv for kv in ph.get("ini_preset", {}).items()]
             ini.write_text("\n".join(keep) + "\n", encoding="utf-8")
     starts = {}
-    for i in range(3):
+    for i in range(4):
         p = root / f"inst{i}" / "run.log"
         # instances.py moves the old run.log to run.prev.log, unless something holds it open (then
         # it appends): remember the file id and size, and copy from there when it is the same file.
@@ -2891,10 +3086,18 @@ def run_phase(a, ph, out: Path):
     # skip / end path (its end actions still run); a phase that needs whole scenes sets full_scenes.
     if not ph.get("full_scenes") and not any(e.startswith("BB_TEST_REMO_SKIP_AFTER=") for e in ph["env"]):
         cmd += ["--env", "BB_TEST_REMO_SKIP_AFTER=5"]
+    sys.path.insert(0, str(HERE))
+    import instances as _inst  # the instance ports ({p0}..{p3}: a test aid naming a peer's party port)
+    port0 = _inst.base_port(root)
+
+    def subst(e):
+        for k in range(4):
+            e = e.replace("{p%d}" % k, str(port0 + k))
+        return e.replace("{root}", str(root))
     for e in ph["env"]:
-        cmd += ["--env", e.replace("{root}", str(root))]
+        cmd += ["--env", subst(e)]
     for e in ph["ienv"]:
-        cmd += ["--ienv", e.replace("{hold}", hold).replace("{root}", str(root))]
+        cmd += ["--ienv", subst(e.replace("{hold}", hold))]
     for w in ph.get("start_when", []):
         cmd += ["--start-when", w]
     for i in (ph.get("pads") or ((0,) if ph.get("pad") else ())):
@@ -2919,10 +3122,15 @@ def run_phase(a, ph, out: Path):
                                + ph.get("watch", []),
                                stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
+    driver = None
     try:
+        # a phase driver (ou: the outage file) starts with the games, like the shooter
+        driver = ph["driver"](root, out / "harness.log") if ph.get("driver") else None
         r = subprocess.run(cmd, env=env, stdout=open(out / "harness.log", "w"), stderr=subprocess.STDOUT)
     finally:
         shooter.terminate()
+        if driver:
+            driver.terminate()
         for h in held:
             h.close()
     print("[smoke] %s: harness exit %d after %.0f s" % (ph["name"], r.returncode, time.time() - t0), flush=True)
@@ -2950,7 +3158,7 @@ TS = re.compile(r"^\[\+ *([\d.]+)\] ")
 class Logs:
     def __init__(self, d: Path):
         self.lines = {}
-        for i in range(3):
+        for i in range(4):
             p = d / f"inst{i}.log"
             self.lines[i] = p.read_text(encoding="utf-8", errors="replace").splitlines() if p.exists() else []
 
@@ -5201,7 +5409,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "nl": lambda v, L, d: check_nl(v, L), "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
-          "eh": lambda v, L, d: check_eh(v, L)}
+          "eh": lambda v, L, d: check_eh(v, L), "ou": lambda v, L, d: check_ou(v, L), "mesh": lambda v, L, d: check_mesh(v, L), "fp": lambda v, L, d: check_fp(v, L)}
 
 
 def main():
@@ -5230,7 +5438,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "ld", "cl", "clg", "clw", "cpr", "cpa", "el", "lt", "bf", "ch",
-                                     "lp", "gd", "gh", "gm", "nl", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "eh", "bl", "sj")
+                                     "lp", "gd", "gh", "gm", "nl", "rt", "br", "sm", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "eh", "bl", "sj", "ou", "mesh", "fp")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
