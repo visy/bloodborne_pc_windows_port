@@ -1,7 +1,15 @@
 # netdoctor Discord bot
 
-`/netdoctor` runs the co-op connection doctor (`scripts/net_doctor.py`) on logs attached in Discord
-and replies with a plain-words diagnosis.
+The bot runs the co-op connection doctor (`scripts/net_doctor.py`) on logs posted in Discord and
+replies with a plain-words diagnosis:
+
+- `/netdoctor` with up to 5 log files attached to the command.
+- `/netdoctor-recent [minutes]`: every log file posted in the channel in the last N minutes (default
+  60), by anyone - players post their halves of a session in separate messages.
+- Right-click a message -> Apps -> **Diagnose logs**: that message's logs plus the logs posted 30
+  minutes around it (the reply is private).
+- Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
+  default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 
 - Attach the logs of **one session**: the host's and every guest's (up to 5).
 - In a channel the reply hides player names and public IP addresses.
@@ -12,13 +20,15 @@ and replies with a plain-words diagnosis.
 
 1. https://discord.com/developers/applications -> New Application -> name it (e.g. "Net Doctor").
 2. Bot -> Reset Token -> copy the token (keep it secret; never commit it).
-3. OAuth2 -> URL Generator: scopes `bot` and `applications.commands`; bot permissions `Send Messages`,
-   `Attach Files`, `Use Slash Commands`. Open the generated URL and add the bot to the server (a server
+3. Bot -> Privileged Gateway Intents: turn on **Message Content Intent** (needed to read log files
+   posted in ordinary messages). The other two privileged intents stay off.
+4. OAuth2 -> URL Generator: scopes `bot` and `applications.commands`; bot permissions `View Channels`,
+   `Read Message History`, `Send Messages`, `Attach Files`, `Add Reactions`, `Use Slash Commands`. Open the generated URL and add the bot to the server (a server
    admin has to do this).
-4. Optional: Discord settings -> Advanced -> Developer Mode, right-click the server -> Copy Server ID
+5. Optional: Discord settings -> Advanced -> Developer Mode, right-click the server -> Copy Server ID
    (makes the command appear at once instead of after up to an hour).
 
-No privileged intents are needed.
+If the bot was already invited, re-invite it with the new URL to add the extra permissions.
 
 ## 2. Run it on a Linux server
 

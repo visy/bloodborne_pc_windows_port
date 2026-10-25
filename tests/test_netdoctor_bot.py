@@ -30,3 +30,11 @@ def test_split_keeps_code_blocks_closed():
     assert all(len(p) <= 500 + 4 + 4 for p in parts)
     assert all(p.count("```") % 2 == 0 for p in parts)
     assert "".join(parts).count("x") == 5000
+
+
+def test_log_names():
+    for n in ("nightwatch-20261024_204859.log", "last_session.log", "previous_session(6).log",
+              "session-20261025-155742.log", "message(21).txt", "host_2048.log"):
+        assert bot.is_log_name(n), n
+    for n in ("screenshot.png", "saves.zip", "userdata0010", "notes.txt"):
+        assert not bot.is_log_name(n), n

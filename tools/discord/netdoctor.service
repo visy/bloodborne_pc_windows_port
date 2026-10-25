@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 EnvironmentFile=%h/.config/netdoctor/env
-ExecStart=%h/netdoctor-venv/bin/python %h/bbport/tools/discord/netdoctor_bot.py
+ExecStart=/bin/sh -c 'exec $HOME/netdoctor-venv/bin/python -u $HOME/bbport/tools/discord/netdoctor_bot.py >> $HOME/.config/netdoctor/bot.log 2>&1'
 Restart=on-failure
 RestartSec=10
 
