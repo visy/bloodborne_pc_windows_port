@@ -1451,7 +1451,9 @@ std::string DescribePlayerNumbers() {
     const u64 gdm = Slot(kSlotGameData);
     const u64 own = Field<u64>(gdm, 8), rows = Field<u64>(gdm, 0x10), occ = Field<u64>(gdm, 0x18);
     char b[96];
-    std::snprintf(b, sizeof b, "own %d (type %d)", own ? Field<int>(own, 0x10, -1) : -1, own ? Field<int>(own, 0xa4, -1) : -1);
+    const u64 pc = Field<u64>(Slot(kSlotWorldChrMan), 0x60);  // the local PlayerIns: its live chr type is +0x78
+    std::snprintf(b, sizeof b, "own %d (type %d, chr type %d)", own ? Field<int>(own, 0x10, -1) : -1,
+                  own ? Field<int>(own, 0xa4, -1) : -1, pc ? Field<int>(pc, 0x78, -9) : -9);
     std::string out = b;
     for (int i = 0; rows && i < 4; ++i) {
         const u64 r = rows + u64(i) * 0x6a0;
