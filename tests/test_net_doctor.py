@@ -44,7 +44,7 @@ def test_findings(tmp_path, capsys):
     assert "setx BB_PARTY_LOCAL_IP 26.121.14.68" in out       # host has Radmin but uses the LAN address
     assert "GuestB's game thinks HostA is at GuestB's own address" in out
     assert "never reaches the host" in out                    # UDP not heard
-    assert "strict NAT" in out
+    assert "strict NAT" not in out                            # host has an open port: the guest only reaches out
 
 
 def test_redaction(tmp_path, capsys):
@@ -53,3 +53,12 @@ def test_redaction(tmp_path, capsys):
     assert "Host (host)" in out and "Guest 1 (guest)" in out
     assert "26.121.14.68" not in out and "26.x.x.x" in out
     assert "203.0.113.9" not in out
+
+
+def test_different_sessions(tmp_path, capsys):
+    h = tmp_path / "nightwatch-20261024_204859.log"   # closed 20:48
+    g = tmp_path / "nightwatch-20261024_210000.log"
+    h.write_text(HOST.replace("engine x", "engine x, 2026-10-24 20:39:01"), encoding="utf-8")
+    g.write_text(GUEST.replace("engine x", "engine x, 2026-10-24 20:54:08"), encoding="utf-8")
+    assert nd.main([str(h), str(g)]) == 0
+    assert "different sessions" in capsys.readouterr().out
