@@ -4,6 +4,7 @@
   /netdoctor log1 [log2 .. log5] [private]   logs attached to the command
   /netdoctor-recent [minutes] [private]      every log file posted in this channel lately, by anyone
   message menu "Diagnose logs"               that message's logs + logs posted 30 min around it
+  DM: send log files to the bot in a direct message; it answers privately (with names and IPs)
   auto (NETDOCTOR_AUTO): react (default) puts a stethoscope on messages with log files; reply also
   posts a redacted diagnosis of the channel's last 30 min of logs, 90 s after the last log arrived
 
@@ -14,8 +15,9 @@ Nothing is stored. Setup and running as a service: tools/discord/README.md.
 Environment:
   NETDOCTOR_TOKEN      the bot token (required; never commit it)
   NETDOCTOR_SCRIPT     path to net_doctor.py (default: ../../scripts/net_doctor.py from this file)
-  NETDOCTOR_GUILD      optional server id: slash commands appear there at once (global sync can
-                       take up to an hour)
+  NETDOCTOR_GUILD      optional server id: the server whose channels get the auto reaction (commands
+                       are global so they also work in DMs; a new global command can take a while to
+                       appear)
   NETDOCTOR_MAX_MB     largest attachment accepted, MiB (default 40)
   NETDOCTOR_AUTO       off | react | reply (default react)
 Needs the privileged Message Content intent (Developer Portal -> Bot) to read ordinary messages.
@@ -36,6 +38,7 @@ MAX_BYTES = int(float(os.environ.get("NETDOCTOR_MAX_MB", "40")) * 1024 * 1024)
 DISCORD_LIMIT = 2000
 MAX_LOGS = 8          # logs per diagnosis (one session: host + up to 3 guests, plus earlier halves)
 AUTO_DEBOUNCE_S = 90  # reply mode: wait this long after the last posted log
+DM_DEBOUNCE_S = 15    # a DM to the bot: wait for the rest of the files, then answer
 
 # File names players attach: bbport logs\last_session.log / previous_session.log / session-*.log,
 # Nightwatch nightwatch-*.log, and Discord's own name for pasted text (message.txt, message(3).txt).
@@ -146,7 +149,8 @@ def main():
         return found[-MAX_LOGS:]
 
     @tree.command(name="netdoctor", description="Explain co-op connection problems from a session's logs "
-                                                "(host + guests)", guild=guild)
+                                                "(host + guests)")
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @app_commands.describe(log1="host or guest log", log2="another player's log", log3="another player's log",
                            log4="another player's log", log5="another player's log",
                            private="only you see the reply, with names and IPs (default: public, hidden)")
@@ -164,7 +168,8 @@ def main():
         await send_text(interaction.followup.send, await run_on(atts, redact=not private), private)
 
     @tree.command(name="netdoctor-recent", description="Diagnose every party log posted in this channel "
-                                                       "recently (by anyone)", guild=guild)
+                                                       "recently (by anyone)")
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @app_commands.describe(minutes="how far back to look (default 60)",
                            private="only you see the reply, with names and IPs")
     async def netdoctor_recent(interaction: discord.Interaction, minutes: int = 60, private: bool = False):
@@ -176,7 +181,8 @@ def main():
             return
         await send_text(interaction.followup.send, await run_on(atts, redact=not private), private)
 
-    @tree.context_menu(name="Diagnose logs", guild=guild)
+    @tree.context_menu(name="Diagnose logs")
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def diagnose_menu(interaction: discord.Interaction, message: discord.Message):
         # this message's logs plus logs posted within 30 min around it (the other players' halves)
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -186,21 +192,26 @@ def main():
             return
         await send_text(interaction.followup.send, await run_on(atts, redact=False), True)
 
-    async def auto_reply(channel):
-        await asyncio.sleep(AUTO_DEBOUNCE_S)  # wait for the other players' logs
+    async def auto_reply(channel, dm=False):
+        await asyncio.sleep(DM_DEBOUNCE_S if dm else AUTO_DEBOUNCE_S)  # wait for the other logs
         pending.pop(channel.id, None)
         atts = await recent_logs(channel, 30)
         if atts:
+            # a DM is private: names and addresses stay in
             await send_text(lambda *a, ephemeral=False, **k: channel.send(*a, **k),
-                            await run_on(atts, redact=True), False)
+                            await run_on(atts, redact=not dm), False)
 
     @client.event
     async def on_message(message):
-        if message.author.bot or auto == "off" or message.guild is None:
+        if message.author.bot or not any(is_log_name(a.filename) for a in message.attachments):
             return
-        if guild and message.guild.id != guild.id:
+        if message.guild is None:  # a DM with the bot
+            old = pending.get(message.channel.id)
+            if old:
+                old.cancel()
+            pending[message.channel.id] = asyncio.create_task(auto_reply(message.channel, dm=True))
             return
-        if not any(is_log_name(a.filename) for a in message.attachments):
+        if auto == "off" or (guild and message.guild.id != guild.id):
             return
         try:
             await message.add_reaction("\N{STETHOSCOPE}")
@@ -218,9 +229,11 @@ def main():
               "bot with the OAuth2 URL (scopes bot + applications.commands)"), flush=True)
         try:
             if guild:
+                # 0.7.6 first registered the commands on the server only: remove that copy (it would
+                # show every command twice next to the global ones)
+                tree.clear_commands(guild=guild)
                 await tree.sync(guild=guild)
-            else:
-                await tree.sync()
+            await tree.sync()
         except discord.Forbidden:
             print(f"cannot register commands in server {guild.id if guild else '(global)'}: the bot is not in it "
                   f"or was invited without the applications.commands scope; check NETDOCTOR_GUILD and re-invite",

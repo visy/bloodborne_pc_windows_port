@@ -8,6 +8,8 @@ replies with a plain-words diagnosis:
   60), by anyone - players post their halves of a session in separate messages.
 - Right-click a message -> Apps -> **Diagnose logs**: that message's logs plus the logs posted 30
   minutes around it (the reply is private).
+- DM: send log files to the bot in a direct message; it answers privately, with names and
+  addresses (the commands work in DMs too).
 - Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
   default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 
@@ -54,6 +56,9 @@ journalctl --user -u netdoctor -f   # log
 
 No systemd lingering (e.g. no polkit, `loginctl enable-linger` fails)? Use cron instead of the
 service: `crontab -e` and add the two lines from the top of `tools/discord/keepalive.sh`.
+
+Housekeeping (hourly): `17 * * * * sh $HOME/bbport/tools/discord/cleanup.sh` in `crontab -e` removes
+upload folders a crash left in /tmp and trims the bot log past 10 MB.
 
 Update the doctor's rules: `git -C ~/bbport pull` (the bot loads `net_doctor.py` fresh on every
 command, no restart needed; restart after a change to the bot itself:
