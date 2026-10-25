@@ -522,6 +522,14 @@ BB_COOP_SYSV void OwnWorldTypeHook(u64, u64, u64, u64, u64, u64) {
     if (!pgd) {
         return;
     }
+    static bool seeded = false;  // test aid (live proof offline): BB_OWNTYPE_TEST_SET=1 plants the saved value once
+    if (!seeded) {
+        seeded = true;
+        if (const char* t = std::getenv("BB_OWNTYPE_TEST_SET"); t && t[0] == '1') {
+            const int one = 1;
+            SafeWrite(pgd + 0xa4, &one, 4);
+        }
+    }
     const int flow = Field<int>(Slot(kSlotFlow), 0x84, -1), rem = Field<int>(pgd, 0xa4, 0), pending = Field<int>(gdm, 0x8c, -1);
     if (!ownworld::ClearRememberedType(flow, rem, pending)) {
         return;
@@ -11317,6 +11325,19 @@ bool SameMapLampWarp(std::uint32_t id, bool alone);
 bool SameMapStageWarp(std::uint32_t map, std::uint32_t point);
 } // namespace
 
+void InstallOwnWorldTypeGuard() {
+    static bool done = false;  // bbgpu_patch_image, once, every mode (a party save copied to offline play)
+    if (done) {
+        return;
+    }
+    done = true;
+    if (!HookPrologue(0x1939470, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
+                                  0xec, 0x18, 0x49, 0x89, 0xfe},
+                      &OwnWorldTypeHook, "own-world chr type (MoveMapStep step 0x1939470)")) {
+        Log("own-world chr type guard: NOT installed (bytes differ)");
+    }
+}
+
 void Init() {
     if (!Requested() || g_on.load()) {
         return;
@@ -11352,11 +11373,6 @@ void Init() {
     InstallCall(kLockSessionCall, kLockSession, reinterpret_cast<const void*>(&LockSessionHook), "B2 K10d boss-clear session lock");
     InstallCall(kFarewellCall, kLuaEventSchedule, reinterpret_cast<const void*>(&BossFarewellHook),
                 "B2 K10c boss-clear farewell message (guest)");
-    if (!HookPrologue(0x1939470, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83,
-                                  0xec, 0x18, 0x49, 0x89, 0xfe},
-                      &OwnWorldTypeHook, "own-world chr type (MoveMapStep step 0x1939470)")) {
-        Log("own-world chr type guard: NOT installed (bytes differ)");
-    }
     // Not B2-specific (B1 bell joins stream too): installed whenever B2 is.
     if (!HookPrologue(0x18cb0e0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x81,
                                   0xec, 0xf8, 0x07, 0x00, 0x00},
