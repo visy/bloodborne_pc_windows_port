@@ -65,6 +65,11 @@ static void test_tables() {
     CHECK(ItemLedgerIndex(23000) >= 0);  // Iosefka's Blood Vial: unique goods (maxNum 1), kept
     CHECK(ItemLedgerIndex(30000) >= 0 && ItemLedgerIndex(39000) >= 0);  // Tiny Music Box, Tonsil Stone
     CHECK(!ItemLotUnshared(31000) && !ItemLotUnshared(2400450) && !ItemLotUnshared(50000001));
+    // 0.7.6: a Caryll rune an NPC gives (34020 / 34040 / 43020) is a unique reward: every member gets it.
+    for (const std::int32_t lot : {34020, 34040, 43020}) {
+        CHECK(!ItemLotUnshared(lot));
+    }
+    CHECK(!ItemLotDenied(34020, 50001820) && !ItemLotDenied(43020, 50002260));
     CHECK(ItemLedgerIndex(17010) == kItemNone);    // repeatable (common 9100)
     CHECK(ItemLedgerIndex(43000) == kItemNone);    // repeatable (13501940)
     CHECK(ItemLedgerIndex(2400450) == kItemNone);  // flagged
@@ -480,6 +485,62 @@ static void test_ledger_seed() {
     CHECK(kItemLedgerSeeded == kItemLedgerBase + kItemLedgerSize - 1);
 }
 
+
+// Shop-gate repair (0.7.6): flags 5500-5521 left in a save by 0.7.4-era sessions are cleared unless
+// the weapon is owned (inventory or storage, any upgrade level); once per save; unknown never clears.
+static void test_shop_gate_repair() {
+    std::set<std::uint32_t> save;
+    for (std::uint32_t f = 5500; f <= 5521; ++f) {
+        save.insert(f);
+    }
+    auto is_set = [&save](std::uint32_t id) { return save.count(id) != 0; };
+    std::set<std::int32_t> held = {24010000 + 100 * 7};  // Uncanny Beast Cutter +7 (flag 5502)
+    auto owns = [&held](std::int32_t base) {
+        for (int lvl = 0; lvl <= kShopWeaponMaxLevel; ++lvl) {
+            if (held.count(base + 100 * lvl)) {
+                return 1;
+            }
+        }
+        return 0;
+    };
+    CHECK(ShopGateWeapon(5500) == 23010000 && ShopGateWeapon(5521) == 38020000 && ShopGateWeapon(5499) == 0 &&
+          ShopGateWeapon(5522) == 0);
+    ShopGateRepair r = ShopGatesToRepair(is_set, owns);
+    CHECK(!r.done && r.complete && r.clear.size() == 21);
+    CHECK(std::find(r.clear.begin(), r.clear.end(), 5502) == r.clear.end());  // the owned weapon's row stays
+    CHECK(std::find(r.clear.begin(), r.clear.end(), 5503) != r.clear.end());  // the Lost twin is not owned
+    // Owned at +0 and at the top level too.
+    held = {23010000, 38020000 + 1500};
+    r = ShopGatesToRepair(is_set, owns);
+    CHECK(r.clear.size() == 20 && std::find(r.clear.begin(), r.clear.end(), 5500) == r.clear.end() &&
+          std::find(r.clear.begin(), r.clear.end(), 5521) == r.clear.end());
+    // Owned weapon but its flag not set: nothing to do for it, never set by the repair.
+    save.erase(5500);
+    r = ShopGatesToRepair(is_set, owns);
+    CHECK(r.clear.size() == 20);
+    // A flag that is not set is never listed.
+    save = {5510};
+    held.clear();
+    r = ShopGatesToRepair(is_set, owns);
+    CHECK(r.clear == std::vector<std::int32_t>{5510});
+    // Unknown ownership: keep the flag and ask again; the other flags are still decided.
+    auto unknown = [](std::int32_t base) { return base == 27010000 ? -1 : 0; };
+    r = ShopGatesToRepair(is_set, unknown);
+    CHECK(!r.complete && r.clear.empty());
+    // The base-game Chalice weapons (pickup flags 5100-5282): same rule, an upgraded Saw Cleaver keeps 5100.
+    save = {5100, 5160, 5281, 5090, 5091, 5910};
+    held = {7010000 + 100 * 3};
+    r = ShopGatesToRepair(is_set, owns);
+    CHECK((r.clear == std::vector<std::int32_t>{5160, 5281}));  // progress gates (5090 / 5091 / 5910) never listed
+    CHECK(ShopGateWeapon(5100) == 7010000 && ShopGateWeapon(5282) == 22020000 && ShopGateWeapon(5090) == 0);
+    // Repaired already (the marker): no matter what is set or owned, nothing is cleared.
+    save = {5500, 5501, kShopGatesRepaired};
+    r = ShopGatesToRepair(is_set, owns);
+    CHECK(r.done && r.clear.empty());
+    // The marker is a bit nothing else uses.
+    CHECK(kShopGatesRepaired == kItemLedgerSeeded - 1);
+    CHECK(ItemLedgerCount() < std::size_t(kItemLedgerSize - 2));
+}
 
 static ItemApplyState Summoned() {
     ItemApplyState s;
@@ -1287,6 +1348,7 @@ int main() {
     test_tables();
     test_fit();
     test_ledger_seed();
+    test_shop_gate_repair();
     test_deny();
     test_classify();
     test_json();
