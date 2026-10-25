@@ -10,6 +10,14 @@ replies with a plain-words diagnosis:
   minutes around it (the reply is private).
 - DM: send log files to the bot in a direct message; it answers privately, with names and
   addresses (the commands work in DMs too).
+- Mentions and the automatic reaction work only in **threads and DMs** (big channels are left alone;
+  `NETDOCTOR_CHANNELS=<id,id>` in the env file adds ordinary channels). Slash commands work everywhere.
+- In a bug thread: mention the bot, e.g. `@Net Doctor Iosefka analyse` (any message mentioning her
+  counts, except a plain thanks/hello). It reads every log posted in the thread/channel,
+  groups them into sessions (same host, overlapping times) and posts one analysis per session. Mention
+  it again after more logs arrive, even hours later: a session that already has a post gets that post
+  edited, a new session gets a new post. The bot remembers who/when of each posted log and which post
+  belongs to which session in a SQLite file (`~/.config/netdoctor/netdoctor.db`).
 - Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
   default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 
@@ -18,6 +26,21 @@ replies with a plain-words diagnosis:
 - `private: True` shows the reply only to you, with names and addresses.
 - The bot keeps nothing: files go to a temporary folder and are deleted after the run.
 
+## Memory and lookup by reference
+
+Every analysis ends with `ref ND-xxxxxxxx`. The bot keeps, for 30 days and within a size cap (default
+256 MiB, never above 1 GiB, oldest first): each analysis text, which logs it used, and the log files
+themselves LZMA-compressed (about 14x smaller, deduplicated by content). On the server:
+
+```sh
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py --list
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d            # analysis + logs
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d --rerun    # unredacted rerun
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d --logs DIR # extract the logs
+```
+
+The file holds player names and logs: it is readable only by the bot's user (0600).
+
 ## 1. Create the bot (Discord Developer Portal)
 
 1. https://discord.com/developers/applications -> New Application -> name it (e.g. "Net Doctor").
@@ -25,7 +48,9 @@ replies with a plain-words diagnosis:
 3. Bot -> Privileged Gateway Intents: turn on **Message Content Intent** (needed to read log files
    posted in ordinary messages). The other two privileged intents stay off.
 4. OAuth2 -> URL Generator: scopes `bot` and `applications.commands`; bot permissions `View Channels`,
-   `Read Message History`, `Send Messages`, `Attach Files`, `Add Reactions`, `Use Slash Commands`. Open the generated URL and add the bot to the server (a server
+   `Read Message History`, `Send Messages`, `Send Messages in Threads`, `Attach Files`, `Add Reactions`,
+   `Use Slash Commands`. Forum / bug channels with their own permission overrides must allow the bot's
+   role there too. Open the generated URL and add the bot to the server (a server
    admin has to do this).
 5. Optional: Discord settings -> Advanced -> Developer Mode, right-click the server -> Copy Server ID
    (makes the command appear at once instead of after up to an hour).
