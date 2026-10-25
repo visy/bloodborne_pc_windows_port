@@ -388,6 +388,12 @@ def main():
         except discord.HTTPException:
             pass
 
+    def mentioned(message):
+        """The bot itself, or its own managed role (Discord offers both when you type @Net Doctor...)."""
+        if client.user in message.mentions:
+            return True
+        return any(getattr(r.tags, "bot_id", None) == client.user.id for r in message.role_mentions if r.tags)
+
     def small_place(channel):
         """Threads, DMs and channels listed in NETDOCTOR_CHANNELS: the bot answers mentions and reacts there.
         Big ordinary channels are left alone (slash commands still work everywhere)."""
@@ -402,9 +408,20 @@ def main():
         ours = message.guild is None or not guild or message.guild.id == guild.id
         if not ours or not small_place(message.channel):
             return
-        if client.user in message.mentions and wants_analysis(message.content, client.user.id):
-            async with message.channel.typing():
-                await analyse_channel(message)
+        if mentioned(message) and wants_analysis(message.content, client.user.id):
+            print(f"mention in {type(message.channel).__name__} {message.channel.id}", flush=True)
+            try:
+                async with message.channel.typing():
+                    await analyse_channel(message)
+            except discord.Forbidden as e:
+                print(f"no access in {message.channel.id}: {e}", flush=True)
+                try:
+                    await message.reply("I can't read this place's history or post here. A server admin needs "
+                                        "to give me View Channel, Read Message History, Send Messages and Send "
+                                        "Messages in Threads here (channel/forum permissions).",
+                                        mention_author=False)
+                except discord.HTTPException:
+                    pass
             return
         if not any(is_log_name(a.filename) for a in message.attachments):
             return
