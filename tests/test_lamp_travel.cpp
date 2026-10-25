@@ -147,6 +147,13 @@ int main() {
         CHECK(calls_a == 1);
     }
 
+    // 0.7.6: a guest's lamp stays closed while an NPC talk plays and for a second after it.
+    CHECK(!GuestLampMayOpen(0.0));                      // a talk plays
+    CHECK(!GuestLampMayOpen(0.4));                      // just stopped: the talk's last press
+    CHECK(!GuestLampMayOpen(kGuestLampAfterTalkGrace - 0.01));
+    CHECK(GuestLampMayOpen(kGuestLampAfterTalkGrace));  // later: the player's own press at the lamp
+    CHECK(GuestLampMayOpen(1e9));                       // no talk yet
+
     if (g_failures) {
         std::fprintf(stderr, "%d failure(s)\n", g_failures);
         return 1;
