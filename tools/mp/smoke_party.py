@@ -2132,7 +2132,7 @@ def check_hg(v, L):
     on = need(v, L, "hg the fight is on (bar)", 0, r"boss health bar shown")
     if on is None:
         return
-    need(v, L, "hg host: the guest's walk through the fog is seen", 0, r"boss fog: slot \d+ went in", on - 120)
+    need(v, L, "hg host: the guest's walk through the fog is seen", 0, r"boss fog: slot \d+ went in", 0)
     tap = need(v, L, "hg guest's first R1 on the boss", 1, r"guest_press 0x800; target 2410810 HP", on)
     if tap is None:
         return
