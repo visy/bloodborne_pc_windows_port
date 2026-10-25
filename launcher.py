@@ -182,7 +182,7 @@ PARTY_INI_FLAGS = [
     ("party_pings", True), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
-    ("party_toasts", True), ("party_guest_lamps", True),
+    ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
 ]
 
 # ---- The party settings tabs (0.7.3, user request): the Party tab holds hosting / joining /
@@ -421,6 +421,12 @@ MY_PARTY_TAB = [
         ("check", "party_toasts", "Join/leave notices",
          "A short notice in a top corner when a hunter joins or leaves the party. Also in the game: "
          "System > My party: Look & notices. Default: on (bbport.ini party_toasts)."),
+        ("check", "party_conn_warnings", "Connection warnings",
+         "A notice on the screen, with the fix, when the Windows Firewall, the router or a wrong address "
+         "keeps the party from working: nobody reaches your party after a few minutes, a guest's game is "
+         "not heard, or you cannot reach the host. Each at most once per session; the log has the same "
+         "line. Your own setting, not a host rule. Also in the game: System > Party members. "
+         "Default: on (bbport.ini party_conn_warnings)."),
         ("check", "party_npc_talk", "Share NPC dialogue",
          "When a companion near you talks to an NPC you get the conversation too: "
          "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
@@ -2649,6 +2655,7 @@ class BloodborneLauncher(tk.Tk):
             value=ini_flag(bbport_ini_path(), "party_guests_bring_lamps", False))
         # 0.7.3: join/leave notices and guests using lamps (game settings, also in the game's menus)
         self.party_toasts = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_toasts"))
+        self.party_conn_warnings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_conn_warnings"))
         self.party_guest_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_guest_lamps"))
         # The Party Rules / My Party checkboxes that are one bbport.ini key each (PARTY_INI_FLAGS)
         self.party_flag_vars = {key: getattr(self, key) for key, _ in PARTY_INI_FLAGS}

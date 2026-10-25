@@ -459,6 +459,7 @@ before anyone is in the game):
 - **Friendly fire / PvP** (host's switch, off by default): party members can hurt each other, both
   ways, like invaders (*System → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
   gets no Echoes or Insight.
+- **Connection warnings.** When the Windows Firewall, the router or a wrong address keeps your party from working (nobody reaches a host without an open port, a guest's game is not heard, a guest cannot reach the host), the game shows a notice with the shortest fix and logs it; at most once per cause per session (*System > Party members > Connection warnings*, on by default).
 - **Party HUD.** Party members and events in a small HUD; each companion's ping in ms after the name (green / yellow / red; *My party: Look & notices > Ping in the party list*, on by default).
 - **Every party setting in the game's own menu, in two groups.** *Party rules* holds what the host
   decides for the whole party: *Party rules: World* (enemies the party killed stay dead, gathering the

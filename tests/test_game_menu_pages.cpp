@@ -363,9 +363,10 @@ static void Party() {
     // Member rows: one per member, name, state and ping; the host's own row cannot be kicked.
     int visible = 0;
     for (const P::Row& row : members.rows) visible += !row.visible || row.visible();
-    // three members and the last event (0.7.3: the notices on My party: Look & notices, the DHT
-    // switch on Party network)
-    assert(visible == 4);
+    // three members, the last event and (0.7.6) the connection warnings switch (0.7.3: the notices on
+    // My party: Look & notices, the DHT switch on Party network)
+    assert(visible == 5);
+    RowNamed(members, u"Connection warnings");
     const P::Row& hud = RowNamed(PageNamed(u"My party: Display"), u"Party HUD");
     assert(hud.visible && hud.visible());
     RowNamed(PageNamed(u"Party network"), u"Find via public DHT");

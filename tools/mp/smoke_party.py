@@ -3288,6 +3288,15 @@ def check_summonfail(v, L):
                    "left at +%.1f s: %s" % (left[0], left[1][:150]) if left else "no leave")
             unr = L.find(0, r"slot 1 \(.*\) (refused \(its last join failed|reports a failure: its UDP is not heard)", f - 5)
             v.step("summonfail: the unreachable guest 1 is held back", unr, unr[1][:150] if unr else "no hold line")
+    # 0.7.6 connection warnings: the host names the guest whose UDP is not heard once it failed twice
+    fails = L.all(0, r"slot 1 \(.*\) reports a failure: its UDP is not heard", f - 5)
+    warn = L.find(0, r"connection warning: .* is in the party but its game is not heard", f - 5)
+    if len(fails) >= 2:
+        v.step("summonfail: the host warns about the guest whose UDP is not heard (%d failure reports)" % len(fails), warn,
+               warn[1][:200] if warn else "no 'connection warning' line")
+    else:
+        v.step("summonfail: connection warning (info: %d failure report(s), 2 needed)" % len(fails), True,
+               warn[1][:200] if warn else "none")
     stuck = L.all(0, r"refused \(the host's game is summoning a sign", f)
     v.step("summonfail: sign-summon refusals after the failure (info)", True, "%d" % len(stuck))
     check_common(v, L, "summonfail")

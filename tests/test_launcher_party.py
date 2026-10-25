@@ -591,6 +591,14 @@ class DiagnosticsAndPingToggles(unittest.TestCase):
         self.assertEqual(self.L.settings_env({}).get("BB_HEAP_WATCH_LOG"), "0")
         self.assertEqual(self.L.settings_env({"feat_heap_watch_log": True}).get("BB_HEAP_WATCH_LOG"), "1")
 
+    def test_conn_warnings_flag_default_on(self):
+        self.assertIn(("party_conn_warnings", True), self.L.PARTY_INI_FLAGS)
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "bbport.ini"
+            self.assertTrue(self.L.ini_flag(ini, "party_conn_warnings"))
+            self.L.update_ini(ini, {"party_conn_warnings": "0"})
+            self.assertFalse(self.L.ini_flag(ini, "party_conn_warnings"))
+
     def test_hud_ping_flag_default_on(self):
         self.assertIn(("party_hud_ping", True), self.L.PARTY_INI_FLAGS)
         with tempfile.TemporaryDirectory() as d:
