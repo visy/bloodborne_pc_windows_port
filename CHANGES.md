@@ -4,6 +4,9 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.6 (unreleased)
 
+- **Fixed: after the party finishes the game, the host is no longer stuck "in the prologue" in New Game+** (player report: after the ending the host walked around Central Yharnam but never became ready, so nobody could summon or be summoned). A new cycle resets the starting weapon picks; the party start check waited for both weapons forever. In New Game+ it now counts the first Hunter's Dream visit as over once you are out of the Dream, whatever you picked.
+- **Fixed: one party ending moves a guest's save forward exactly one New Game+ cycle** (player report: a guest ended one cycle ahead of the party). The ending replay's cycle step is now remembered per ending, also across a game restart in the staff roll, and a repeated report of the same ending is ignored.
+- **Changed: a guest summoned into a host at another New Game+ cycle is told so** ("Your save is in NG+2, the host's world is NG+1..."), instead of only a log line.
 - **Fixed: shop items unlocked by beating a Chalice Dungeon boss now unlock for every party member** (player report: after the host beat the Keeper of the Old Lords only the host's Insight shop (Bath Messenger) offered the Bone Ash set; the guest never got it). The unlock flags of the Bone Ash set and the Madman set were filed with the item pickups, which only reach a guest together with an item, and no item carries them. They are now shared progress like the other shop unlocks (Gascoigne's, Henryk's, the blood stones): they come to guests when the host sets them, in the guest's own save too.
 
 ## 0.7.5
