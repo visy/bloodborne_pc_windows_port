@@ -117,6 +117,51 @@ class PortSuffix(unittest.TestCase):
         self.assertEqual(h("26.41.7.9", ""), "26.41.7.9:9307")
         self.assertEqual(h("26.41.7.9", "abc"), "26.41.7.9:9307")
 
+    def test_offline_vpn_is_not_offered(self):
+        """0.7.6: Windows keeps an overlay VPN's adapter Up with its address while the VPN app is off."""
+        sel = self.L.select_vpn_adapter
+        still = [1380, 23, 0]  # measured on an offline Radmin: nothing arrives
+        off_radmin = dict(RADMIN, vendor="offline", rx1=still, rx2=still)
+        on_radmin = dict(RADMIN, vendor="online")
+        self.assertIsNone(sel([LAN, off_radmin], "auto"))
+        self.assertIsNone(sel([LAN, off_radmin], "radmin"))
+        self.assertIs(sel([LAN, on_radmin], "auto"), on_radmin)
+        # no vendor status: the counters decide
+        quiet = dict(HAMACHI, vendor="", rx1=still, rx2=still)
+        busy = dict(HAMACHI, vendor="", rx1=still, rx2=[1500, 24, 0])
+        self.assertIsNone(sel([LAN, quiet], "auto"))
+        self.assertIs(sel([LAN, busy], "auto"), busy)
+        self.assertIs(sel([LAN, quiet], "hamachi"), quiet)  # a named adapter is trusted on quiet counters
+        self.assertIs(sel([LAN, HAMACHI], "auto"), HAMACHI)  # no evidence at all: trusted
+        self.assertFalse(self.L.vpn_adapter_offline(LAN))
+        self.assertTrue(self.L.vpn_adapter_offline(off_radmin))
+
+    def test_vendor_outputs(self):
+        L = self.L
+        log = ("2026.10.23 19:58:26.453\tINFO\tConnected to server (17)\n"
+               "2026.10.23 19:59:19.382\tINFO\tConnected to 154680149/'x' via TcpRelay/outgoing\n"
+               "2026.10.23 21:37:57.218\tINFO\tSwitched Off\n"
+               "2026.10.23 21:37:57.219\tINFO\tDisconnected from server(code:4)\n")
+        self.assertEqual(L.vpn_state_from_radmin_log(log), "offline")
+        self.assertEqual(L.vpn_state_from_radmin_log(log + "t\tINFO\tConnected to server (3)\n"), "online")
+        self.assertEqual(L.vpn_state_from_radmin_log("t\tINFO\tConnected to 1/'x' via TcpRelay\n"), "")
+        self.assertEqual(L.vpn_state_from_radmin_log(""), "")
+        self.assertEqual(L.vpn_state_from_tailscale_json('{"BackendState": "Running"}'), "online")
+        self.assertEqual(L.vpn_state_from_tailscale_json('{"BackendState":"Stopped"}'), "offline")
+        self.assertEqual(L.vpn_state_from_tailscale_json('{"BackendState":"NeedsLogin"}'), "offline")
+        self.assertEqual(L.vpn_state_from_tailscale_json('{"BackendState":"Starting"}'), "")
+        self.assertEqual(L.vpn_state_from_tailscale_json("not json"), "")
+        self.assertEqual(L.vpn_state_from_zerotier_info("200 info 8056c2e21c 1.12.2 ONLINE"), "online")
+        self.assertEqual(L.vpn_state_from_zerotier_info("200 info 8056c2e21c 1.12.2 OFFLINE"), "offline")
+        self.assertEqual(L.vpn_state_from_zerotier_info("missing authtoken"), "")
+        d = L.vpn_decide_online
+        self.assertTrue(d("online", [1, 1, 0], [1, 1, 0]))
+        self.assertFalse(d("offline", [1, 1, 0], [9, 9, 9]))
+        self.assertFalse(d("", [1, 1, 0], [1, 1, 0]))
+        self.assertTrue(d("", [1, 1, 0], [1, 1, 1]))
+        self.assertTrue(d("", None, None))
+        self.assertTrue(d("", [1, 1, 0], [1, 1, 0], counters_trusted=False))
+
 
 if __name__ == "__main__":
     unittest.main()
