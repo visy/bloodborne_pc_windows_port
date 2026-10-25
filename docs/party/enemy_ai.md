@@ -18,7 +18,7 @@ chr's handle is in the WorldChrMan `+0xA40` owner table, or when the chr's vfunc
 the NetAI otherwise. A client's game asks for it **every frame for every enemy** (live: 8640 calls per
 second for 240 enemies at 36 fps).
 
-Live probe (`BB_PARTY_AI_LOG=1`, a lone guest in the Cathedral Ward, the host in the Dream):
+Live probe (`BB_PARTY_AI_LOG=1`, smoke phase `la`, a lone guest in the Cathedral Ward, the host in the Dream):
 the guest's enemies are built on the Com manipulator and the first chooser call puts them on NetAI
 two seconds after the arrival (`owner table 0, vfunc +0x4C8 0`); nothing ever sends them a frame, so
 they stand still. The host's game did not have the map, so there is no AI owner at all. The same
@@ -59,10 +59,23 @@ event ChangeTarget path 0x1299CD0, once a second, `BB_PARTY_LIMBO_RETARGET=0` of
 Reproduced here (smoke phase `ba`, 2 players, Cleric Beast, the host frail so that the boss itself
 kills it, the guest invincible beside the boss, `BB_PARTY_TARGET_ANIM=1`): **with and without** the
 retarget the boss kept acting after the host's death in limbo (30-60 animation changes in 100+ s,
-the attack combos 3000-3027) and walked 22 m to a guest who had moved away (closest 1.6 m inside
-45 s, retarget off). So the idle boss of the player's screenshot is **not reproduced** on one PC and
+the attack combos 3000-3027); in one extra run (retarget off) the guest moved 22 m away after the
+host's death and the boss walked to it (closest 1.6 m inside 45 s). So the idle boss of the player's screenshot is **not reproduced** on one PC and
 the retarget is not shown to be needed or to hurt; it stays as it is. What differs in the real
 session is unknown (no log came with the report): the build, the boss and whether the limbo path was
 taken at all (a host death with no boss bar up is the whole party's respawn load, the boss idles
 for the ~10 s of the death sequence by the game's own rule). The AI log switch above is for the next
 report: ask for `BB_PARTY_AI_LOG=1` and `BB_PARTY_TARGET_ANIM=1` logs of both games.
+
+## Evidence (one PC, 2 instances, loopback; agents/enemyai/smoke)
+
+* `la9` (fix on): the Ward enemy 2400421 (182 HP, awake, on a ledge 22 m from the lamp) beside the lone
+  guest: animations 0, 3011, 2603 (hit reaction), 3011, 3008, 0; the guest (frail test aid) went 340 HP -> 1
+  from its hit; the guest's R1 took the enemy from 182 to 84 HP.
+* `la10` (`BB_PARTY_LONE_AI=0`): the same enemy: animations 0, 3011 and then nothing, the guest never hurt.
+* Not every Ward enemy is awake: 2400350-352 and 2400220 sleep (chr entry +0x10 is 0, no animation at all,
+  also on a guest in a shared world with the host: `lb1`), 2400362 is a statue. The probe lists only the
+  active ones (+0x10 == 4); a lone guest's active enemies animate on its own game (`la8`: the anim ring
+  index of 2400421, 2400899, 2400422, 2400203 keeps advancing, manipulator Com).
+* Hand back is not exercised live: when the host reaches the guest's area the B2 re-join loads the older
+  world (fresh chrs); the unit test covers the take / keep / hand-back steps.

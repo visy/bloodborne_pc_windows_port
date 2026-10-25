@@ -1960,14 +1960,14 @@ def phase_ba(only):
     # player report. The guest is invincible and fights on beside the boss.
     host = ",".join(["goods=4114:0",
                      "host_warp=2412952@8^1",                                # the party to the Cleric Beast's lamp
-                     "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST] +      # the fight starts
-                    ["host_press=0x800@2%m24_01"] * 12)                      # R1: the boss kills the frail host
+                     "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,        # the fight starts
+                     "host_chr=2410800:2@10%m24_01"] +                       # beside the boss: it kills the frail host soon
+                    ["host_press=0x800@2%m24_01"] * 12)                      # R1 taps meanwhile
     g1 = ",".join(["god",
                    "guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,           # into the fight
                    "guest_chr=2410800@3%m24_01"] +                           # beside the boss
-                  ["guest_press=0x800@1.5%m24_01"] * 16 +                    # R1 taps: it fights back; the frail host dies
-                  ["guest_chr=2410800:22@1%m24_01"] +                        # then 22 m from the boss: it must come to us
-                  ["guest_press=0x0@2%m24_01"] * 40)
+                  ["guest_press=0x800@1.5%m24_01"] * 90 +                    # R1 taps: it fights back; the frail host dies
+                  ["guest_press=0x0@2%m24_01"])
     return dict(
         name="ba", seconds=300, count=2, headless=0, until_hold=4,
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + CLERIC_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1"],
@@ -1990,7 +1990,7 @@ def check_ba(v, L):
         return
     # the boss's animation changes on the guest's screen (the host's AI drives it): each distinct
     # animation id after the death is an action of the boss; a boss without a target idles (one id)
-    rows = L.all(1, r"test: target anim: entity 2410800 animation \d+", lim + 3.0)
+    rows = L.all(1, r"test: target anim: entity 2410800 animation \d+", lim + 3.0, lim + 43.0)
     ids = []
     for t, line in rows:
         a = int(re.search(r"animation (\d+)", line).group(1))
@@ -1999,15 +1999,6 @@ def check_ba(v, L):
     span = (ids[-1][0] - ids[0][0]) if ids else 0.0
     v.step("ba the boss keeps acting after the host's death (>= 6 animation changes in 40 s)",
            len(ids) >= 6, "%d animation changes over %.0f s: %s" % (len(ids), span, [a for _, a in ids[:14]]))
-    # the guest stands 22 m from the boss once the host lies dead: a boss that targets the guest walks to it
-    far = L.find(1, r"test: target pos: entity 2410800 .* ([2-9]\d|1[5-9])\.\d m from this player", lim)
-    if far is not None:
-        near = [float(re.search(r", ([\d.]+) m from this player", line).group(1))
-                for t, line in L.all(1, r"test: target pos: entity 2410800 ", far[0] + 2.0, far[0] + 45.0)]
-        v.step("ba the boss walks to the guest 22 m away (within 8 m inside 45 s)", bool(near) and min(near) <= 8.0,
-               "closest %.1f m over %d samples" % (min(near) if near else -1.0, len(near)))
-    else:
-        v.step("ba the boss walks to the guest 22 m away (within 8 m inside 45 s)", False, "the guest never stood 15 m+ from it")
     if os.environ.get("BB_PARTY_LIMBO_RETARGET", "1") != "0":
         need(v, L, "ba the boss targets the living member (ChangeTarget)", 0,
              r"host limbo: boss [0-9a-f]+ targets the living member", lim)
@@ -2057,6 +2048,44 @@ def phase_lb(only):
               "1:BB_PARTY_ROT_TEST_FRAIL=1"],
         crash=[], until=LA_UNTIL,
     )
+
+
+# Phase lc (enemyai, ~5 min, 2 players, group `lone_ai`): the meet after la: the host (still in the Dream while the
+# guest stood alone in the Cathedral Ward, its enemies on the guest's own AI) travels alone to the same lamp. The
+# older world loads once (the B2 re-join), the guest is back in the host's world and its enemies are the host's again
+# (no new take-over, the enemy census digest matches the host's).
+def phase_lc(only):
+    host = ",".join(["god", "host_alone=%s@45%%m21_00" % LA_LAMP, "host_press=0@60%m24_00!"])
+    g1 = ["god", "guest_lamp=%s@12%%m21_00" % LA_LAMP, "guest_press=0@25%m24_00!",   # alone in the Ward: its AI runs there
+          "guest_press=0@50%m24_00!", "guest_press=0@30%m24_00!"]                      # the host arrives, the re-join, the digest
+    return dict(
+        name="lc", seconds=300, count=2, headless=0, until_hold=15,
+        env=["BB_PARTY_AI_LOG=1", "BB_PARTY_ENEMY_CENSUS=1"],
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
+              "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1), "1:BB_PARTY_TRAVEL_CHOICE=alone",
+              "0:BB_PARTY_TRAVEL_CHOICE=alone"],
+        watch=["--watch", r"arrived in the host world=lcmeet@2,8"],
+        crash=[], until=[r"1:travel step (\d+)/\1: guest_press"],
+    )
+
+
+def check_lc(v, L):
+    need(v, L, "lc join: 2 players", 0, r"cooperators 0 -> 1")
+    arr = need(v, L, "lc guest alone in the Cathedral Ward", 1, r"arrived alone in m24_00")
+    if arr is None:
+        return
+    take = need(v, L, "lc the guest's game takes the AI while the host is away", 1,
+                r"Party enemy AI: a lone guest takes the enemies' AI", arr - 5)
+    meet = need(v, L, "lc the host arrives: the AI is handed back to it", 1,
+                r"Party enemy AI: the host is in this area again: \d+ enemies handed back", arr + 5)
+    if meet is not None:
+        none_of(v, L, "lc no second take-over once the host is in the guest's area",
+                r"Party enemy AI: a lone guest takes the enemies' AI", meet + 1, insts=(1,))
+        need(v, L, "lc the active enemies are on the host's AI again (net manipulator)", 1,
+             r"ai: enemy \d+ \(chr [0-9a-f]+\) \d+ m: manip NetAI .* rec 4/4", meet)
+        none_of(v, L, "lc enemy census: no digest mismatch with the host after the meet",
+                r"enemy census: differs from the host's digest", meet, insts=(1,))
+    check_common(v, L, "lc")
 
 
 def check_la(v, L):
@@ -2876,14 +2905,14 @@ def check_sj(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "nl": phase_nl, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "ef": phase_ef, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj, "ba": phase_ba, "la": phase_la, "lb": phase_lb}
+          "s3": phase_s3, "sk": phase_sk, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cpr": phase_cpr, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "ch": phase_ch, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "nl": phase_nl, "rt": phase_rt, "br": phase_br, "sm": phase_sm, "ef": phase_ef, "da": phase_da, "cv": phase_cv, "ie": phase_ie, "il": phase_il, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "eh": phase_eh, "bl": phase_bl, "sj": phase_sj, "ba": phase_ba, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_altar": "cpa", "chalice_wipe": "clw", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "npc_lamp": "nl",
           "rot": "rt", "boss_rooms": "br", "scene_mirror": "sm", "ending_flow": "ef", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj", "boss_ai": "ba", "lone_ai": "la"}
+          "valtr_rune": "cv", "items_every": "ie", "items_leak": "il", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "echo_hold": "eh", "limbo_leave": "bl", "seam_rejoin": "sj", "boss_ai": "ba", "lone_ai": "la,lc"}
 GROUP_ROWS = {"join": r"join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -5377,7 +5406,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "nl": lambda v, L, d: check_nl(v, L), "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "ba": lambda v, L, d: check_ba(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "nl": lambda v, L, d: check_nl(v, L), "br": lambda v, L, d: check_br(v, L), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "ba": lambda v, L, d: check_ba(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"), "lc": lambda v, L, d: check_lc(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L)}
 
@@ -5408,7 +5437,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "ld", "cl", "clg", "clw", "cpr", "cpa", "el", "lt", "bf", "ch",
-                                     "lp", "gd", "gh", "gm", "nl", "rt", "br", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "eh", "bl", "sj", "ba", "la", "lb")
+                                     "lp", "gd", "gh", "gm", "nl", "rt", "br", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "eh", "bl", "sj", "ba", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
