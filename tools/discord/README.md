@@ -8,6 +8,16 @@ replies with a plain-words diagnosis:
   60), by anyone - players post their halves of a session in separate messages.
 - Right-click a message -> Apps -> **Diagnose logs**: that message's logs plus the logs posted 30
   minutes around it (the reply is private).
+- DM: send log files to the bot in a direct message; it answers privately, with names and
+  addresses (the commands work in DMs too).
+- Mentions and the automatic reaction work only in **threads and DMs** (big channels are left alone;
+  `NETDOCTOR_CHANNELS=<id,id>` in the env file adds ordinary channels). Slash commands work everywhere.
+- In a bug thread: mention the bot, e.g. `@Net Doctor Iosefka analyse` (any message mentioning her
+  counts, except a plain thanks/hello). It reads every log posted in the thread/channel,
+  groups them into sessions (same host, overlapping times) and posts one analysis per session. Mention
+  it again after more logs arrive, even hours later: a session that already has a post gets that post
+  edited, a new session gets a new post. The bot remembers who/when of each posted log and which post
+  belongs to which session in a SQLite file (`~/.config/netdoctor/netdoctor.db`).
 - Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
   default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 
@@ -15,6 +25,21 @@ replies with a plain-words diagnosis:
 - In a channel the reply hides player names and public IP addresses.
 - `private: True` shows the reply only to you, with names and addresses.
 - The bot keeps nothing: files go to a temporary folder and are deleted after the run.
+
+## Memory and lookup by reference
+
+Every analysis ends with `ref ND-xxxxxxxx`. The bot keeps, for 30 days and within a size cap (default
+256 MiB, never above 1 GiB, oldest first): each analysis text, which logs it used, and the log files
+themselves LZMA-compressed (about 14x smaller, deduplicated by content). On the server:
+
+```sh
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py --list
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d            # analysis + logs
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d --rerun    # unredacted rerun
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d --logs DIR # extract the logs
+```
+
+The file holds player names and logs: it is readable only by the bot's user (0600).
 
 ## 1. Create the bot (Discord Developer Portal)
 
@@ -54,6 +79,9 @@ journalctl --user -u netdoctor -f   # log
 
 No systemd lingering (e.g. no polkit, `loginctl enable-linger` fails)? Use cron instead of the
 service: `crontab -e` and add the two lines from the top of `tools/discord/keepalive.sh`.
+
+Housekeeping (hourly): `17 * * * * sh $HOME/bbport/tools/discord/cleanup.sh` in `crontab -e` removes
+upload folders a crash left in /tmp and trims the bot log past 10 MB.
 
 Update the doctor's rules: `git -C ~/bbport pull` (the bot loads `net_doctor.py` fresh on every
 command, no restart needed; restart after a change to the bot itself:
