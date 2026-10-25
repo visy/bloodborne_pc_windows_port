@@ -371,9 +371,8 @@ before anyone is in the game):
   start the Blood Moon at Moonside Lake). After the Blood Moon the host is asked "Travel with the
   party?" and everyone goes to Yahar'gul together.
 - **Your ending, your choice.** When the host reaches an ending, every guest is asked first:
-  *Yes* plays that ending in your own save (end credits, then New Game+), *No* takes you home with
-  your save as it was. A guest who used three Umbilical Cords gets Childhood's Beginning when the
-  host refused Gehrman.
+  *Yes* plays the same ending the host got in your own save (its cutscene, the end credits, then
+  New Game+ once), *No* takes you home with your save as it was.
 - **One NG cycle per world.** In the host's world everyone plays at the host's NG cycle; your own
   save keeps your own cycle.
 
