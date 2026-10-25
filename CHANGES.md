@@ -4,6 +4,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.6 (unreleased)
 
+- **Fixed: Uncanny and Lost weapon rows you do not own are gone from the Bath Messenger's shop again, in saves that an earlier version had filled** (player reports: a guest's shop listed every Uncanny / Lost weapon, also after leaving the party; 0.7.5 stopped new rows from appearing but a save that already held them kept them). The first time such a character is in its own world the game now checks, once per save, which Uncanny / Lost weapons it really owns (inventory and storage box, any upgrade level) and takes back the rows of the others; the owned weapons' rows stay and nothing else is touched.
 - **Fixed: Caryll runes that an NPC gives (Eileen, Patches) now reach every member of the party** (player reports: the host got the rune from Patches and from Eileen's quest, the guests only saw "got a gift" on screen). Runes are unique rewards like key items, so the host's gift is handed to every member once.
 - **Fixed: after answering NO to the host's "Gather the party" question, later gather questions come back** (player report: the question never appeared again for that guest until the game was restarted). A question whose box is gone without an answer now counts as a NO.
 - **Fixed: Patches in the Nightmare Frontier is solid for guests** (player report: a transparent ghost that guests could not attack).
