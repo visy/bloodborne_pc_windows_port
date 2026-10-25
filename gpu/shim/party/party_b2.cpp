@@ -4780,8 +4780,19 @@ void HeldDeathTick(const GameSnapshot& s, double now) {
         // The respawn lamp in the loaded map: revived where it lies and put on the lamp, no load
         // for anyone (own last lamp outside a boss fight, the host's after one). Own lamp in
         // another map: split travel loads it for this guest alone; if it cannot, the host's lamp.
-        const u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
+        u32 own = Field<u32>(Slot(kSlotGsm), 0x1528);
         const u32 party = GuestDeathRedirectLamp();
+        {
+            // mensislamp: the guest's own last lamp is a scripted arrival spot (no lamp object) and the
+            // host's is a real lamp of that map: it gets up at the lit lamp. BB_PARTY_GUEST_ARRIVAL_LAMP=0: off.
+            static const bool arrival_on = !EnvOff("BB_PARTY_GUEST_ARRIVAL_LAMP");
+            const u32 use = arrival_on ? deathrules::GuestArrivalLamp(own, party) : own;
+            if (use != own) {
+                Log("guest: its own last lamp %u is the area's arrival spot (no lamp): the host's last lamp %u instead",
+                    own, use);
+                own = use;
+            }
+        }
         const bool boss = limbo_logged == at;
         // A death in the host's Chalice Dungeon (a tester's report: the guest went to its own lamp
         // in the Dream and could not get back in): a dungeon is entered only by the summon's quick
