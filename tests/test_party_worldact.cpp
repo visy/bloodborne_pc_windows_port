@@ -362,7 +362,7 @@ int main() {
     // Playtest 1 bugs 11 / 17: talk NPCs stay solid for guests (NpcParam isChangeWanderGhost).
     {
         namespace ng = coop::npcghost;
-        for (std::uint32_t row : {803000u, 804000u, 6060u, 6070u, 6151u, 6155u, 6160u, 113010u, 6113u, 8125u}) {
+        for (std::uint32_t row : {803000u, 804000u, 6060u, 6070u, 6151u, 6155u, 6160u, 113010u, 6113u, 8125u, 111012u}) {
             assert(ng::FindTalkNpcRow(row));
         }
         // P3: enemy-family rows used only by talk NPCs (every MSB checked): the beggar, Willem, the
