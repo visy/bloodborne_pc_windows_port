@@ -213,7 +213,7 @@ Instead of a code, a guest can also enter the host's address directly as `host:p
   failure message say "automatic punching is off: send the host your guest code, or turn on the
   DHT option on both PCs".
 - **Which NAT do I have?** The *Party* page's *Network* line (and the log's `NAT:` line) says it:
-  a *cone* NAT can be punched; a *symmetric* NAT (some mobile / carrier connections) cannot, and
+  a *cone* NAT can be punched; a *symmetric* ("strict") NAT cannot (some home routers, and mobile or ISP carrier NAT; compare the router's WAN IP with your public IP to tell them apart; UPnP or forwarding UDP+TCP 9307 fixes a router), and
   the line tells you what to do instead.
 - **Carrier-grade NAT / no port forwarding possible**: use a VPN that puts all players in one
   virtual network, such as Tailscale or ZeroTier. The host shares its VPN address as
