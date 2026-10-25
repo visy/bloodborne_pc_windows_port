@@ -2733,14 +2733,14 @@ def check_rf(v, L):
     check_common(v, L, "rf")
 
 
-# Phase bd / bdo (bossdrops, 0.7.6, ~4 min, 2 players, groups `boss_drops` / `boss_drops_off`): the item a
+# Phase bd / bdo (bossdrops, 0.7.6, ~3 min, 2 players, groups `boss_drops` / `boss_drops_off`): the item a
 # world boss drops for the host reaches the guest present at the kill (player report 2026-10-25: a guest got no
-# Kin Coldblood from Rom). The party at the Moonside Lake lamp, Rom's fight started (13201802), the host kills
-# her by HP 0 (the game's own death path: event 13201800 awards lot 51001900 host-only, Kin Coldblood); the
-# guest's own copy of the award is refused by the game (hostOnly on a client), so the item must come from the
-# host's grant. bdo: the host's rule `party_boss_drops` off (BB_PARTY_BOSS_DROPS=0 on the host):
-# the guest gets none. Both press OK on the item box (screenshots every few seconds: the guest's box).
-BD_ROM = "3200800"
+# Kin Coldblood from Rom). The party travels to the Moonside Lake lamp 3202952 (Rom's map m32_00); the host
+# awards Rom's lot 51001900 through the game's own award function with hostOnly 1, as her defeat event 13201800
+# does (test aid BB_PARTY_ITEMS_HOST_TEST: waits until the host is in the lot's map area; Rom's real fight cannot
+# be started by a test walk, HP 0 on her entity ends nothing). The guest's own game would refuse that hostOnly
+# award, so the item must come from the host's grant. bdo: the host's rule `party_boss_drops` off
+# (BB_PARTY_BOSS_DROPS=0 on the host): the guest gets none. Both press OK on the item box.
 BD_UNTIL = [r"1:gave #\d+ lot 51001900"]
 BDO_UNTIL = [r"0:award lot 51001900 \(hostOnly 1"]
 
@@ -2749,21 +2749,19 @@ def phase_bd(only, rule_off=False):
     host = ",".join([
         "god",
         "host_warp=3202952@8^1",                                    # the party to the Moonside Lake lamp
-        "host_flag=13201802@6%m32_00",                              # her fight started
-        "host_kill=%s:hp@8%%m32_00" % BD_ROM,                        # Rom dies (the game's own death path)
-        "host_press=0x4000@14%m32_00!", "host_press=0x4000@4%m32_00!",  # OK on the host's reward box
+        "host_press=0x4000@40%m32_00!", "host_press=0x4000@4%m32_00!",  # OK on the host's item box
     ])
     g1 = ",".join([
-        "god", "guest_flag=13201802@6%m32_00",
-        "guest_press=0x4000@20%m32_00!", "guest_press=0x4000@4%m32_00!",  # OK on the guest's reward box
+        "god",
+        "guest_press=0x4000@44%m32_00!", "guest_press=0x4000@4%m32_00!",  # OK on the guest's item box
         "guest_press=0x4000@4%m32_00!",
     ])
     return dict(
-        name="bdo" if rule_off else "bd", seconds=300, count=2, headless=0, pads=(0, 1),
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + RF_CLEAR, "BB_PARTY_EMEVD_TRACE=0"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1] +
-             (["0:BB_PARTY_BOSS_DROPS=0"] if rule_off else []),
-        crash=[], until=BDO_UNTIL if rule_off else BD_UNTIL, until_hold=30 if rule_off else 12,
+        name="bdo" if rule_off else "bd", seconds=240, count=2, headless=0, pads=(0, 1),
+        env=[],
+        ienv=["0:BB_PARTY_ITEMS_HOST_TEST=51001900", "0:BB_PARTY_DIRECTOR_TEST=" + host,
+              "1:BB_PARTY_DIRECTOR_TEST=" + g1] + (["0:BB_PARTY_BOSS_DROPS=0"] if rule_off else []),
+        crash=[], until=BDO_UNTIL if rule_off else BD_UNTIL, until_hold=30 if rule_off else 15,
     )
 
 
@@ -2775,11 +2773,10 @@ def check_bd(v, L, rule_off=False):
     tag = "bdo" if rule_off else "bd"
     j = need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
     arr = need(v, L, tag + " guest in Byrgenwerth (m32_00)", 1, r"map .*-> m32_00", j or 0)
-    kill = need(v, L, tag + " host: Rom's defeat awards her host-only lot 51001900", 0,
+    kill = need(v, L, tag + " host: the award of Rom's host-only lot 51001900", 0,
                 r"award lot 51001900 \(hostOnly 1", arr or 0)
     if rule_off:
-        need(v, L, tag + " host: the rule is off, no boss drop is sent", 0, r"award lot 51001900 \(hostOnly 1", arr or 0)
-        none_of(v, L, tag + " host: no boss drop grant queued (rule off)", r"host award #\d+ lot 51001900 .*boss", insts=(0,))
+        none_of(v, L, tag + " host: no boss drop grant queued (rule off)", r"host award #\d+ lot 51001900 ", insts=(0,))
         none_of(v, L, tag + " guest: no Kin Coldblood given", r"gave #\d+ lot 51001900", insts=(1,))
     else:
         need(v, L, tag + " host: the boss drop is queued for the party with the host's items", 0,
@@ -2787,7 +2784,7 @@ def check_bd(v, L, rule_off=False):
              kill or 0)
         need(v, L, tag + " guest: takes it (present at the kill)", 1,
              r"boss drop lot 51001900 from the host \(1 item\(s\)\): queued for this guest", kill or 0)
-        need(v, L, tag + " guest: Kin Coldblood given once, with the item-get box", 1,
+        need(v, L, tag + " guest: Kin Coldblood given, with the item-get box", 1,
              r"gave #\d+ lot 51001900 .*goods 1591 x\d+ \(held \d+ -> \d+, item-get dialog\)", kill or 0)
         n = len(L.all(1, r"gave #\d+ lot 51001900"))
         v.step(tag + " guest: exactly one give", n == 1, "%d give(s)" % n)
