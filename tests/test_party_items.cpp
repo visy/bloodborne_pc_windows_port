@@ -152,7 +152,7 @@ static void test_classify() {
     CHECK(!InstancedTreasureFlag(50001700, true, false));
     CHECK(!InstancedTreasureFlag(12410000, true, false));
     // Progression keys and workshop tools found as map treasure go to everyone (quest_audit.md).
-    for (const std::int32_t lot : {2400450, 2800290, 2600550, 2600610, 3200720, 3500800, 2200360, 2411000}) {
+    for (const std::int32_t lot : {2400450, 2800290, 2600550, 2600610, 3200720, 3200810, 3500800, 2200360, 2411000}) {
         CHECK(SharedKeyTreasureLot(lot));
         CHECK(ItemLotFlag(lot) == 50000000 + lot);
         CHECK(!InstancedTreasureFlag(50000000 + lot, true, false));
@@ -182,6 +182,12 @@ static void test_classify() {
                                          [](std::uint32_t) { return false; });
         CHECK(std::find(lots.begin(), lots.end(), 2400450) != lots.end());
         CHECK(std::find(lots.begin(), lots.end(), 2410920) == lots.end());
+    }
+    // The Lunarium Key (an EMEVD award, flag 53200810): a save with the flag and no key gets it back.
+    {
+        const auto lots = KeyCatchupLots([](std::uint32_t f) { return f == 53200810; },
+                                         [](std::uint32_t) { return false; });
+        CHECK(std::find(lots.begin(), lots.end(), 3200810) != lots.end());
     }
     CHECK(!SharedKeyTreasureLot(31000));              // Oedon Tomb Key: a boss award (ledger), not treasure
     captured[50001700] = 33010; // the hook saw the NG variant

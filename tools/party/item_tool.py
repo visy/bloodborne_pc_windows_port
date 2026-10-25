@@ -57,7 +57,7 @@ DENY_LOTS = {
 # Messenger Ribbon, Red Jeweled Brooch; a guest never reached the sewer spots in the host's world).
 SHARED_QUEST_LOTS = {2410900, 2410910, 2410920}
 # Progression keys / workshop tools of 0.7.0 (quest_audit.md F2): re-given by the key catch-up.
-SHARED_CATCHUP_LOTS = {2400450, 2800290, 2600550, 2600610, 3200720, 3500800, 2200360, 2411000}
+SHARED_CATCHUP_LOTS = {2400450, 2800290, 2600550, 2600610, 3200720, 3200810, 3500800, 2200360, 2411000}
 
 
 def is_chalice(lot, flag):
