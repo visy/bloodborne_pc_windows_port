@@ -27,9 +27,10 @@ VPN_NAMES = ("Radmin", "Hamachi", "ZeroTier", "Tailscale", "WireGuard")
 R = {
     "role": re.compile(r"party networking on \((host|guest), as ([^,]+), port (\d+)\)"),
     "role_old": re.compile(r"party networking on \((host|guest)"),
-    "build": re.compile(r"^(Nightwatch Co-op v[\w. -]+?|bbport [\d.]+)[,\s]"),
+    "build": re.compile(r"^(Nightwatch Co-op v[^,]+)"),
+    "coop_nw": re.compile(r"co-op visy v([\w.+-]+)"),
     "version": re.compile(r"version check: eboot ([0-9a-f]+)\.*, patches ([0-9a-f]+)\.*, mods ([0-9a-f]+)"),
-    "build_id": re.compile(r"Party: build (\S+), params"),
+    "build_id_full": re.compile(r"Party: build (.+?), params"),
     "max": re.compile(r"Party: party rules: max (\d) players"),
     "local": re.compile(r"Net: local address (\S+) (from BB_PARTY_LOCAL_IP|on) ?\(?(?:adapter )?([^\[\];)]*)"),
     "public": re.compile(r"Party: public address (\S+?):\d+"),
@@ -123,19 +124,38 @@ class Log:
         self.ng = None
         self.left_room = Counter()
         self.evidence = {}
+        self.started = None
+        self.coop = None
 
     def note(self, key, lineno, line):
         self.evidence.setdefault(key, []).append((lineno, line.strip()[:220]))
 
 
+def _minutes(day, hhmm):
+    """Minutes since 2000-01-01 for a 'YYYY-MM-DD' day and minutes in the day (ordering only)."""
+    y, mo, d = (int(x) for x in day.split("-"))
+    return ((y - 2000) * 372 + (mo - 1) * 31 + (d - 1)) * 1440 + hhmm
+
+
 def parse(path):
     lg = Log(path)
+    # Nightwatch names a log after the time it was closed: nightwatch-YYYYMMDD_HHMMSS.log
+    m = re.search(r"(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})\d{2}", Path(path).name)
+    lg.ended = _minutes(f"{m.group(1)}-{m.group(2)}-{m.group(3)}", int(m.group(4)) * 60 + int(m.group(5))) \
+        if m and Path(path).name.startswith("nightwatch-") else None
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         for n, line in enumerate(f, 1):
             if n == 1 or (lg.build is None and n < 5):
                 m = R["build"].match(line)
                 if m:
                     lg.build = m.group(1).strip()
+                m = re.search(r"(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?", line)
+                if m and lg.started is None:
+                    lg.started = (m.group(1), int(m.group(2)) * 60 + int(m.group(3)))
+            if lg.coop is None and n < 6:
+                m = R["coop_nw"].search(line)
+                if m:
+                    lg.coop = m.group(1)
             if "[coop]" not in line and "Party" not in line and "Net:" not in line:
                 continue
             if lg.role is None:
@@ -149,9 +169,11 @@ def parse(path):
             m = R["version"].search(line)
             if m:
                 lg.version = m.groups()
-            m = R["build_id"].search(line)
+            m = R["build_id_full"].search(line)
             if m:
                 lg.build_id = m.group(1)
+                if lg.coop is None and not m.group(1).startswith("nightwatch"):
+                    lg.coop = m.group(1).split()[0]
             m = R["max"].search(line)
             if m:
                 lg.max_players = int(m.group(1))
@@ -276,6 +298,9 @@ def redact(text, logs, names, ips):
         # Windows paths carry the user name
         text = re.sub(r"([A-Za-z]:\\Users\\)[^\\\s]+", lambda m: m.group(1) + "<user>", text)
     if ips:
+        text = re.sub(r"(setx BB_PARTY_LOCAL_IP |local address |to `|print `)(\d+\.\d+\.\d+\.\d+)",
+                      lambda m: m.group(1) + f"<your {vpn_kind(m.group(2))} IP>", text)
+
         def mask(m):
             ip = m.group(0)
             if is_public(ip):
@@ -292,8 +317,24 @@ def diagnose(logs, show_ips):
     host = hosts[0] if hosts else None
     by_name = {l.name: l for l in logs if l.name}
 
-    def add(prio, text, fix=None):
+    flagged = set()  # (kind, player) already reported
+
+    def add(prio, text, fix=None, key=None):
+        if key:
+            flagged.add(key)
         issues.append((prio, text, fix))
+
+    starts = [_minutes(*l.started) for l in logs if l.started]
+    ends = [l.ended for l in logs if getattr(l, "ended", None)]
+    if len(starts) > 1:
+        apart = (ends and max(starts) > min(ends) + 1) or max(starts) - min(starts) > 20
+        if apart:
+            txt = ", ".join(f"{l.name or l.path.name} {l.started[1] // 60:02d}:{l.started[1] % 60:02d}"
+                            for l in logs if l.started)
+            add(0, f"**These logs may be from different sessions** (game started: {txt}). Findings that compare "
+                   f"players can be wrong.",
+                "For a reliable check, send the logs of ONE attempt from everyone: the newest log right after it "
+                "happened, before starting the game again.")
 
     # Same game and mods on every PC
     vers = {l.version for l in logs if l.version}
@@ -304,8 +345,9 @@ def diagnose(logs, show_ips):
             "Everyone needs the exact same eboot.bin, the same patch selection and the same gameplay mod files.")
     builds = {l.build_id for l in logs if l.build_id}
     if len(builds) > 1:
-        add(2, "**Different co-op builds.** The players run different versions of the co-op.",
-            "Everyone installs the same version.")
+        txt = ", ".join(f"{l.name or l.path.name}: {version_text(l)}" for l in logs)
+        add(1, f"**Different versions.** The players run different builds ({txt}).",
+            "Everyone installs the same version of the game / Nightwatch.")
 
     for l in logs:
         who = l.name or l.path.name
@@ -325,10 +367,14 @@ def diagnose(logs, show_ips):
             add(2, f"**{hn} has no open port** (UPnP not available on the router). Guests can only get in by "
                    f"hole punching, which fails if a guest's router is strict.",
                 f"{hn}: turn on UPnP in the router, or forward UDP + TCP 9307 to the PC, or use a VPN.")
+    host_reachable = bool(host and host.nat and ("port open" in host.nat or host.nat == "open"))
     for l in logs:
         who = l.name or l.path.name
         if l.nat == "symmetric":
             role = "host" if l.role == "host" else "guest"
+            on_vpn = bool(l.local and is_vpn_ip(l.local))
+            if role == "guest" and (host_reachable or on_vpn):
+                continue  # a guest only needs to reach out; strict NAT matters for hole punching only
             add(2 if role == "guest" else 1,
                 f"**{who} is behind a strict NAT** (a strict router or the internet provider's own NAT). "
                 f"Hole punching cannot reach it.",
@@ -345,11 +391,11 @@ def diagnose(logs, show_ips):
             ip, adapter = l.vpn_candidates[0]
             kind = vpn_kind(ip)
             prio = 1 if vpn_in_use else 3
+            flagged.add(("vpn_unused", who))
             add(prio, f"**{who} has {kind} running, but the game uses the home network address** "
                       f"({hide(l.local, show_ips)}) instead of the {kind} one ({ip}).",
-                f"{who}: open a Command Prompt, run `setx BB_PARTY_LOCAL_IP {ip}`, then close the launcher "
-                f"completely (or restart the PC) and start again. The log should then say "
-                f"\"local address {ip} from BB_PARTY_LOCAL_IP\".")
+                setx_steps(who, "BB_PARTY_LOCAL_IP", ip, f"make the game use {kind}: ") +
+                f"\n   The new log then says \"local address {ip} from BB_PARTY_LOCAL_IP\".")
 
     # Self-alias: a game took its own address for another player's
     for l in logs:
@@ -358,26 +404,32 @@ def diagnose(logs, show_ips):
             if l.local and local_used == l.local:
                 add(1, f"**{who}'s game thinks {peer} is at {who}'s own address** ({hide(local_used, show_ips)}), "
                        f"so it ends up talking to itself and drops out.",
-                    f"Check every player's `BB_PARTY_LOCAL_IP`: each must be that player's OWN VPN address "
-                    f"(run `echo %BB_PARTY_LOCAL_IP%` in a new Command Prompt). Co-op 0.7.5 and newer fix the "
-                    f"case where it is set right.")
+                    f"Every player checks `BB_PARTY_LOCAL_IP`: press the Windows key, type `cmd`, Enter, then "
+                    f"type `echo %BB_PARTY_LOCAL_IP%` and Enter. It must print that player's OWN VPN address "
+                    f"(shown in the VPN app). If not, set it with `setx BB_PARTY_LOCAL_IP <own VPN address>`, close "
+                    f"the window, restart the launcher (or the PC). Co-op 0.7.5 and newer fix the remaining case.")
                 break
             other = by_name.get(peer)
             if other and other.local and local_used != other.local and not is_vpn_ip(local_used) and \
-                    any(is_vpn_ip(x) for x in (l.local or "", other.local or "")):
+                    any(is_vpn_ip(x) for x in (l.local or "", other.local or "")) and \
+                    ("vpn_unused", who) not in flagged:
                 add(2, f"**{who} talks to {peer} on a home network address** ({hide(local_used, show_ips)}) "
                        f"instead of the VPN one.",
-                    f"Both set `BB_PARTY_LOCAL_IP` to their VPN address and restart the launcher.")
+                    f"Both set `BB_PARTY_LOCAL_IP` to their own VPN address (Windows key, `cmd`, "
+                    f"`setx BB_PARTY_LOCAL_IP <own VPN address>`, close the window) and fully restart the launcher.")
                 break
 
     # Game traffic not arriving after the party link is up
     if host:
         for g, cnt in host.not_heard.items():
+            if cnt < 2:
+                continue
             add(1, f"**{g} connects to the party but the game's own traffic never reaches the host** "
                    f"({cnt} failed summons). Shared progress works, the summon does not.",
-                f"{host.name or 'Host'} and {g}: both set `BB_PARTY_LOCAL_IP` to your VPN address (if you use a "
-                f"VPN) and restart the launcher; allow the game through Windows Firewall (UDP + TCP 9307). If it "
-                f"still fails, send both logs from that attempt.")
+                f"{host.name or 'Host'} and {g}: if you play over a VPN, each sets `BB_PARTY_LOCAL_IP` to "
+                f"their OWN VPN address (Windows key, type `cmd`, Enter, `setx BB_PARTY_LOCAL_IP <own VPN "
+                f"address>`, Enter, close the window, then fully restart the launcher or the PC). Allow the game "
+                f"through Windows Firewall (UDP + TCP 9307). If it still fails, send both logs from that attempt.")
 
     # Guest link never up
     for l in guests:
@@ -395,7 +447,8 @@ def diagnose(logs, show_ips):
             found, reports = l.lan_fallback
             add(4, f"{who}'s LAN code pointed at the wrong address; the game found the host at "
                    f"{hide(found, show_ips)} by searching (the host advertised {hide(reports, show_ips)}).",
-                "Fixed in co-op 0.7.6. Until then the host can set `BB_PARTY_LOCAL_IP` to its VPN address.")
+                "Fixed in co-op 0.7.6. Until then the host sets `BB_PARTY_LOCAL_IP` to its VPN address (Windows "
+                "key, `cmd`, `setx BB_PARTY_LOCAL_IP <VPN address>`, close the window, restart the launcher).")
 
     # Hole punching
     if host and host.punching and not host.guests:
@@ -417,12 +470,13 @@ def diagnose(logs, show_ips):
             if len(outs) < 3:
                 continue
             span = f"{min(outs):.0f}-{max(outs):.0f} s" if round(max(outs)) > round(min(outs)) else f"{max(outs):.0f} s"
+            flagged.add(("freeze", peer))
             add(2, f"**The link between {who} and {peer} keeps freezing** ({len(outs)} dropouts of "
                    f"{span}). After a long one the game ends the session and the guest is sent home.",
                 "Find the weak link: phone hotspot, relayed VPN (Hamachi shows 'relayed'), Wi-Fi, downloads "
                 "running. The player with the steadiest connection should host.")
         for g, cnt in l.lost.items():
-            if cnt >= 2:
+            if cnt >= 2 and ("freeze", g) not in flagged:
                 add(3, f"**{g} lost the link {cnt} times** in {who}'s log.", None)
         med = {p: sorted(v)[len(v) // 2] for p, v in l.pings.items() if v}
         bad = {p: ms for p, ms in med.items() if ms >= 250}
@@ -440,9 +494,9 @@ def diagnose(logs, show_ips):
         if l.prologue_last and l.role == "host":
             add(1, f"**Not network: {l.prologue_last[0]} counts as still in the prologue**, so no summons "
                    f"happen. After an ending (NG+) this is a known bug, fixed in co-op 0.7.6.",
-                "Until then the host sets `BB_PARTY_START=immediate` (Command Prompt: `setx BB_PARTY_START "
-                "immediate`) and restarts the launcher. In a first playthrough: finish the first Hunter's Dream "
-                "visit (take the weapon) first.")
+                setx_steps(l.prologue_last[0], "BB_PARTY_START", "immediate",
+                           "until co-op 0.7.6, skip the prologue check: ") +
+                "\n   In a first playthrough, finish the first Hunter's Dream visit (take a weapon) instead.")
             break
     ngs = {l.name or l.path.name: l.ng for l in logs if l.ng is not None}
     if len(set(ngs.values())) > 1:
@@ -458,6 +512,18 @@ def diagnose(logs, show_ips):
             add(3, f"More players tried than the host allows (max {host.max_players}).",
                 "Host sets Max players higher (all players must use the same value).")
     return issues
+
+
+def setx_steps(who, var, value, why=""):
+    """Plain steps for setting a Windows user environment variable and making the game see it."""
+    return (f"{who}: {why}set `{var}` to `{value}`:\n"
+            f"   a. Press the Windows key, type `cmd` and press Enter (a black Command Prompt window opens).\n"
+            f"   b. Type `setx {var} {value}` and press Enter. It must answer `SUCCESS: Specified value was saved.`\n"
+            f"   c. Close that window. setx only reaches programs started AFTER it.\n"
+            f"   d. Close the game and the launcher completely (also Steam or whatever starts it), or simply "
+            f"restart the PC.\n"
+            f"   e. Check: open a NEW Command Prompt, type `echo %{var}%`, press Enter: it must print `{value}`.\n"
+            f"   f. Start the launcher again and host / join.")
 
 
 def refusal_fix(reason):
@@ -479,11 +545,18 @@ def refusal_fix(reason):
     return None
 
 
+def version_text(l):
+    if l.build:
+        return f"{l.build} (co-op {l.coop or '?'})"
+    if l.coop:
+        return f"bbport {l.coop}"
+    return "version ?"
+
+
 def player_line(l, show_ips):
     who = l.name or "?"
     parts = [f"{who} ({l.role or '?'})"]
-    if l.build:
-        parts.append(l.build)
+    parts.append(version_text(l))
     if l.local:
         src = "set by BB_PARTY_LOCAL_IP" if l.local_forced else "automatic"
         parts.append(f"address {hide(l.local, show_ips)} ({src})")
