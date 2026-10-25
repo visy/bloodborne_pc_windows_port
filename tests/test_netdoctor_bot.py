@@ -145,3 +145,15 @@ def test_wants_rerun():
     assert bot.wants_rerun("<@42> rerun please")
     assert bot.wants_rerun("<@42> check again")
     assert not bot.wants_rerun("<@42> analyse")
+
+
+def test_all_attachments_includes_forwarded():
+    class A:
+        def __init__(self, n): self.filename = n
+    class Snap:
+        attachments = [A("last_session.log")]
+    class Msg:
+        attachments = [A("note.txt")]
+        message_snapshots = [Snap()]
+    names = [a.filename for a in bot.all_attachments(Msg())]
+    assert names == ["note.txt", "last_session.log"]

@@ -104,6 +104,15 @@ SMALL_TALK = ("thanks", "thank", "you", "thx", "ty", "tysm", "hi", "hello", "hey
 DB_PATH = Path(os.environ.get("NETDOCTOR_DB", Path.home() / ".config" / "netdoctor" / "netdoctor.db"))
 
 
+def all_attachments(message):
+    """The message's own files plus those of messages forwarded in it (Discord keeps a forwarded message's
+    files in its snapshot, not in .attachments)."""
+    out = list(getattr(message, "attachments", None) or [])
+    for snap in getattr(message, "message_snapshots", None) or []:
+        out += list(getattr(snap, "attachments", None) or [])
+    return out
+
+
 def wants_analysis(content, bot_id):
     """Any message that mentions the bot asks for a (re)analysis, unless it is only thanks / a greeting."""
     text = content.replace(f"<@{bot_id}>", " ").replace(f"<@!{bot_id}>", " ").lower()
@@ -235,7 +244,7 @@ def main():
         before = center + dt.timedelta(minutes=minutes) if around else None
         found = []
         async for msg in channel.history(limit=300, after=after, before=before, oldest_first=True):
-            found += [(msg, i, a) for i, a in enumerate(msg.attachments)
+            found += [(msg, i, a) for i, a in enumerate(all_attachments(msg))
                       if is_log_name(a.filename) and a.size <= MAX_BYTES]
         return found[-MAX_LOGS:]
 
@@ -308,7 +317,7 @@ def main():
         channel_id: file it under this channel (a thread's starter post lives in the parent channel)."""
         channel_id = channel_id or message.channel.id
         new = 0
-        for idx, a in enumerate(message.attachments):
+        for idx, a in enumerate(all_attachments(message)):
             if not is_log_name(a.filename) or a.size > MAX_BYTES or \
                     store.has_log(channel_id, message.id, idx):
                 continue
@@ -337,12 +346,12 @@ def main():
             # the thread's id; forum posts are inside the thread already (the fetch then just fails)
             try:
                 starter = await channel.parent.fetch_message(channel.id)
-                if starter.attachments and not starter.author.bot:
+                if all_attachments(starter) and not starter.author.bot:
                     await record_logs(starter, channel.id)
             except (discord.HTTPException, AttributeError):
                 pass
         async for msg in channel.history(limit=1000, oldest_first=True):
-            if msg.attachments and not msg.author.bot:
+            if all_attachments(msg) and not msg.author.bot:
                 await record_logs(msg)
         infos = store.logs(channel.id)
         if not infos:
@@ -373,7 +382,7 @@ def main():
                         if where is None:
                             continue
                         try:
-                            att = (await where.fetch_message(mid)).attachments[idx]
+                            att = all_attachments(await where.fetch_message(mid))[idx]
                             break
                         except (discord.HTTPException, IndexError, AttributeError):
                             pass
@@ -451,7 +460,7 @@ def main():
                 except discord.HTTPException:
                     pass
             return
-        if not any(is_log_name(a.filename) for a in message.attachments):
+        if not any(is_log_name(a.filename) for a in all_attachments(message)):
             return
         asyncio.create_task(record_logs(message))  # remembered for a later "@bot update"
         if message.guild is None:  # a DM with the bot: answer on its own
