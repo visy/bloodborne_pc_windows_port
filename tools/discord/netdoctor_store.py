@@ -2,6 +2,9 @@
 holds each session's analysis. SQLite (standard library). The log files themselves are never stored:
 they stay on Discord and are downloaded again for each analysis.
 
+Log files are kept LZMA-compressed (about 14x smaller), deduplicated by content hash, so an analysis can
+be re-run after Discord forgets an attachment; they go with the 30-day prune and the size cap.
+
 Grouping logs into sessions is pure logic here (same_session / group_sessions / session_key) so it is
 tested without Discord.
 """
@@ -16,6 +19,11 @@ CREATE TABLE IF NOT EXISTS logs (
     filename TEXT, name TEXT, role TEXT, host TEXT, start INTEGER, end_ INTEGER, day TEXT,
     peers TEXT, posted REAL,
     PRIMARY KEY (channel_id, message_id, att_index));
+CREATE TABLE IF NOT EXISTS logdata (
+    sha1 TEXT PRIMARY KEY, filename TEXT, raw_size INTEGER, blob BLOB, created REAL);
+CREATE TABLE IF NOT EXISTS analyses (
+    ref TEXT PRIMARY KEY, channel_id INTEGER, guild_id INTEGER, bot_message_id INTEGER,
+    files TEXT, text TEXT, created REAL);
 CREATE TABLE IF NOT EXISTS sessions (
     channel_id INTEGER NOT NULL, session_key TEXT NOT NULL, bot_message_id INTEGER,
     log_count INTEGER, updated REAL, members TEXT,
@@ -27,6 +35,9 @@ class Store:
     def __init__(self, path):
         self.db = sqlite3.connect(str(path))
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(logs)")}
+        if "sha1" not in cols:  # files from before the compressed copies
+            self.db.execute("ALTER TABLE logs ADD COLUMN sha1 TEXT")
         self.db.commit()
 
     def has_log(self, channel_id, message_id, att_index):
@@ -34,20 +45,21 @@ class Store:
                                (channel_id, message_id, att_index)).fetchone() is not None
 
     def add_log(self, channel_id, message_id, att_index, filename, info):
-        self.db.execute("INSERT OR REPLACE INTO logs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        self.db.execute("INSERT OR REPLACE INTO logs (channel_id, message_id, att_index, filename, name, role, "
+                        "host, start, end_, day, peers, posted, sha1) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (channel_id, message_id, att_index, filename, info.get("name"), info.get("role"),
                          info.get("host"), info.get("start"), info.get("end"), info.get("day", ""),
-                         json.dumps(sorted(info.get("peers", ()))), time.time()))
+                         json.dumps(sorted(info.get("peers", ()))), time.time(), info.get("sha1", "")))
         self.db.commit()
 
     def logs(self, channel_id):
-        rows = self.db.execute("SELECT message_id, att_index, filename, name, role, host, start, end_, day, peers "
-                               "FROM logs WHERE channel_id=? ORDER BY message_id, att_index", (channel_id,))
+        rows = self.db.execute("SELECT message_id, att_index, filename, name, role, host, start, end_, day, peers, "
+                               "sha1 FROM logs WHERE channel_id=? ORDER BY message_id, att_index", (channel_id,))
         out = []
-        for mid, idx, fn, name, role, host, start, end, day, peers in rows:
+        for mid, idx, fn, name, role, host, start, end, day, peers, sha in rows:
             out.append({"message_id": mid, "att_index": idx, "filename": fn, "name": name, "role": role,
                         "host": host, "start": start, "end": end, "day": day or "",
-                        "peers": set(json.loads(peers or "[]"))})
+                        "peers": set(json.loads(peers or "[]")), "sha1": sha or ""})
         return out
 
     def find_session(self, channel_id, key, members):
@@ -69,6 +81,45 @@ class Store:
                          json.dumps(sorted(f"{m}:{i}" for m, i in members))))
         self.db.commit()
 
+    def put_logdata(self, data, filename):
+        """Store one log file compressed; returns its content hash (the key)."""
+        import lzma
+        sha = hashlib.sha1(data).hexdigest()
+        if self.db.execute("SELECT 1 FROM logdata WHERE sha1=?", (sha,)).fetchone():
+            self.db.execute("UPDATE logdata SET created=? WHERE sha1=?", (time.time(), sha))
+        else:
+            self.db.execute("INSERT INTO logdata VALUES (?,?,?,?,?)",
+                            (sha, filename, len(data), lzma.compress(data, preset=6), time.time()))
+        self.db.commit()
+        return sha
+
+    def get_logdata(self, sha):
+        """(filename, bytes) of a stored log, or None."""
+        import lzma
+        row = self.db.execute("SELECT filename, blob FROM logdata WHERE sha1=?", (sha,)).fetchone()
+        return (row[0], lzma.decompress(row[1])) if row else None
+
+    def add_analysis(self, ref, channel_id, guild_id, bot_message_id, files, text):
+        """One analysis under its reference (re-running a session keeps its reference, newest text)."""
+        self.db.execute("INSERT OR REPLACE INTO analyses VALUES (?,?,?,?,?,?,?)",
+                        (ref, channel_id, guild_id, bot_message_id, json.dumps(files), text[:200000],
+                         time.time()))
+        self.db.commit()
+
+    def get_analysis(self, ref):
+        row = self.db.execute("SELECT ref, channel_id, guild_id, bot_message_id, files, text, created "
+                              "FROM analyses WHERE ref=?", (ref,)).fetchone()
+        if not row:
+            return None
+        keys = ("ref", "channel_id", "guild_id", "bot_message_id", "files", "text", "created")
+        d = dict(zip(keys, row))
+        d["files"] = json.loads(d["files"] or "[]")
+        return d
+
+    def recent_analyses(self, limit=20):
+        return self.db.execute("SELECT ref, channel_id, created, substr(text, 1, 80) FROM analyses "
+                               "ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+
     def size_bytes(self):
         pages = self.db.execute("PRAGMA page_count").fetchone()[0]
         return pages * self.db.execute("PRAGMA page_size").fetchone()[0]
@@ -81,19 +132,36 @@ class Store:
         cut = time.time() - days * 86400
         self.db.execute("DELETE FROM logs WHERE posted < ?", (cut,))
         self.db.execute("DELETE FROM sessions WHERE updated < ?", (cut,))
+        self.db.execute("DELETE FROM analyses WHERE created < ?", (cut,))
+        self.db.execute("DELETE FROM logdata WHERE created < ?", (cut,))
         self.db.commit()
+        if self.size_bytes() > max_bytes * 0.8:
+            self.db.execute("VACUUM")
         while self.size_bytes() > max_bytes * 0.8:
             n = self.db.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
             m = self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-            if n == 0 and m == 0:
+            if n == 0 and m == 0 and \
+                    self.db.execute("SELECT COUNT(*) FROM analyses").fetchone()[0] == 0 and \
+                    self.db.execute("SELECT COUNT(*) FROM logdata").fetchone()[0] == 0:
                 break
             self.db.execute("DELETE FROM logs WHERE rowid IN (SELECT rowid FROM logs ORDER BY posted LIMIT ?)",
                             (max(1, n // 4),))
             self.db.execute("DELETE FROM sessions WHERE rowid IN "
                             "(SELECT rowid FROM sessions ORDER BY updated LIMIT ?)", (max(1, m // 4),))
+            b = self.db.execute("SELECT COUNT(*) FROM logdata").fetchone()[0]
+            self.db.execute("DELETE FROM logdata WHERE rowid IN "
+                            "(SELECT rowid FROM logdata ORDER BY created LIMIT ?)", (max(1, b // 4),))
+            k = self.db.execute("SELECT COUNT(*) FROM analyses").fetchone()[0]
+            self.db.execute("DELETE FROM analyses WHERE rowid IN "
+                            "(SELECT rowid FROM analyses ORDER BY created LIMIT ?)", (max(1, k // 4),))
             self.db.commit()
             self.db.execute("VACUUM")
         return self.size_bytes()
+
+
+def new_ref():
+    import secrets
+    return "ND-" + secrets.token_hex(4)
 
 
 def same_session(a, b):

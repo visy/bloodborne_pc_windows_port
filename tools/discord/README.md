@@ -15,8 +15,7 @@ replies with a plain-words diagnosis:
   groups them into sessions (same host, overlapping times) and posts one analysis per session. Mention
   it again after more logs arrive, even hours later: a session that already has a post gets that post
   edited, a new session gets a new post. The bot remembers who/when of each posted log and which post
-  belongs to which session in a small SQLite file (`~/.config/netdoctor/netdoctor.db`, 30 days); the
-  log files themselves are not kept, they are downloaded from Discord again for each analysis.
+  belongs to which session in a SQLite file (`~/.config/netdoctor/netdoctor.db`).
 - Auto: the bot puts a stethoscope reaction on messages with log files (`NETDOCTOR_AUTO=react`,
   default); with `NETDOCTOR_AUTO=reply` it also posts a redacted diagnosis 90 s after the last log.
 
@@ -24,6 +23,21 @@ replies with a plain-words diagnosis:
 - In a channel the reply hides player names and public IP addresses.
 - `private: True` shows the reply only to you, with names and addresses.
 - The bot keeps nothing: files go to a temporary folder and are deleted after the run.
+
+## Memory and lookup by reference
+
+Every analysis ends with `ref ND-xxxxxxxx`. The bot keeps, for 30 days and within a size cap (default
+256 MiB, never above 1 GiB, oldest first): each analysis text, which logs it used, and the log files
+themselves LZMA-compressed (about 14x smaller, deduplicated by content). On the server:
+
+```sh
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py --list
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d            # analysis + logs
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d --rerun    # unredacted rerun
+~/netdoctor-venv/bin/python ~/bbport/tools/discord/netdoctor_query.py ND-1a2b3c4d --logs DIR # extract the logs
+```
+
+The file holds player names and logs: it is readable only by the bot's user (0600).
 
 ## 1. Create the bot (Discord Developer Portal)
 

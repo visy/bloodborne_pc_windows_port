@@ -90,3 +90,27 @@ def test_store_size_cap(tmp_path):
     after = st.prune(days=30, max_bytes=before // 2)
     assert after <= before // 2 * 0.8 + 65536
     assert 0 < len(st.logs(1)) < 3000          # oldest dropped, newest kept
+
+
+def test_analysis_ref_roundtrip(tmp_path):
+    ns = _store_mod()
+    st = ns.Store(tmp_path / "db.sqlite")
+    ref = ns.new_ref()
+    assert ref.startswith("ND-") and len(ref) == 11
+    st.add_analysis(ref, 5, 7, 99, [{"channel": 5, "message": 10, "index": 0, "url": "", "filename": "a.log"}],
+                    "**Co-op connection check**")
+    rec = st.get_analysis(ref)
+    assert rec["bot_message_id"] == 99 and rec["files"][0]["filename"] == "a.log"
+    assert st.get_analysis("ND-00000000") is None
+    assert st.recent_analyses()[0][0] == ref
+
+
+def test_logdata_compressed(tmp_path):
+    ns = _store_mod()
+    st = ns.Store(tmp_path / "db.sqlite")
+    data = ("[coop] Party: roster: HostA(slot 0, home, map 1, 0 ms)\n" * 20000).encode()
+    sha = st.put_logdata(data, "nightwatch-20261025_120000.log")
+    assert st.put_logdata(data, "copy.log") == sha                 # deduplicated by content
+    name, back = st.get_logdata(sha)
+    assert back == data and name == "nightwatch-20261025_120000.log"
+    assert st.size_bytes() < len(data) // 10                       # stored compressed

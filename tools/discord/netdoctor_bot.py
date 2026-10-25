@@ -163,10 +163,18 @@ def main():
     auto = os.environ.get("NETDOCTOR_AUTO", "react").lower()  # off | react | reply
     pending = {}  # channel id -> asyncio task (reply mode debounce)
 
+    async def keep(path, filename):
+        """Store the log compressed (off the event loop: LZMA takes a moment on big logs)."""
+        data = path.read_bytes()
+        return await asyncio.get_running_loop().run_in_executor(None, store.put_logdata, data, filename)
+
+    last_hashes = {}
+
     async def run_on(attachments, redact):
-        """Download attachments (each into its own folder, keeping its name), run the doctor."""
+        """Download attachments (each into its own folder, keeping its name), keep them compressed, run
+        the doctor. The content hashes land in last_hashes[id(attachments)]."""
         with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
-            paths = []
+            paths, hashes = [], []
             for i, a in enumerate(attachments):
                 d = Path(tmp) / str(i)
                 d.mkdir()
@@ -174,9 +182,29 @@ def main():
                 p = d / (Path(a.filename).name or "log.log")
                 await a.save(p)
                 paths.append(p)
+                hashes.append(await keep(p, a.filename))
+            last_hashes[id(attachments)] = hashes
             return diagnose(paths, redact=redact)
 
-    async def send_text(send, text, private):
+    def remember(channel, files, text, bot_message_id=None, ref=None):
+        """Store an analysis under a short reference (shown in the post) for the server-side lookup
+        tool (tools/discord/netdoctor_query.py). Returns the reference."""
+        ref = ref or ns.new_ref()
+        store.add_analysis(ref, getattr(channel, "id", 0), getattr(getattr(channel, "guild", None), "id", 0),
+                           bot_message_id, files, text)
+        return ref
+
+    def file_recs(entries, hashes=()):
+        """(message or None, index, attachment) -> records the lookup tool can load again (stored copy by
+        hash first, Discord second)."""
+        hashes = list(hashes) + [""] * len(entries)
+        return [{"channel": getattr(getattr(m, "channel", None), "id", 0), "message": getattr(m, "id", 0),
+                 "index": i, "url": a.url, "filename": a.filename, "sha1": h}
+                for (m, i, a), h in zip(entries, hashes)]
+
+    async def send_text(send, text, private, ref=None):
+        if ref:
+            text = text + f"\n-# ref {ref}"
         parts = split_message(text)
         if len(parts) > 4:
             await send("The diagnosis is long, attached as a file.", ephemeral=private,
@@ -193,7 +221,8 @@ def main():
         before = center + dt.timedelta(minutes=minutes) if around else None
         found = []
         async for msg in channel.history(limit=300, after=after, before=before, oldest_first=True):
-            found += [a for a in msg.attachments if is_log_name(a.filename) and a.size <= MAX_BYTES]
+            found += [(msg, i, a) for i, a in enumerate(msg.attachments)
+                      if is_log_name(a.filename) and a.size <= MAX_BYTES]
         return found[-MAX_LOGS:]
 
     @tree.command(name="netdoctor", description="Explain co-op connection problems from a session's logs "
@@ -213,7 +242,10 @@ def main():
             await interaction.followup.send(f"Too large (max {MAX_BYTES // (1024 * 1024)} MB): "
                                             + ", ".join(too_big), ephemeral=private)
             return
-        await send_text(interaction.followup.send, await run_on(atts, redact=not private), private)
+        text = await run_on(atts, redact=not private)
+        ref = remember(interaction.channel, file_recs([(None, i, a) for i, a in enumerate(atts)],
+                                                      last_hashes.pop(id(atts), ())), text)
+        await send_text(interaction.followup.send, text, private, ref)
 
     @tree.command(name="netdoctor-recent", description="Diagnose every party log posted in this channel "
                                                        "recently (by anyone)")
@@ -222,32 +254,40 @@ def main():
                            private="only you see the reply, with names and IPs")
     async def netdoctor_recent(interaction: discord.Interaction, minutes: int = 60, private: bool = False):
         await interaction.response.defer(ephemeral=private, thinking=True)
-        atts = await recent_logs(interaction.channel, max(1, min(minutes, 24 * 60)))
-        if not atts:
+        found = await recent_logs(interaction.channel, max(1, min(minutes, 24 * 60)))
+        if not found:
             await interaction.followup.send(f"No log files posted here in the last {minutes} min.",
                                             ephemeral=private)
             return
-        await send_text(interaction.followup.send, await run_on(atts, redact=not private), private)
+        atts = [a for _, _, a in found]
+        text = await run_on(atts, redact=not private)
+        await send_text(interaction.followup.send, text, private,
+                        remember(interaction.channel, file_recs(found, last_hashes.pop(id(atts), ())), text))
 
     @tree.context_menu(name="Diagnose logs")
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def diagnose_menu(interaction: discord.Interaction, message: discord.Message):
         # this message's logs plus logs posted within 30 min around it (the other players' halves)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        atts = await recent_logs(message.channel, 30, around=message.created_at)
-        if not atts:
+        found = await recent_logs(message.channel, 30, around=message.created_at)
+        if not found:
             await interaction.followup.send("No log files in or around that message.", ephemeral=True)
             return
-        await send_text(interaction.followup.send, await run_on(atts, redact=False), True)
+        atts = [a for _, _, a in found]
+        text = await run_on(atts, redact=False)
+        await send_text(interaction.followup.send, text, True,
+                        remember(message.channel, file_recs(found, last_hashes.pop(id(atts), ())), text))
 
     async def auto_reply(channel, dm=False):
         await asyncio.sleep(DM_DEBOUNCE_S if dm else AUTO_DEBOUNCE_S)  # wait for the other logs
         pending.pop(channel.id, None)
-        atts = await recent_logs(channel, 30)
-        if atts:
+        found = await recent_logs(channel, 30)
+        if found:
             # a DM is private: names and addresses stay in
-            await send_text(lambda *a, ephemeral=False, **k: channel.send(*a, **k),
-                            await run_on(atts, redact=not dm), False)
+            atts = [a for _, _, a in found]
+            text = await run_on(atts, redact=not dm)
+            await send_text(lambda *a, ephemeral=False, **k: channel.send(*a, **k), text, False,
+                            remember(channel, file_recs(found, last_hashes.pop(id(atts), ())), text))
 
     async def record_logs(message):
         """Remember who/when of every party log file in a message (downloaded once, then deleted)."""
@@ -259,6 +299,7 @@ def main():
             with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
                 p = Path(tmp) / (Path(a.filename).name or "log.log")
                 await a.save(p)
+                sha = await keep(p, a.filename)
                 try:
                     info = log_info(load_doctor(), p)
                 except Exception as e:  # a broken file must not stop the others
@@ -266,6 +307,7 @@ def main():
                     continue
             if info["role"] is None:
                 continue  # not a party log
+            info["sha1"] = sha
             store.add_log(message.channel.id, message.id, idx, a.filename, info)
             new += 1
         return new
@@ -292,12 +334,19 @@ def main():
             with tempfile.TemporaryDirectory(prefix="netdoctor_") as tmp:
                 paths = []
                 for n, (mid, idx) in enumerate(members):
+                    d = Path(tmp) / str(n)
+                    d.mkdir()
+                    sha = infos[group[n]].get("sha1", "")
+                    kept = store.get_logdata(sha) if sha else None
+                    if kept:  # the stored copy: no download, works after the message is gone
+                        p = d / (Path(kept[0] or "log.log").name)
+                        p.write_bytes(kept[1])
+                        paths.append(p)
+                        continue
                     try:
                         att = (await channel.fetch_message(mid)).attachments[idx]
                     except (discord.HTTPException, IndexError):
-                        continue  # deleted meanwhile
-                    d = Path(tmp) / str(n)
-                    d.mkdir()
+                        continue  # deleted meanwhile and never stored
                     p = d / (Path(att.filename).name or "log.log")
                     await att.save(p)
                     paths.append(p)
@@ -305,8 +354,9 @@ def main():
                     continue
                 text = diagnose(paths, redact=True)
             stamp = int(time.time())
-            footer = f"\n-# {len(paths)} log(s) of this session · updated <t:{stamp}:R> · mention me again " \
-                     f"after more logs are posted"
+            ref = "ND-" + ((found[0] if found else None) or key)[:8]
+            footer = f"\n-# ref {ref} · {len(paths)} log(s) of this session · updated <t:{stamp}:R> · " \
+                     f"mention me again after more logs are posted"
             files = []
             body = text + footer
             if len(body) > DISCORD_LIMIT:
@@ -325,6 +375,9 @@ def main():
             else:
                 bot_msg = await channel.send(body, files=files)
             store.set_session(channel.id, key, bot_msg.id, members, old_key=found[0] if found else None)
+            remember(channel, [{"channel": channel.id, "message": mid, "index": idx, "url": "",
+                                "filename": infos[i].get("filename", ""), "sha1": infos[i].get("sha1", "")}
+                               for (mid, idx), i in zip(members, group)], text, bot_msg.id, ref)
             changed += 1
         try:
             await trigger.add_reaction("\N{WHITE HEAVY CHECK MARK}" if changed else "\N{SLEEPING SYMBOL}")
