@@ -1953,8 +1953,8 @@ def phase_ff(only):
         ienv=ienv,
         watch=["--watch", r"story warp: event 13200311=ffwarp@0.5,1.5,3",
                "--watch", r"asking \"Travel with the party\?\"=ffq@0.4",
-               "--watch", r"map .*-> m33_00=ffarr@3,6"],
-        crash=[], until=FF_UNTIL, until_hold=6,
+               "--watch", r"map .*-> m33_00=ffarr@3,6,10,14"],
+        crash=[], until=FF_UNTIL, until_hold=18,
     )
 
 
