@@ -46,6 +46,30 @@ as against an invader.
 - **Lock-on** follows the relation table, so with friendly fire on the lock-on can pick a party
   member, as it picks an invader in vanilla.
 
+## Full health in PvP (0.7.6, pvphp; owner's decision)
+
+A joined hunter has 30 % less maximum health than the host (SpEffect 9006 / 9026 maxHpRate 0.7, the host rule
+*Phantom health cut*, balance.md section 5): a 490-HP guest against a 700-HP host is no duel. The host rule
+**Full health in PvP** (`pvp_full_hp`, sent with `balance`; ini `party_pvp_full_hp`, env `BB_PARTY_PVP_FULL_HP`;
+System > Party rules: PvP & lamps, the launcher's Party Rules tab, the overlay's Party tab; default on; guests
+read-only) lifts the cut while friendly fire is on: the cut in force on every peer is
+`levelsync::PhantomCutOn(phantom_hp, friendly_fire, pvp_full_hp) = phantom_hp && !(friendly_fire && pvp_full_hp)`
+(party_levelsync_rules.h), written into rows 9006 / 9026 by `ApplyPhantomHp` (seamless_rules.cpp, every 2 s).
+
+The game recomputes the max HP from the rows within a frame but keeps the HP points: 490/490 would become
+490/700 when the cut lifts (a hunter at 70 %), and 700/700 is clamped to 490/490 when it comes back while
+350/700 would stay 350/490. So each peer keeps its **own** hunter's HP fraction across the change:
+`HpRatioKeeper` (pure, same header) is armed with the HP before the rate write and, once the max moved
+(checked once a frame, `PhantomHpKeepTick`), writes `HpAtRatio(hp, old max, new max)` (nearest point, half up;
+0 stays 0, full stays full) into the data module (+0xf8) and logs `phantom health: HP kept at its fraction:
+245/490 -> 350/700`. A max that does not move in 5 s (the host's own chr has no phantom effect) disarms it. A
+remote hunter's HP is never written: the host's copy of a guest gets its max from the same row write and its
+HP from the game's player sync, so the host's view of the guest's bar follows. `BB_PARTY_PVP_HP_KEEP=0` leaves
+the points as the game has them (test aid). Unit tests: `party-levelsync-test` (the cut in force, the
+rounding, 0 HP, round trips, the keeper's arm / change / window, level sync in the same window); live:
+smoke group `pvp_full_hp` (phase pvh: the host flips friendly fire and the rule live, the guest at 250/503
+goes to 357/719 and back; the host's copy of the guest shows the guest's max).
+
 ## Decisions
 
 - **A kill is a normal party death.** The victim's game sees an ordinary death (`HP -> 0`): a
