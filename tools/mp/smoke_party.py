@@ -389,7 +389,7 @@ RULES_PAGES = [
                              "Cutscenes live with host"],
      ("Open world", "down/down/", "left", "Off", "right", "party_open_world=0", "party_open_world=1",
       '"open_world":false')),
-    ("Party rules: Rewards", ["Full rewards for guests", "Insight for bosses"],
+    ("Party rules: Rewards", ["Full rewards for guests", "Boss drops for guests", "Insight for bosses"],
      ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
     # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
     ("Party rules: Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
