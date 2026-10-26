@@ -2,3 +2,6 @@
 *.sh text eol=lf
 # cmd.exe scripts: CRLF.
 *.bat text eol=crlf
+# Hash-bound data of the Legacy CPU translation (cpu_compat.py): byte-exact, never converted.
+docs/evidence/** -text
+tools/legacy-cpu-plan.json -text
