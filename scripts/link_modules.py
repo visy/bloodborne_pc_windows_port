@@ -20,12 +20,14 @@ import struct
 import sys
 from prepare import parse_self, span, unpack
 from link_libc import encode_id
+from cpu_compat import atomic_output, patch_image, patch_libc
 
 DEFAULT_MODULES = ('libc.prx', 'libSceFios2.prx')
 FS_LOAD = bytes.fromhex('64488b042500000000')  # mov rax, fs:[0]
 RED_ZONE_SITES = Path(__file__).resolve().parent.parent / 'patches' / 'redzone.json'
 LEA_DOWN = bytes.fromhex('488d642480')        # lea rsp, [rsp-0x80]
 LEA_UP = bytes.fromhex('488da42480000000')    # lea rsp, [rsp+0x80]
+MAX_INSTRUCTION = 15
 
 
 def module(path):
@@ -97,6 +99,12 @@ def patch_fs_loads(image, ph, base):
     return patched
 
 
+def red_zones_enabled():
+    """Windows only (Linux signal frames skip the red zone); BB_RED_ZONE=0/1 overrides."""
+    override = os.environ.get('BB_RED_ZONE')
+    return override == '1' if override is not None else os.name == 'nt'
+
+
 def protect_red_zones(image, sites, base, skip=()):
     """Run guest stores of red-zone leaf functions with rsp 128 bytes lower (Windows).
 
@@ -130,7 +138,37 @@ def protect_red_zones(image, sites, base, skip=()):
     return bytes(code), applied
 
 
-def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
+def protect_image(image, segments, untranslated, relocs, path=RED_ZONE_SITES):
+    """Apply the red-zone sites to the linked image in place, after the CPU translations.
+
+    A site is left alone when any byte within an instruction's reach of it differs from
+    `untranslated` (the image before cpu_compat): a translated instruction overlaps it."""
+    report = dict(enabled=red_zones_enabled(), sites=0, available=0, sites_sha256=None,
+                  cpu_overlaps=[], trampoline_bytes=0, segment=None)
+    if not report['enabled'] or not path.is_file():
+        return report
+    raw = path.read_bytes()
+    sites = json.loads(raw)['sites']
+    clear = []
+    for site in sites:
+        start, end = max(0, site[0] - (MAX_INSTRUCTION - 1)), site[0] + len(site[1]) // 2
+        if image[start:end] != untranslated[start:end]:
+            report['cpu_overlaps'].append(hex(site[0]))
+        else:
+            clear.append(site)
+    base = (len(image) + 65535) & ~65535
+    code, applied = protect_red_zones(image, clear, base, sorted(r[0] for r in relocs))
+    if code:
+        size = (len(code) + 4095) & ~4095
+        image.extend(bytes(base - len(image)) + code + b'\xcc' * (size - len(code)))
+        segments.append((base, size, 5))
+        report['segment'] = hex(base)
+    report.update(sites=applied, available=len(sites), sites_sha256=hashlib.sha256(raw).hexdigest(),
+                  trampoline_bytes=len(code))
+    return report
+
+
+def link(game, out, module_names=DEFAULT_MODULES):
     main = module(game / 'eboot.bin')
     raw = (out / 'boot.bin').read_bytes()
     magic, size, entry, ns, nr, ni, flags = unpack('<8s6Q', raw, 0)
@@ -165,11 +203,14 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
 
     exports, by_nid = {}, collections.defaultdict(list)
     table = []
+    libc_changes = []
     base = (size + 65535) & ~65535
     fs_patched = patch_fs_loads(image, main['ph'], 0)
     tls_module = 2
     for filename in module_names:
         m = module(game / 'sce_module' / filename)
+        if filename == 'libc.prx':
+            libc_changes = patch_libc(m)
         loads = [p for p in m['ph'] if p['type'] in (1, 0x61000010)]
         modsize = max(p['vaddr'] + p['memsz'] for p in loads)
         if base + modsize > 512 * 1024 * 1024:
@@ -237,14 +278,6 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
                           tls_relocations=tls_relocations, exports=count, sha256=m['sha256']))
         base = (base + modsize + 65535) & ~65535
 
-    red_zone_sites = 0
-    if red_zones and RED_ZONE_SITES.is_file():
-        sites = json.loads(RED_ZONE_SITES.read_text(encoding='utf-8'))['sites']
-        code, red_zone_sites = protect_red_zones(image, sites, base, sorted(r[0] for r in relocs))
-        if code:
-            image.extend(bytes(base - len(image)) + code)
-            segments.append((base, len(code), 5))
-
     bindings, unresolved = [], []
     for identity, index in identities.items():
         found = exports.get(identity)
@@ -262,7 +295,11 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
                      or main_tls['vaddr'] + main_tls['filesz'] > size):
         raise ValueError('unsupported eboot TLS layout')
     procparam = next(p for p in main['ph'] if p['type'] == 0x61000001)
-    with (out / 'boot-linked.bin').open('wb') as f:
+    untranslated = bytes(image)
+    image, segments, cpu_compat = patch_image(image, segments, main, table, relocs)
+    cpu_compat['libc'] = libc_changes
+    red_zone = protect_image(image, segments, untranslated, relocs)
+    with atomic_output(out / 'boot-linked.bin') as f:
         f.write(struct.pack('<8s6Q', b'BBPROBE5', len(image), entry, len(segments), len(relocs), len(names), flags))
         f.write(struct.pack('<Q', procparam['vaddr']))
         f.write(struct.pack('<4Q', *main_tls_values))
@@ -284,13 +321,27 @@ def link(game, out, module_names=DEFAULT_MODULES, red_zones=os.name == 'nt'):
         f.write(image)
     report = dict(modules=[{k: (hex(v) if k in ('base', 'init', 'tls_address') else v) for k, v in t.items()} for t in table],
                   bindings=len(bindings), imports=len(names), fs_loads_patched=fs_patched,
-                  red_zone_sites=red_zone_sites,
                   main_tls=dict(zip(('vaddr', 'filesz', 'memsz', 'align'), main_tls_values)),
-                  unresolved_imports=unresolved)
-    (out / 'link.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
-    summary = ', '.join(f"{t['file']}@{t['base']:#x}" for t in table)
+                  unresolved_imports=unresolved, cpu_compat=cpu_compat, red_zone=red_zone)
+    with atomic_output(out / 'link.json') as f:
+        f.write((json.dumps(report, indent=2) + '\n').encode('utf-8'))
+    if cpu_compat['enabled']:
+        print(f"CPU compatibility: translated {cpu_compat['patched_sites']} instruction sites; "
+              f"{cpu_compat['unhandled_count']} remain unhandled; "
+              f"trampolines={cpu_compat['trampoline_bytes']} bytes")
+        if cpu_compat['span_patches']:
+            print(f"CPU compatibility: {cpu_compat['span_patches']} short instructions translated with their "
+                  'neighbors moved along (no jump into them was found; jump tables are not '
+                  'globally proven).')
+        if cpu_compat['semantic_risk_sites']:
+            print(f"CPU compatibility EXPERIMENTAL: {cpu_compat['semantic_risk_sites']} count instructions "
+                  'can still have incorrect semantics; this is not a complete compatibility profile.')
+    if red_zone['enabled']:
+        print(f"Red zone: {red_zone['sites']}/{red_zone['available']} guest store sites run red-zone-safe "
+              f"({len(red_zone['cpu_overlaps'])} left to CPU translations; BB_RED_ZONE=0 disables)")
+    summary =', '.join(f"{t['file']}@{t['base']:#x}" for t in table)
     print(f'Linked modules: {summary}; {len(bindings)} native bindings, {len(unresolved)} imports left to the host runtime, '
-          f'fs->gs patched={fs_patched}, red-zone-safe stores at {red_zone_sites} sites')
+          f'fs->gs patched={fs_patched}')
 
 
 if __name__ == '__main__':

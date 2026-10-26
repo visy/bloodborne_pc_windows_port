@@ -141,7 +141,10 @@ static void fail(const char *message) {
 /* The game's code was compiled for the PS4's CPU (AMD Jaguar) and runs as it is: AVX, BMI1
  * (andn/bextr/blsr/tzcnt), MOVBE, LZCNT and POPCNT, thousands of each in eboot.bin. A CPU without
  * them stops at the first one with SIGILL (exit code 132, issue #26), and lzcnt/tzcnt even run as
- * bsr/bsf there, with other results. Said before the game starts; BB_SKIP_CPU_CHECK=1 skips it. */
+ * bsr/bsf there, with other results. Said before the game starts; BB_SKIP_CPU_CHECK=1 skips it.
+ * The Legacy CPU profile (scripts/cpu_compat.py, from Supermedo/bloodborne_pc; run.bat and run.sh
+ * set BB_CPU_COMPAT=1 when the boot image was translated) replaces BMI1, MOVBE and LZCNT in the
+ * image, so only AVX, POPCNT and SSE4.2 stop the game then. */
 static void check_cpu(void) {
     const char *skip = getenv("BB_SKIP_CPU_CHECK");
     if (skip && !strcmp(skip, "1")) return;
@@ -155,17 +158,22 @@ static void check_cpu(void) {
         __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
         avx = (lo & 6) == 6; /* the OS saves SSE and AVX state */
     }
-    const struct { int present; const char *name; } features[] = {
-        {avx, "AVX"}, {(leaf7_b & bit_BMI) != 0, "BMI1"}, {(leaf1_c & bit_MOVBE) != 0, "MOVBE"},
-        {(ext1_c & bit_LZCNT) != 0, "LZCNT"}, {(leaf1_c & bit_POPCNT) != 0, "POPCNT"},
-        {(leaf1_c & bit_SSE4_2) != 0, "SSE4.2"},
+    const struct { int present, translatable; const char *name; } features[] = {
+        {avx, 0, "AVX"}, {(leaf7_b & bit_BMI) != 0, 1, "BMI1"}, {(leaf1_c & bit_MOVBE) != 0, 1, "MOVBE"},
+        {(ext1_c & bit_LZCNT) != 0, 1, "LZCNT"}, {(leaf1_c & bit_POPCNT) != 0, 0, "POPCNT"},
+        {(leaf1_c & bit_SSE4_2) != 0, 0, "SSE4.2"},
     };
-    char missing[64] = "";
+    const char *compat = getenv("BB_CPU_COMPAT");
+    const int translated = compat && !strcmp(compat, "1");
+    char missing[64] = "", translations[64] = "";
     for (unsigned i = 0; i < sizeof(features) / sizeof(features[0]); ++i) {
         if (features[i].present) continue;
-        if (missing[0]) strcat(missing, ", ");
-        strcat(missing, features[i].name);
+        char *list = translated && features[i].translatable ? translations : missing;
+        if (list[0]) strcat(list, ", ");
+        strcat(list, features[i].name);
     }
+    if (translations[0])
+        printf("CPU: no %s; the Legacy CPU translations run instead (best effort)\n", translations);
     if (!missing[0]) return;
     fprintf(stderr,
             "ERROR: this CPU lacks %s. Bloodborne's code was compiled for the PS4's CPU and uses "
