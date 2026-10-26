@@ -28,14 +28,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import cpu_compat  # noqa: E402
 
 FORMAT = 1
 OUTPUTS = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bin', 'libc-link.json',
            'boot-linked.bin', 'link.json')
-SCRIPTS = ('boot_image.py', 'prepare.py', 'game_check.py', 'link_libc.py', 'link_modules.py')
+SCRIPTS = ('boot_image.py', 'prepare.py', 'game_check.py', 'link_libc.py', 'link_modules.py',
+           'cpu_compat.py')
 # Data the scripts read into the image (link_modules.py: the red-zone store sites): a build that
 # changes only these must not reuse an image linked with the old ones.
-DATA = (HERE.parent / 'patches' / 'redzone.json',)
+DATA = (HERE.parent / 'patches' / 'redzone.json', HERE.parent / 'tools' / 'legacy-cpu-plan.json')
 STAMP = 'boot_image.json'
 
 
@@ -79,6 +81,7 @@ def key(game: Path):
         'shaders': _folder(game / 'dvdroot_ps4' / 'shader'),
         'scripts': {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()[:16] for n in SCRIPTS},
         'data': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.is_file() else None for p in DATA},
+        'legacy_cpu': cpu_compat.enabled(),   # the Legacy CPU translation on/off (BB_LEGACY_CPU, bbport.ini, CPUID)
         'skip_check': os.environ.get('BB_SKIP_GAME_CHECK') == '1',
     }
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:24]
@@ -153,6 +156,18 @@ def build(game: Path, out: Path):
     return buf.getvalue().splitlines()
 
 
+def write_compat(out: Path):
+    """out/cpu_compat.txt: '1' when the image holds the Legacy CPU translations, else empty. run.bat
+    and run.sh export BB_CPU_COMPAT=1 from it, which bb-probe's CPU check reads."""
+    try:
+        enabled = bool(json.loads((out / 'link.json').read_text(encoding='utf-8')).get('cpu_compat', {}).get('enabled'))
+    except (OSError, ValueError):
+        enabled = False
+    (out / 'cpu_compat.txt').write_text('1\n' if enabled else '\n', encoding='ascii')
+    print('Legacy CPU translation: ' + ('on (this image runs without BMI1, LZCNT, MOVBE)' if enabled else
+          'off (the CPU has the instructions, or legacy_cpu=0)'))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('game', type=Path)
@@ -167,6 +182,7 @@ def main():
     import prepare
     try:
         image(a)
+        write_compat(a.out)
         if a.sku:
             import content_profile
             content_profile.prepare(a.game, a.out, a.sku)

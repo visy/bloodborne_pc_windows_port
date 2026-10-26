@@ -78,6 +78,8 @@ fi
 # Boot image (prepare, link_libc, link_modules; reused while the game files stay the same,
 # docs/STARTUP.md) and the AppContent profile.
 "$PYTHON" scripts/boot_image.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+# Legacy CPU profile (scripts/cpu_compat.py): bb-probe's CPU check lets such a CPU start.
+if [[ $(cat "$out/cpu_compat.txt" 2>/dev/null) == 1 ]]; then export BB_CPU_COMPAT=1; else unset BB_CPU_COMPAT; fi
 # Sizes chosen below for the previous launch are recomputed after an in-game restart.
 if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
     unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES

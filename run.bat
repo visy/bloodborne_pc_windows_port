@@ -150,6 +150,10 @@ set "sku=%BB_CONTENT_SKU%"
 if "%sku%"=="" set "sku=full"
 "%PYTHON%" scripts\boot_image.py "%game%" --out "%out%" --sku "%sku%"
 if errorlevel 1 exit /b %ERRORLEVEL%
+REM Legacy CPU profile (scripts\cpu_compat.py, from Supermedo/bloodborne_pc): bb-probe's CPU check lets
+REM a CPU without BMI1, LZCNT or MOVBE start when the image was translated.
+set "BB_CPU_COMPAT="
+if exist "%out%\cpu_compat.txt" for /f "usebackq delims=" %%c in ("%out%\cpu_compat.txt") do set "BB_CPU_COMPAT=%%c"
 
 if "%BB_AUTO_RENDER_RES%"=="1" (
     set "BB_RENDER_RES="

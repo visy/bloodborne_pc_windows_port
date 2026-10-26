@@ -229,6 +229,10 @@ def setup(a):
                 shutil.copy2(build / name, inst / name)
         for sub in ("scripts", "patches"):
             link_tree(build / sub, inst / sub)
+        plan = build / "tools" / "legacy-cpu-plan.json"  # scripts/cpu_compat.py reads it (Legacy CPU)
+        if plan.exists():
+            (inst / "tools").mkdir(exist_ok=True)
+            shutil.copy2(plan, inst / "tools" / plan.name)
         if (build / "python").is_dir():  # a staged release's bundled Python (run.bat prefers it)
             link_tree(build / "python", inst / "python")
         for f in (build / "out").iterdir():
