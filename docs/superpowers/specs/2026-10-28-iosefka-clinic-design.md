@@ -68,9 +68,7 @@ instances over SSH. Reporting a bug stays painless for players and safe for them
   ~25 MB LZMA), 243 images (282 MB), 40 videos (857 MB, stills only), 4 zips, 1 crash dump (.dmp),
   1 game file (.dcx). Logs by place: #bug-reports 135 (79 posts), #help 42, #general 9, #co-op 2.
   Expected archive size 300-400 MB.
-- Files removed from the server (they can carry names/IPs/memory): .log/.txt, crash dumps (.dmp), zips
-  holding any of those, save/game files (.dcx, userdata). Everything else (images, videos) stays unless
-  it shares a message with a removed file (then it is reposted by Iosefka).
+- Files removed from the server (they can carry names/IPs/memory): .log/.txt, crash dumps (.dmp), game files (.dcx), and zips holding any of those. Updated 2026-10-28 (visy): saves, images and videos carry no PII, so they are archived but their message stays on Discord untouched (no note, no reaction); a message that also holds a log is deleted and replaced as before. Archives over 100 MiB, or holding no log, save, image or video, are neither downloaded/copied nor touched.
 
 ## Decisions made by visy
 

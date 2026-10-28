@@ -311,7 +311,7 @@ def _scan_level(path: Path, prefix: str, depth: int, st: _Scan) -> None:
         full = prefix + clean
         st.names.append(full)
         kind = _logic.file_kind(clean)
-        if kind in _logic.REMOVABLE_KINDS or kind == "archive":
+        if kind in _logic.STORE_INNER_KINDS or kind == "archive":
             if size is not None and size > MAX_FILE_BYTES:
                 if kind == "archive":
                     st.ok = False  # cannot look inside: unreadable
