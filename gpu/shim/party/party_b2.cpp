@@ -38,6 +38,7 @@
 #include "party_split_notice.h"
 #include "party_kidnap_rules.h"
 #include "party_bossfog_rules.h"
+#include "party_enemyai_rules.h"
 #include "party_hud.h"
 #include "party_status.h"
 #include "party_guestvals_rules.h"
@@ -6607,6 +6608,88 @@ void LimboBossTargetTick(double now) {
     }
 }
 
+/// Host (the AI owner of its world), main thread, every frame: a player chr at HP 0 in a boss fight
+/// or in the host's limbo leaves the enemies' target bank (SprjTargetBankManager *0x553B098: begin
+/// +0x8, end +0x10, capacity +0x18; the chr's entry at chr +0x3B0 -> +0x40 -> +0x8, as the teardown
+/// 0x18BC110 removes it) and goes back when it gets up, the fight ends or the session does. The
+/// target search 0x12ADC50 has no HP check: the boss kept a dead player (the spectating host's
+/// carried chr 0.2 m from the followed member, a dead guest's copy at its death spot) as its
+/// nearest target and idled over it while the living fought on. BB_PARTY_DEAD_UNTARGET=0 off (A/B).
+struct UntargetedChr {
+    u64 chr = 0, entry = 0;
+    u32 handle = ~0u;
+    size_t size_before = 0;  // the bank's size when it was taken out: room for it is still allocated
+};
+std::vector<UntargetedChr> g_untargeted;  // main thread only
+
+void DeadPlayerUntargetTick(const GameSnapshot& s, double now) {
+    static const bool on = !(std::getenv("BB_PARTY_DEAD_UNTARGET") && std::getenv("BB_PARTY_DEAD_UNTARGET")[0] == '0');
+    const u64 bank = Slot(0x553b098);
+    const bool up = s.world_up && !s.loading && bank;
+    const bool fight = up && (g_host_limbo.load() || BossFightActive());
+    // The player chrs now: the local one and every member's copy.
+    std::vector<u64> players;
+    if (up && s.player) players.push_back(s.player);
+    for (const TaskInfo& t : (up ? Tasks(false) : std::vector<TaskInfo>{})) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c) players.push_back(c);
+    }
+    const auto entry_of = [](u64 chr) { return Field<u64>(Field<u64>(Field<u64>(chr, 0x3b0), 0x40), 8); };
+    // Back in: got up, the fight is over, or not the owner any more. A chr that is gone (a load, a
+    // member left) took its entry with it: forgotten, never put back.
+    for (auto it = g_untargeted.begin(); it != g_untargeted.end();) {
+        const bool live = std::find(players.begin(), players.end(), it->chr) != players.end() && entry_of(it->chr) == it->entry;
+        const bool keep_out = live && enemyai_rules::DeadPlayerOutOfBank(on, Role() == RoleHost, fight, ChrHp(it->chr));
+        if (keep_out) {
+            ++it;
+            continue;
+        }
+        if (live && up) {
+            u64 b = Field<u64>(bank, 8), e = Field<u64>(bank, 0x10), cap = Field<u64>(bank, 0x18);
+            const size_t n = b && e >= b ? size_t((e - b) / 8) : 0;
+            // Room: the size it had (a vector never shrinks its storage), or the capacity word when
+            // the bank grew meanwhile and the word is plausible.
+            const size_t room = std::max(it->size_before, cap >= e && cap - b <= 4096 * 8 ? size_t((cap - b) / 8) : 0);
+            std::vector<u64> v(std::max(n, room) + 1, 0);
+            bool ok = n <= 4096 && room <= 4096 && (n == 0 || SafeRead(b, v.data(), n * 8));
+            ok = ok && enemyai_rules::BankInsert(v.data(), v.data() + n, v.data() + room, it->entry);
+            if (ok) {
+                SafeWrite(b + n * 8, &it->entry, 8);
+                e += 8;
+                SafeWrite(bank + 0x10, &e, 8);
+            }
+            Log("dead untarget: chr %08x (hp %d) back in the enemies' target bank%s", it->handle, ChrHp(it->chr),
+                ok ? "" : " (already there or no room: left to the game)");
+        } else {
+            Log("dead untarget: chr %08x gone (%s): its entry is not put back", it->handle, up ? "left" : "a load");
+        }
+        it = g_untargeted.erase(it);
+    }
+    if (!fight) return;
+    for (const u64 c : players) {
+        if (!enemyai_rules::DeadPlayerOutOfBank(on, Role() == RoleHost, fight, ChrHp(c))) continue;
+        if (std::any_of(g_untargeted.begin(), g_untargeted.end(), [c](const UntargetedChr& u) { return u.chr == c; })) continue;
+        const u64 ent = entry_of(c);
+        u64 b = Field<u64>(bank, 8), e = Field<u64>(bank, 0x10);
+        const size_t n = b && e >= b ? size_t((e - b) / 8) : 0;
+        if (!ent || n == 0 || n > 4096) continue;
+        std::vector<u64> v(n);
+        if (!SafeRead(b, v.data(), n * 8) || !enemyai_rules::BankRemove(v.data(), v.data() + n, ent)) {
+            continue;
+        }
+        SafeWrite(b, v.data(), (n - 1) * 8);
+        e -= 8;
+        SafeWrite(bank + 0x10, &e, 8);
+        g_untargeted.push_back({c, ent, Field<u32>(c, 8), n});
+        Log("dead untarget: chr %08x (%s, hp %d) out of the enemies' target bank (%zu -> %zu entries, capacity word "
+            "%lld)%s",
+            Field<u32>(c, 8), c == s.player ? "this player" : "a member's copy", ChrHp(c), n, n - 1,
+            (long long)((Field<u64>(bank, 0x18) - b) / 8),
+            g_host_limbo.load() ? " in the host's limbo" : " in a boss fight");
+    }
+    (void)now;
+}
+
 /// Main thread, host: the alive snapshot, the taken death's revive (or a wipe's vanilla funnel)
 /// and a 10 s watch of the revived chr.
 void HostDownTick(const GameSnapshot& s, double now) {
@@ -11861,6 +11944,7 @@ void Tick(const GameSnapshot& s) {
     HeldDeathTick(s, now);
     LampSpotTick(s);
     HostDownTick(s, now);
+    DeadPlayerUntargetTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
