@@ -91,10 +91,19 @@ def test_parse_release():
 
 
 def test_unmatched(tmp_path):
-    for n in ("2026-10-01_alice_crash", "2026-10-02_bob_hang", "2026-10-03_carol"):
-        (tmp_path / n).mkdir()
+    for d in ("2026-10-25/chalice_vase_shop", "2026-10-25/lamp", "2026-10-25/lamp_after_join",
+              "2026-10-26/boss_hang", "2026-10-26/other", "nw_clinic/2026-10-26", "nw_clinic/stuff"):
+        (tmp_path / d).mkdir(parents=True)
     (tmp_path / "readme.txt").write_text("x")
-    names = tmp_path / "names.json"
-    names.write_text(json.dumps(["2026-10-02_bob_hang"]))
-    out = coop.unmatched(tmp_path, json.loads(names.read_text()))
-    assert out == ["2026-10-01_alice_crash", "2026-10-03_carol"]
+    names = ["2026-10-25/chalice_vase_shop", "Boss_Hang", "lamp_after_join notes"]
+    out = coop.unmatched(tmp_path, names)
+    assert out == ["2026-10-25/lamp", "2026-10-26/other"]
+
+
+def test_noise_word_boundary():
+    log = ("a1\x1f2026-10-01T10:00:00+03:00\x1fDocstrings fix\x1f\x1e\n"
+           "a2\x1f2026-10-02T10:00:00+03:00\x1fwiping saves\x1f\x1e\n"
+           "a3\x1f2026-10-03T10:00:00+03:00\x1fDocs: update\x1f\x1e\n"
+           "a4\x1f2026-10-04T10:00:00+03:00\x1f0.2.5: x\x1f\x1e\n")
+    items, _ = nw.parse_log(log)
+    assert sorted(i["source_key"] for i in items) == ["git:a1", "git:a2", "git:a4"]

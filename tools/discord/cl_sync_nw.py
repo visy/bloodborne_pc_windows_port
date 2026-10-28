@@ -15,7 +15,7 @@ from clinic_changes import clean_text, norm_version, version_key  # noqa: E402
 
 PREFIX_RX = re.compile(r"^(\d+\.\d+\.\d+(?:[ -](?:alpha|beta|rc)[ .]?\d+)?)\s*[:;(]\s*(.+)", re.I)
 AREA_RX = re.compile(r"^[A-Za-z][\w /-]{0,30}:\s+")
-NOISE = ("wip", "merge ", "readme", "docs", 'revert "')
+NOISE_RX = re.compile(r'^(?:wip|merge|readme|docs)\b|^revert "', re.I)
 BUG_RX = re.compile(r"NW-[0-9a-f]{7}")
 LOG_FORMAT = "%H%x1f%cI%x1f%s%x1f%b%x1e"
 
@@ -56,7 +56,7 @@ def parse_log(text, current=None):
 
     last_prefixed = None
     for sha, when, subj, body in recs:
-        if subj.lower().startswith(NOISE):
+        if NOISE_RX.match(subj):
             continue
         m = PREFIX_RX.match(subj)
         if m:
