@@ -293,7 +293,7 @@ def test_save_zip_is_archived_as_saves_and_replied_as_saves(tmp_path):
     bug = c.new_bug("x", "channel cluster", 100, None)
     assert run(cd.replace_and_delete(c, m, bug, ping=False, delete=True, need_export=False)) == "deleted"
     text = ch.sent[0].content
-    assert "brought their saves" in text and "a log" not in text and "keep them safe" in text
+    assert "memories of their hunt" in text and "a log" not in text and "keep them safe" in text
     assert c.bug(bug)["tags"]["has_saves"] == "yes"
 
 

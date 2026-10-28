@@ -62,10 +62,10 @@ def test_announcement_mentions_duties():
 
 def test_voice_names_saves():
     out = v.replacement("<@1>", "NW-1a2b3c4", "my saves 203.0.113.9", what="save")
-    assert out.startswith("<@1> brought their saves") and "log" not in out.split("\n")[0]
-    assert "keep them safe" in out and "developers use them" in out and "203.0.113.9" not in out
+    assert out.startswith("<@1> entrusted me with the memories of their hunt") and "log" not in out.split("\n")[0]
+    assert "keep them safe" in out.replace("I'll keep them safe","keep them safe") and "developers will read them" in out and "203.0.113.9" not in out
     both = v.replacement("<@1>", "NW-1a2b3c4", "x", what="both")
-    assert "brought logs and saves" in both and "keep them safe" in both
+    assert "their logs and the memories of their hunt" in both and "keep them safe" in both
     assert v.replacement("<@1>", "NW-1a2b3c4", "x").startswith("<@1> brought a log to my clinic")
     assert "keep them safe" not in v.replacement("<@1>", "NW-1a2b3c4", "x")
     for what, word in (("save", "saves"), ("both", "logs and saves")):
@@ -80,6 +80,6 @@ def test_voice_names_saves():
 
 def test_bug_filed_for_saves():
     s = v.bug_filed("NW-1a2b3c4", ["host"], what="save")
-    assert "NW-1a2b3c4" in s and "saves are safe" in s and "host's log" not in s
+    assert "NW-1a2b3c4" in s and "memories of your hunt are safe" in s and "host's log" not in s
     b = v.bug_filed("NW-1a2b3c4", ["host"], what="both")
-    assert "saves are safe" in b and "host's log" in b
+    assert "memories of your hunt are safe" in b and "host's log" in b
