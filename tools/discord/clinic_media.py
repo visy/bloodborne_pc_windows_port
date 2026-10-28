@@ -199,7 +199,8 @@ def _sevenzip_read(exe: str, path: Path, members: list[str], limit: int) -> dict
     out: dict[str, bytes] = {}
     with tempfile.TemporaryDirectory(prefix="7z_") as tmp:
         try:
-            r = _run([exe, "x", "-y", "-p-", "-bb1", f"-o{tmp}", "--", str(path), *members], timeout=UNRAR_TIMEOUT)
+            # no -bb1 etc.: Ubuntu's p7zip 9.20 rejects switches newer than 2010 ("Incorrect command line")
+            r = _run([exe, "x", "-y", "-p-", f"-o{tmp}", "--", str(path), *members], timeout=UNRAR_TIMEOUT)
         except (OSError, subprocess.SubprocessError):
             return None
         text = (r.stdout + (r.stderr or b"")).decode("utf-8", "replace") if isinstance(r.stdout, bytes) else ""
