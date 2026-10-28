@@ -11,7 +11,8 @@ Everything the clinic holds is private: logs carry player names, Steam/PSN names
 ## Quick queries
 
 ```
-ssh iosefka new                                                  what is new since my last check
+ssh iosefka new                                                  what is new since my last check (also bugs that got new material)
+ssh iosefka triage-queue                                         bugs waiting for a triage pass + auto-linked messages
 ssh iosefka list --open --tag component=nw-launcher              all open launcher bugs
 ssh iosefka list --open --tag component=coop-mod --tag feature=chalice     open co-op chalice bugs
 ssh iosefka files --open --tag component=coop-mod --tag feature=chalice > b.tar    pull them all
@@ -55,6 +56,9 @@ or `$()` is stored as plain text and never run.
 
 `ssh iosefka new`: bugs created and notes added by others since your last `new` (the first call lists
 everything). It also marks "seen now". `share` notes addressed to you are included.
+`updated_bugs` lists older bugs that got new messages or files since your last `new` (players add details
+days later; a fixed or closed bug that gets new material is reopened and carries a note "new report
+after <status>"). `triage_pending` is the size of the triage queue.
 
 ```json
 {"since": "2026-10-28T08:00:00Z",
@@ -157,6 +161,16 @@ Suggested keys and values:
 | role | `host`, `guest` |
 | plan | the open item name in `agents/PLAN_077.md` that covers it |
 
+### triage-queue, title, move
+
+- `ssh iosefka triage-queue`: bugs with tag `triage=pending` (oldest first) and the `auto-link` notes added
+  since your last queue check (messages Iosefka attached by a weaker rule: same session, 24 h follow-up).
+  Clear a bug after the pass with `tag NW-x triage=done`. Tag `unsure` lists what she could not settle:
+  network-or-bug, which-bug, no-log, unreadable-file, no-text.
+- `ssh iosefka title NW-x "'new title'"`: set the title (IPs masked).
+- `ssh iosefka move <message_id> NW-x`: re-point one message and its files to another bug (for a wrong
+  auto-link); both bugs get a note.
+
 ### assign, share, merge
 
 - `ssh iosefka assign NW-1a2b3c4 vlad` (`-` unassigns).
@@ -178,6 +192,13 @@ case with `case.json` `{title, tags, notes, files, status?}` and the files) and 
 ## Workflows
 
 - Morning check: `ssh iosefka new`; open the interesting ones with `show`.
+- Triage pass (Claude): `triage-queue`; per bug `show NW-x` + `files NW-x`, read the logs (party logs with
+  `scripts/net_doctor.py`), set title (`title`), status and tags (component, area, feature, version, role,
+  plan, severity), settle each `unsure` reason (wrong auto-link: `move`), look for duplicates in open bugs
+  (`list --open --q ...`, then `merge`), check CHANGES.md and the Nightwatch repo for an already fixed
+  cause, write a triage `note`, and finish with `tag NW-x triage=done`.
+- Late details: a message with a bug id, a reply to Iosefka's note, a log of the same session or the
+  reporter's follow-up within 24 h joins the bug automatically (see `updated_bugs` in `new`).
 - Working a bug: `show NW-x` -> `files NW-x > x.tar`, extract, analyse the logs locally -> `note` with the
   finding -> `tag` (component, feature, version) -> `status open` / `waiting-logs`.
 - Handing over: `share NW-x visy "'why'"`, or `assign NW-x visy`.
