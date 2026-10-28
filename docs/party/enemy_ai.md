@@ -69,8 +69,8 @@ report: ask for `BB_PARTY_AI_LOG=1` and `BB_PARTY_TARGET_ANIM=1` logs of both ga
 
 ## Dead players in the target bank (0.7.7, bossai077: "the boss stops when the host dies")
 
-Root cause found from the player's screenshot (NW-ca9ed04): it is the **host's** screen, spectating
-(empty HP bar, echoes 0), the followed guest at **0.2 m** and the Cleric Beast idle beside them. The
+Root cause, read from the player's screenshot (NW-ca9ed04): most likely the **host's** screen, spectating
+(empty HP bar, echoes 0; smoke `bh` shows the same picture on the host), the followed guest at **0.2 m** and the Cleric Beast idle beside them. The
 spectate (C5, smooth follow since 0.7.0) carries the dead host chr onto the followed member's own spot
 so that the camera follows it. The enemies' target search (`SprjTargetBankManager` *0x553B098, a vector
 at +0x8 / +0x10 of every chr's target entry; read by 0x12ADC50, which filters on team and entry flags,
@@ -86,7 +86,8 @@ in party_enemyai_rules.h): on the host's game (the AI owner), a player chr (its 
 at HP 0 while a boss bar is up or in the host's limbo is taken out of the bank vector as the chr
 teardown 0x18BC110 does it (chr +0x3B0 -> +0x40 -> +0x8 is its entry) and put back at the end when it
 gets up (arena revive), when the fight ends, or never when the chr is gone (a load or a member that
-left took the entry with it; a load builds a new one). Put back only into room the vector already had
+left took the entry with it; a load builds a new one). The game itself put the dead host's entry back once,
+~4 s after the death (live `bk_fix2`), so the tick checks once a second and takes it out again. Put back only into room the vector already had
 (its size at removal; capacity word +0x18 when it grew meanwhile). `BB_PARTY_DEAD_UNTARGET=0` off (A/B).
 Log: `dead untarget: chr ... out of / back in the enemies' target bank`. Smoke phases `bh` (mortal
 guest gets hit after the host's death) and `bk` (boss killed in limbo, host up, back in the bank),

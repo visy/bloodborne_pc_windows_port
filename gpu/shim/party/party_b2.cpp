@@ -9827,7 +9827,8 @@ void TitleJoinHostTick(const GameSnapshot& s) {
         // A Chalice Dungeon: a title join loads the joiner's own slot's dungeon (no quick join), so
         // only a joiner whose slot holds this dungeon comes in that way; the others continue into
         // their own world and the summon brings them in (an empty m29 otherwise).
-        const std::uint64_t host_channel = Field<u64>(Field<u64>(Guest(0x553b120), 0, 0), 0xa88, dsummon::kNoChannel);
+        const std::uint64_t host_channel =
+            chalice::BoardChannelFor(Field<u64>(Field<u64>(Guest(0x553b120), 0, 0), 0xa88, dsummon::kNoChannel));
         std::vector<int> into_chalice;
         if (busy == dsummon::Busy::None) {
             std::lock_guard<std::mutex> lk(TJ().mu);
@@ -10180,7 +10181,8 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         // guest's game quick-joins (chalice.md 4). Right after the host's arrival it is still 0 (live:
         // ~1.5 s), and the summoned game fetches the dungeon from the board: until both are there,
         // the guest asks again (a room without it loaded the guest into an empty m29 and it fell).
-        const std::uint64_t host_channel = Field<u64>(Field<u64>(Guest(kNetMan), 0, 0), 0xa88, dsummon::kNoChannel);
+        const std::uint64_t host_channel =
+            chalice::BoardChannelFor(Field<u64>(Field<u64>(Guest(kNetMan), 0, 0), 0xa88, dsummon::kNoChannel));
         v.chalice_unready = dsummon::ChaliceMap(s.map_id) &&
                             (!dsummon::ChannelSet(host_channel) ||
                              !bbnet::party::FromApi::instance().channels().known(host_channel));
