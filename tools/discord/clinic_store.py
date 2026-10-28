@@ -29,7 +29,8 @@ CREATE INDEX IF NOT EXISTS nw_messages_bug ON nw_messages (bug_id);
 CREATE TABLE IF NOT EXISTS nw_bugs (
     id TEXT PRIMARY KEY, title TEXT, source TEXT, channel_id INTEGER, thread_id INTEGER,
     status TEXT, dup_of TEXT, tags TEXT, assignee TEXT, nd_refs TEXT, created REAL, updated REAL,
-    reporter_id INTEGER);
+    reporter_id INTEGER, activity REAL);
+CREATE TABLE IF NOT EXISTS nw_loginfo (sha256 TEXT PRIMARY KEY, info TEXT);
 CREATE TABLE IF NOT EXISTS nw_notes (
     bug_id TEXT NOT NULL, at REAL, who TEXT, kind TEXT, text TEXT, to_who TEXT);
 CREATE INDEX IF NOT EXISTS nw_notes_bug ON nw_notes (bug_id);
@@ -46,7 +47,7 @@ MESSAGE_COLS = ("channel_id", "thread_id", "author_id", "author_name", "created"
 BUG_FIELDS = ("title", "source", "channel_id", "thread_id", "status", "dup_of", "assignee", "nd_refs",
               "reporter_id")
 BUG_COLS = ("id", "title", "source", "channel_id", "thread_id", "status", "dup_of", "tags", "assignee",
-            "nd_refs", "created", "updated", "reporter_id")
+            "nd_refs", "created", "updated", "reporter_id", "activity")
 
 
 def _bug_dict(row):
@@ -73,7 +74,8 @@ class Clinic:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
-        for table, col in (("nw_messages", "dm INTEGER"), ("nw_bugs", "reporter_id INTEGER")):
+        for table, col in (("nw_messages", "dm INTEGER"), ("nw_bugs", "reporter_id INTEGER"),
+                           ("nw_bugs", "activity REAL")):
             have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col.split()[0] not in have:  # database from before the column: add it
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
@@ -239,7 +241,7 @@ class Clinic:
 
     # bugs
 
-    def new_bug(self, title, source, channel_id, thread_id, reporter_id=None):
+    def new_bug(self, title, source, channel_id, thread_id, reporter_id=None, tags=None):
         while True:
             bug_id = "NW-" + secrets.token_hex(4)[:7]
             if not self.db.execute("SELECT 1 FROM nw_bugs WHERE id=?", (bug_id,)).fetchone():
@@ -247,10 +249,68 @@ class Clinic:
         now = time.time()
         self.db.execute("INSERT INTO nw_bugs (id, title, source, channel_id, thread_id, status, dup_of, tags, "
                         "assignee, nd_refs, created, updated, reporter_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (bug_id, title, source, channel_id, thread_id, "new", None, "{}", None, "[]", now, now,
+                        (bug_id, title, source, channel_id, thread_id, "new", None,
+                         json.dumps(tags or {}, sort_keys=True), None, "[]", now, now,
                          reporter_id))
         self.db.commit()
         return bug_id
+
+    def touch_bug(self, bug_id):
+        """New material joined this bug: stamp `activity` (and `updated`)."""
+        now = time.time()
+        self.db.execute("UPDATE nw_bugs SET activity=?, updated=? WHERE id=?", (now, now, bug_id))
+        self.db.commit()
+
+    def add_unsure(self, bug_id, reasons):
+        """Add reasons to the bug's `unsure` tag (a list), keeping the ones already there."""
+        have = (self.bug(bug_id) or {}).get("tags", {}).get("unsure") or []
+        have = have if isinstance(have, list) else [have]
+        new = [r for r in reasons if r not in have]
+        if new:
+            self.update_bug(bug_id, tags={"unsure": have + new})
+
+    def message_by_replacement(self, replacement_id):
+        row = self.db.execute("SELECT bug_id FROM nw_messages WHERE replacement_id=? AND bug_id IS NOT NULL "
+                              "LIMIT 1", (replacement_id,)).fetchone()
+        return row[0] if row else None
+
+    def put_loginfo(self, sha, info):
+        """Keep one log's session info (sets stored as sorted lists)."""
+        d = {k: (sorted(v) if isinstance(v, (set, frozenset)) else v) for k, v in info.items()}
+        self.db.execute("INSERT OR REPLACE INTO nw_loginfo VALUES (?,?)", (sha, json.dumps(d)))
+        self.db.commit()
+
+    def all_loginfos(self):
+        out = {}
+        for sha, raw in self.db.execute("SELECT sha256, info FROM nw_loginfo"):
+            d = json.loads(raw)
+            d["peers"] = set(d.get("peers") or ())
+            out[sha] = d
+        return out
+
+    def reporter_candidates(self, author_id, channel_id, created, window=86400):
+        """Bugs (not duplicates) reported by this author whose last message is in this channel within
+        `window` seconds before `created`; most recent first."""
+        out = []
+        for b in self.bugs(exclude_status=("duplicate",)):
+            if b["reporter_id"] != author_id:
+                continue
+            msgs = [m for m in self.messages_for_bug(b["id"]) if m["created"]]
+            if not msgs:
+                continue
+            last = max(msgs, key=lambda m: m["created"])
+            if last["channel_id"] == channel_id and 0 <= created - last["created"] <= window:
+                out.append((last["created"], b["id"]))
+        return [i for _, i in sorted(out, reverse=True)]
+
+    def move_message(self, message_id, bug_id):
+        """Re-point one message (and so its files) to another bug; returns the old bug id."""
+        row = self.db.execute("SELECT bug_id FROM nw_messages WHERE message_id=?", (message_id,)).fetchone()
+        if not row:
+            return False
+        self.db.execute("UPDATE nw_messages SET bug_id=? WHERE message_id=?", (bug_id, message_id))
+        self.db.commit()
+        return row[0] or ""
 
     def bug(self, bug_id):
         row = self.db.execute(f"SELECT {', '.join(BUG_COLS)} FROM nw_bugs WHERE id=?", (bug_id,)).fetchone()
@@ -334,6 +394,11 @@ class Clinic:
         self.db.execute("UPDATE nw_bugs SET updated=? WHERE id=?", (time.time(), bug_id))
         self.db.commit()
 
+    def notes_of_kind(self, kind, since=0.0):
+        rows = self.db.execute("SELECT bug_id, at, who, kind, text, to_who FROM nw_notes WHERE kind=? AND at>? "
+                               "ORDER BY at, rowid", (kind, since))
+        return [dict(zip(("bug_id", "at", "who", "kind", "text", "to"), r)) for r in rows]
+
     def notes(self, bug_id):
         rows = self.db.execute("SELECT bug_id, at, who, kind, text, to_who FROM nw_notes WHERE bug_id=? "
                                "ORDER BY at, rowid", (bug_id,))
@@ -389,10 +454,11 @@ class Clinic:
         self.db.execute("INSERT OR REPLACE INTO nw_watermark VALUES (?,?)", (channel_id, mid))
         self.db.commit()
 
-    def mark_seen(self, who):
-        """Record that `who` looked now; returns the previous time (0.0 the first time)."""
-        row = self.db.execute("SELECT at FROM nw_seen WHERE who=? AND bug_id=''", (who,)).fetchone()
-        self.db.execute("INSERT OR REPLACE INTO nw_seen VALUES (?,?,?)", (who, "", time.time()))
+    def mark_seen(self, who, key=""):
+        """Record that `who` looked now; returns the previous time (0.0 the first time). `key`: another
+        checklist than `new` (the triage queue)."""
+        row = self.db.execute("SELECT at FROM nw_seen WHERE who=? AND bug_id=?", (who, key)).fetchone()
+        self.db.execute("INSERT OR REPLACE INTO nw_seen VALUES (?,?,?)", (who, key, time.time()))
         self.db.commit()
         return row[0] if row else 0.0
 
@@ -405,7 +471,9 @@ class Clinic:
             "SELECT bug_id, at, who, kind, text, to_who FROM nw_notes WHERE at>? ORDER BY at, rowid", (t,))]
         if who:
             notes = [n for n in notes if n["kind"] != "share" or n["to"] == who]
-        return {"bugs": bugs, "notes": notes}
+        updated = [_bug_dict(r) for r in self.db.execute(
+            f"SELECT {', '.join(BUG_COLS)} FROM nw_bugs WHERE activity>? AND created<=? ORDER BY activity", (t, t))]
+        return {"bugs": bugs, "notes": notes, "updated_bugs": updated}
 
     # exports (the PC copy before the cull)
 

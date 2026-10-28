@@ -126,8 +126,12 @@ class Msg:
         self.deleted = False
         self.delete_error = None
         self.kw = {}
+        self.reactions = []
         if hasattr(channel, "index"):
             channel.index[id] = self
+
+    async def add_reaction(self, emoji):
+        self.reactions.append(emoji)
 
     async def delete(self):
         if self.delete_error:

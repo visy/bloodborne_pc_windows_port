@@ -9,6 +9,7 @@ delete.
 import asyncio
 import hashlib
 import importlib.util
+import re
 import shutil
 import sys
 import tempfile
@@ -301,6 +302,7 @@ def log_infos(clinic, atts, log_info_fn, tmp):
             if info and info.get("role") is not None:
                 info = dict(info)
                 info["sha256"] = sha
+                clinic.put_loginfo(sha, info)
                 out.append(info)
         finally:
             shutil.rmtree(d, ignore_errors=True)
@@ -379,10 +381,135 @@ def store_text(clinic, message, bug_id):
         "author_id": message.author.id, "author_name": str(getattr(message.author, "name", "")),
         "created": _ts(message.created_at), "edited": _ts(getattr(message, "edited_at", None)),
         "content": message.content or "", "reply_to": getattr(ref, "message_id", None),
-        "attachments": [], "bug_id": bug_id, "state": "kept", "seen": time.time()})
+        "attachments": [], "bug_id": bug_id, "state": "kept", "seen": time.time(),
+        "dm": 1 if message.guild is None else 0})
 
 
 # --- bugs ------------------------------------------------------------------------------------------------
+
+PENDING = {"triage": "pending"}  # every bug Iosefka files waits for a later triage pass
+BUG_ID_RX = re.compile(r"NW-[0-9a-f]{7}", re.I)
+REACT = "\U0001FA7A"
+
+
+def resolve_dup(clinic, bug_id):
+    """Follow dup_of: new material for a duplicate goes to the bug it duplicates."""
+    for _ in range(8):
+        b = clinic.bug(bug_id)
+        if not b or b["status"] != "duplicate" or not b["dup_of"] or not clinic.bug(b["dup_of"]):
+            break
+        bug_id = b["dup_of"]
+    return bug_id
+
+
+def message_link(message):
+    g = getattr(message, "guild", None)
+    gid = getattr(g, "id", None) if g is not None else "@me"
+    return f"https://discord.com/channels/{gid or 0}/{message.channel.id}/{message.id}"
+
+
+def explicit_bugs(clinic, text):
+    out = []
+    for m in BUG_ID_RX.findall(text or ""):
+        bid = "NW-" + m[3:].lower()
+        if clinic.bug(bid):
+            bid = resolve_dup(clinic, bid)
+            if bid not in out:
+                out.append(bid)
+    return out
+
+
+def reply_bug(clinic, message):
+    ref = getattr(getattr(message, "reference", None), "message_id", None)
+    if not ref:
+        return None
+    rec = clinic.message(ref)
+    bug = (rec or {}).get("bug_id") or clinic.message_by_replacement(ref)
+    return resolve_dup(clinic, bug) if bug else None
+
+
+def _same_session(a, b):
+    if a.get("day") and b.get("day") and a["day"] != b["day"]:
+        return False  # a session is one day's; the post may come days later, the log cannot
+    try:
+        return _sib("netdoctor_store").same_session(a, b)
+    except KeyError:
+        return False
+
+
+def session_bugs(clinic, infos, own_shas=()):
+    """Bugs holding a stored log of the same party session as one of these infos (any age)."""
+    out = []
+    if not infos:
+        return out
+    for sha, old in clinic.all_loginfos().items():
+        if sha in own_shas or not any(_same_session(old, i) for i in infos):
+            continue
+        bug = clinic.bug_for_files([sha])
+        if bug:
+            bug = resolve_dup(clinic, bug)
+            if bug not in out:
+                out.append(bug)
+    return out
+
+
+def find_link(clinic, message, infos=None):
+    """The bug a message belongs to by the late-detail rules: (bug, rule, unsure reasons) or None.
+    Priority: explicit id > reply > thread > same session > 24 h reporter follow-up."""
+    explicit = explicit_bugs(clinic, message.content)
+    reply = reply_bug(clinic, message)
+    t = thread_of(message) if message.guild is not None else None
+    tb = clinic.bug_for_thread(t.id) if t is not None else None
+    thread = resolve_dup(clinic, tb) if tb else None
+    plain = message.guild is not None and t is None
+    own = {i.get("sha256") for i in infos or []}
+    session = session_bugs(clinic, infos or [], own) if plain and infos else []
+    follow = []
+    if plain and not infos:
+        follow = [resolve_dup(clinic, b) for b in
+                  clinic.reporter_candidates(message.author.id, message.channel.id, _ts(message.created_at))]
+    if explicit:
+        bug, rule, others = explicit[0], "explicit", explicit[1:] + session + ([reply] if reply else [])
+    elif reply:
+        bug, rule, others = reply, "reply", session
+    elif thread:
+        bug, rule, others = thread, "thread", []
+    elif session:
+        bug, rule, others = session[0], "session", session[1:]
+    elif follow:
+        bug, rule, others = follow[0], "followup", follow[1:]
+    else:
+        return None
+    return bug, rule, (["which-bug"] if any(o != bug for o in others) else [])
+
+
+def join_bug(clinic, message, bug, rule, unsure=()):
+    """New material joined `bug`: reopen a fixed/closed one, stamp activity, note weak links, flag doubts."""
+    b = clinic.bug(bug)
+    if b["status"] in ("fixed", "closed"):
+        clinic.update_bug(bug, status="open")
+        clinic.add_note(bug, "iosefka", "status", f"new report after {b['status']}: {message_link(message)}")
+    clinic.touch_bug(bug)
+    if rule in ("session", "followup"):
+        clinic.add_note(bug, "iosefka", "auto-link", f"{rule} rule: message {message.id} {message_link(message)}")
+    if unsure:
+        clinic.add_unsure(bug, list(unsure))
+    return bug
+
+
+def link_text(clinic, message):
+    """A text-only message: join the bug the rules name (store its words), or None. Idempotent."""
+    got = find_link(clinic, message)
+    if not got:
+        return None
+    bug, rule, unsure = got
+    rec = clinic.message(message.id)
+    if rec and rec.get("bug_id") == bug:
+        return None
+    store_text(clinic, message, bug)
+    join_bug(clinic, message, bug, rule, unsure)
+    return bug, rule
+
 
 def thread_of(message):
     ch = message.channel
@@ -398,7 +525,7 @@ def ensure_thread_bug(clinic, thread, reporter_id=None):
     forum = parent is not None and hasattr(parent, "available_tags")
     pid = getattr(thread, "parent_id", None) or getattr(parent, "id", None)
     return clinic.new_bug(logic.mask_ips(thread.name or "thread")[:80], "forum post" if forum else "thread",
-                          pid, thread.id, getattr(thread, "owner_id", None) or reporter_id)
+                          pid, thread.id, getattr(thread, "owner_id", None) or reporter_id, tags=PENDING)
 
 
 def _title(text):
@@ -442,7 +569,8 @@ def assign_clusters(clinic, lights, infos_by_id, focus=None):
             seed = next((by_id[i] for i in g if by_id[i]["has_log"]), by_id[g[0]])
             first = next((by_id[i] for i in g if by_id[i]["author_id"] == seed["author_id"]
                           and by_id[i]["content"].strip()), seed)
-            bug = clinic.new_bug(_title(first["content"]), "channel cluster", seed["channel_id"], None, seed["author_id"])
+            bug = clinic.new_bug(_title(first["content"]), "channel cluster", seed["channel_id"], None, seed["author_id"],
+                                tags=PENDING)
         for dup in existing[1:]:
             if dup != bug:
                 clinic.merge_bugs(bug, dup)
@@ -476,17 +604,35 @@ async def _neighbors(message, window=logic.WINDOW_S):
 
 
 async def assign_bug(clinic, message, infos, *, log_info_fn=None, tmpdir=None):
-    """The bug a log message belongs to: thread/forum post -> that thread's bug; DM -> one per conversation
-    per UTC day; plain channel -> the cluster around the message (the poster's words, replies, peer logs)."""
+    """The bug a log message belongs to (see assign_bug_ex)."""
+    return (await assign_bug_ex(clinic, message, infos, log_info_fn=log_info_fn, tmpdir=tmpdir))[0]
+
+
+async def assign_bug_ex(clinic, message, infos, *, log_info_fn=None, tmpdir=None):
+    """(bug, rule): rule names the late-detail link used (explicit, reply, thread, session, followup) or is
+    None. Order: an NW id in the text > a reply to the bug's message or note > the thread's bug > a log of
+    the same session already in a bug > the 24 h follow-up (text only) > thread/forum post -> its bug; DM
+    -> one per conversation per UTC day; plain channel -> the cluster around the message."""
     rec = clinic.message(message.id)
     if rec and rec.get("bug_id"):
-        return rec["bug_id"]
+        return rec["bug_id"], None
+    got = find_link(clinic, message, infos)
+    if got:
+        bug, rule, unsure = got
+        clinic.upsert_message({"message_id": message.id, "bug_id": bug})
+        join_bug(clinic, message, bug, rule, unsure)
+        return bug, rule
+    return await _assign_new(clinic, message, infos, log_info_fn, tmpdir), None
+
+
+async def _assign_new(clinic, message, infos, log_info_fn, tmpdir):
     t = thread_of(message)
     if message.guild is None:
         day = time.strftime("%Y-%m-%d", time.gmtime(_ts(message.created_at)))
         title = f"DM log report {day}"
         bug = next((b["id"] for b in clinic.bugs() if b["source"] == "dm" and b["channel_id"] == message.channel.id
-                    and b["title"] == title), None) or clinic.new_bug(title, "dm", message.channel.id, None, message.author.id)
+                    and b["title"] == title), None) or clinic.new_bug(title, "dm", message.channel.id, None, message.author.id,
+                                                                tags=PENDING)
         clinic.upsert_message({"message_id": message.id, "bug_id": bug})
         return bug
     if t is not None:
