@@ -27,9 +27,9 @@ def info(name, role, host, start, end=None, peers=()):
 
 
 def test_skip_rule():
-    for n in ("staff", "staff-archived", "development", "moderator-only"):
+    for n in ("staff", "staff-archived", "development", "moderator-only", "Dev Test", "dev-chat", "DEVELOPMENT-notes"):
         assert cl.skipped_channel(n)
-    for n in ("general", "dev-chat", "development-notes", "moderator"):
+    for n in ("general", "moderator", "help"):
         assert not cl.skipped_channel(n)
 
 

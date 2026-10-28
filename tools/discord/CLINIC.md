@@ -311,7 +311,7 @@ bugs to retest (next section). The NW track: run the sync first, so its VERSION 
   short ask in its thread (or channel, replying to her replacement note; a DM bug gets a DM): the fix is in
   <version>, please try and say if it still happens. Only the reporter is mentioned. A note of kind
   `retest-asked` ("<version>: asked to retest") makes it once per bug and version. Skipped: `source=local`
-  bugs, bugs with no reporter, places that are gone or skipped (staff / development / moderator-only). One
+  bugs, bugs with no reporter, places that are gone or skipped (staff* / dev* such as development and "Dev Test" / moderator-only). One
   post every ~5 s. The reporter's reply reopens the bug through the usual follow-up rules.
 - waiting-logs: in the hourly sweep a `waiting-logs` bug with no activity (message, status change, note by
   anyone but her own asks) for 14 days gets ONE nudge (note kind `nudge`); at 30 days it becomes `closed` with
@@ -481,7 +481,10 @@ queue sizes, open alerts, and versions (git commit, discord.py, python, 7z/unrar
 
 **Start-up self-check** (on_ready, logged as `self-check: ...`): permissions per non-skipped place (view,
 read history, send, and manage messages when NW_DELETE=1), `PRAGMA quick_check`, and the 7z, unrar and ffmpeg
-programs. Problems are alerted.
+programs. Problems are alerted as ONE message listing channel names. Places whose name is skipped (staff*, dev*,
+moderator-only), and private places neither @everyone nor she can view, are never checked; Send Messages is only
+required where @everyone can post or attach files (forums: Send Messages in Threads + Manage Threads/Messages).
+Open `forbidden:<channel>` alerts of places that are no longer a problem are closed.
 
 **Weekly DB upkeep** (about 05:00 local, every 7 days): `PRAGMA integrity_check`, WAL checkpoint(TRUNCATE),
 `VACUUM` only when free disk >= 2x the DB size.
