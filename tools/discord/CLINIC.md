@@ -167,19 +167,29 @@ longer moves it. Fixing the same bug on both tracks works: run the command once 
 
 ### tag
 
-`ssh iosefka tag NW-1a2b3c4 component=coop-mod feature=chalice,lamps version=0.2.3`: a comma makes a list;
+`ssh iosefka tag NW-1a2b3c4 component=coop-mod feature=chalice,lamps coop_version=0.7.5`: a comma makes a list;
 `key=` with no value removes the tag. Keys: lowercase letters, digits, `-`, `_`.
 
-Suggested keys and values:
+Tag vocabulary (normalised 2026-10-28; use these values so filters work; a list is fine where noted):
 
 | key | values |
 |---|---|
-| area | map or boss name, e.g. `old-yharnam`, `cleric-beast`, `chalice` |
-| feature | `lamps`, `joins`, `chalice`, `endings`, `summons`, `audio`, ... (a list is fine) |
-| component | `coop-mod`, `nw-launcher`, `nw-port`, `game-data`, `network`, `unknown` |
-| version | build the player ran, e.g. `0.2.3` |
-| role | `host`, `guest` |
-| plan | the open item name in `agents/PLAN_077.md` that covers it |
+| component | `coop-mod`, `nw-port`, `nw-launcher`, `network`, `game-data`, `discord` (server/community), `external` (third-party tools) |
+| area | region, list if several: `central-yharnam`, `cathedral-ward`, `upper-cathedral-ward`, `old-yharnam`, `hemwick`, `forbidden-woods`, `byrgenwerth`, `yahargul`, `cainhurst`, `nightmare-frontier`, `mensis`, `hunters-nightmare`, `research-hall`, `fishing-hamlet`, `hunters-dream`, `chalice` |
+| place | free text detail: boss, NPC or spot (`Ludwig`, `Bath Messenger`, `Gascoigne lift`) |
+| feature | list: `joins`, `bosses`, `performance`, `graphics`, `travel`, `items`, `crash`, `install`, `npc`, `lamps`, `chalice`, `saves`, `hud`, `enemies`, `summons`, `update`, `input`, `audio`, `echoes`, `pvp`, `lifts`, `party`, `launcher`, `chat`, `other` |
+| nw_version | Nightwatch build the player ran, normalised: `0.2.4 beta 1`, `0.2.5` (list if several) |
+| coop_version | co-op mod version: `0.7.5` (list if several) |
+| version_note | the original free-text version (ranges, "older than", dates) when it said more |
+| role | `host`, `guest`, `solo` (list if several) |
+| severity | `major`, `minor` |
+| plan | changelist/plan item name it belongs to (`enemyai`, `chalicefollow`, ...) |
+| triage | `pending` (Iosefka filed it, waits for a Claude pass), `done` |
+| local_cases, nd, source | links to local player_logs cases, ND analysis refs, `source=local` for imported cases |
+
+Changelist items use the same `component`, `area` and `feature` values.
+Example queries: `list --open --tag area=hunters-nightmare`, `list --tag nw_version="'0.2.4 beta 1'"`,
+`list --open --tag feature=bosses --tag role=guest`.
 
 ### triage-queue, title, move
 
