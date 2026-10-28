@@ -84,7 +84,7 @@ def _not_found(exc):
 
 # --- walking ---------------------------------------------------------------------------------------------
 
-async def walk_places(guild):
+async def walk_places(guild, archived=True):
     """Every text/news channel (and every thread of it, active or archived, public or private) and every
     forum post, except the skipped channels. Forums themselves have no messages and are not yielded."""
     forums = list(getattr(guild, "forums", None) or [])
@@ -96,7 +96,7 @@ async def walk_places(guild):
         if not is_forum:
             yield ch
         threads = list(getattr(ch, "threads", None) or [])
-        for private in ((None,) if is_forum else (False, True)):
+        for private in (() if not archived else (None,) if is_forum else (False, True)):
             try:
                 it = ch.archived_threads(limit=None) if private is None else \
                     ch.archived_threads(private=private, limit=None)
