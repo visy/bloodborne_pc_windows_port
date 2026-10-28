@@ -656,7 +656,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
 | vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); Chalice Dungeon entry with a party (PR #8); co-op bug reports |
 | zackcage6 | Testing and bug reports |
-| Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) (GPL-3.0): its save parsing, ported in `tools/party/editor_check.py` to check that exported saves open in it |
+| Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) (GPL-3.0): its save parsing, ported in `tools/party/editor_check.py` to check that exported saves open in it; its feature list is the reference for the launcher's Save editor (`scripts/saveedit`, written from our own test saves, no code copied) |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
 included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license
