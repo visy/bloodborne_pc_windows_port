@@ -75,7 +75,8 @@ after <status>"). `triage_pending` is the size of the triage queue.
 Filters combine with AND. `--status` and `--tag` can repeat. `--open` means every status except fixed,
 closed and duplicate. A tag value matches case-insensitively, and a tag holding a list matches when any
 element equals it (`feature=chalice` finds `["chalice","lamps"]`); `--tag area` (no value) means "has this
-tag". `--q` searches title, message texts and notes. `--q` searches title, message texts and notes. `--older-than DAYS` keeps bugs created more than
+tag". `--q` searches title, message texts and notes.
+`--older-than DAYS` keeps bugs created more than
 DAYS days ago; `--idle DAYS` keeps bugs with no activity (message, note or status change) for DAYS days.
 `--sort` is `newest` (default, by creation), `oldest`, or `activity` (most recently active first).
 
@@ -149,8 +150,12 @@ addresses in it are masked, but write it with no names, IPs or log lines anyway.
 as a `triage` note.
 
 `--in TRACK:VERSION` goes only with `fixed`: it also records the fix in the changelist (see Changelists):
-the bug's existing item in that track is marked done, or a new `fixed` item with the bug's title is added
-to that version. Example: `status NW-1a2b3c4 fixed --in nw:0.2.6`.
+the bug's existing item in that track moves to done (forward only, version kept), or a new `fixed` item with
+the bug's title is added to that version (done, unless that version is still `planned`). Example: `status NW-1a2b3c4 fixed --in nw:0.2.6`.
+If the bug already has an item in that track, the item moves to done (forward only) and keeps its version.
+Otherwise a new `fixed` item with the bug's title is added to that version: done, unless the version is
+still `planned` (then the item is `planned` and `cl notes` leaves it out). So mark the version `current` or
+`released` first (`cl version nw 0.2.6 --status current`).
 
 ### tag
 
@@ -216,18 +221,20 @@ Concepts:
 Privacy rule: item `text` is PUBLIC (it ends up in release notes). Write it with no player names, IPs,
 Discord ids or player_logs paths. Put anything private in `--dev`, which never appears in `cl notes`.
 
-All commands are `ssh iosefka cl <command>`; output is JSON (`--text` for a short summary, except on
+All commands are `ssh iosefka cl <command>`. Quoting is the same as for `note` and `--tell`: the string
+is split by your local shell and again by the server, so any argument with spaces goes in single quotes
+inside double quotes, e.g. `"'multi word text'"`. Output is JSON (except `cl notes`, which prints Markdown) (`--text` for a short summary, except on
 `edit`, which takes its own `--text VALUE`).
 
 ```
 ssh iosefka cl versions --track coop                               versions with status and item counts (--track optional)
-ssh iosefka cl version coop 0.7.8 --status planned                 create or update a version (also --released YYYY-MM-DD, --note "..")
+ssh iosefka cl version coop 0.7.8 --status planned                 create or update a version (also --released YYYY-MM-DD, --note "'..'")
 ssh iosefka cl list --track nw --current                           items of the current NW version
 ssh iosefka cl list --track coop --version 0.7.7                   items of one version
 ssh iosefka cl list --track coop --next --section fixed            more filters: --status (repeat), --tag k=v, --bug NW-x, --q, --since, --older-than DAYS, --idle DAYS
 ssh iosefka cl show CL-1a2b3c                                      one item with notes and its linked bugs
-ssh iosefka cl add coop 0.7.8 fixed "Chalice lamp state now syncs" --bug NW-1a2b3c4 --dev "private detail"
-ssh iosefka cl edit CL-1a2b3c --text "Clearer wording" --section changed
+ssh iosefka cl add coop 0.7.8 fixed "'Chalice lamp state now syncs'" --bug NW-1a2b3c4 --dev "'private detail'"
+ssh iosefka cl edit CL-1a2b3c --text "'Clearer wording'" --section changed
 ssh iosefka cl status CL-1a2b3c done                               planned, in-progress, done, dropped
 ssh iosefka cl move CL-1a2b3c coop 0.7.8                           move an item to another version
 ssh iosefka cl link CL-1a2b3c --bug NW-1b2c3d4 --commit abc1234    add links (--case folder; --unlink removes them)
@@ -253,9 +260,13 @@ The NW track is filled from the Nightwatch git history by a script that runs on 
 server (it needs the git clone):
 
 ```
-python tools/discord/cl_sync_nw.py <path to NightwatchCoop clone> --dry-run     show what it would send
-python tools/discord/cl_sync_nw.py <path to NightwatchCoop clone>               send it
+python tools/discord/cl_sync_nw.py <path to NightwatchCoop clone> --host iosefka --dry-run     show what it would send
+python tools/discord/cl_sync_nw.py <path to NightwatchCoop clone> --host iosefka               send it
 ```
+
+`--host` is the ssh target the script pipes `cl import` to. The default is `visy@quad.fi` (the forced-command
+account); vlad's key is installed in that account too, but his key is picked by his ssh alias, so use
+`--host iosefka` (the Host alias from the setup section).
 
 - Versions come from commit subject prefixes such as `0.2.5 beta 3: ...` (`;` or `(` after the version
   also works). A commit without a prefix joins the next prefixed version after it.
@@ -263,7 +274,7 @@ python tools/discord/cl_sync_nw.py <path to NightwatchCoop clone>               
 - Each commit becomes one item, keyed by its hash, so re-running is safe and creates no duplicates.
 - Items a dev edited (text, section, status, version, tags) are locked and never overwritten by a later
   sync.
-- Sections are guessed from keywords in the subject (fix / crash -> `fixed`, add / new -> `added`, else
+- Sections are guessed from keywords in the subject (fix, fixed, fixes, crash, crashes, broken -> `fixed`; add, added, adds, new -> `added`; else
   `changed`), so tidy them with `cl edit`. Commit subjects become public item text: keep them free of
   names and IPs.
 
@@ -279,7 +290,7 @@ How vlad keeps NW in sync: after pushing commits, tell Claude "sync the NW chang
 |---|---|
 | show the current NW changelist | `ssh iosefka cl list --track nw --current` |
 | what's planned for coop 0.7.7 | `ssh iosefka cl list --track coop --version 0.7.7` |
-| add the local bug items to the next coop version | `ssh iosefka cl versions --track coop` to find the next version, then per item `ssh iosefka cl add coop <version> fixed "<public text>" --case "<folder>"` |
+| add the local bug items to the next coop version | `ssh iosefka cl versions --track coop` to find the next version, then per item `ssh iosefka cl add coop <version> fixed "'<public text>'" --case "<folder>"` |
 | was NW-1a2b3c4 fixed on the NW side | `ssh iosefka cl related NW-1a2b3c4` and `ssh iosefka cl list --track nw --bug NW-1a2b3c4` |
 | mark NW-1a2b3c4 fixed in NW 0.2.6 | `ssh iosefka status NW-1a2b3c4 fixed --in nw:0.2.6` |
 | make the 0.2.6 release notes | `ssh iosefka cl notes nw 0.2.6` |
@@ -288,7 +299,7 @@ How vlad keeps NW in sync: after pushing commits, tell Claude "sync the NW chang
 | open bugs older than two weeks | `ssh iosefka list --open --older-than 14` |
 | bugs nobody touched for a week, oldest first | `ssh iosefka list --open --idle 7 --sort oldest` |
 | all open chalice bugs | `ssh iosefka list --open --tag feature=chalice` |
-| sync the NW changelist | on the PC: `python tools/discord/cl_sync_nw.py <clone>` |
+| sync the NW changelist | on the PC: `python tools/discord/cl_sync_nw.py <clone> --host iosefka` |
 
 ## Workflows
 
