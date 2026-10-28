@@ -49,6 +49,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import clinic_asks as asks  # noqa: E402
 import clinic_discord as cd  # noqa: E402
 import clinic_logic  # noqa: E402
 import clinic_store  # noqa: E402
@@ -202,6 +203,7 @@ class Ctx:
         self.log_info_fn, self.diagnose_fn, self.record_logs = log_info_fn, diagnose_fn, record_logs
         self.client, self.guild_id = client, guild_id
         self.busy = set()
+        self.ask_delay = asks.ASK_DELAY  # seconds between two retest asks / nudges
         self.warned_day = None
 
 
@@ -329,6 +331,12 @@ async def _reply_text(ctx, message, bug, infos):
 async def dispatch_message(message, ctx):
     """Live duty for one new message. True when the clinic took the message off the server (the older
     reaction / auto-reply path must then stay quiet)."""
+    if ctx is not None and ctx.live and message.guild is not None and asks.is_releases_channel(
+            message.channel, ctx.guild_id or asks.GUILD_ID):
+        try:
+            await asks.on_release_post(ctx, message)
+        except Exception as e:
+            print(f"retest asks failed: {type(e).__name__}: {e}", flush=True)
     if ctx is None or not ctx.live or getattr(message.author, "bot", False):
         return False
     guild_msg = message.guild is not None
@@ -437,6 +445,11 @@ async def catch_up(ctx, guilds, archived=True, out=print):
                 msgs = [m async for m in place.history(**kw)]
                 msgs.sort(key=lambda m: m.id)
                 for m in msgs:
+                    if asks.is_releases_channel(place, ctx.guild_id or asks.GUILD_ID):
+                        try:
+                            await asks.on_release_post(ctx, m, recent_only=True)
+                        except Exception as e:
+                            out(f"retest asks failed: {type(e).__name__}: {e}")
                     if getattr(m.author, "bot", False):
                         if not stuck:
                             last = max(last, m.id)
@@ -937,6 +950,7 @@ def main():
             try:
                 if tick % 60 == 0:
                     await catch_up(CTX, guilds, archived=first)
+                    await asks.sweep_waiting(CTX)
                     await disk_guard(CTX, guilds)
                     first = False
                 await send_outbox(CTX)
