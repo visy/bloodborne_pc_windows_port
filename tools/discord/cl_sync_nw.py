@@ -2,6 +2,7 @@
 server: reads `git log`, builds JSONL and pipes it to `ssh <host> cl import`. Standard library only.
 
     python cl_sync_nw.py <repo> [--dry-run] [--host visy@quad.fi]
+    python cl_sync_nw.py <repo> --local ~/.config/netdoctor/netdoctor.db     (on quad.fi: straight into the DB)
 """
 import argparse
 import json
@@ -128,6 +129,7 @@ def main(argv=None):
     ap.add_argument("repo")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--host", default="visy@quad.fi")
+    ap.add_argument("--local", metavar="DB", help="import straight into this clinic database (as nw-sync), no ssh")
     a = ap.parse_args(argv)
     git = subprocess.run(["git", "-C", a.repo, "log", "--format=" + LOG_FORMAT], capture_output=True)
     if git.returncode:
@@ -144,6 +146,16 @@ def main(argv=None):
     data = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in vers + items)
     if a.dry_run:
         out_bytes(data.encode("utf-8"))
+        return 0
+    if a.local:
+        import clinic_changes
+        import clinic_store
+        res = clinic_changes.Changes(clinic_store.Clinic(a.local)).import_lines(
+            data.splitlines(), who="nw-sync")
+        out_bytes((f"applied={res['applied']} skipped={len(res['skipped'])} "
+                   f"locked={len(res.get('locked', []))}" + chr(10)).encode("utf-8"))
+        for sk in res["skipped"]:
+            note(f"skipped line {sk['line']}: {sk['why']}")
         return 0
     r = subprocess.run(["ssh", "-o", "BatchMode=yes", a.host, "cl", "import"],
                        input=data.encode("utf-8"), capture_output=True)
