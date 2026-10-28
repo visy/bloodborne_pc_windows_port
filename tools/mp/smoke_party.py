@@ -5649,7 +5649,7 @@ def ch_at(L, i, w):
 
 
 MD_DRAW_RX = re.compile(r"^  mesh pass #\d+ draw \d+: indices (\d+) ")
-MD_CLOTH_RX = re.compile(r"^    vertex stream 0 at \S+ size \d+ stride 20: (\d+) elements, NaN \d+, box \(([^)]*)\) \.\. \(([^)]*)\)")
+MD_CLOTH_RX = re.compile(r"^    vertex stream 0 at \S+ size \d+ stride 20: (\d+) elements, NaN \d+, box \(([^)]*)\) \.\. \(([^)]*)\)(?:, gpu-written (\w+), cpu-modified (\w+))?")
 
 
 def md_record(text):
@@ -5666,7 +5666,10 @@ def md_record(text):
         m = MD_CLOTH_RX.match(line)
         if m and int(m.group(1)) < 4096:  # a cloth mesh's own small stream (not the shared vertex heap)
             zero = all(float(x) == 0.0 for x in (m.group(2) + " " + m.group(3)).split())
-            cloth.append((int(m.group(1)), zero))
+            # GPU-produced (the cloth's own vertices: the GPU's copy is newer than the game's memory) and
+            # not about to be overwritten by the game's (stale) bytes; None: an older record without the flags
+            fresh = None if m.group(4) is None else (m.group(4) == "yes" and m.group(5) == "no")
+            cloth.append((int(m.group(1)), zero, fresh))
     return draws, cloth
 
 
@@ -5691,11 +5694,19 @@ def check_md(v, L, d):
            "%d records; bodies drawn %s" % (len(seen), " ".join(str(b) for _n, b in seen)))
     miss = [(n, md_missing(dr)) for n, dr, _c in parsed]
     bad = [(n, m) for n, m in miss if m]
-    zero = sum(1 for _n, _d, cl in parsed for _e, z in cl if z)
+    zero = sum(1 for _n, _d, cl in parsed for _e, z, _f in cl if z)
     total = sum(len(cl) for _n, _d, cl in parsed)
     v.step("md every maid drawn with her dress and cloth meshes (none drawn less than her body)", bool(parsed) and not bad,
            ("; ".join("%s: %s" % (n, ", ".join("%s LOD%d %d/%d" % x for x in m)) for n, m in bad[:3])) if bad else
            "all records; cloth vertex streams all-zero in game memory: %d of %d" % (zero, total))
+    # The maids' cloth vertex streams (stride 20) are written by the GPU (live: every one gpu-written, the game's
+    # memory under them zero at 30 FPS, stale at 60+). A draw that reads the game's bytes instead (gpu-written no,
+    # or cpu-modified yes: an upload over the GPU's copy) draws the skirt from stale data: the missing skirt.
+    flags = [f for _n, _d, cl in parsed for _e, _z, f in cl if f is not None]
+    stale = sum(1 for f in flags if not f)
+    v.step("md the maids' cloth vertex streams read from the GPU's own copy (none stale)", bool(flags) and not stale,
+           "%d of %d cloth streams stale (gpu-written no or cpu-modified yes)" % (stale, len(flags)) if flags else
+           "no cloth stream flags in the records (an older build)")
     # the locked-on maid's HP (R3 picks the nearest one: 2500233 or 2500234)
     hp = [int(x) for x in re.findall(r"lock-on 1 \(target at .*: enemy 25002\d\d, HP (\d+)\)",
                                      "\n".join(l for _t, l in L.all(0, r"test: host_press 0x")))]
