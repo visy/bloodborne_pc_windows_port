@@ -192,7 +192,7 @@ def test_7z_one_bad_member_keeps_the_others(tmp_path, monkeypatch):
     import types
 
     class FakeArchive:
-        def __init__(self, path):
+        def __init__(self, path, **kw):
             pass
 
         def __enter__(self):
@@ -207,8 +207,25 @@ def test_7z_one_bad_member_keeps_the_others(tmp_path, monkeypatch):
             return {targets[0]: io.BytesIO(targets[0].encode())}
 
     monkeypatch.setitem(sys.modules, "py7zr", types.SimpleNamespace(SevenZipFile=FakeArchive))
+    monkeypatch.setattr(cm, "_sevenzip_exe", lambda: None)  # the py7zr path
     got = cm._read(tmp_path / "x.7z", "7z", [("a.log", 5), ("bad.log", 7), ("b.log", 5)], 100)
     assert got == {"a.log": b"a.log", "b.log": b"b.log"}
+
+
+def test_7z_program_skips_damaged_member(tmp_path, monkeypatch):
+    """With the 7-Zip program, every good member is read and the ones it reports as CRC failed are left out."""
+    import subprocess
+
+    def fake_run(cmd, timeout=120):
+        out = Path(next(a for a in cmd if a.startswith("-o"))[2:])
+        for name, data in {"logs/a.log": b"aa", "logs/bad.log": b"??", "logs/b.log": b"bb"}.items():
+            (out / name).parent.mkdir(parents=True, exist_ok=True)
+            (out / name).write_bytes(data)
+        return subprocess.CompletedProcess(cmd, 2, b"ERROR: CRC Failed : logs/bad.log\n", b"")
+
+    monkeypatch.setattr(cm, "_run", fake_run)
+    got = cm._sevenzip_read("7z", tmp_path / "x.7z", ["logs/a.log", "logs/bad.log", "logs/b.log", "../evil"], 100)
+    assert got == {"logs/a.log": b"aa", "logs/b.log": b"bb"}
 
 
 def test_nested_zip_in_zip(tmp_path):

@@ -181,6 +181,41 @@ def _unrar_read(path: Path, member: str, limit: int) -> bytes | None:
     return data if p.returncode == 0 else None
 
 
+def _sevenzip_exe() -> str | None:
+    """The 7-Zip program (7z / 7zz / 7za), preferred over py7zr: it reads the good members of an archive with a
+    damaged one (py7zr gives up on the whole read) and is far lighter on a small server."""
+    for name in ("7z", "7zz", "7za"):
+        exe = shutil.which(name)
+        if exe:
+            return exe
+    return None
+
+
+def _sevenzip_read(exe: str, path: Path, members: list[str], limit: int) -> dict[str, bytes] | None:
+    """Extract `members` with the 7-Zip program into a private temp folder; members it reports as damaged (CRC
+    failed / data error) or larger than `limit` are left out. None when 7-Zip could not run at all."""
+    if any(m.startswith("-") or any(c in m for c in "*?") for m in members):
+        return None
+    out: dict[str, bytes] = {}
+    with tempfile.TemporaryDirectory(prefix="7z_") as tmp:
+        try:
+            r = _run([exe, "x", "-y", "-p-", "-bb1", f"-o{tmp}", "--", str(path), *members], timeout=UNRAR_TIMEOUT)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        text = (r.stdout + (r.stderr or b"")).decode("utf-8", "replace") if isinstance(r.stdout, bytes) else ""
+        bad = {ln.rsplit(" : ", 1)[-1].strip() for ln in text.splitlines()
+               if ("CRC Failed" in ln or "Data Error" in ln) and " : " in ln}
+        root = Path(tmp).resolve()
+        for m in members:
+            if m in bad:
+                continue
+            f = (root / m).resolve()
+            if root not in f.parents or not f.is_file() or f.stat().st_size > limit:
+                continue
+            out[m] = f.read_bytes()
+    return out
+
+
 def _list(path: Path, fmt: str) -> list[tuple[str, int | None]] | None:
     """[(raw member name, size or None)] of one archive level; None when unreadable or password protected."""
     try:
@@ -223,9 +258,12 @@ def _read(path: Path, fmt: str, members: list[tuple[str, int | None]], limit: in
                 if data is not None:
                     out[name] = data
         elif fmt == "7z":
+            exe = _sevenzip_exe()
+            if exe:
+                return _sevenzip_read(exe, path, [n for n, _ in members], limit)
             import py7zr
-            try:
-                with py7zr.SevenZipFile(path) as z:
+            try:  # mp=False: py7zr's parallel decoding misreports CRCs on a small server
+                with py7zr.SevenZipFile(path, mp=False) as z:
                     got = z.read([n for n, _ in members]) or {}
             except Exception:
                 # one bad member (e.g. a CRC error) fails the whole batch: read them one by one instead and
@@ -233,7 +271,7 @@ def _read(path: Path, fmt: str, members: list[tuple[str, int | None]], limit: in
                 got = {}
                 for name, _ in members:
                     try:
-                        with py7zr.SevenZipFile(path) as z:
+                        with py7zr.SevenZipFile(path, mp=False) as z:
                             got.update(z.read([name]) or {})
                     except Exception:
                         pass
