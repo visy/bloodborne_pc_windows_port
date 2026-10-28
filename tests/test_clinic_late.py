@@ -77,7 +77,7 @@ def test_explicit_id_links(tmp_path):
     assert run(bot.dispatch_message(m, ctx)) is False and not m.deleted
     rec = c.message(2)
     assert rec["bug_id"] == bug and rec["state"] == "kept" and "lamp" in rec["content"]
-    assert m.reactions == [cd.REACT] and not other.sent  # a reaction, no post
+    assert m.reactions == [] and not other.sent  # silent: no reaction, no post
     # the first existing id wins; a log with an id joins too and gets the usual note
     log = log_post(other, 3, user=9, content=f"NW-0000000 and {bug}", minutes=DAYS3 + 5)
     assert run(bot.dispatch_message(log, ctx)) is True
@@ -176,7 +176,7 @@ def test_text_followup_24h(tmp_path):
     c, ctx, ch, bug = first_bug(tmp_path)
     m = text_post(ch, 2, "forgot to say: it was on the second floor", user=7, minutes=120)
     run(bot.dispatch_message(m, ctx))
-    assert c.message(2)["bug_id"] == bug and m.reactions == [cd.REACT] and len(ch.sent) == 1
+    assert c.message(2)["bug_id"] == bug and m.reactions == [] and len(ch.sent) == 1
     assert any(n["kind"] == "auto-link" and "followup" in n["text"] for n in c.notes(bug))
     stranger = text_post(ch, 3, "me too", user=8, minutes=130)
     run(bot.dispatch_message(stranger, ctx))
@@ -184,7 +184,7 @@ def test_text_followup_24h(tmp_path):
     late = text_post(ch, 4, "one more thing", user=7, minutes=120 + 25 * 60)
     run(bot.dispatch_message(late, ctx))  # past 24 h of the bug's last message
     assert c.message(4) is None
-    chain = text_post(ch, 5, "and this", user=7, minutes=120 + 10 * 60)  # 24 h of the previous follow-up
+    chain = text_post(ch, 5, "and this happened twice there", user=7, minutes=120 + 10 * 60)  # 24 h of the previous follow-up
     run(bot.dispatch_message(chain, ctx))
     assert c.message(5)["bug_id"] == bug
 
@@ -230,6 +230,24 @@ def test_move_message(tmp_path):
     assert code == 0 and c.bug(bug)["title"] == "Lamp <public IP> stays dark"
 
 
+def test_followup_skips_chat_and_stops_after_five(tmp_path):
+    c, ctx, ch, bug = first_bug(tmp_path)
+    for i, chat in enumerate(("Okay, thank you", "i will wait", "😃", "thx!")):
+        m = text_post(ch, 10 + i, chat, user=7, minutes=60 + i)
+        run(bot.dispatch_message(m, ctx))
+        assert c.message(10 + i) is None and m.reactions == []  # chat: not gathered, no reaction
+    for i in range(7):
+        m = text_post(ch, 20 + i, f"detail {i}: the lamp stays dark after the boss", user=7, minutes=70 + i)
+        run(bot.dispatch_message(m, ctx))
+        assert m.reactions == []
+    joined = [i for i in range(7) if (c.message(20 + i) or {}).get("bug_id") == bug]
+    assert joined == [0, 1, 2, 3, 4] and c.followups(bug) == 5
+    # a reply or an explicit id still joins after the cap
+    m = text_post(ch, 30, f"one more for {bug}: it was the second lamp", user=7, minutes=80)
+    run(bot.dispatch_message(m, ctx))
+    assert c.message(30)["bug_id"] == bug
+
+
 def test_triage_queue(tmp_path):
     c, ctx, ch, bug = first_bug(tmp_path)
     other_day(ctx)
@@ -238,7 +256,7 @@ def test_triage_queue(tmp_path):
     code, text = cli(tmp_path, "triage-queue")
     q = json.loads(text)
     assert [b["id"] for b in q["bugs"]] == [bug, second] and q["auto_links"] == []
-    run(bot.dispatch_message(text_post(ch, 3, "extra words", user=7, minutes=130), ctx))
+    run(bot.dispatch_message(text_post(ch, 3, "extra words about the lamp", user=7, minutes=130), ctx))
     code, text = cli(tmp_path, "triage-queue")
     q = json.loads(text)
     assert [n["bug_id"] for n in q["auto_links"]] == [bug] and "followup" in q["auto_links"][0]["text"]
