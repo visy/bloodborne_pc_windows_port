@@ -2863,7 +2863,8 @@ def phase_br(only):
     return dict(
         name="br", seconds=720, count=2, headless=0, pads=(0, 1),
         env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        # 0.7.7 (bossrunes): the Holy Moonlight Sword's award spot lot 43211 (the weapon is shared with every member)
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "0:BB_PARTY_ITEMS_HOST_TEST=43211"],
         watch=["--watch", r"test: (?:host|guest)_stick: object 340(?:1850|1801) found=brdoor@0.5,4"],
         crash=[], until=BR_UNTIL, until_hold=6,
     )
@@ -6287,6 +6288,12 @@ def check_br(v, L):
     need(v, L, "br Ludwig's fight (bar)", 0, r"boss health bar shown: .*event 13404802", lud[0])
     dead = need(v, L, "br Ludwig killed (9471)", 0, r"boss defeat, event 13401800", lud[0])
     if dead is not None:
+        # 0.7.7 (bossrunes): Ludwig's rune (lot 3401800, flag 6674) reaches the guest once; the Holy Moonlight Sword
+        # (test award of its spot lot 43211) too.
+        need(v, L, "br guest: Ludwig's rune from the host", 1, r"gave #\d+ lot 3401800 ", dead)
+        n = len(L.all(1, r"gave #\d+ lot 3401800 "))
+        v.step("br guest: exactly one give of Ludwig's rune", n == 1, "%d give(s)" % n)
+        need(v, L, "br guest: the Holy Moonlight Sword (lot 43211)", 1, r"gave #\d+ lot 43211 .*weapon|gave #\d+ lot 43211 ")
         for i, who, kind in ((0, "host", "host_stick"), (1, "guest", "guest_stick")):
             _br_walk_rows(v, L, i, who, kind, ("through the wall behind Ludwig", "back through it"), dead)
     check_common(v, L, "br")
