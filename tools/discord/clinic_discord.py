@@ -529,3 +529,15 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
                 await ch.edit(locked=reopened[1], archived=reopened[0])
             except Exception as e:
                 print(f"could not restore thread {ch.id}: {e}", file=sys.stderr, flush=True)
+
+
+# --- guards ----------------------------------------------------------------------------------------------
+
+STILLS_OFF_BYTES = int(2.4 * 2**30)
+STILLS_OFF_FREE = 1_000_000_000
+
+
+def stills_allowed(clinic, path):
+    """False when the archive is near its 3 GiB ceiling or the disk is nearly full: videos are then kept
+    unstilled (their messages stay on the server) until there is room."""
+    return clinic.size_bytes() < STILLS_OFF_BYTES and media.free_disk(path) >= STILLS_OFF_FREE
