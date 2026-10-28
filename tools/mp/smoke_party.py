@@ -2503,6 +2503,7 @@ def _phase_boss_dead(name, guest_god, kill):
                      "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,
                      "host_chr=2410800:2@10%m24_01"] +
                     ["host_press=0x800@2%m24_01"] * 12 +
+                    ["host_die@1%m24_01"] +                                # the boss did not kill it yet (latches)
                     (["host_kill=2410800@40%m24_01"] if kill else []))
     g1 = ",".join((["god"] if guest_god else []) +
                   ["guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
