@@ -206,6 +206,7 @@ class Ctx:
 
 
 CTX = None
+LATE_RULES = ("explicit", "reply", "session", "followup")  # links to a bug that is already on the table
 
 
 def _stills_ok(ctx):
@@ -247,6 +248,7 @@ async def handle_log_message(message, *, live, ctx=None):
             return "kept"
         if res["state"] in ("replaced", "deleted"):
             bug = (clinic.message(message.id) or {}).get("bug_id")
+            rule = "known"
         else:
             if ctx.record_logs:  # keep the older "@bot update" memory working after the message is gone
                 try:
@@ -255,21 +257,39 @@ async def handle_log_message(message, *, live, ctx=None):
                     print(f"record_logs failed: {e}", flush=True)
             if res["state"] != "verified":
                 return res["state"]
-            bug = await cd.assign_bug(clinic, message, res["infos"], log_info_fn=ctx.log_info_fn,
-                                      tmpdir=ctx.tmp_root)
+            bug, rule = await cd.assign_bug_ex(clinic, message, res["infos"], log_info_fn=ctx.log_info_fn,
+                                               tmpdir=ctx.tmp_root)
         if bug is None:
             return "no-bug"
+        if rule in (None, "thread"):
+            _flag_unsure(clinic, bug, message)
         if dm:  # a DM is private and never deleted: answer only when live duty may act (archive-only is silent)
             if ctx.delete:
                 await message.channel.send(voice.dm_ack(bug), allowed_mentions=cd.AllowedMentions.none())
             return "dm"
         if not ctx.delete:
             return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=False, need_export=False)
-        extra = await _reply_text(ctx, message, bug, res["infos"])
+        extra = voice.added_to(bug) if rule in LATE_RULES else await _reply_text(ctx, message, bug, res["infos"])
         return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=True, need_export=False,
                                            extra=extra)
     finally:
         ctx.busy.discard(message.id)
+
+
+def _flag_unsure(clinic, bug, message):
+    """Doubts Iosefka cannot settle alone, left for the later triage pass (tag `unsure`)."""
+    why = []
+    msgs = clinic.messages_for_bug(bug)
+    if not any((m["content"] or "").strip() for m in msgs):
+        why.append("no-text")
+    atts = [a for m in msgs for a in m["attachments"]]
+    if not any(a.get("kind") in ("log", "dump", "game") or a.get("inner_shas") for a in atts):
+        why.append("no-log")
+    if any(a.get("kind") == "archive" and (a.get("filename", "").lower().endswith((".7z", ".rar"))
+                                          or not a.get("inner_shas")) for a in atts):
+        why.append("unreadable-file")
+    if why:
+        clinic.add_unsure(bug, why)
 
 
 async def _reply_text(ctx, message, bug, infos):
@@ -296,6 +316,8 @@ async def _reply_text(ctx, message, bug, infos):
                     print(f"diagnose failed: {e}", flush=True)
         keys = verdict_keys(diag)
     kind = clinic_logic.classify(message.content or "", keys) if infos else "bug"
+    if infos and clinic_logic.classify_unsure(message.content or "", keys):
+        clinic.add_unsure(bug, ["network-or-bug"])
     if kind == "network":
         clinic.update_bug(bug, tags={"triage": "network"})
         clinic.add_note(bug, "iosefka", "triage", "network question: advice given, logs archived")
@@ -316,11 +338,21 @@ async def dispatch_message(message, ctx):
         return False
     if all_attachments(message):
         return await handle_log_message(message, live=True, ctx=ctx) == "deleted"
-    if guild_msg and cd.is_thread(message.channel):
-        bug = ctx.clinic.bug_for_thread(message.channel.id)
-        if bug:
-            cd.store_text(ctx.clinic, message, bug)  # follow-ups join the bug; they stay on the server
+    await handle_text_message(message, ctx, live=True)
     return False
+
+
+async def handle_text_message(message, ctx, *, live):
+    """A message with no files: by an NW id, a reply, its thread or the reporter's own 24 h follow-up it may
+    belong to a bug; then its words are stored there (it stays on the server, nothing is posted). A short
+    reaction tells the poster it was noticed (live duty with posting on, not for thread follow-ups)."""
+    got = cd.link_text(ctx.clinic, message)
+    if got and live and ctx.delete and got[1] != "thread":
+        try:
+            await message.add_reaction(cd.REACT)
+        except Exception as e:
+            print(f"no reaction on {message.id}: {type(e).__name__}", flush=True)
+    return got
 
 
 async def handle_raw_edit(payload, ctx):
@@ -421,8 +453,8 @@ async def catch_up(ctx, guilds, archived=True, out=print):
                         touched.add(m.id)
                         r = await handle_log_message(m, live=False, ctx=ctx)
                         n += r not in ("none", "off", "skipped", "kept")
-                    elif cd.is_thread(place) and ctx.clinic.bug_for_thread(place.id):
-                        cd.store_text(ctx.clinic, m, ctx.clinic.bug_for_thread(place.id))
+                    elif not cd.place_skipped(place):
+                        await handle_text_message(m, ctx, live=False)
                     if r not in FINAL:
                         stuck = True
                     if not stuck:

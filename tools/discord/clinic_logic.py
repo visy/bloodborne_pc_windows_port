@@ -186,3 +186,12 @@ def classify(text: str, verdict_keys: set[str]) -> str:
     if _NET_RX.search(text) and not _BUG_RX.search(text):
         return "network"
     return "bug"
+
+
+def classify_unsure(text: str, verdict_keys: set[str]) -> bool:
+    """True when `classify` was a guess: the text has both network and bug words, or net_doctor's verdict
+    and the words point different ways."""
+    text = (text or "").replace("’", "'")
+    net, bug = bool(_NET_RX.search(text)), bool(_BUG_RX.search(text))
+    key_net = any(k.startswith(_NET_KEYS) for k in verdict_keys)
+    return (net and bug) or (key_net and bug and not net) or (net and not bug and not key_net)

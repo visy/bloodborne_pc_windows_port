@@ -87,6 +87,10 @@ def bug_filed(bug_id: str, missing: list[str]) -> str:
     return _fit(text)
 
 
+def added_to(bug_id: str) -> str:
+    return _fit(f"These details are added to {bug_id}, which I already have on the table. Thank you for coming back.")
+
+
 def network_help(diagnosis: str) -> str:
     tail = "\n\nTell me what you tried, and I'll do what I can."
     head = "I looked at your log. Connections can be stubborn things; here is what I found:\n\n"
