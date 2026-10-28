@@ -12,7 +12,6 @@ the bot posts it.
 """
 import argparse
 import hashlib
-import ipaddress
 import json
 import os
 import re
@@ -27,6 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import clinic_store  # noqa: E402
+from clinic_logic import mask_ips  # noqa: E402
 
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
 CLOSED = ("fixed", "closed", "duplicate")
@@ -37,10 +37,6 @@ NAME_RX = re.compile(r"^[a-z0-9_-]{1,32}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 LOG_DIR_KINDS = ("log", "dump", "game", "archive", "text", "other")
 MEDIA_KINDS = ("image", "still")
-KEPT_NETS = tuple(ipaddress.ip_network(n) for n in (
-    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "26.0.0.0/8", "25.0.0.0/8",
-    "127.0.0.0/8"))
-IP4_RX = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?(?![\w.]*\d)")
 
 
 class CliError(Exception):
@@ -48,20 +44,6 @@ class CliError(Exception):
         super().__init__(msg)
         self.code = code
 
-
-def _mask_ips(text):
-    """Mask public IPv4 addresses (with an optional :port) in `text`; it mirrors clinic_logic.mask_ips.
-    Private 10/8, 172.16/12, 192.168/16, 100.64/10 and the Radmin/Hamachi ranges 26/8 and 25/8, and
-    127/8, are kept."""
-    def one(m):
-        try:
-            ip = ipaddress.IPv4Address(m.group(1))
-        except ValueError:
-            return m.group(0)
-        if any(ip in n for n in KEPT_NETS):
-            return m.group(0)
-        return "<public IP>"
-    return IP4_RX.sub(one, text)
 
 
 class Parser(argparse.ArgumentParser):
@@ -458,7 +440,7 @@ def _run(argv, who, out, db, stdin):
         c.add_note(a.bug, who, "status", a.new_status + (f" (duplicate of {a.dup})" if a.dup else ""))
         res = {"ok": True, "bug": a.bug, "status": a.new_status}
         if a.tell:
-            masked = _mask_ips(a.tell)
+            masked = mask_ips(a.tell)
             res["tell_queued"] = c.queue_tell(a.bug, who, masked)
             res["tell_text"] = masked
             c.add_note(a.bug, who, "triage", "told the player: " + masked)

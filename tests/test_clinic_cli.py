@@ -207,7 +207,7 @@ def test_tell_goes_to_outbox_masked(tmp_path):
     db, a, _, _ = seed(tmp_path)
     res = js(db, "vlad", "status", a, "fixed", "--tell",
              "Fixed in the next build. Your address 203.0.113.9:9307 or 192.168.1.5 was fine.")
-    assert "203.0.113.9" not in res["tell_text"] and "192.168.1.5" in res["tell_text"]
+    assert "203.0.113.9" not in res["tell_text"] and "192.x.x.x" in res["tell_text"]
     c = cs.Clinic(db)
     pending = c.outbox_pending()
     assert [p["bug_id"] for p in pending] == [a]
@@ -251,10 +251,3 @@ def test_note_tag_assign_merge_nd(tmp_path):
     code, _ = run(db, "vlad", "nd", "ND-zz")
     assert code == 2
 
-
-def test_mask_ips_helper():
-    m = cli._mask_ips
-    assert "198.51.100.7" not in m("host 198.51.100.7:9307 ok") and "9307" not in m("198.51.100.7:9307")
-    for keep in ("192.168.1.5", "10.0.0.2", "172.20.1.1", "100.64.1.1", "26.1.2.3", "25.4.5.6", "127.0.0.1"):
-        assert m(f"ip {keep}") == f"ip {keep}"
-    assert m("version 1.2.3.456") == "version 1.2.3.456"
