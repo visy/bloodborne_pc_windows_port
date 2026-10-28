@@ -49,6 +49,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import clinic_asks as asks  # noqa: E402
 import clinic_discord as cd  # noqa: E402
 import clinic_logic  # noqa: E402
 import clinic_store  # noqa: E402
@@ -202,6 +203,7 @@ class Ctx:
         self.log_info_fn, self.diagnose_fn, self.record_logs = log_info_fn, diagnose_fn, record_logs
         self.client, self.guild_id = client, guild_id
         self.busy = set()
+        self.ask_delay = asks.ASK_DELAY  # seconds between two retest asks / nudges
         self.warned_day = None
 
 
@@ -269,11 +271,37 @@ async def handle_log_message(message, *, live, ctx=None):
             return "dm"
         if not ctx.delete:
             return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=False, need_export=False)
-        extra = voice.added_to(bug) if rule in LATE_RULES else await _reply_text(ctx, message, bug, res["infos"])
-        return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=True, need_export=False,
-                                           extra=extra)
+        staff = is_staff(message.author)
+        if staff:
+            clinic.update_bug(bug, tags={"source": "dev"})
+        short = staff or _full_reply_recent(clinic, bug, message.author.id)
+        if short:
+            extra = ""
+        else:
+            extra = voice.added_to(bug) if rule in LATE_RULES else await _reply_text(ctx, message, bug, res["infos"])
+        out = await cd.replace_and_delete(clinic, message, bug, ping=live, delete=True, need_export=False,
+                                          extra=extra, short=short)
+        if not short and out in ("deleted", "delete_forbidden"):
+            clinic.add_note(bug, "iosefka", FULL_REPLY, "full reply posted", to=str(message.author.id))
+        return out
     finally:
         ctx.busy.discard(message.id)
+
+
+FULL_REPLY = "reply_full"
+REPLY_WINDOW = 30 * 60  # seconds: one full reply per author and bug in this time, then short ones
+STAFF_WORDS = ("dev", "staff", "mod", "admin")
+
+
+def is_staff(author):
+    """A poster holding a role whose name has dev / staff / mod / admin in it."""
+    return any(w in (getattr(r, "name", "") or "").lower() for r in (getattr(author, "roles", None) or [])
+               for w in STAFF_WORDS)
+
+
+def _full_reply_recent(clinic, bug, author_id):
+    since = time.time() - REPLY_WINDOW
+    return any(n["to"] == str(author_id) and n["bug_id"] == bug for n in clinic.notes_of_kind(FULL_REPLY, since))
 
 
 def _flag_unsure(clinic, bug, message):
@@ -329,6 +357,12 @@ async def _reply_text(ctx, message, bug, infos):
 async def dispatch_message(message, ctx):
     """Live duty for one new message. True when the clinic took the message off the server (the older
     reaction / auto-reply path must then stay quiet)."""
+    if ctx is not None and ctx.live and message.guild is not None and asks.is_releases_channel(
+            message.channel, ctx.guild_id or asks.GUILD_ID):
+        try:
+            await asks.on_release_post(ctx, message)
+        except Exception as e:
+            print(f"retest asks failed: {type(e).__name__}: {e}", flush=True)
     if ctx is None or not ctx.live or getattr(message.author, "bot", False):
         return False
     guild_msg = message.guild is not None
@@ -437,6 +471,11 @@ async def catch_up(ctx, guilds, archived=True, out=print):
                 msgs = [m async for m in place.history(**kw)]
                 msgs.sort(key=lambda m: m.id)
                 for m in msgs:
+                    if asks.is_releases_channel(place, ctx.guild_id or asks.GUILD_ID):
+                        try:
+                            await asks.on_release_post(ctx, m, recent_only=True)
+                        except Exception as e:
+                            out(f"retest asks failed: {type(e).__name__}: {e}")
                     if getattr(m.author, "bot", False):
                         if not stuck:
                             last = max(last, m.id)
@@ -937,6 +976,7 @@ def main():
             try:
                 if tick % 60 == 0:
                     await catch_up(CTX, guilds, archived=first)
+                    await asks.sweep_waiting(CTX)
                     await disk_guard(CTX, guilds)
                     first = False
                 await send_outbox(CTX)
@@ -975,6 +1015,7 @@ def main():
                   f"or was invited without the applications.commands scope; check NETDOCTOR_GUILD and re-invite",
                   flush=True)
             return
+        voice.SELF_ID = client.user.id
         print(f"netdoctor bot ready as {client.user} (script {SCRIPT})", flush=True)
 
     client.run(token)

@@ -194,3 +194,22 @@ def test_case_with_date_prefix(tmp_path):
     assert it["cases"] == ["2026-10-25/lamp_x"]
     assert run(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp", "--case", "../x")[0] == 2
     assert run(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp", "--case", "a/b/c")[0] == 2
+
+
+def test_new_reports_changelist_news(tmp_path):
+    db = tmp_path / "nd.db"
+    run(db, "vlad", "new")  # vlad's mark
+    time.sleep(0.02)
+    code, out = run(db, "visy", "cl", "add", "coop", "0.7.7", "fixed", "Bosses keep fighting")
+    cid = json.loads(out)["id"]
+    run(db, "visy", "cl", "status", cid, "done")
+    lines = "\n".join(json.dumps({"kind": "item", "source_key": f"git:{i:040x}", "track": "nw", "version": "0.2.6",
+                                  "section": "changed", "text": f"change {i}", "status": "done"}) for i in range(12))
+    code, out = run(db, "visy", "cl", "import", stdin=lines.encode())
+    assert code == 0
+    news = js(db, "vlad", "new")["changelist"]
+    assert [i["id"] for i in news["items"]] == [cid] and news["items"][0]["status"] == "done"
+    assert news["imports"] == [{"who": "visy", "track": "nw", "version": "0.2.6", "items": 12}]
+    assert js(db, "visy", "new")["changelist"]["items"] == []  # own changes are not news
+    code, text = run(db, "vlad", "new", "--text")
+    assert code == 0
