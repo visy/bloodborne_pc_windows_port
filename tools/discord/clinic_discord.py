@@ -465,6 +465,16 @@ def session_bugs(clinic, infos, own_shas=()):
     return out
 
 
+FOLLOWUP_MAX = 5  # a plain channel: at most this many of the reporter's later messages join a bug by the follow-up rule
+_WORD_RX = re.compile(r"[^\W\d_]{2,}")
+
+
+def substantive(text):
+    """Worth joining a bug by the follow-up rule alone: at least 4 words ("okay, thank you", "i will wait",
+    an emoji or a sticker are chat, not bug details)."""
+    return len(_WORD_RX.findall(text or "")) >= 4
+
+
 def find_link(clinic, message, infos=None):
     """The bug a message belongs to by the late-detail rules: (bug, rule, unsure reasons) or None.
     Priority: explicit id > reply > thread > same session > 24 h reporter follow-up."""
@@ -477,9 +487,10 @@ def find_link(clinic, message, infos=None):
     own = {i.get("sha256") for i in infos or []}
     session = session_bugs(clinic, infos or [], own) if plain and infos else []
     follow = []
-    if plain and not infos:
-        follow = [resolve_dup(clinic, b) for b in
-                  clinic.reporter_candidates(message.author.id, message.channel.id, _ts(message.created_at))]
+    if plain and not infos and substantive(message.content):
+        follow = [b for b in (resolve_dup(clinic, b) for b in
+                  clinic.reporter_candidates(message.author.id, message.channel.id, _ts(message.created_at)))
+                  if clinic.followups(b) < FOLLOWUP_MAX]
     if explicit:
         bug, rule, others = explicit[0], "explicit", explicit[1:] + session + ([reply] if reply else [])
     elif reply:
