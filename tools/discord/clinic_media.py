@@ -134,3 +134,8 @@ def free_disk(path: Path) -> int:
     while not p.exists() and p != p.parent:
         p = p.parent
     return shutil.disk_usage(p).free
+
+
+def enough_disk(path: Path, need_bytes: int, reserve=1_500_000_000) -> bool:
+    """True when `need_bytes` fit and `reserve` stays free. Callers check before each download."""
+    return free_disk(path) >= need_bytes + reserve
