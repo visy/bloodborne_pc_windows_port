@@ -95,7 +95,7 @@ def test_unmatched(tmp_path):
               "2026-10-26/boss_hang", "2026-10-26/other", "nw_clinic/2026-10-26", "nw_clinic/stuff"):
         (tmp_path / d).mkdir(parents=True)
     (tmp_path / "readme.txt").write_text("x")
-    names = ["2026-10-25/chalice_vase_shop", "Boss_Hang", "lamp_after_join notes"]
+    names = ["2026-10-25/chalice_vase_shop", "Boss_Hang", "see 2026-10-25/lamp_after_join notes"]
     out = coop.unmatched(tmp_path, names)
     assert out == ["2026-10-25/lamp", "2026-10-26/other"]
 
@@ -107,3 +107,10 @@ def test_noise_word_boundary():
            "a4\x1f2026-10-04T10:00:00+03:00\x1f0.2.5: x\x1f\x1e\n")
     items, _ = nw.parse_log(log)
     assert sorted(i["source_key"] for i in items) == ["git:a1", "git:a2", "git:a4"]
+
+
+def test_section_keywords():
+    assert nw._section("VRAM cleanup, fixes a crash") == "fixed"
+    assert nw._section("Launcher: new language list") == "added"
+    assert nw._section("Docstrings") == "changed"
+    assert nw._section("Renewal of stuff") == "changed"
