@@ -111,6 +111,22 @@ def told(text: str) -> str:
     return head + _fit(body, LIMIT - len(head))
 
 
+def retest_ask(mention: str, bug_id: str, version: str) -> str:
+    """After a release: the reporter of a fixed bug is asked to try the new version."""
+    mention = (mention + " ") if mention else ""
+    return _fit(f"{mention}The developers say what you brought me as {bug_id} is mended in {version}. "
+                f"Would you try it, when you have a moment, and tell me if it still happens? "
+                f"If it does, say so here and I will reopen your case. Thank you for your patience.")
+
+
+def logs_nudge(mention: str, bug_id: str) -> str:
+    """A bug has waited for logs for two weeks: one gentle word to its reporter."""
+    mention = (mention + " ") if mention else ""
+    return _fit(f"{mention}I still have {bug_id} on my table, waiting for a few more logs from that night "
+                f"(from the host and the guests, if you can). Bring them whenever you are able and I will take "
+                f"them in. There is no hurry; I only did not want you to think I had forgotten.")
+
+
 def announcement() -> str:
     text = (
         "**Iosefka's clinic is open.**\n\n"
