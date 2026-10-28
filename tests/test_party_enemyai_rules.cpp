@@ -64,6 +64,25 @@ int main() {
     const float near_zero[] = {0.0f, 3.0f};
     CHECK(PickLimboTarget(near_zero, 2) == 0);
 
+    // a dead player leaves the target bank only on the AI owner's game, in a fight, at HP 0
+    CHECK(DeadPlayerOutOfBank(true, true, true, 0));
+    CHECK(!DeadPlayerOutOfBank(true, true, true, 1));
+    CHECK(!DeadPlayerOutOfBank(true, false, true, 0));
+    CHECK(!DeadPlayerOutOfBank(true, true, false, 0));
+    CHECK(!DeadPlayerOutOfBank(false, true, true, 0));
+
+    // bank vector edits: remove shifts the rest down; insert at the end, once, within capacity
+    int bank[5] = {11, 22, 33, 44, 0};
+    CHECK(BankRemove(bank, bank + 4, 22));
+    CHECK(bank[0] == 11 && bank[1] == 33 && bank[2] == 44);
+    CHECK(!BankRemove(bank, bank + 3, 99));
+    CHECK(BankRemove(bank, bank + 3, 44));  // the last one
+    CHECK(bank[0] == 11 && bank[1] == 33);
+    CHECK(BankInsert(bank, bank + 2, bank + 5, 22));
+    CHECK(bank[2] == 22);
+    CHECK(!BankInsert(bank, bank + 3, bank + 5, 33));  // already there
+    CHECK(!BankInsert(bank, bank + 5, bank + 5, 77));  // full
+
     if (g_fail) {
         std::printf("%d failure(s)\n", g_fail);
         return 1;
