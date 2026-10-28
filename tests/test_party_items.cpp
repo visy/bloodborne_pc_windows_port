@@ -6,6 +6,7 @@
 #include <cstring>
 #include "party/party_items.h"
 #include "party/party_kill_award_rules.h"
+#include "party/party_item_notice_rules.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -1450,6 +1451,22 @@ static void test_audit() {
     CHECK(la && la->flag == 52605010);
     // A late joiner / reconnect: the host's full list is built from the set pickup flags, so the lot is in it once.
     CHECK(KillAwardEntity(2605010) == 2600129 && KillAwardEntity(2400450) == 0);
+
+    // CL-806406: the notice text and its rate limit.
+    {
+        CHECK(itemnotice::Text("Living String") == "Living String: shared with the party");
+        CHECK(itemnotice::Text("") == "Item: shared with the party");
+        itemnotice::Queue q;
+        std::string out;
+        CHECK(q.Push("A", 0.0) && !q.Push("A", 0.1));           // the same item twice while waiting: once
+        CHECK(q.Push("B", 0.1) && q.Push("C", 0.1) && q.Push("D", 0.1) && !q.Push("E", 0.1));  // full: dropped
+        CHECK(q.Pop(0.2, &out) && out == "A");
+        CHECK(!q.Pop(1.0, &out));                                 // 2.5 s apart at least
+        CHECK(q.Pop(2.8, &out) && out == "B");
+        CHECK(q.Pop(5.4, &out) && out == "C" && q.Pop(8.0, &out) && out == "D" && !q.Pop(20.0, &out));
+        CHECK(!q.Push("D", 9.0));                                 // just shown: not again within 20 s
+        CHECK(q.Push("D", 40.0));
+    }
 
     // The host fallback's timing rule: dead for kGraceS without the lot's flag = award once; the flag = done.
     {

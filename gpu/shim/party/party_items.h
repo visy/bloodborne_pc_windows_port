@@ -275,6 +275,9 @@ struct KillAwardRow {
     std::uint32_t event;
     std::uint32_t spot_flag;  ///< flag the game's event sets with the award (0: none)
 };
+/// 0.7.7: queue the notice "<item>: shared with the party" for a shared grant given on this game / queued for the party
+/// by the host (nothing for catch-up lists, per-player lots, or with party_item_notices off). Game build only.
+void ShareNotice(const ItemGrant& g, const char* how);
 std::vector<KillAwardRow> KillAwardRows();
 std::uint32_t KillAwardEntity(std::int32_t lot);  ///< 0: not a kill award
 /// A shared key treasure given to a member who stands in the host's world (summoned guest): the item

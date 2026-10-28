@@ -7,6 +7,8 @@
 #include "party_items.h"
 #include "party_kill_award_rules.h"
 #include "party_guestsvc.h"
+#include "party_item_notice_rules.h"
+#include "bbport_game_menu.h"
 #include "party_b2.h"
 #include "party_async_io.h"
 #include "party_perf.h"
@@ -1946,6 +1948,9 @@ BB_COOP_SYSV void AwardReplace(u64 mim, u64 lot_arg, u64 host_only_arg) {
     }
     Log("host award %s %s; items [%s]%s", DescribeItem(*g).c_str(), queued ? "queued for the party" : "already sent",
         list.c_str(), g_captured_bad ? " (an item could not be read: guests resolve the lot themselves)" : "");
+    if (queued) {
+        ShareNotice(*g, "host award");
+    }
 }
 
 // Our own award's inventory adds (evidence for the apply log): ItemList {u32 n, then n x
@@ -2153,6 +2158,129 @@ void HostTestTick(double now) {
             Log("host test: flag %u %d -> %d", f, was ? 1 : 0, IsFlag(man, f) ? 1 : 0);
         }
     }
+}
+
+// ---- 0.7.7 (CL-806406): "<item>: shared with the party" ----
+itemnotice::Queue g_notices;  // main thread
+std::mutex g_notice_mu;       // producers: the host award hook (game thread), the apply paths (main thread)
+
+std::string Utf8Text(const char16_t* t) {
+    std::string out;
+    for (; t && *t && out.size() < 120; ++t) {
+        std::uint32_t c = *t;
+        if (c >= 0xD800 && c <= 0xDBFF && t[1] >= 0xDC00 && t[1] <= 0xDFFF) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (t[1] - 0xDC00);
+            ++t;
+        }
+        if (c == '\n' || c == '\r') {
+            c = ' ';
+        }
+        if (c < 0x80) {
+            out += char(c);
+        } else if (c < 0x800) {
+            out += char(0xC0 | (c >> 6));
+            out += char(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            out += char(0xE0 | (c >> 12));
+            out += char(0x80 | ((c >> 6) & 0x3F));
+            out += char(0x80 | (c & 0x3F));
+        } else {
+            out += char(0xF0 | (c >> 18));
+            out += char(0x80 | ((c >> 12) & 0x3F));
+            out += char(0x80 | ((c >> 6) & 0x3F));
+            out += char(0x80 | (c & 0x3F));
+        }
+    }
+    return out;
+}
+
+/// The game's name of an item (its own language); empty when the lookup is not up yet or there is none (runes).
+std::string GameItemName(std::uint32_t category, std::int32_t id) {
+    std::uint32_t fmg = 0;
+    switch (category) {
+    case 0: fmg = 11; break;
+    case 1: fmg = 12; break;
+    case 2: fmg = 13; break;
+    case 4: fmg = 10; break;
+    default: return {};
+    }
+    return id >= 0 ? Utf8Text(BbGameMenu::GameText(fmg, std::uint32_t(id))) : std::string();
+}
+
+std::vector<LotRowData> LotChain(std::int32_t lot);
+
+/// The item the notice names: the first shareable one (a weapon, a rune, a key / unique goods item) of the grant's
+/// list, else of the lot's rows; the first item when none qualifies.
+std::string ShareNoticeItem(const ItemGrant& g) {
+    std::vector<GrantItem> items = g.items;
+    if (items.empty()) {
+        for (const LotRowData& r : LotChain(g.lot)) {
+            for (int i = 0; i < 8; ++i) {
+                if (SlotWeighted(r, i) && SlotHasItem(r, i)) {
+                    items.push_back({r.category[i], r.id[i], 1});
+                }
+            }
+        }
+    }
+    const std::vector<LotSlotState> slots = LotSlots(g.lot);
+    auto goods_shareable = [&](std::int32_t id) {
+        for (const LotSlotState& sl : slots) {
+            if (sl.category == 4 && sl.id == id) {
+                return sl.goods_type == 1 || sl.max_num == 1;
+            }
+        }
+        return false;
+    };
+    const GrantItem* pick = nullptr;
+    for (const GrantItem& it : items) {
+        if (it.category == 0 || it.category == 8 || (it.category == 4 && goods_shareable(it.id))) {
+            pick = &it;
+            break;
+        }
+    }
+    if (!pick && !items.empty()) {
+        pick = &items.front();
+    }
+    if (!pick) {
+        return {};
+    }
+    std::string n = GameItemName(pick->category, pick->id);
+    if (n.empty() && pick->category == 8) {
+        n = "Caryll rune";
+    }
+    return n;
+}
+
+}  // namespace
+
+/// A shared item was given on this game (or queued for the party by the host): queue the notice. `how`: log word.
+/// Nothing for catch-up lists, marks, tests, per-player lots (no share path) or when the player switched it off.
+void ShareNotice(const ItemGrant& g, const char* how) {
+    if (g.source == ItemSource::Full || g.source == ItemSource::Mark || g.source == ItemSource::Test ||
+        g.source == ItemSource::Chalice || ItemLotSharePath(g.lot) == SharePath::None || !party::status::Enabled()) {
+        return;
+    }
+    if (!BbSettings::Get().party_item_notices.load()) {
+        return;
+    }
+    const std::string text = itemnotice::Text(ShareNoticeItem(g));
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    const bool queued = g_notices.Push(text, Now());
+    Log("notice \"%s\" (lot %d, %s): %s", text.c_str(), g.lot, how, queued ? "queued" : "dropped (same item just shown, or the queue is full)");
+}
+
+namespace {
+
+void NoticeTick() {
+    std::string text;
+    {
+        std::lock_guard<std::mutex> lk(g_notice_mu);
+        if (!g_notices.Pop(Now(), &text)) {
+            return;
+        }
+    }
+    party::status::SetLastEvent(text);  // the party notice corner (party_toasts); also the Party members page's "Last event"
+    Log("notice shown: %s", text.c_str());
 }
 
 /// 0.7.7 (NW-4ae26be): the host's fallback for a kill award that needs entity 10000's blow (party_kill_award_rules.h).
@@ -2466,6 +2594,7 @@ bool Apply(const ItemGrant& g) {
         spots.empty() ? "" : "; item spot flag(s) set: ", spots.c_str());
     if (added > 0) {
         ForgetOwedLot(g.lot);  // given at home in this session: not owed any more
+        ShareNotice(g, "given at home");
     }
     return true;
 }
@@ -3117,6 +3246,9 @@ SummonedResult ApplySummoned(const ItemGrant& g, bool quiet) {
     if (gave == 0) {
         return SummonedResult::Skipped;
     }
+    if (!quiet) {
+        ShareNotice(g, "given while summoned");
+    }
     if (native < gave && !quiet) {
         // Fallback only: the native dialog could not be queued for some item.
         party::status::SetLastEvent("Party item received: " + notice);
@@ -3301,6 +3433,7 @@ void OnHostFlagSet(std::uint32_t flag) {
     }
     if (queued) {
         Log("host flag %u -> %s queued for the party", flag, DescribeItem(*g).c_str());
+        ShareNotice(*g, "host pickup");
     }
 }
 
@@ -3785,6 +3918,29 @@ void GiftTick(double now) {
             reinterpret_cast<AwardFn>(Guest(kAwardLot))(Ptr(kMapItemMan), static_cast<u32>(g_gift_test), host_only);
         }
     }
+    {   // BB_PARTY_GUEST_PICKUP_TEST=<lot>,...: the guest "picks up" shared treasure in the host's world (0.7.7 smoke
+        // aid): what the D4 pickup path does (the flag into the own save, ReportGuestKeyTreasure), 20 s after its world is steady.
+        static const std::vector<long> lots = EnvList("BB_PARTY_GUEST_PICKUP_TEST");
+        static double since = 0;
+        static bool done = false;
+        if (!lots.empty() && !done && role == PartyRole::Guest) {
+            const GameSnapshot q = ReadGameState(false);
+            if (own != 0 || !q.world_up || q.loading || LoadMode(Ptr(kFlagMan)) != 1) {
+                since = 0;
+            } else if (!since) {
+                since = now;
+            } else if (now - since >= 20.0) {
+                done = true;
+                for (const long lot : lots) {
+                    const std::int32_t flag = ItemLotFlag(static_cast<std::int32_t>(lot));
+                    const bool own_ok = flag > 0 && progress::WriteFlagOwnSave(static_cast<std::uint32_t>(flag), true);
+                    const bool sent = flag > 0 && ReportGuestKeyTreasure(flag);
+                    Log("guest pickup test: lot %ld flag %d: own save %s, report to the host %s", lot, flag,
+                        own_ok ? "set" : "NOT set", sent ? "sent" : "refused (not shared / not allowed)");
+                }
+            }
+        }
+    }
     if (role != PartyRole::Host || own != 1 || now - g_gift_last < 2.0) {
         return;
     }
@@ -3902,6 +4058,11 @@ bool ReportGuestKeyTreasure(std::int32_t flag) {
     g_gift_up.push_back(GiftUpToJsonText(lot, flag));
     Log("gift: shared key treasure lot %d (flag %d) picked up by this guest: reported to the host (its world "
         "awards it, C3 hands it to every member)", lot, flag);
+    ItemGrant picked;
+    picked.lot = lot;
+    picked.flag = flag;
+    picked.source = ItemSource::Flag;
+    ShareNotice(picked, "picked up here");
     return true;
 }
 
@@ -4196,6 +4357,7 @@ void ItemsTick() {
     }
     HostTestTick(Now());
     KillAwardTick(Now());
+    NoticeTick();
     GiftTick(Now());
     const GameSnapshot gs = ReadGameState(false);
     ItemApplyState s;
