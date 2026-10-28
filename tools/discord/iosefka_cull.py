@@ -50,9 +50,15 @@ def tmp_root():
 
 async def _harvest_place(clinic, place, log_info_fn, tmpdir, out):
     msgs = []
-    async for m in place.history(limit=None, oldest_first=True):
-        if not getattr(m.author, "bot", False):
-            msgs.append(m)
+    try:
+        async for m in place.history(limit=None, oldest_first=True):
+            if not getattr(m.author, "bot", False):
+                msgs.append(m)
+    except Exception as e:
+        if type(e).__name__ != "Forbidden":
+            raise
+        out(f"no access: {getattr(place, 'name', place.id)}")
+        return 0, 0, 0, 1
     files = failed = 0
     infos_by_id, lights = {}, []
     stored = {}
@@ -87,11 +93,11 @@ async def _harvest_place(clinic, place, log_info_fn, tmpdir, out):
         clinic.set_watermark(place.id, msgs[-1].id)
     out(f"place {getattr(place, 'name', place.id)}: {len(msgs)} msgs, {files} files"
         + (f", {failed} failed" if failed else ""))
-    return len(msgs), files, failed
+    return len(msgs), files, failed, 0
 
 
 async def harvest(guilds, clinic, *, log_info_fn, tmpdir, out=print):
-    total = [0, 0, 0]
+    total = [0, 0, 0, 0]
     try:
         for guild in guilds:
             async for place in cd.walk_places(guild):
@@ -100,8 +106,8 @@ async def harvest(guilds, clinic, *, log_info_fn, tmpdir, out=print):
     except cd.DiskLow:
         out(f"disk low, resume later (stopped after {total[0]} msgs, {total[1]} files)")
         return DISK_LOW
-    out(f"harvest done: {total[0]} msgs, {total[1]} files, {total[2]} archive_failed (rerun retries them); "
-        f"{len(clinic.bugs())} bugs")
+    out(f"harvest done: {total[0]} msgs, {total[1]} files, {total[2]} archive_failed (rerun retries them), "
+        f"{total[3]} places without access; {len(clinic.bugs())} bugs")
     return OK
 
 

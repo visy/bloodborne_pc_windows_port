@@ -48,19 +48,21 @@ def test_walk_skips_staff_and_development():
     staff.threads = [F.Thread(11, "t", staff)]
     staff.private_archived = [F.Thread(12, "secret", staff)]
     dev = F.Channel(2, "development", calls)
-    mod = F.Channel(3, "moderator-only", calls)
+    mod = F.Channel(3, "moderator-only", calls)  # skipped too (owner decision)
     mod.private_archived = [F.Thread(31, "old private", mod)]
     mod.public_archived = [F.Thread(32, "old public", mod)]
+    gen = F.Channel(6, "general", calls)
+    gen.private_archived = [F.Thread(61, "old private", gen)]
     help_ = F.Channel(4, "help", calls)
     help_.threads = [F.Thread(41, "active", help_)]
     forum = F.Forum(5, "bug-reports", calls)
     forum.public_archived = [F.Thread(51, "post", forum)]
-    g = F.Guild([staff, dev, mod, help_], [forum])
+    g = F.Guild([staff, dev, mod, help_, gen], [forum])
 
     async def collect():
         return [p.id async for p in cd.walk_places(g)]
     ids = run(collect())
-    assert set(ids) == {3, 31, 32, 4, 41, 51}
+    assert set(ids) == {4, 41, 51, 6, 61}
     assert 5 not in ids  # forums have no messages of their own
 
 
