@@ -3249,6 +3249,9 @@ class BloodborneLauncher(tk.Tk):
         self.build_party_settings_tab(PARTY_RULES_TAB_TITLE, PARTY_RULES_TAB_INTRO, PARTY_RULES_TAB)
         self.build_party_settings_tab(MY_PARTY_TAB_TITLE, MY_PARTY_TAB_INTRO, MY_PARTY_TAB)
 
+        # 6b. Save editor (single-player and party character saves)
+        self.build_saveedit_tab()
+
         # 7. Advanced / Debug
         tab = self._tab("Advanced / Debug")
         sec = self._section(tab, 0, "Diagnostics")
@@ -3469,6 +3472,32 @@ class BloodborneLauncher(tk.Tk):
         return lbl, entry, btn, holder
 
     # ------------------------------------------------------------- party
+    def build_saveedit_tab(self):
+        """The Save editor tab (scripts/saveedit): edits a character save after an automatic backup."""
+        try:
+            scripts_dir = str(APP_DIR / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            from saveedit import ui as saveedit_ui
+        except Exception as ex:  # a missing or broken module only removes the tab
+            print(f"Save editor tab unavailable: {ex}", file=sys.stderr)
+            return
+
+        def game_dir():
+            text = self.eboot_var.get().strip()
+            return resolve_game_dir(text) if text else None
+
+        def update_party(user, slot, data):
+            save_editor_module()._update_party_characters(user, slot, data)
+
+        tab = saveedit_ui.SaveEditorTab(self.notebook, party_user_dir, game_dir, lambda: party_user_dir() / "cache",
+                                        running_instances, lambda m: self.log(m), update_party)
+        self.notebook.add(tab, text="Save editor")
+        self.saveedit_tab = tab
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           lambda e: tab.refresh_slots() if self.notebook.select() == str(tab) and tab.model is None else None,
+                           add="+")
+
     def build_party_tab(self):
         tab = self.party_tab = self._tab("Party")
         sec = self._section(tab, 0, "Party")
