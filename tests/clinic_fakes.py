@@ -38,8 +38,10 @@ class User:
 
 
 class Guild:
-    def __init__(self, text_channels=(), forums=(), filesize_limit=25 * 1024 * 1024):
+    def __init__(self, text_channels=(), forums=(), filesize_limit=25 * 1024 * 1024, voice_channels=(),
+                 stage_channels=()):
         self.text_channels, self.forums, self.filesize_limit = list(text_channels), list(forums), filesize_limit
+        self.voice_channels, self.stage_channels = list(voice_channels), list(stage_channels)
 
 
 class Channel:
@@ -55,6 +57,7 @@ class Channel:
         self.private_archived = []
         self.public_archived = []
         self.messages = []
+        self.index = {}  # every message made in this channel: fetchable, but not in history()
 
     async def send(self, content=None, **kw):
         Channel._next[0] += 1
@@ -73,7 +76,7 @@ class Channel:
         return gen()
 
     async def fetch_message(self, mid):
-        for m in self.messages:
+        for m in list(self.messages) + list(self.index.values()):
             if m.id == mid and not m.deleted:
                 return m
         raise NotFound(f"unknown message {mid}")
@@ -123,6 +126,8 @@ class Msg:
         self.deleted = False
         self.delete_error = None
         self.kw = {}
+        if hasattr(channel, "index"):
+            channel.index[id] = self
 
     async def delete(self):
         if self.delete_error:
