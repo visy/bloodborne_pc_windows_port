@@ -4536,6 +4536,14 @@ void PartyDirector::Tick() {
     zone.Next(perf::Zone::DirSend);
     // The roster entry.
     if (link) {
+        {
+            // 0.7.7: loading screens of ours and of the members (the roster): receive gaps inside them
+            // are no outage (nr_loadgap.h).
+            std::vector<std::pair<std::string, bool>> loads;
+            for (const party::RosterEntry& e : link->roster())
+                loads.emplace_back(e.name, e.state == party::MemberState::Loading);
+            bbnet::p2p_load_update(s.loading, loads);
+        }
         const party::MemberState ms = LocalState(s, st.start_prologue);
         const std::uint32_t map = s.world_up ? s.map_id : 0;
         if (!st.sent_any || ms != st.sent_state || map != st.sent_map) {
