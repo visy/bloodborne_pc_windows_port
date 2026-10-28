@@ -74,7 +74,8 @@ user pushes NW commits, run the sync and report the new items. `status NW-x fixe
 ## Procedures
 
 Check new bugs:
-1. `ssh iosefka new`. Summarise the bugs (id, title, counts) and notes shared with the user.
+1. `ssh iosefka new`. Summarise the bugs (id, title, counts) and notes shared with the user, and the
+   `changelist` news (items the other dev changed, e.g. fixes marked done; `imports` = a sync, one line each).
    `updated_bugs` are older bugs that got new messages or files (players add details later; fixed or
    closed ones are reopened with a note). `triage_pending` counts the triage queue.
 2. Offer to triage; do not change anything yet.

@@ -58,7 +58,9 @@ or `$()` is stored as plain text and never run.
 everything). It also marks "seen now". `share` notes addressed to you are included.
 `updated_bugs` lists older bugs that got new messages or files since your last `new` (players add details
 days later; a fixed or closed bug that gets new material is reopened and carries a note "new report
-after <status>"). `triage_pending` is the size of the triage queue.
+after <status>"). `triage_pending` is the size of the triage queue. `changelist` lists changelist items
+someone else added, edited or moved (e.g. set `done` after a fix was merged), one entry per item with its
+current status; a sync or import is folded into `imports` (who, track, version, item count).
 
 ```json
 {"since": "2026-10-28T08:00:00Z",
