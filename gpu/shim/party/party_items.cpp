@@ -6,7 +6,6 @@
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_items.h"
 #include "party_kill_award_rules.h"
-#include "party_guestsvc.h"
 #include "party_item_notice_rules.h"
 #include "bbport_game_menu.h"
 #include "party_b2.h"
@@ -1982,6 +1981,9 @@ BB_COOP_SYSV void GiveListEntry(u64, u64 list, u64, u64, u64, u64) {
             it.count = static_cast<std::int32_t>(e[2]);
             if (it.category == 8) {
                 if (it.count != 1 || !ReadGem(e[0], &it)) {
+                    Log("give list entry %u/%u: gem %u (gaitem 0x%x, count %u) could not be read: instance data %s", i + 1, n,
+                        e[1] & 0x0fffffffu, e[0], e[2],
+                        it.id > 0 ? GemText(it).c_str() : "unreadable");
                     bad = true;
                     continue;
                 }
@@ -2323,7 +2325,9 @@ void KillAwardTick(double now) {
         const bool set = flag > 0 && IsFlag(man, flag);
         bool seen = false, alive = true;
         if (!set) {
-            const u64 chr = GuestSvcFindChr(r.entity);
+            // the game's own chr-by-entity lookup (0x13C97A0, as the test kills and the boss clear bonus use it)
+            const u64 chr = reinterpret_cast<u64(BB_COOP_SYSV*)(std::int32_t, u64, u64)>(Guest(0x13c97a0))(
+                static_cast<std::int32_t>(r.entity), 0, 0);
             u64 a = 0, dm = 0;
             std::int32_t hp = -1;
             if (chr && SafeGet(chr + 0x3b0, &a) && a && SafeGet(a + 0x20, &dm) && dm) {
