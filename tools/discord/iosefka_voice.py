@@ -42,6 +42,37 @@ def replacement(mention: str, bug_id: str, text: str, media_note: str = "") -> s
     return head + (f"\n\n{quote}" if quote else "") + tail
 
 
+def replacement_many(mention: str, bug_id: str, texts: list, media_note: str = "") -> str:
+    """One note for a run of messages by the same author about the same bug. One message: exactly
+    `replacement`. Several: "brought N logs", then each non-empty masked text as its own quote block, the
+    room shared fairly between them so the whole note stays <= 2000 chars."""
+    n = len(texts)
+    if n <= 1:
+        return replacement(mention, bug_id, texts[0] if texts else "", media_note)
+    head = (f"{mention} brought {n} logs to my clinic. I've taken them inside, where patients aren't exposed to "
+            f"infection: names and addresses stay off the open streets. They're being triaged as {bug_id}. "
+            f"Thank you, truly. Now, go. And good hunting.")
+    media_note = media_note[:300]
+    tail = ("\n\n" + media_note) if media_note else ""
+    full = [_quote(t, LIMIT) for t in texts]
+    full = [q for q in full if q]
+    room = LIMIT - len(head) - len(tail) - 2 * len(full)
+    lens = [len(q) for q in full]
+    take = [0] * len(full)
+    left, k = room, len(full)
+    for i in sorted(range(len(full)), key=lambda j: lens[j]):  # short quotes whole, long ones share the rest
+        take[i] = min(lens[i], max(left, 0) // k)
+        left -= take[i]
+        k -= 1
+    quotes = []
+    for t, tk in zip([t for t in texts if _quote(t, LIMIT)], take):
+        q = _quote(t, LIMIT if tk >= len(_quote(t, LIMIT)) else tk)  # whole when it fits (the floor is for cuts)
+        if q:
+            quotes.append(q)
+    out = head + "".join("\n\n" + q for q in quotes) + tail
+    return _fit(out)
+
+
 def bug_filed(bug_id: str, missing: list[str]) -> str:
     text = f"Thank you. I've written this down as {bug_id}, and the developers will look at it."
     asks = []
