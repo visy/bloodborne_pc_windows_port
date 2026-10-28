@@ -5648,7 +5648,63 @@ def ch_at(L, i, w):
     return flags, anim
 
 
+MD_DRAW_RX = re.compile(r"^  mesh pass #\d+ draw \d+: indices (\d+) ")
+MD_CLOTH_RX = re.compile(r"^    vertex stream 0 at \S+ size \d+ stride 20: (\d+) elements, NaN \d+, box \(([^)]*)\) \.\. \(([^)]*)\)")
+
+
+def md_record(text):
+    """One frame analyzer record (BB_CAPTURE_MESH_COUNTS = MD_MESHES) -> ({(mesh, lod): draws},
+    [cloth streams: (elements, all zero)]): which of the c2150 meshes the frame drew, at which LOD."""
+    by_count = {c: (name, lod) for name, cs in MD_MESHES.items() for lod, c in enumerate(cs)}
+    draws, cloth = {}, []
+    for line in text.splitlines():
+        m = MD_DRAW_RX.match(line)
+        if m and int(m.group(1)) in by_count:
+            k = by_count[int(m.group(1))]
+            draws[k] = draws.get(k, 0) + 1
+            continue
+        m = MD_CLOTH_RX.match(line)
+        if m and int(m.group(1)) < 4096:  # a cloth mesh's own small stream (not the shared vertex heap)
+            zero = all(float(x) == 0.0 for x in (m.group(2) + " " + m.group(3)).split())
+            cloth.append((int(m.group(1)), zero))
+    return draws, cloth
+
+
+def md_missing(draws):
+    """[(mesh, lod, drawn, bodies)]: the maid meshes drawn fewer times than her body at that LOD (every c2150
+    draws its dress and cloth with its body: a missing skirt that is not drawn shows here)."""
+    out = []
+    for lod in range(3):
+        bodies = draws.get(("body", lod), 0)
+        for name in ("dress", "BD_cloth", "AM_cloth", "BD_cloth_e"):
+            n = draws.get((name, lod), 0)
+            if n < bodies:
+                out.append((name, lod, n, bodies))
+    return out
+
+
 def check_md(v, L, d):
+    recs = sorted((Path(d) / "captures").glob("frame_*.txt")) if d else []
+    parsed = [(r.name, *md_record(r.read_text(encoding="utf-8", errors="replace"))) for r in recs]
+    seen = [(n, sum(c for (m, _l), c in dr.items() if m == "body")) for n, dr, _c in parsed]
+    v.step("md frame analyzer records with the maids drawn (c2150 body)", len(seen) >= 4 and all(b > 0 for _n, b in seen),
+           "%d records; bodies drawn %s" % (len(seen), " ".join(str(b) for _n, b in seen)))
+    miss = [(n, md_missing(dr)) for n, dr, _c in parsed]
+    bad = [(n, m) for n, m in miss if m]
+    zero = sum(1 for _n, _d, cl in parsed for _e, z in cl if z)
+    total = sum(len(cl) for _n, _d, cl in parsed)
+    v.step("md every maid drawn with her dress and cloth meshes (none drawn less than her body)", bool(parsed) and not bad,
+           ("; ".join("%s: %s" % (n, ", ".join("%s LOD%d %d/%d" % x for x in m)) for n, m in bad[:3])) if bad else
+           "all records; cloth vertex streams all-zero in game memory: %d of %d" % (zero, total))
+    # the locked-on maid's HP (R3 picks the nearest one: 2500233 or 2500234)
+    hp = [int(x) for x in re.findall(r"lock-on 1 \(target at .*: enemy 25002\d\d, HP (\d+)\)",
+                                     "\n".join(l for _t, l in L.all(0, r"test: host_press 0x")))]
+    v.step("md the maid was hit (her HP dropped)", len(hp) >= 2 and min(hp) < hp[0],
+           "HP " + " -> ".join(str(h) for h in sorted(set(hp), reverse=True)) if hp else "no lock-on on a maid")
+    cap = L.all(0, r"test: host_gfx: capture")
+    hit = L.find(0, r"test: host_press 0x800;")
+    v.step("md records before and after the hit", bool(hit) and any(t < hit[0] for t, _l in cap) and any(t > hit[0] for t, _l in cap),
+           "%d records, hit at %s" % (len(cap), "+%.1f s" % hit[0] if hit else "-"))
     check_common(v, L, "md")
 
 
