@@ -156,6 +156,8 @@ PARTY_INI_SWITCHES = [
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
     # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Party rules: World)
     ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
+    # 0.7.7: bosses share their attention between the players in reach (the host's game acts)
+    ("party_boss_share", "BB_PARTY_BOSS_SHARE", True),
     # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
     # System > Deaths & revives)
     ("party_any_kidnap", "BB_PARTY_ANY_KIDNAP", True),
@@ -398,6 +400,13 @@ MY_PARTY_TAB_TITLE = "My Party"
 MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what the party brings into your own save "
                       "and items, and your saves. Each player chooses them for itself (in the game: System > My party).")
 MY_PARTY_TAB = [
+    (0, 1, "Bosses", [
+        ("check", "party_boss_share", "Bosses share their attention",
+         "In a party boss fight the boss turns on each player within reach in turn (about every eight "
+         "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
+         "few metres further is attacked too. Takes effect when you host. Default: on (bbport.ini "
+         "party_boss_share; in the game: System > My party: Bosses)."),
+    ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
          "Your companions' names and health in the bottom left corner of the game, "

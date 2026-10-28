@@ -60,6 +60,7 @@ player_logs paths; private detail goes in `--dev`. Quote multi-word arguments as
 | add these bugs to the next coop version | `ssh iosefka cl versions --track coop`, then `ssh iosefka cl add coop 0.7.8 fixed "'public text'" --bug NW-1a2b3c4` per item |
 | was NW-1a2b3c4 fixed on the NW side | `ssh iosefka cl related NW-1a2b3c4`, `ssh iosefka cl list --track nw --bug NW-1a2b3c4` |
 | mark NW-1a2b3c4 fixed in NW 0.2.6 | `ssh iosefka status NW-1a2b3c4 fixed --in nw:0.2.6` |
+| release 0.7.7 | `ssh iosefka cl release coop 0.7.7 --dry-run` to preview, then `ssh iosefka cl release coop 0.7.7 [--next 0.7.8]`; post the returned `notes` in #releases, then Iosefka asks the reporters of the fixed bugs to retest (do not ask them yourself) |
 | make the 0.2.6 release notes | `ssh iosefka cl notes nw 0.2.6` (public-safe; re-read before pasting) |
 | move this item to 0.7.8 | `ssh iosefka cl move CL-1a2b3c coop 0.7.8` |
 | drop this item | `ssh iosefka cl status CL-1a2b3c dropped` |
