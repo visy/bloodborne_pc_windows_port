@@ -334,3 +334,18 @@ def test_replacement_many_fits_2000():
     assert out.count("\n> ") + out.startswith("> ") >= 3 and out.endswith("(pictures/video kept in the clinic)")
     assert voice.replacement_many("<@7>", "NW-0000001", ["only"]) == voice.replacement("<@7>", "NW-0000001", "only")
     assert "203.0.113.9" not in voice.replacement_many("<@7>", "NW-1", ["ip 203.0.113.9", "b"])
+
+
+def test_run_split_by_time_gap_in_channel(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    ch = F.Channel(100, "help", [])
+    user = F.User(7, "SecretPlayer")
+    ch.messages = [F.Msg(1, ch, user, "a", [F.Att(10, "a.log", LOG)], minutes=0),
+                   F.Msg(2, ch, user, "b", [F.Att(11, "b.log", LOG + b"2")], minutes=30)]
+    guild = F.Guild([ch], [])
+    ch.guild = guild
+    for m in ch.messages:
+        m.guild = guild
+    harvest(c, guild, tmp_path)
+    confirm_all(c)
+    assert [len(r) for r in cull.cull_runs(c)] == [1, 1]  # unseen chat may sit in a 30 min gap
