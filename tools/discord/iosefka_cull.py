@@ -201,6 +201,27 @@ async def _place(client, cid):
     return client.get_channel(cid) or await client.fetch_channel(cid)
 
 
+async def _missing_permissions(client, runs):
+    """Names of the places of `runs` where the bot lacks Send / Manage Messages (checked before any post)."""
+    bad = set()
+    for pid in {r[0]["thread_id"] or r[0]["channel_id"] for r in runs}:
+        try:
+            place = await _place(client, pid)
+        except Exception:
+            continue  # gone or unreadable: the run reports it
+        guild = getattr(place, "guild", None)
+        perms_for = getattr(place, "permissions_for", None)
+        if guild is None or perms_for is None or getattr(guild, "me", None) is None:
+            continue
+        p = perms_for(guild.me)
+        is_thread = getattr(place, "parent", None) is not None and hasattr(place, "archived")
+        can_send = p.send_messages_in_threads if is_thread else p.send_messages
+        if not (p.manage_messages and can_send):
+            parent = getattr(place, "parent", None)
+            bad.add(f"#{getattr(parent, 'name', None) or getattr(place, 'name', pid)}")
+    return bad
+
+
 async def starter_test(client, thread_id, out=print, env=os.environ):
     if env.get("NW_DELETE") != "1":
         out("starter-test deletes a message: set NW_DELETE=1")
@@ -234,10 +255,20 @@ async def cull(client, clinic, *, limit=None, delay=1.0, out=print, env=os.envir
     if env.get("NW_DELETE") != "1":
         out("cull deletes messages: set NW_DELETE=1 (and run `report` first)")
         return REFUSED
-    done = 0
-    for run_ in cull_runs(clinic):
-        if limit is not None and done >= limit:
+    # a delete Discord refused earlier (missing permission, fixed since): its note is already posted, so the
+    # run only deletes now
+    for m in clinic.messages_in_state(("delete_forbidden",)):
+        clinic.set_state(m["message_id"], "replaced")
+    runs = cull_runs(clinic)
+    missing = await _missing_permissions(client, runs)
+    if missing:
+        out("cull refused: Iosefka cannot send/delete in: " + ", ".join(sorted(missing)))
+        return FAIL
+    done = tried = 0
+    for run_ in runs:
+        if limit is not None and tried >= limit:
             break
+        tried += 1
         if not run_[0].get("bug_id"):
             out(f"{run_[0]['message_id']}: blocked:no-bug")
             continue
@@ -266,6 +297,10 @@ async def cull(client, clinic, *, limit=None, delay=1.0, out=print, env=os.envir
             out(f"{mid} {bug_id}: {res}")
         n = sum(r == "deleted" for r in results.values())
         done += n
+        if any(r in ("delete_forbidden", "send_forbidden") for r in results.values()):
+            out(f"cull stopped: Discord refused in place {run_[0]['thread_id'] or run_[0]['channel_id']}")
+            out(f"cull: {done} message(s) replaced and deleted")
+            return FAIL
         if n:
             await asyncio.sleep(delay)
     out(f"cull: {done} message(s) replaced and deleted")
