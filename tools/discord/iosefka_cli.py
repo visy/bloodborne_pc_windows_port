@@ -74,6 +74,13 @@ def build_parser():
     def add(name, *parents):
         return sub.add_parser(name, parents=[common, *parents], add_help=False)
     add("new")
+    add("triage-queue")
+    s = add("title")
+    s.add_argument("bug")
+    s.add_argument("title_text")
+    s = add("move")
+    s.add_argument("message_id", type=int)
+    s.add_argument("bug")
     add("list", _filters())
     s = add("show")
     s.add_argument("bug")
@@ -149,6 +156,11 @@ def _summary(c, b):
                 b["nd_refs"], str) else b["nd_refs"], "dup_of": b["dup_of"],
             "last_note": {"who": last["who"], "kind": last["kind"], "at": _iso(last["at"]),
                           "text": _excerpt(last["text"])} if last else None}
+
+
+def _pending(c):
+    """Bugs Iosefka filed that wait for a triage pass (tag triage=pending), oldest first."""
+    return sorted(c.bugs(tag="triage=pending"), key=lambda b: b["created"])
 
 
 def _query(c, a):
@@ -227,13 +239,21 @@ def _json_out(out, data):
 
 def _text_out(out, cmd, data):
     lines = []
-    if cmd in ("list", "new") and "bugs" in data or cmd == "list":
+    if cmd in ("list", "new", "triage-queue") and "bugs" in data or cmd == "list":
         bugs = data if isinstance(data, list) else data["bugs"]
         for b in bugs:
             k = b["counts"]
             lines.append(f"{b['id']}  {b['status']:<12} {b['title']}  "
                          f"[{k['messages']} msg, {k['logs']} log, {k['images']} img, {k['stills']} still]")
+        if cmd == "triage-queue":
+            for n in data["auto_links"]:
+                lines.append(f"  auto-link {n['bug_id']}: {_excerpt(n['text'])}")
         if cmd == "new":
+            for b in data["updated_bugs"]:
+                k = b["counts"]
+                lines.append(f"  updated {b['id']}  {b['status']:<12} {b['title']}  "
+                             f"[{k['messages']} msg, {k['logs']} log, {k['images']} img]")
+            lines.append(f"  triage pending: {data['triage_pending']}")
             for n in data["notes"]:
                 lines.append(f"  note {n['bug_id']} {n['who']} ({n['kind']}): {_excerpt(n['text'])}")
     elif cmd == "show":
@@ -381,7 +401,7 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args(list(argv))
     if not a.cmd:
-        raise CliError("no command (new, list, show, files, note, status, tag, assign, share, merge, nd)")
+        raise CliError("no command (new, triage-queue, title, move, list, show, files, note, status, tag, assign, share, merge, nd)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
     if a.cmd == "nd" and not ND_RX.match(a.ref):
@@ -415,7 +435,33 @@ def _run(argv, who, out, db, stdin):
         got = c.changes_since(since, who)
         notes = [{"bug_id": n["bug_id"], "at": _iso(n["at"]), "who": n["who"], "kind": n["kind"],
                   "text": n["text"]} for n in got["notes"] if n["who"] != who]
-        return emit({"since": _iso(since), "bugs": [_summary(c, b) for b in got["bugs"]], "notes": notes})
+        return emit({"since": _iso(since), "bugs": [_summary(c, b) for b in got["bugs"]],
+                     "updated_bugs": [_summary(c, b) for b in got["updated_bugs"]], "notes": notes,
+                     "triage_pending": len(_pending(c))})
+    if a.cmd == "triage-queue":
+        since = c.mark_seen(who, "triage")
+        links = [{"bug_id": n["bug_id"], "at": _iso(n["at"]), "text": n["text"]}
+                 for n in c.notes_of_kind("auto-link", since)]
+        return emit({"since": _iso(since), "bugs": [_summary(c, b) for b in _pending(c)], "auto_links": links})
+    if a.cmd == "title":
+        b = _need_bug(c, a.bug)
+        new = mask_ips(a.title_text).strip()[:120]
+        if not new:
+            raise CliError("title wants some text")
+        c.update_bug(a.bug, title=new)
+        c.add_note(a.bug, who, "note", f"title: {b['title']!r} -> {new!r}")
+        return emit({"ok": True, "bug": a.bug, "title": new})
+    if a.cmd == "move":
+        _need_bug(c, a.bug)
+        old = c.move_message(a.message_id, a.bug)
+        if old is False:
+            raise CliError(f"no such message: {a.message_id}", 1)
+        c.touch_bug(a.bug)
+        note = f"moved message {a.message_id} from {old or 'no bug'}"
+        c.add_note(a.bug, who, "note", note)
+        if old and old != a.bug and c.bug(old):
+            c.add_note(old, who, "note", f"moved message {a.message_id} to {a.bug}")
+        return emit({"ok": True, "message": a.message_id, "from": old, "to": a.bug})
     if a.cmd == "list":
         return emit([_summary(c, b) for b in _query(c, a)])
     if a.cmd == "show":

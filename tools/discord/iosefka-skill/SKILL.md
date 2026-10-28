@@ -42,7 +42,20 @@ Quote text yourself: the command string is split on the server, so write
 
 Check new bugs:
 1. `ssh iosefka new`. Summarise the bugs (id, title, counts) and notes shared with the user.
+   `updated_bugs` are older bugs that got new messages or files (players add details later; fixed or
+   closed ones are reopened with a note). `triage_pending` counts the triage queue.
 2. Offer to triage; do not change anything yet.
+
+Triage pass (bugs Iosefka filed and was unsure about):
+1. `ssh iosefka triage-queue`: bugs with `triage=pending` (oldest first) and `auto-link` notes (messages she
+   attached by a weaker rule). Tag `unsure` says what she could not settle (network-or-bug, which-bug,
+   no-log, unreadable-file, no-text).
+2. Per bug: `show NW-x`, `files NW-x` (see Triage a bug); read the logs, party logs with `scripts/net_doctor.py`.
+3. Set `title NW-x "'text'"`, `status`, and tags: component, area, feature, version, role, plan, severity.
+4. Resolve each unsure item; a wrongly linked message goes back with `move <message_id> NW-y`.
+5. Check duplicates (`list --open --q ...`, then `merge`) and whether CHANGES.md or the Nightwatch repo
+   already has the fix.
+6. Write a triage `note`, then `tag NW-x triage=done`.
 
 Triage a bug:
 1. `ssh iosefka show NW-x` (use `--brief` for long threads). Read the messages, notes and file counts.
