@@ -4100,6 +4100,70 @@ def hold_udp_ports(n):
     sys.exit("no %d free UDP ports to hold" % n)
 
 
+# ---- frame-rate sweep (--fps 30,60,90,60/30) --------------------------------------------------------
+# A phase's "fps" key is its own default rate (the rate a report was made at: rh, fw*, fh, rs at 60) and
+# applies only when no --fps sweep is running. "fps_fixed": True marks a phase that needs its rate even in
+# a sweep (none does today). Without --fps nothing changes: BB_MP_FPS (default 30) or the phase's "fps".
+# Physics / timing groups (lifts, ladders, falls: anything frame-dependent): `--only physics`.
+PHYSICS_GROUPS = ["lifts", "ladder", "elevator", "lifts_together", "cainhurst_lift", "research_lift", "research_solo",
+                  "forbidden_lift", "forbidden_lift_guest", "forbidden_lift_both", "forbidden_lift_edge",
+                  "hemwick_lift", "fall", "fall_deep", "host_fall_lamp", "frontier_fall"]
+# A future maid-dress (cloth) phase at Cainhurst plugs in as a screenshot-based visual phase: add its group
+# name here and in GROUPS (see QA_TESTING.md, "Frame-rate sweeps").
+
+
+def parse_fps_sweep(spec):
+    """'30,60,90,60/30' -> ['30', '60', '90', '60/30'] (each entry validated like instances.parse_fps)."""
+    entries = [x.strip() for x in str(spec).split(",") if x.strip()]
+    if not entries:
+        raise ValueError("empty --fps list")
+    sys.path.insert(0, str(HERE))
+    import instances as _inst
+    for e in entries:
+        _inst.parse_fps(e, 1)
+    return entries
+
+
+def fps_dir_name(entry):
+    """Output sub-directory of one sweep entry: 60 -> fps60, 60/30 -> fps60x30."""
+    return "fps" + entry.replace("/", "x")
+
+
+def phase_fps(ph, sweep=None):
+    """The --fps value for a phase's instances.py call (None: leave BB_MP_FPS / the default)."""
+    if sweep and not ph.get("fps_fixed"):
+        return sweep
+    return str(ph["fps"]) if ph.get("fps") else None
+
+
+def fps_summary(results, entries):
+    """results: {entry: {phase: [passed, failed]}} -> (text, [phases that pass at some rates, fail at others])."""
+    phases = []
+    for e in entries:
+        for ph in results.get(e, {}):
+            if ph not in phases:
+                phases.append(ph)
+    w = max([5] + [len(e) for e in entries]) + 2
+    lines = ["%-8s" % "phase" + "".join("%-*s" % (w + 6, "@" + e) for e in entries)]
+    sensitive = []
+    for ph in phases:
+        cells, verdicts = [], []
+        for e in entries:
+            r = results.get(e, {}).get(ph)
+            if r is None:
+                cells.append("-")
+                continue
+            ok = r[1] == 0 and r[0] > 0
+            verdicts.append(ok)
+            cells.append("%s %d/%d" % ("PASS" if ok else "FAIL", r[0], r[0] + r[1]))
+        lines.append("%-8s" % ph + "".join("%-*s" % (w + 6, c) for c in cells))
+        if any(verdicts) and not all(verdicts):
+            sensitive.append(ph)
+    lines.append("(cell: verdict passed/total steps)")
+    lines.append("FPS-sensitive (pass at some rates, fail at others): " + (", ".join(sensitive) if sensitive else "none"))
+    return "\n".join(lines), sensitive
+
+
 def run_phase(a, ph, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     root = Path(a.root)
@@ -4129,7 +4193,7 @@ def run_phase(a, ph, out: Path):
     if ph.get("prep"):
         ph["prep"](root)
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", str(ph.get("count", 3)),
-           *(["--fps", str(ph["fps"])] if ph.get("fps") else []),
+           *(["--fps", phase_fps(ph, getattr(a, "sweep_fps", None))] if phase_fps(ph, getattr(a, "sweep_fps", None)) else []),
            "--headless", str(ph.get("headless", 1)), "--party"] + (["--fresh-saves"] if ph.get("fresh", True) else []) + [
            "--timestamps", "--idle", "0", "--seconds", str(ph["seconds"]),
            "--root", str(root), "--build", str(a.build), "--game", str(a.game),
@@ -6594,6 +6658,53 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "eh": lambda v, L, d: check_eh(v, L), "ou": lambda v, L, d: check_ou(v, L), "mesh": lambda v, L, d: check_mesh(v, L), "fp": lambda v, L, d: check_fp(v, L), "po": lambda v, L, d: check_po(v, L), "pos": lambda v, L, d: check_pos(v, L), "sg": lambda v, L, d: check_sg(v, L), "sg2": lambda v, L, d: check_sg2(v, L), "csh": lambda v, L, d: check_csh(v, L), "csh2": lambda v, L, d: check_csh2(v, L)}
 
 
+def sweep_args(argv):
+    """argv without --fps / --out / --sweep-fps (and their values): what a sweep child repeats."""
+    base, k = [], 0
+    while k < len(argv):
+        t = argv[k]
+        if t in ("--fps", "--out", "--sweep-fps"):
+            k += 2
+        elif t.startswith(("--fps=", "--out=", "--sweep-fps=")):
+            k += 1
+        else:
+            base.append(t)
+            k += 1
+    return base
+
+
+def sweep_main(a, only):
+    """--fps LIST: this same command once per entry (own subprocess, --out <out>/fps<entry>), then the summary."""
+    try:
+        entries = parse_fps_sweep(a.fps)
+    except ValueError as e:
+        sys.exit(str(e))
+    out = Path(a.out)
+    base = sweep_args(sys.argv[1:])
+    if only:  # the child gets the expanded group list (physics -> its groups)
+        base = sweep_args(base + ["--only", a.only])
+        k = [i for i, t in enumerate(base) if t == "--only"]
+        if len(k) > 1:  # the original --only stays first: drop it, keep the expanded one
+            del base[k[0]:k[0] + 2]
+    results, codes = {}, {}
+    for e in entries:
+        sub = out / fps_dir_name(e)
+        print("[smoke] === frame rate %s -> %s" % (e, sub), flush=True)
+        codes[e] = subprocess.call([sys.executable, str(Path(__file__).resolve())] + base + ["--out", str(sub), "--sweep-fps", e])
+        results[e] = {}
+        for rj in sorted(sub.glob("*/rows.json")):
+            try:
+                rows = json.loads(rj.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            results[e][rj.parent.name] = [sum(1 for r in rows if r[1]), sum(1 for r in rows if not r[1])]
+    text, sensitive = fps_summary(results, entries)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "fps_summary.txt").write_text(text + "\n", encoding="utf-8")
+    print("\n[smoke] frame-rate sweep summary\n" + text + "\n[smoke] " + str(out / "fps_summary.txt"), flush=True)
+    sys.exit(1 if any(codes.values()) or any(r[1] for d in results.values() for r in d.values()) else 0)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=str(DEFAULT_ROOT))
@@ -6602,10 +6713,16 @@ def main():
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
     ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
     ap.add_argument("--every", type=float, default=10)
+    ap.add_argument("--fps", default=None,
+                    help="frame-rate sweep: comma list, each one rate or a per-instance mix: 30,60,90,60/30 (60/30 = host "
+                         "at 60, guests at 30). The phases run once per entry into <out>/fps<entry, / -> x>, then one "
+                         "summary. Without it: BB_MP_FPS (default 30), a phase's own fps")
+    ap.add_argument("--sweep-fps", default=None, help=argparse.SUPPRESS)  # one sweep entry (a --fps child run)
     ap.add_argument("--check-only", action="store_true")
     ap.add_argument("--real-net", action="store_true",
                     help="the phases on the real network (instances.py --real-net: public STUN, UPnP, the Internet code)")
-    ap.add_argument("--only", default="", help="comma list of step groups (a smaller run): " + ",".join(GROUPS))
+    ap.add_argument("--only", default="", help="comma list of step groups (a smaller run); `physics` = the lift / ladder / elevator / fall "
+                    "groups (" + ",".join(PHYSICS_GROUPS) + "): " + ",".join(GROUPS))
     ap.add_argument("--lanes", type=int, default=1,
                     help="run the phases in N parallel lanes (own instance root each, <root>_lN; split by the "
                          "last measured phase times); the verdict is made once over all phases")
@@ -6613,6 +6730,12 @@ def main():
     a = ap.parse_args()
     RUN_ROOT[0] = a.root
     only = {g.strip() for g in a.only.split(",") if g.strip()}
+    if "physics" in only:
+        only = (only - {"physics"}) | set(PHYSICS_GROUPS)
+        a.only = ",".join(sorted(only))
+    if a.fps:
+        sweep_main(a, only)
+        return
     global WIPE_LATE_RUN
     WIPE_LATE_RUN = "wipe_late" in only
     bad = only - set(GROUPS)
@@ -6660,7 +6783,7 @@ def main():
             ph_names.sort(key=names.index)
             argv = [sys.executable, str(Path(__file__).resolve()), "--root", "%s_l%d" % (a.root, k),
                     "--build", str(a.build), "--game", str(a.game), "--out", str(out), "--every", str(a.every),
-                    "--phase", ",".join(ph_names), "--lane-id", str(k)] + (["--only", a.only] if a.only else []) + (
+                    "--phase", ",".join(ph_names), "--lane-id", str(k)] + (["--only", a.only] if a.only else []) + (["--sweep-fps", a.sweep_fps] if a.sweep_fps else []) + (
                     ["--real-net"] if a.real_net else [])
             print("[smoke] lane %d (~%.0f s): %s" % (k, est, ",".join(ph_names)), flush=True)
             out.mkdir(parents=True, exist_ok=True)
@@ -6692,7 +6815,10 @@ def main():
             except (OSError, ValueError):
                 v.rows.append(("%s: lane result" % name, False, "no rows.json (lane crashed? see lane*.log)"))
             continue
+        n0 = len(v.rows)
         CHECKS[name](v, Logs(out / name), out / name)
+        (out / name).mkdir(parents=True, exist_ok=True)
+        (out / name / "rows.json").write_text(json.dumps(v.rows[n0:]), encoding="utf-8")
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
