@@ -1220,7 +1220,7 @@ int runtime_pad_prompt(const char *name, int single, char *label, int size) {
     }
     for (int i=0;i<b.key_count;++i)
         if (b.keys[i]<MOUSE_KEY) {
-            prompt_key_label(key_name(b.keys[i]),label,size);
+            prompt_key_label(key_label(b.keys[i]),label,size);
             return 'K';
         }
     return 0;
