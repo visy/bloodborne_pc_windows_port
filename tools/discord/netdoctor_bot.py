@@ -271,11 +271,37 @@ async def handle_log_message(message, *, live, ctx=None):
             return "dm"
         if not ctx.delete:
             return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=False, need_export=False)
-        extra = voice.added_to(bug) if rule in LATE_RULES else await _reply_text(ctx, message, bug, res["infos"])
-        return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=True, need_export=False,
-                                           extra=extra)
+        staff = is_staff(message.author)
+        if staff:
+            clinic.update_bug(bug, tags={"source": "dev"})
+        short = staff or _full_reply_recent(clinic, bug, message.author.id)
+        if short:
+            extra = ""
+        else:
+            extra = voice.added_to(bug) if rule in LATE_RULES else await _reply_text(ctx, message, bug, res["infos"])
+        out = await cd.replace_and_delete(clinic, message, bug, ping=live, delete=True, need_export=False,
+                                          extra=extra, short=short)
+        if not short and out in ("deleted", "delete_forbidden"):
+            clinic.add_note(bug, "iosefka", FULL_REPLY, "full reply posted", to=str(message.author.id))
+        return out
     finally:
         ctx.busy.discard(message.id)
+
+
+FULL_REPLY = "reply_full"
+REPLY_WINDOW = 30 * 60  # seconds: one full reply per author and bug in this time, then short ones
+STAFF_WORDS = ("dev", "staff", "mod", "admin")
+
+
+def is_staff(author):
+    """A poster holding a role whose name has dev / staff / mod / admin in it."""
+    return any(w in (getattr(r, "name", "") or "").lower() for r in (getattr(author, "roles", None) or [])
+               for w in STAFF_WORDS)
+
+
+def _full_reply_recent(clinic, bug, author_id):
+    since = time.time() - REPLY_WINDOW
+    return any(n["to"] == str(author_id) and n["bug_id"] == bug for n in clinic.notes_of_kind(FULL_REPLY, since))
 
 
 def _flag_unsure(clinic, bug, message):
@@ -989,6 +1015,7 @@ def main():
                   f"or was invited without the applications.commands scope; check NETDOCTOR_GUILD and re-invite",
                   flush=True)
             return
+        voice.SELF_ID = client.user.id
         print(f"netdoctor bot ready as {client.user} (script {SCRIPT})", flush=True)
 
     client.run(token)
