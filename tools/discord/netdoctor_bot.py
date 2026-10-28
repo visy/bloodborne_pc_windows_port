@@ -22,9 +22,10 @@ Environment:
   NETDOCTOR_AUTO       off | react | reply (default react)
   NETDOCTOR_CHANNELS   ids of ordinary channels where mentions/reactions work too (default: none - only
                        threads and DMs; slash commands work everywhere)
-  NETDOCTOR_DB         memory file (default ~/.config/netdoctor/netdoctor.db; rows older than 30 days
+  NETDOCTOR_DB         memory file (default ~/.config/netdoctor/netdoctor.db; analysis rows older than 180 days
                        are dropped hourly)
-  NETDOCTOR_DB_MAX_MB  size cap of that file, MiB (default 256, never above 1024): oldest rows go first
+  NETDOCTOR_DB_MAX_MB  size cap of that file, MiB (default 3072, never above 3072): oldest analysis rows go first;
+                       the clinic's nw_* tables are never pruned
 Needs the privileged Message Content intent (Developer Portal -> Bot) to read ordinary messages.
 """
 import asyncio
@@ -161,7 +162,7 @@ def main():
         os.chmod(DB_PATH, 0o600)  # player names inside
     except OSError:
         pass
-    db_max = int(float(os.environ.get("NETDOCTOR_DB_MAX_MB", "256")) * 1024 * 1024)
+    db_max = int(float(os.environ.get("NETDOCTOR_DB_MAX_MB", "3072")) * 1024 * 1024)
     store.prune(max_bytes=db_max)
     pruner = []
 

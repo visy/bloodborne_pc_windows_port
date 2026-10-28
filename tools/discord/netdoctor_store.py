@@ -3,7 +3,8 @@ holds each session's analysis. SQLite (standard library). The log files themselv
 they stay on Discord and are downloaded again for each analysis.
 
 Log files are kept LZMA-compressed (about 14x smaller), deduplicated by content hash, so an analysis can
-be re-run after Discord forgets an attachment; they go with the 30-day prune and the size cap.
+be re-run after Discord forgets an attachment; they go with the 180-day prune and the size cap. Only these tables are pruned: the clinic's nw_*
+tables (clinic_store.py, same file) are never touched.
 
 Grouping logs into sessions is pure logic here (same_session / group_sessions / session_key) so it is
 tested without Discord.
@@ -123,11 +124,11 @@ class Store:
         pages = self.db.execute("PRAGMA page_count").fetchone()[0]
         return pages * self.db.execute("PRAGMA page_size").fetchone()[0]
 
-    def prune(self, days=30, max_bytes=256 * 1024 * 1024):
-        """Drop rows older than `days`; if the file is still over `max_bytes` (hard ceiling 1 GiB), drop
+    def prune(self, days=180, max_bytes=256 * 1024 * 1024):
+        """Drop rows older than `days`; if the file is still over `max_bytes` (hard ceiling 3 GiB), drop
         the oldest rows until it is under 80% of it, then compact the file. A row is ~200 bytes, so the
         size cap is a safety net, not the normal path."""
-        max_bytes = min(max_bytes, 1024 * 1024 * 1024)
+        max_bytes = ceiling(max_bytes)
         cut = time.time() - days * 86400
         self.db.execute("DELETE FROM logs WHERE posted < ?", (cut,))
         self.db.execute("DELETE FROM sessions WHERE updated < ?", (cut,))
@@ -156,6 +157,14 @@ class Store:
             self.db.commit()
             self.db.execute("VACUUM")
         return self.size_bytes()
+
+
+MAX_CEILING = 3 * 1024 * 1024 * 1024
+
+
+def ceiling(max_bytes):
+    """The size cap actually used: never above 3 GiB for the whole database file."""
+    return min(max_bytes, MAX_CEILING)
 
 
 def pack(data):
