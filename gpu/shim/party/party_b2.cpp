@@ -6614,7 +6614,7 @@ void LimboBossTargetTick(double now) {
 /// limbo retarget does) every kAttentionHold seconds, the one targeted longest ago first
 /// (enemyai_rules::PickAttention). The game's own search keeps the nearest / first player, so a guest
 /// fighting a few metres further was ignored (player report: "bosses only target the host").
-/// party_boss_share (System > Party rules: Bosses, launcher, BB_PARTY_BOSS_SHARE=0 off).
+/// party_boss_share (System > My party: Bosses, launcher, BB_PARTY_BOSS_SHARE=0 off).
 void BossAttentionTick(const GameSnapshot& s, double now) {
     static double next = 0;
     if (now < next) return;
