@@ -88,7 +88,7 @@ class Item:
     @property
     def level(self):
         """Weapon reinforcement level (id = base + 100 * level), None for other items."""
-        return (self.number % 10000) // 100 if self.category == 0 else None
+        return (self.number % 10000) // 100 if self.category == 0 and self.number >= 1000000 else None
 
     def __repr__(self):
         return f"Item({self.kind} {self.number} x{self.count} slot {self.section}:{self.slot})"
@@ -279,8 +279,8 @@ class SaveModel:
     def set_weapon_level(self, item, level, valid_ids=None):
         """Weapon reinforcement: id = base + 100 * level. valid_ids (the game's EquipParamWeapon ids) is
         required: a level without a param row would crash the game."""
-        if item.category != 0:
-            raise ValueError("not a weapon")
+        if item.level is None:
+            raise ValueError("this weapon has no reinforcement levels")
         if valid_ids is None:
             raise ValueError("the game's weapon list is needed to change a level")
         base = item.number - (item.number % 10000) // 100 * 100

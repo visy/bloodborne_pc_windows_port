@@ -120,6 +120,8 @@ class Catalogue:
         if not game_dir:
             return cls()
         game, cache = Path(game_dir), Path(cache_dir) / f"saveedit_names_{lang}.json"
+        if not (game / "msg").is_dir() and (game / "dvdroot_ps4" / "msg").is_dir():
+            game = game / "dvdroot_ps4"  # the folder with eboot.bin holds the game data in dvdroot_ps4
         stamp = _stamp(game, lang)
         try:
             c = json.loads(cache.read_text(encoding="utf-8"))
