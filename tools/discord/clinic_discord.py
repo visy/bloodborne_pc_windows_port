@@ -638,7 +638,7 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
             am = AllowedMentions(users=[message.author], everyone=False, roles=False) if ping \
                 else AllowedMentions.none()
             # the nonce makes Discord drop a second post of the same replacement (a retry after a lost reply)
-            kw = {"allowed_mentions": am, "nonce": str(mid)[-25:], "enforce_nonce": True}
+            kw = {"allowed_mentions": am, "nonce": str(mid)[-25:]}
             try:
                 sent = await ch.send(text, files=files, **kw) if files else await ch.send(text, **kw)
             except Exception as e:
@@ -718,7 +718,7 @@ async def _run_segment(clinic, seg, bug_id, ping):
             mention = f"<@{first.author.id}>"
             text = voice.replacement_many(mention, bug_id, texts, note)
             am = AllowedMentions(users=[first.author], everyone=False, roles=False) if ping                 else AllowedMentions.none()
-            kw = {"allowed_mentions": am, "nonce": str(first.id)[-25:], "enforce_nonce": True}
+            kw = {"allowed_mentions": am, "nonce": str(first.id)[-25:]}
             try:
                 sent = await ch.send(text, files=files, **kw) if files else await ch.send(text, **kw)
             except Exception as e:
