@@ -68,13 +68,13 @@ def test_voice_names_saves():
     assert "their logs and the memories of their hunt" in both and "keep them safe" in both
     assert v.replacement("<@1>", "NW-1a2b3c4", "x").startswith("<@1> brought a log to my clinic")
     assert "keep them safe" not in v.replacement("<@1>", "NW-1a2b3c4", "x")
-    for what, word in (("save", "saves"), ("both", "logs and saves")):
+    for what, word in (("save", "memories of the hunt"), ("both", "logs and memories of the hunt")):
         s = v.replacement_short("<@1>", "NW-1a2b3c4", "", what=what)
         assert word in s and "NW-1a2b3c4" in s
     many = v.replacement_many("<@1>", "NW-1a2b3c4", ["a", "b"], what="save")
-    assert "brought their saves" in many and "logs" not in many.split("\n")[0]
+    assert "memories of their hunt" in many and "logs" not in many.split("\n")[0]
     assert "brought 2 logs" in v.replacement_many("<@1>", "NW-1a2b3c4", ["a", "b"])
-    assert v.replacement_many("<@1>", "NW-1a2b3c4", ["a"], what="save").startswith("<@1> brought their saves")
+    assert v.replacement_many("<@1>", "NW-1a2b3c4", ["a"], what="save").startswith("<@1> entrusted me with the memories of their hunt")
     assert len(v.replacement_many("<@1>", "NW-1a2b3c4", ["word " * 900] * 3, "n" * 400, what="both")) <= 2000
 
 
