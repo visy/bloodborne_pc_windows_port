@@ -37,7 +37,7 @@ BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 ND_RX = re.compile(r"^ND-[0-9a-f]{8}$")
 NAME_RX = re.compile(r"^[a-z0-9_-]{1,32}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-LOG_DIR_KINDS = ("log", "dump", "game", "archive", "text", "other")
+LOG_DIR_KINDS = ("log", "dump", "game", "save", "archive", "text", "other")
 MEDIA_KINDS = ("image", "still")
 SORTS = ("newest", "oldest", "activity")
 
@@ -307,14 +307,15 @@ def _write_bug_tar(c, bug_ids, out, media):
                     if not media:
                         continue
                     folder = "images" if f["kind"] == "image" else "stills"
-                elif f.get("parent"):  # a log from inside an archive: logs/<archive name>/<inner path>
+                elif f.get("parent"):  # a log (or save) from inside an archive: logs|saves/<archive name>/<path>
                     inner = "/".join(_safe_name(p) for p in (f.get("path") or f["filename"]).split("/") if p.strip(". "))
                     name, data, _codec = c.get_file(f["sha256"])
-                    _add_bytes(tar, f"{base}/logs/{_safe_name(f['parent'])}/{inner or _safe_name(name)}", data,
+                    top = "saves" if f["kind"] == "save" else "logs"
+                    _add_bytes(tar, f"{base}/{top}/{_safe_name(f['parent'])}/{inner or _safe_name(name)}", data,
                                b["created"])
                     continue
                 else:
-                    folder = "logs"
+                    folder = "saves" if f["kind"] == "save" else "logs"
                 name, data, _codec = c.get_file(f["sha256"])
                 _add_bytes(tar, f"{base}/{folder}/{f['sha256'][:8]}_{_safe_name(name)}", data, b["created"])
 
