@@ -426,14 +426,16 @@ class Clinic:
         return None
 
     def files_for_bug(self, bug_id):
-        """Files of a bug (attachments and video stills), deduplicated, as dicts without the blob."""
+        """Files of a bug (attachments, video stills and logs found inside archives), deduplicated, as dicts
+        without the blob. A file from inside an archive carries `parent` (the archive's filename) and `path`
+        (its path inside)."""
         out, seen = [], set()
 
-        def add(sha):
+        def add(sha, **extra):
             info = sha not in seen and self.file_info(sha)
             if info:
                 seen.add(sha)
-                out.append(info)
+                out.append(info | extra)
         for m in self.messages_for_bug(bug_id):
             for a in m["attachments"]:
                 sha = a.get("sha256")
@@ -441,6 +443,9 @@ class Clinic:
                     add(sha)
                     for s in self.stills(sha):
                         add(s["sha256"])
+                    inner = a.get("inner_files") or [{"sha256": x} for x in a.get("inner_shas") or []]
+                    for f in inner:
+                        add(f["sha256"], parent=a.get("filename") or "archive", path=f.get("name"))
         return out
 
     # catch-up and "new since my last check"

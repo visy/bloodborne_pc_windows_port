@@ -4,6 +4,7 @@ be stopped and rerun (all state lives in the clinic database).
 
   iosefka_cull.py harvest                      store every file and message of the server (read-only on Discord)
   iosefka_cull.py verify                       re-check every stored file; exit 1 on any failure
+  iosefka_cull.py unpack                       backfill: logs inside stored zip/rar/7z files (nested too) become own files
   iosefka_cull.py report --out PATH            dry run: what the cull would replace (no deletions)
   iosefka_cull.py starter-test --thread ID     delete the starter of a test post, check the post survives
   iosefka_cull.py cull [--limit N]             replace + delete the messages holding logs (needs NW_DELETE=1)
@@ -17,7 +18,10 @@ NW_DELETE=1 is required for `cull` and `starter-test`. NW_TMP: where downloads g
 import argparse
 import asyncio
 import importlib.util
+import lzma
 import os
+import shutil
+import tempfile
 import sys
 import time
 import traceback
@@ -131,6 +135,72 @@ def verify(clinic, out=print):
         out("FAIL " + line)
     out("verify: " + ("FAILED" if bad else "ok"))
     return FAIL if bad else OK
+
+
+def _blob_to_file(clinic, sha, dest):
+    """Write a stored file's bytes to `dest` (LZMA rows decompressed chunk by chunk). False when missing."""
+    row = clinic.db.execute("SELECT blob, codec FROM nw_files WHERE sha256=?", (sha,)).fetchone()
+    if not row or row[0] is None:
+        return False
+    blob = bytes(row[0])
+    with open(dest, "wb") as f:
+        if row[1] != "lzma":
+            f.write(blob)
+            return True
+        dec = lzma.LZMADecompressor()
+        for i in range(0, len(blob), 1 << 20):
+            f.write(dec.decompress(blob[i:i + (1 << 20)]))
+    return True
+
+
+def unpack(clinic, log_info_fn=None, tmpdir=None, out=print):
+    """Backfill: for every stored archive file take its inner logs out of the stored blob, store them as their
+    own files, link them to every message attachment holding the archive and record their log_info. An archive
+    nobody can read tags its bugs unsure=unreadable-file. Idempotent (done attachments carry `inner_files`).
+    Returns OK, or DISK_LOW when the disk is too full to unpack the next archive."""
+    tmp = Path(tmpdir or tempfile.gettempdir())
+    tmp.mkdir(parents=True, exist_ok=True)
+    holders = {}  # archive sha -> [(message, attachment index)]
+    for m in clinic.all_messages():
+        for i, a in enumerate(m["attachments"]):
+            if a.get("kind") == "archive" and a.get("sha256") and "inner_files" not in a:
+                holders.setdefault(a["sha256"], []).append((m, i))
+    done = unreadable = made = 0
+    for sha, held in sorted(holders.items()):
+        info = clinic.file_info(sha)
+        if not info:
+            continue
+        if not cd.media.enough_disk(tmp, int(info["raw_size"] or 0)):
+            out(f"disk low: stopping before {sha[:12]}, rerun later")
+            return DISK_LOW
+        d = Path(tempfile.mkdtemp(prefix="unpack_", dir=str(tmp)))
+        try:
+            path = d / "archive.bin"
+            if not _blob_to_file(clinic, sha, path):
+                continue
+            listing, inner = cd._prep_archive(clinic.prepare_file, path)
+        except Exception as e:
+            out(f"cannot unpack {sha[:12]}: {type(e).__name__}: {e}")
+            continue
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        recs = {}
+        for m, i in held:
+            recs.setdefault(m["message_id"], (m, []))[1].append(i)
+        for mid, (m, idxs) in recs.items():
+            atts = m["attachments"]
+            for i in idxs:
+                cd.store_inner(clinic, atts[i], listing, inner)
+                if log_info_fn is not None:
+                    cd.log_infos(clinic, [atts[i]], log_info_fn, tmp)
+            clinic.upsert_message({"message_id": mid, "attachments": atts})
+            if listing is None and m.get("bug_id"):
+                clinic.add_unsure(m["bug_id"], ["unreadable-file"])
+        done += 1
+        made += len(inner)
+        unreadable += listing is None
+    out(f"unpack: {done} archive(s), {made} inner file(s), {unreadable} unreadable")
+    return OK
 
 
 def cullable(clinic):
@@ -377,6 +447,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="phase", required=True)
     sub.add_parser("harvest")
     sub.add_parser("verify")
+    sub.add_parser("unpack")
     r = sub.add_parser("report")
     r.add_argument("--out", required=True)
     s = sub.add_parser("starter-test")
@@ -403,6 +474,9 @@ def main(argv=None):
     clinic = clinic_store.Clinic(bot.DB_PATH)
     if args.phase == "verify":
         return verify(clinic)
+    if args.phase == "unpack":
+        nd = bot.load_doctor()
+        return unpack(clinic, lambda p: bot.log_info(nd, p), tmp_root())
     token = os.environ.get("NETDOCTOR_TOKEN")
     if args.phase != "report" and not token:
         print("set NETDOCTOR_TOKEN", file=sys.stderr)
