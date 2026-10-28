@@ -281,6 +281,10 @@ Notes on single commands:
   Added / Changed / Fixed. `dev` text and unfinished or dropped items are left out. Check the result holds
   no names or IPs before you paste it anywhere.
 - `status NW-x fixed --in nw:0.2.6` marks a bug fixed and links it into the changelist in one step.
+  For a fix that already shipped in a released version, the release-note item usually exists without the
+  bug link: find it (`cl list --track coop --version 0.7.6 --q freeze`, or `cl related NW-x`), `cl link
+  CL-x --bug NW-x`, then plain `status NW-x fixed`. `fixed --in` on it would add a second item (fold it back
+  with `cl merge <keep> <dup>`).
 
 ### Nightwatch sync (vlad's PC)
 

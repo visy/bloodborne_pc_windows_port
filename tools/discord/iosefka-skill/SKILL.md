@@ -87,7 +87,9 @@ Triage pass (bugs Iosefka filed and was unsure about):
 3. Set `title NW-x "'text'"`, `status`, and tags from the vocabulary: component, area, place, feature, nw_version, coop_version, role, plan, severity.
 4. Resolve each unsure item; a wrongly linked message goes back with `move <message_id> NW-y`.
 5. Check duplicates (`list --open --q ...`, then `merge`) and whether CHANGES.md or the Nightwatch repo
-   already has the fix.
+   already has the fix. A fix that already shipped: link the existing release item (`cl list --version V --q
+   ...` or `cl related NW-x`, then `cl link CL-x --bug NW-x`) and set plain `status NW-x fixed`; use
+   `fixed --in` only for new fixes, or it adds a duplicate item.
 6. Write a triage `note`, then `tag NW-x triage=done`.
 
 Triage a bug:
