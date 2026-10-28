@@ -139,6 +139,9 @@ def cullable(clinic):
             if cd.rec_removable(m["attachments"]) and not m.get("dm")]
 
 
+CHANNEL_RUN_GAP_S = 300
+
+
 def cull_runs(clinic):
     """The cullable messages grouped into runs: consecutive (by id, one place) messages of one author for
     one bug, with no stored message of anyone else between them. Oldest first; a lone message is a run of 1."""
@@ -155,7 +158,11 @@ def cull_runs(clinic):
         cur = None
         for rec in recs:  # oldest id first
             key = (rec["author_id"], rec.get("bug_id"))
-            if cur is not None and key[1] and cur[0] == key and not any(
+            # plain channels keep only messages with files, so other people's chat in between is unknown:
+            # there a run also needs the messages to be close in time
+            near = bool(rec["thread_id"]) or cur is None or \
+                (rec.get("created") or 0) - (cur[1][-1].get("created") or 0) <= CHANNEL_RUN_GAP_S
+            if cur is not None and key[1] and cur[0] == key and near and not any(
                     o["author_id"] != rec["author_id"]
                     and cur[1][-1]["message_id"] < o["message_id"] < rec["message_id"] for o in stored[place]):
                 cur[1].append(rec)
