@@ -24,7 +24,10 @@ inline bool Due(State* s, double now, bool seen, bool alive, bool lot_flag_set) 
         s->done = true;
         return false;
     }
-    if (!seen || alive) {
+    if (!seen) {  // gone from the map: it stays dead if it was seen dead (the chr is removed a while after its death)
+        return s->dead_since > 0 && now - s->dead_since >= kGraceS;
+    }
+    if (alive) {
         s->dead_since = 0;
         return false;
     }
