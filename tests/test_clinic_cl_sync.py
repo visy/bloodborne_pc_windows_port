@@ -21,27 +21,39 @@ cc = _load("clinic_changes")
 nw = _load("cl_sync_nw")
 coop = _load("cl_import_coop")
 
-LOG = (
-    "aaa1111\x1f2026-10-01T10:00:00+03:00\x1f0.2.5 beta 3: VRAM cleanup\x1fSee NW-1234567 for details\x1e\n"
-    "bbb2222\x1f2026-10-02T10:00:00+03:00\x1f0.2.5 Beta 3: Fix firewall prompt\x1f\x1e\n"
-    "ccc3333\x1f2026-10-03T10:00:00+03:00\x1fCheats: free stamina\x1f\x1e\n"
-    "ddd4444\x1f2026-09-01T09:00:00+03:00\x1f0.2.4: Add logs menu\x1f\x1e\n"
+LOG = (  # newest first, as git prints it
+    "fff6666\x1f2026-10-05T10:00:00+03:00\x1fLauncher: Fix crash on start\x1f\x1e\n"
+    "ccc3333\x1f2026-10-03T10:00:00+03:00\x1fMerge branch x\x1f\x1e\n"
+    "bbb2222\x1f2026-10-02T10:00:00+03:00\x1f0.2.5 Beta 3; Fix firewall prompt\x1f\x1e\n"
+    "aaa1111\x1f2026-10-01T10:00:00+03:00\x1f0.2.5 beta 2 (tester build)\x1fSee NW-1234567\x1e\n"
+    "ccc4444\x1f2026-09-20T10:00:00+03:00\x1fMap: added lamp\x1f\x1e\n"
+    "ddd4444\x1f2026-09-01T09:00:00+03:00\x1f0.9.1: Add logs menu\x1f\x1e\n"
 )
 
 
 def test_parse_log_versions():
     items, vers = nw.parse_log(LOG)
-    assert len(items) == 3
     by = {i["source_key"]: i for i in items}
-    assert by["git:aaa1111"]["section"] == "changed"
-    assert by["git:bbb2222"]["section"] == "fixed"
-    assert by["git:ddd4444"]["section"] == "added"
-    assert all(i["status"] == "done" and i["track"] == "nw" for i in items)
-    assert by["git:aaa1111"]["version"] == "0.2.5 beta 3"
+    assert set(by) == {"git:fff6666", "git:bbb2222", "git:aaa1111", "git:ccc4444", "git:ddd4444"}
+    assert by["git:bbb2222"]["section"] == "fixed" and by["git:bbb2222"]["version"] == "0.2.5 beta 3"
+    assert by["git:fff6666"]["section"] == "fixed" and by["git:fff6666"]["text"].startswith("Launcher:")
+    assert by["git:fff6666"]["version"] == "0.2.5 beta 3"  # newer than last prefixed -> current
+    assert by["git:ccc4444"]["version"] == "0.2.5 beta 2"  # shipped in the next prefixed commit
+    assert by["git:ccc4444"]["section"] == "added"
     assert by["git:aaa1111"]["bugs"] == ["NW-1234567"]
+    assert by["git:aaa1111"]["text"] == "tester build)"
+    assert all(i["status"] == "done" and i["track"] == "nw" for i in items)
     vv = {v["version"]: v for v in vers}
-    assert vv["0.2.5 beta 3"]["status"] == "current"
-    assert vv["0.2.4"]["status"] == "released" and vv["0.2.4"]["released"] == "2026-09-01"
+    assert vv["0.2.5 beta 3"]["status"] == "current"  # chronologically newest, not highest number
+    assert vv["0.9.1"]["released"] == "2026-09-01" and vv["0.9.1"]["status"] == "released"
+    assert vv["0.2.5 beta 2"]["released"] == "2026-10-01"
+
+
+def test_current_override():
+    items, vers = nw.parse_log(LOG, current="0.2.5-beta.3")
+    assert {v["version"] for v in vers if v["status"] == "current"} == {"0.2.5 beta 3"}
+    _, vers = nw.parse_log(LOG, current="0.3.0")
+    assert {v["version"] for v in vers if v["status"] == "current"} == {"0.3.0"}
 
 
 def test_sync_rerun_idempotent(tmp_path):
@@ -53,7 +65,7 @@ def test_sync_rerun_idempotent(tmp_path):
     cid = ch.items(track="nw", version="0.2.5 beta 3", section="fixed")[0]["id"]
     ch.move(cid, "nw", "0.2.4", who="visy")
     ch.import_lines(lines, who="sync")
-    assert len(ch.items(track="nw")) == 3
+    assert len(ch.items(track="nw")) == 5
     assert ch.get(cid)["version"] == "0.2.4"
 
 

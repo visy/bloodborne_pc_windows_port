@@ -13,12 +13,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from clinic_changes import clean_text, norm_version, version_key  # noqa: E402
 
-PREFIX_RX = re.compile(r"^(\d+\.\d+\.\d+(?: (?:alpha|beta|rc) ?\d+)?):\s*(.+)", re.I)
+PREFIX_RX = re.compile(r"^(\d+\.\d+\.\d+(?:[ -](?:alpha|beta|rc)[ .]?\d+)?)\s*[:;(]\s*(.+)", re.I)
+AREA_RX = re.compile(r"^[A-Za-z][\w /-]{0,30}:\s+")
+NOISE = ("wip", "merge ", "readme", "docs", 'revert "')
 BUG_RX = re.compile(r"NW-[0-9a-f]{7}")
 LOG_FORMAT = "%H%x1f%cI%x1f%s%x1f%b%x1e"
 
 
 def _section(rest):
+    rest = AREA_RX.sub("", rest, count=1)
     word = (rest.split() or [""])[0].lower().strip(":,.")
     if word in ("fix", "fixed", "fixes"):
         return "fixed"
@@ -27,42 +30,71 @@ def _section(rest):
     return "changed"
 
 
-def parse_log(text):
-    """(item lines, version lines) from git log --format=%H%x1f%cI%x1f%s%x1f%b%x1e output."""
-    items, dates = [], {}
+def parse_log(text, current=None):
+    """(item lines, version lines) from git log --format=%H%x1f%cI%x1f%s%x1f%b%x1e output.
+
+    A prefixed commit ("0.2.5 beta 3: ...") names its version; an unprefixed one belongs to the version of
+    the chronologically next prefixed commit, or to `current` when none follows. `current` defaults to the
+    version of the chronologically newest prefixed commit."""
+    recs = []
     for rec in text.split("\x1e"):
         rec = rec.strip("\r\n")
-        if not rec.strip():
-            continue
         parts = rec.split("\x1f", 3)
         if len(parts) < 3:
             continue
-        sha, when, subj = parts[0].strip(), parts[1].strip(), parts[2].strip()
-        body = parts[3] if len(parts) > 3 else ""
-        m = PREFIX_RX.match(subj)
-        if not m:
+        recs.append((parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3] if len(parts) > 3 else ""))
+    recs.reverse()  # git prints newest first
+    recs.sort(key=lambda r: r[1][:19])  # stable: ties keep log order
+    if current:
+        current = norm_version(current)
+    pending, entries = [], []  # entries: (sha, day, version, rest, subj, body)
+
+    def flush(version):
+        for sha, day, rest, subj, body in pending:
+            entries.append((sha, day, version, rest, subj, body))
+        pending.clear()
+
+    last_prefixed = None
+    for sha, when, subj, body in recs:
+        if subj.lower().startswith(NOISE):
             continue
+        m = PREFIX_RX.match(subj)
+        if m:
+            try:
+                version = norm_version(m.group(1))
+            except ValueError as e:
+                print(f"skipped {sha[:12]}: {e}", file=sys.stderr)
+                continue
+            last_prefixed = version
+            pending.append((sha, when[:10], m.group(2).strip(), subj, body))
+            flush(version)
+        else:
+            pending.append((sha, when[:10], subj, subj, body))
+    if current is None:
+        current = last_prefixed
+    if current:
+        flush(current)
+    else:
+        pending.clear()
+    items, dates = [], {}
+    for sha, day, version, rest, subj, body in entries:
         try:
-            version = norm_version(m.group(1))
-            rest = m.group(2).strip()[:300]
-            msg = clean_text(rest)
+            msg = clean_text(rest[:300])
         except ValueError as e:
             print(f"skipped {sha[:12]}: {e}", file=sys.stderr)
             continue
-        bugs = list(dict.fromkeys(BUG_RX.findall(subj + "\n" + body)))
         item = {"kind": "item", "source_key": f"git:{sha}", "track": "nw", "version": version,
                 "section": _section(rest), "text": msg, "status": "done", "commits": [sha[:12]]}
+        bugs = list(dict.fromkeys(BUG_RX.findall(subj + "\n" + body)))
         if bugs:
             item["bugs"] = bugs
         items.append(item)
-        day = when[:10]
         if day > dates.get(version, ""):
             dates[version] = day
     vers = []
-    newest = max(dates, key=version_key) if dates else None
-    for v in sorted(dates, key=version_key):
+    for v in sorted(set(dates) | ({current} if current else set()), key=version_key):
         line = {"kind": "version", "track": "nw", "version": v}
-        if v == newest:
+        if v == current:
             line["status"] = "current"
         else:
             line["status"] = "released"
@@ -81,7 +113,14 @@ def main(argv=None):
     if git.returncode:
         print(git.stderr.decode("utf-8", "replace"), file=sys.stderr)
         return 1
-    items, vers = parse_log(git.stdout.decode("utf-8", "replace"))
+    cur = None
+    vf = Path(a.repo) / "VERSION"
+    if vf.is_file():
+        try:
+            cur = norm_version(vf.read_text(encoding="utf-8").strip())
+        except ValueError as e:
+            print(f"VERSION ignored: {e}", file=sys.stderr)
+    items, vers = parse_log(git.stdout.decode("utf-8", "replace"), cur)
     data = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in vers + items)
     if a.dry_run:
         sys.stdout.write(data)
