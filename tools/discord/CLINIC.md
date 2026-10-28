@@ -271,6 +271,7 @@ ssh iosefka cl link CL-1a2b3c --bug NW-1b2c3d4 --commit abc1234    add links (--
 ssh iosefka cl merge CL-1a2b3c CL-2b3c4d                           second item folds into the first
 ssh iosefka cl related NW-1a2b3c4                                  items and bugs that look related (also takes a CL id)
 ssh iosefka cl notes nw 0.2.6                                      release notes as Markdown
+ssh iosefka cl release coop 0.7.7 [--next 0.7.8] [--dry-run]        release a version (see below)
 ```
 
 Notes on single commands:
@@ -287,6 +288,38 @@ Notes on single commands:
   bug link: find it (`cl list --track coop --version 0.7.6 --q freeze`, or `cl related NW-x`), `cl link
   CL-x --bug NW-x`, then plain `status NW-x fixed`. `fixed --in` on it would add a second item (fold it back
   with `cl merge <keep> <dup>`).
+
+### Releasing a version
+
+`cl release <track> <version> [--next <version>] [--dry-run]` (both devs): the version becomes `released`
+with released = now; its unfinished items (planned / in-progress) move to `--next` (created as planned when
+missing; default: the track's next planned version, an error when there is none), and `--next` becomes
+`current`. Every step leaves change notes (version notes, one `move` note per item). The JSON answer holds
+`released`, `next`, `moved` (item ids) and `notes` (the rendered release notes markdown, same as `cl notes`).
+`--dry-run` shows the same without changing anything.
+
+Order for a release ("release 0.7.7"): 1. run `cl release coop 0.7.7` (preview with `--dry-run`),
+2. post the `notes` markdown in #releases, 3. Iosefka reads the post and asks the reporters of the fixed
+bugs to retest (next section). The NW track: run the sync first, so its VERSION file and items are current.
+
+### Retest asks and waiting-logs nudges (the bot)
+
+- Retest asks: a new message in the server's #releases channel (live; the hourly catch-up also handles posts
+  of the last 7 days) is read for versions (`0.7.7`, `v0.7.7`, `0.2.6`, `0.2.5 beta 4`, `0.2.5-beta.4`). A
+  version is matched to the track whose changelist has it (when both have it, the words Nightwatch / NW or
+  co-op / port decide). Every bug with status `fixed` that is linked to a `done` item of that version gets ONE
+  short ask in its thread (or channel, replying to her replacement note; a DM bug gets a DM): the fix is in
+  <version>, please try and say if it still happens. Only the reporter is mentioned. A note of kind
+  `retest-asked` ("<version>: asked to retest") makes it once per bug and version. Skipped: `source=local`
+  bugs, bugs with no reporter, places that are gone or skipped (staff / development / moderator-only). One
+  post every ~5 s. The reporter's reply reopens the bug through the usual follow-up rules.
+- waiting-logs: in the hourly sweep a `waiting-logs` bug with no activity (message, status change, note by
+  anyone but her own asks) for 14 days gets ONE nudge (note kind `nudge`); at 30 days it becomes `closed` with
+  the note "closed: no logs for 30 days; reopens when logs arrive". New material reopens a closed bug (the
+  existing rule). Local bugs are left alone.
+- Preview or run by hand on quad.fi (needs `--yes` to post, NETDOCTOR_TOKEN for that):
+  `python tools/discord/iosefka_cull.py retest-asks --version 0.7.7 --dry-run` (add `--track coop|nw`),
+  `python tools/discord/iosefka_cull.py waiting-logs --dry-run`.
 
 ### Nightwatch sync (vlad's PC)
 
@@ -312,6 +345,16 @@ account); vlad's key is installed in that account too, but his key is picked by 
 - Sections are guessed from keywords in the subject (fix, fixed, fixes, crash, crashes, broken -> `fixed`; add, added, adds, new -> `added`; else
   `changed`), so tidy them with `cl edit`. Commit subjects become public item text: keep them free of
   names and IPs.
+
+On quad.fi the same sync runs hourly from cron straight into the database (no ssh): `cl_sync_nw.py <clone>
+--local ~/.config/netdoctor/netdoctor.db` imports as `nw-sync`. `tools/discord/nw_sync_cron.sh` clones
+https://github.com/vladtepes22/NightwatchCoop to `~/nightwatch-src` when missing (a full clone, about 45 MB:
+the sync needs the history), runs `git pull --ff-only`, syncs, and appends one line per run
+(`applied=N skipped=N locked=N`) to `~/.config/netdoctor/nw_sync.log`. Crontab line (visy):
+
+```
+17 * * * * sh $HOME/bbport/tools/discord/nw_sync_cron.sh
+```
 
 The coop track is seeded once from the GitHub releases with `python tools/discord/cl_import_coop.py
 --releases` (visy's job).
