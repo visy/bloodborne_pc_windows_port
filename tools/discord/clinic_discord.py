@@ -209,12 +209,26 @@ def _prep_small(prepare, path, kind):
 
 
 def _prep_archive(prepare, path):
-    """Zip listing plus the prepared inner logs [(name, kind, (sha, blob, codec), raw size)]."""
+    """Archive listing (None: unreadable) plus the prepared inner logs
+    [(path inside the archive, kind, (sha, blob, codec), raw size)]. zip, rar and 7z, nested."""
     inner = []
     for n, b in media.archive_inner_logs(path):
         k = logic.file_kind(n)
-        inner.append((Path(n).name or "inner.log", k, prepare(b, k), len(b)))
+        inner.append((n, k, prepare(b, k), len(b)))
     return media.archive_listing(path), inner
+
+
+def store_inner(clinic, rec, listing, inner):
+    """Put the prepared inner logs in the store and describe them in the attachment record: `inner` (member
+    names, None = unreadable), `inner_shas` and `inner_files` [{sha256, name, kind}] (name = path inside)."""
+    files = []
+    for nm, k, p, raw_n in inner:
+        sha = clinic.put_prepared(p[0], p[1], p[2], raw_n, Path(nm).name or "inner.log", k)
+        files.append({"sha256": sha, "name": nm, "kind": k})
+    rec["inner"] = listing
+    rec["inner_shas"] = [f["sha256"] for f in files]
+    rec["inner_files"] = files
+    return rec
 
 
 async def _store_attachment(clinic, att, tmp, stills):
@@ -254,9 +268,7 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
             del blob
             if kind == "archive":
                 listing, inner = await loop.run_in_executor(None, _prep_archive, clinic.prepare_file, path)
-                rec["inner"] = listing
-                rec["inner_shas"] = [clinic.put_prepared(p[0], p[1], p[2], raw_n, nm, k)
-                                     for nm, k, p, raw_n in inner]
+                store_inner(clinic, rec, listing, inner)
         return rec
     finally:
         shutil.rmtree(d, ignore_errors=True)

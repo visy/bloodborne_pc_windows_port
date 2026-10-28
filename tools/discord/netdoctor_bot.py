@@ -285,8 +285,7 @@ def _flag_unsure(clinic, bug, message):
     atts = [a for m in msgs for a in m["attachments"]]
     if not any(a.get("kind") in ("log", "dump", "game") or a.get("inner_shas") for a in atts):
         why.append("no-log")
-    if any(a.get("kind") == "archive" and (a.get("filename", "").lower().endswith((".7z", ".rar"))
-                                          or not a.get("inner_shas")) for a in atts):
+    if any(a.get("kind") == "archive" and a.get("inner") is None for a in atts):  # listing None: unreadable
         why.append("unreadable-file")
     if why:
         clinic.add_unsure(bug, why)

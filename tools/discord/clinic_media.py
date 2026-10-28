@@ -17,7 +17,6 @@ except ImportError:  # loaded by path without tools/discord on sys.path
 
 IMAGE_LIMIT = 2 * 1024 * 1024
 IMAGE_MAX_SIDE = 2560
-MAX_INNER_BYTES = 256 * 1024 * 1024
 
 
 def _webp_ok() -> bool:
@@ -105,28 +104,228 @@ def video_stills(path: Path, every_s=4.0, max_frames=48, width=1280) -> list[tup
     return frames
 
 
-def archive_listing(path: Path) -> list[str] | None:
-    """Member names of a zip; None for 7z/rar and for anything unreadable (counted as removable)."""
+# --- archives: zip (zipfile), rar (the `unrar` binary), 7z (py7zr, imported lazily) --------------------------
+
+MAX_FILE_BYTES = 200 * 1024 * 1024    # one extracted inner file
+MAX_TOTAL_BYTES = 500 * 1024 * 1024   # everything extracted from one upload
+MAX_MEMBERS = 2000
+MAX_DEPTH = 2                         # archives inside archives: how many levels are opened
+UNRAR_TIMEOUT = 120
+
+
+def _sniff(path: Path) -> str | None:
     try:
-        with zipfile.ZipFile(path) as z:
-            return [i.filename for i in z.infolist() if not i.is_dir()]
-    except (zipfile.BadZipFile, OSError, NotImplementedError, RuntimeError):
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        return None
+    if head.startswith(b"Rar!\x1a\x07"):
+        return "rar"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7z"
+    try:
+        return "zip" if zipfile.is_zipfile(path) else None
+    except OSError:
         return None
 
 
-def archive_inner_logs(path: Path) -> list[tuple[str, bytes]]:
-    """(member name, bytes) of zip members that are removable kinds (logs, dumps, game files)."""
-    out = []
+def _clean(name: str) -> str | None:
+    """A member name made safe: forward slashes, no drive, no empty/`.`/`..` parts. None when nothing is left."""
+    parts = []
+    for p in (name or "").replace("\\", "/").split("/"):
+        if p in ("", ".", "..") or p.endswith(":") or "\x00" in p:
+            continue
+        parts.append(p.strip())
+    parts = [p for p in parts if p]
+    return "/".join(parts) if parts else None
+
+
+def _unrar_list(path: Path) -> list[tuple[str, int | None]] | None:
+    exe = shutil.which("unrar")
+    if not exe:
+        return None
     try:
-        with zipfile.ZipFile(path) as z:
-            for i in z.infolist():
-                if i.is_dir() or i.file_size > MAX_INNER_BYTES:
-                    continue
-                if _logic.file_kind(i.filename) in _logic.REMOVABLE_KINDS:
-                    out.append((i.filename, z.read(i)))
-    except (zipfile.BadZipFile, OSError, NotImplementedError, RuntimeError):
-        return out
+        r = _run([exe, "lb", "-p-", "--", str(path)], timeout=UNRAR_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    names = [ln.rstrip("\r") for ln in r.stdout.decode("utf-8", "replace").split("\n")]
+    return [(n, None) for n in names if n]
+
+
+def _unrar_read(path: Path, member: str, limit: int) -> bytes | None:
+    exe = shutil.which("unrar")
+    if not exe or any(c in member for c in "*?") or member.startswith("-"):
+        return None
+    try:
+        p = subprocess.Popen([exe, "p", "-inul", "-p-", "--", str(path), member],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return None
+    try:
+        data = p.stdout.read(limit + 1)
+        if len(data) > limit:
+            p.kill()
+            return None
+        p.wait(timeout=UNRAR_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        p.kill()
+        return None
+    finally:
+        p.stdout.close()
+        try:
+            p.wait(timeout=5)
+        except subprocess.SubprocessError:
+            p.kill()
+    return data if p.returncode == 0 else None
+
+
+def _list(path: Path, fmt: str) -> list[tuple[str, int | None]] | None:
+    """[(raw member name, size or None)] of one archive level; None when unreadable or password protected."""
+    try:
+        if fmt == "zip":
+            with zipfile.ZipFile(path) as z:
+                infos = [i for i in z.infolist() if not i.is_dir()]
+                if any(i.flag_bits & 0x1 for i in infos):
+                    return None
+                return [(i.filename, i.file_size) for i in infos]
+        if fmt == "rar":
+            return _unrar_list(path)
+        if fmt == "7z":
+            try:
+                import py7zr
+            except ImportError:
+                return None
+            with py7zr.SevenZipFile(path) as z:
+                if z.needs_password():
+                    return None
+                return [(i.filename, i.uncompressed) for i in z.list() if not i.is_directory]
+    except Exception:
+        return None
+    return None
+
+
+def _read(path: Path, fmt: str, members: list[tuple[str, int | None]], limit: int) -> dict[str, bytes] | None:
+    """Bytes of `members` (each <= limit). Members that cannot be read are left out; None: the archive broke."""
+    out: dict[str, bytes] = {}
+    try:
+        if fmt == "zip":
+            with zipfile.ZipFile(path) as z:
+                for name, _ in members:
+                    with z.open(name) as f:
+                        data = f.read(limit + 1)
+                    if len(data) <= limit:
+                        out[name] = data
+        elif fmt == "rar":
+            for name, _ in members:
+                data = _unrar_read(path, name, limit)
+                if data is not None:
+                    out[name] = data
+        elif fmt == "7z":
+            import py7zr
+            with py7zr.SevenZipFile(path) as z:
+                got = z.read([n for n, _ in members]) or {}
+            for name, bio in got.items():
+                data = bio.read(limit + 1)
+                if len(data) <= limit:
+                    out[name] = data
+    except Exception:
+        return None
     return out
+
+
+class _Scan:
+    def __init__(self, tmp: Path):
+        self.tmp, self.n_members, self.total, self.ok, self.seq = tmp, 0, 0, True, 0
+        self.names: list[str] = []
+        self.logs: list[tuple[str, bytes]] = []
+
+
+def _scan_level(path: Path, prefix: str, depth: int, st: _Scan) -> None:
+    fmt = _sniff(path)
+    members = _list(path, fmt) if fmt else None
+    if members is None:
+        st.ok = False
+        return
+    st.n_members += len(members)
+    if st.n_members > MAX_MEMBERS:
+        st.ok = False
+        return
+    want, seen = [], set()
+    for raw, size in members:
+        clean = _clean(raw)
+        if clean is None or raw in seen:
+            continue
+        seen.add(raw)
+        full = prefix + clean
+        st.names.append(full)
+        kind = _logic.file_kind(clean)
+        if kind in _logic.REMOVABLE_KINDS or kind == "archive":
+            if size is not None and size > MAX_FILE_BYTES:
+                if kind == "archive":
+                    st.ok = False  # cannot look inside: unreadable
+                continue
+            want.append((raw, size, full, kind))
+    if not want:
+        return
+    declared = sum(s or 0 for _, s, _, _ in want)
+    if st.total + declared > MAX_TOTAL_BYTES:
+        st.ok = False
+        return
+    got = _read(path, fmt, [(r, s) for r, s, _, _ in want], MAX_FILE_BYTES)
+    if got is None:
+        st.ok = False
+        return
+    for raw, _size, full, kind in want:
+        data = got.get(raw)
+        if data is None:
+            if kind == "archive":
+                st.ok = False
+            continue
+        st.total += len(data)
+        if st.total > MAX_TOTAL_BYTES:
+            st.ok = False
+            return
+        if kind != "archive":
+            st.logs.append((full, data))
+            continue
+        if depth >= MAX_DEPTH:
+            st.ok = False  # nested deeper than we open: unreadable
+            continue
+        st.seq += 1
+        inner = st.tmp / f"n{st.seq}.bin"  # our own name, never the member's
+        inner.write_bytes(data)
+        del data
+        try:
+            _scan_level(inner, full + "/", depth + 1, st)
+        finally:
+            inner.unlink(missing_ok=True)
+        if st.n_members > MAX_MEMBERS or st.total > MAX_TOTAL_BYTES:
+            return
+
+
+def _scan(path: Path) -> _Scan:
+    with tempfile.TemporaryDirectory(prefix="arch_") as tmp:
+        st = _Scan(Path(tmp))
+        try:
+            _scan_level(Path(path), "", 0, st)
+        except Exception:
+            st.ok = False
+    return st
+
+
+def archive_listing(path: Path) -> list[str] | None:
+    """Member names of a zip/rar/7z (nested archives' members as `inner.zip/name`, down to depth 2); None when
+    the archive, or one inside it, is unreadable, password protected, too big or too deep (counted as removable)."""
+    st = _scan(path)
+    return st.names if st.ok else None
+
+
+def archive_inner_logs(path: Path) -> list[tuple[str, bytes]]:
+    """(member name, bytes) of members that are removable kinds (logs, dumps, game files), nested archives
+    included. Whatever could be read is returned even when the archive is only partly readable."""
+    return _scan(path).logs
 
 
 def free_disk(path: Path) -> int:

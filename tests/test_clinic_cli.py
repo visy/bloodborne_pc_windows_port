@@ -251,3 +251,18 @@ def test_note_tag_assign_merge_nd(tmp_path):
     code, _ = run(db, "vlad", "nd", "ND-zz")
     assert code == 2
 
+
+
+def test_files_inner_logs_under_archive_name(tmp_path):
+    db, a, _b, _log = seed(tmp_path)
+    c = cs.Clinic(db)
+    inner = c.put_file(b"deep log", "guest.log", "log")
+    arch = c.put_file(b"PK fake archive", "saves.zip", "archive")
+    c.upsert_message({"message_id": 200, "bug_id": a, "created": time.time(), "attachments": [
+        {"sha256": arch, "filename": "saves.zip", "kind": "archive", "size": 15, "inner": ["x.zip/dir/guest.log"],
+         "inner_shas": [inner], "inner_files": [{"sha256": inner, "name": "x.zip/dir/../guest.log", "kind": "log"}]}]})
+    _, out = run(db, "vlad", "files", a)
+    t = _tar(out)
+    assert t.extractfile(f"{a}/logs/saves.zip/x.zip/dir/guest.log").read() == b"deep log"
+    shown = js(db, "vlad", "show", a)
+    assert any(f.get("inside") == "saves.zip" and f["path"] == "x.zip/dir/../guest.log" for f in shown["files"])
