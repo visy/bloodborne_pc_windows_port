@@ -543,12 +543,14 @@ def _chunks(text, limit=DISCORD_LIMIT):
     return out
 
 
-async def _media_files(message, rec):
+async def _media_files(message, rec, files=None, shared=None):
     """Files to repost in the replacement: pictures and videos that are not removable, within the upload
     cap. Anything else that stays out of the message (text, odd files) is left in the clinic (media note)."""
     removable_ids = {a["id"] for a in rec["attachments"] if logic.removable(a["filename"], a.get("inner"))}
     limit = getattr(getattr(message, "guild", None), "filesize_limit", None) or DEFAULT_UPLOAD
-    files, budget, left_out = [], limit, False
+    files = [] if files is None else files  # a run shares one list: at most 10 files in one post
+    budget = limit if shared is None or shared[0] is None else shared[0]
+    left_out = False
     for a in all_attachments(message):
         if a.id in removable_ids:
             continue
@@ -561,6 +563,8 @@ async def _media_files(message, rec):
         try:
             files.append(await a.to_file())
             budget -= a.size
+            if shared is not None:
+                shared[0] = budget
         except Exception:
             left_out = True
     return files, left_out
@@ -570,39 +574,49 @@ def _status(exc):
     return getattr(exc, "status", None)
 
 
-async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_export, extra=""):
-    """Post the replacement note, delete the original, record. Returns the final state, "would-replace"
-    when delete is False, or "blocked:<why>" (not-archived, dm, skipped, not-verified, not-exported). A
-    message already `replaced` skips the post. A delete the bot may not do is recorded as
-    "delete_forbidden". `extra`: more of Iosefka's words (bug_filed / network_help) added to the same
-    message when they fit. The message is re-fetched first: what is deleted is what Discord holds now."""
+async def _gate(clinic, message, bug_id, delete, need_export):
+    """Every safety check before a replacement. Returns (result, message, rec): result is None when the
+    message may go on, else the final answer (blocked:<why>, deleted, would-replace, replaced)."""
     mid = message.id
     rec = clinic.message(mid)
     if not rec:
-        return "blocked:not-archived"
+        return "blocked:not-archived", message, rec
     if rec["state"] == "deleted":
-        return "deleted"
+        return "deleted", message, rec
     if message.guild is None:  # a DM is private: never touched
-        return "blocked:dm"
+        return "blocked:dm", message, rec
     if await aplace_skipped(message.channel):
-        return "blocked:skipped"
+        return "blocked:skipped", message, rec
     if delete:
         try:
             message = await message.channel.fetch_message(mid)
         except Exception as e:
             if _not_found(e):
                 clinic.set_state(mid, "deleted")
-                return "deleted"
+                return "deleted", message, rec
             raise
     ids = {a.id for a in all_attachments(message)}
     stored = {a["id"] for a in rec["attachments"]}
     if rec["state"] not in ("verified", "replaced") or not rec["attachments"] or not ids <= stored \
             or not all(att_verified(clinic, a) for a in rec["attachments"]):
-        return "blocked:not-verified"
+        return "blocked:not-verified", message, rec
     if need_export and not _exported(clinic, rec["attachments"]):
-        return "blocked:not-exported"
+        return "blocked:not-exported", message, rec
     if not delete:
-        return "replaced" if rec["state"] == "replaced" else "would-replace"
+        return ("replaced" if rec["state"] == "replaced" else "would-replace"), message, rec
+    return None, message, rec
+
+
+async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_export, extra=""):
+    """Post the replacement note, delete the original, record. Returns the final state, "would-replace"
+    when delete is False, or "blocked:<why>" (not-archived, dm, skipped, not-verified, not-exported). A
+    message already `replaced` skips the post. A delete the bot may not do is recorded as
+    "delete_forbidden". `extra`: more of Iosefka's words (bug_filed / network_help) added to the same
+    message when they fit. The message is re-fetched first: what is deleted is what Discord holds now."""
+    res, message, rec = await _gate(clinic, message, bug_id, delete, need_export)
+    if res:
+        return res
+    mid = message.id
     if rec.get("bug_id") != bug_id:
         clinic.upsert_message({"message_id": mid, "bug_id": bug_id})
     ch = message.channel
@@ -646,6 +660,89 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
                 raise
         clinic.set_state(mid, "deleted")
         return "deleted"
+    finally:
+        if reopened:
+            try:
+                await ch.edit(locked=reopened[1], archived=reopened[0])
+            except Exception as e:
+                print(f"could not restore thread {ch.id}: {e}", file=sys.stderr, flush=True)
+
+
+async def replace_run(clinic, messages, bug_id, *, need_export=True, ping=False):
+    """Replace a run (consecutive messages of one author about one bug in one place) with ONE note, then
+    delete each. Every message passes the same gates as `replace_and_delete`; a blocked message is left out
+    and the run splits around it. Returns {message_id: result}. A segment with messages already `replaced`
+    reuses their replacement (no second note) and only deletes the rest. The nonce is the first message id."""
+    results, segment = {}, []
+
+    async def flush():
+        if len(segment) == 1:
+            results[segment[0][0].id] = await replace_and_delete(clinic, segment[0][0], bug_id, ping=ping,
+                                                                 delete=True, need_export=need_export)
+        elif segment:
+            results.update(await _run_segment(clinic, list(segment), bug_id, ping))
+        segment.clear()
+
+    for message in messages:
+        res, message, rec = await _gate(clinic, message, bug_id, True, need_export)
+        if res == "deleted":
+            results[message.id] = res
+        elif res:
+            results[message.id] = res
+            await flush()
+        else:
+            segment.append((message, rec))
+    await flush()
+    return results
+
+
+async def _run_segment(clinic, seg, bug_id, ping):
+    first = seg[0][0]
+    ch = first.channel
+    rid = next((r["replacement_id"] for _, r in seg if r["state"] == "replaced" and r.get("replacement_id")), None)
+    results, reopened = {}, None
+    try:
+        if is_thread(ch) and (ch.archived or ch.locked):
+            reopened = (ch.archived, ch.locked)
+            await ch.edit(archived=False, locked=False)
+        for m, r in seg:
+            if r.get("bug_id") != bug_id:
+                clinic.upsert_message({"message_id": m.id, "bug_id": bug_id})
+        if rid is None:
+            files, shared, left_out = [], [None], False
+            for m, r in seg:
+                _, lo = await _media_files(m, r, files, shared)
+                left_out = left_out or lo
+            note = MEDIA_NOTE if left_out else ""
+            texts = [m.content or "" for m, _ in seg]
+            mention = f"<@{first.author.id}>"
+            text = voice.replacement_many(mention, bug_id, texts, note)
+            am = AllowedMentions(users=[first.author], everyone=False, roles=False) if ping                 else AllowedMentions.none()
+            kw = {"allowed_mentions": am, "nonce": str(first.id)[-25:], "enforce_nonce": True}
+            try:
+                sent = await ch.send(text, files=files, **kw) if files else await ch.send(text, **kw)
+            except Exception as e:
+                if not files or _status(e) not in (400, 413):
+                    raise
+                sent = await ch.send(voice.replacement_many(mention, bug_id, texts, MEDIA_NOTE), **kw)
+            rid = sent.id
+        for m, r in seg:
+            if r["state"] != "replaced" or r.get("replacement_id") != rid:
+                clinic.set_state(m.id, "replaced", rid)
+        for m, _ in seg:
+            try:
+                await m.delete()
+            except Exception as e:
+                if type(e).__name__ == "Forbidden":
+                    clinic.set_state(m.id, "delete_forbidden")
+                    print(f"cannot delete {m.id}: Forbidden (the replacement is posted)", file=sys.stderr, flush=True)
+                    results[m.id] = "delete_forbidden"
+                    continue
+                if not _not_found(e):
+                    raise
+            clinic.set_state(m.id, "deleted")
+            results[m.id] = "deleted"
+        return results
     finally:
         if reopened:
             try:
