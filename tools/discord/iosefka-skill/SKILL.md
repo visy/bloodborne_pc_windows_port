@@ -38,8 +38,10 @@ than reading by eye. `--text` after the command name gives a human summary.
   `dated` (when the change happened: commit / release / the fixed bug's reported date; `cl list --sort
   dated`, `--dated-since YYYY-MM-DD`, `cl add|edit --dated`) and `added` (when it reached Iosefka).
 - Open bugs older than two weeks: `ssh iosefka list --open --older-than 14`
-- Tag keys: area, feature, component (coop-mod, nw-launcher, nw-port, game-data, network, unknown),
-  version, role, plan. Statuses: new, open, analysing, waiting-logs, fixed, closed, duplicate.
+- Tag keys (fixed values, see CLINIC.md "Tag vocabulary"): component (coop-mod, nw-port, nw-launcher,
+  network, game-data, discord, external), area (region: central-yharnam, cathedral-ward, hunters-nightmare,
+  chalice, hunters-dream, ...), place (free text), feature (joins, bosses, performance, graphics, travel,
+  ...), nw_version ("0.2.4 beta 1"), coop_version ("0.7.5"), role (host, guest, solo), severity, plan, triage. Statuses: new, open, analysing, waiting-logs, fixed, closed, duplicate.
 
 Quote text yourself: the command string is split on the server, so write
 `ssh iosefka note NW-1a2b3c4 "'the finding'"` (single quotes inside double quotes).
@@ -82,7 +84,7 @@ Triage pass (bugs Iosefka filed and was unsure about):
    attached by a weaker rule). Tag `unsure` says what she could not settle (network-or-bug, which-bug,
    no-log, unreadable-file, no-text).
 2. Per bug: `show NW-x`, `files NW-x` (see Triage a bug); read the logs, party logs with `scripts/net_doctor.py`.
-3. Set `title NW-x "'text'"`, `status`, and tags: component, area, feature, version, role, plan, severity.
+3. Set `title NW-x "'text'"`, `status`, and tags from the vocabulary: component, area, place, feature, nw_version, coop_version, role, plan, severity.
 4. Resolve each unsure item; a wrongly linked message goes back with `move <message_id> NW-y`.
 5. Check duplicates (`list --open --q ...`, then `merge`) and whether CHANGES.md or the Nightwatch repo
    already has the fix.
