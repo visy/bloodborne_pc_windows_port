@@ -122,3 +122,15 @@ Not reproduced on loopback, and a player's host log (Nightwatch 0.2.4-beta.1) sh
   death, "boss targets the living member (ChangeTarget ok)"), the host died at 53 % both times (the phase-2 start)
   and the second attempt ended with the guest killing the boss 103.8 s after the host's death.
 * `BB_HG_ORDER=guest` (guest goes in first), `BB_HG_DELAY`, `BB_HG_HP`, `BB_HG_HOSTDIST` vary the phase.
+
+## Bosses share their attention (0.7.7, bosstarget, report "bosses only target the host")
+
+Reproduced (smoke `hg`, `BB_HG_MORTAL=1 BB_HG_HOSTDIST=1 BB_HG_GUESTDIST=8`, host invincible beside the boss, guest mortal 8 m
+away): with the rule off the boss stayed on the host for the whole fight, never came within 4 m of the guest and the guest's HP
+never fell. Cause: the game's target search keeps the nearest player (the earlier `hg` check, "within 4 m of the guest, host
+passive 16 m away", only showed that a nearer guest is taken). Fix: `BossAttentionTick` (party_b2.cpp, rule
+`enemyai_rules::PickAttention`): on the host's game, while a boss bar is up and 2+ living players are within 30 m of the boss, the
+event ChangeTarget path 0x1299CD0 hands the boss the one who was the target longest ago, every 8 s (checked twice a second).
+Log: `boss attention: boss ... turns to player chr ...`. Switch `party_boss_share` / `BB_PARTY_BOSS_SHARE=0`. With the rule on
+the same run: boss at the guest (39/51 samples < 4 m), guest HP to 0 while the host stood by. Not tested: 3+ players,
+bosses other than Gascoigne, the 8 s / 30 m values against real play.
