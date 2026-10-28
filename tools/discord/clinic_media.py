@@ -224,8 +224,19 @@ def _read(path: Path, fmt: str, members: list[tuple[str, int | None]], limit: in
                     out[name] = data
         elif fmt == "7z":
             import py7zr
-            with py7zr.SevenZipFile(path) as z:
-                got = z.read([n for n, _ in members]) or {}
+            try:
+                with py7zr.SevenZipFile(path) as z:
+                    got = z.read([n for n, _ in members]) or {}
+            except Exception:
+                # one bad member (e.g. a CRC error) fails the whole batch: read them one by one instead and
+                # leave out only the ones that fail
+                got = {}
+                for name, _ in members:
+                    try:
+                        with py7zr.SevenZipFile(path) as z:
+                            got.update(z.read([name]) or {})
+                    except Exception:
+                        pass
             for name, bio in got.items():
                 data = bio.read(limit + 1)
                 if len(data) <= limit:
