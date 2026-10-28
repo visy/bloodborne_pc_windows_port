@@ -12,7 +12,12 @@ except ImportError:  # loaded by path without tools/discord on sys.path
     _spec.loader.exec_module(_ns)
 
 WINDOW_S = 1800
-REMOVABLE_KINDS = {"log", "dump", "game", "save"}
+# Kinds that carry names / IPs: a message holding one is archived, replaced and deleted. Saves, pictures and
+# videos carry no PII: they are archived and the message stays on Discord, untouched.
+REMOVABLE_KINDS = {"log", "dump", "game"}
+STORE_INNER_KINDS = REMOVABLE_KINDS | {"save"}  # members of an archive that are copied into the clinic
+CLINIC_KINDS = STORE_INNER_KINDS | {"image", "video"}  # an archive holding none of these is left alone
+ARCHIVE_CAP_BYTES = 100 * 1024 * 1024  # a bigger archive is never downloaded or touched
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 ARCHIVE_EXT = {".zip", ".7z", ".rar"}
@@ -61,6 +66,8 @@ def holds(attachments: list[dict]) -> str:
     "save" (Bloodborne save files only) or "both". Archives count by their member names (`inner`)."""
     logs = saves = False
     for a in attachments or []:
+        if a.get("skip"):
+            continue
         kind = file_kind(a.get("filename") or "")
         if kind == "archive":
             names = a.get("inner")
@@ -72,6 +79,16 @@ def holds(attachments: list[dict]) -> str:
     if saves and not logs:
         return "save"
     return "both" if saves else "log"
+
+
+def archive_relevant(inner_names: list[str] | None) -> bool:
+    """False only for a readable archive holding no log, save, image or video (a mod pack, a tool): the
+    clinic leaves such an upload be. An unreadable listing (None) counts as relevant."""
+    return inner_names is None or any(file_kind(i) in CLINIC_KINDS for i in inner_names)
+
+
+def has_saves(attachments: list[dict]) -> bool:
+    return holds([a for a in attachments or [] if not a.get("skip")]) in ("save", "both") and         any(not a.get("skip") for a in attachments or [])
 
 
 def removable(filename: str, inner_names: list[str] | None = None) -> bool:

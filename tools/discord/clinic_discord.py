@@ -240,6 +240,8 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
     name = Path(att.filename or "file").name or "file"
     kind = logic.file_kind(name)
     size = int(att.size or 0)
+    if kind == "archive" and size > logic.ARCHIVE_CAP_BYTES:  # too big: not downloaded, not touched
+        return {"id": att.id, "filename": name, "kind": kind, "size": size, "sha256": None, "skip": "big"}
     if not media.enough_disk(tmp, size):
         raise DiskLow(f"free disk below {size} bytes + reserve")
     d = Path(tempfile.mkdtemp(prefix="att_", dir=str(tmp)))
@@ -258,6 +260,9 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
                 if frames:
                     clinic.add_stills(sha, frames)
         else:
+            if kind == "archive" and not logic.archive_relevant(await loop.run_in_executor(None, media.archive_listing, path)):
+                return {"id": att.id, "filename": name, "kind": kind, "size": served, "sha256": None,
+                        "skip": "nothing"}  # no log, save, image or video inside: left be, not copied
             if served > STREAM_BYTES:
                 sha, blob, raw = await loop.run_in_executor(None, clinic.prepare_stream, path)
                 codec = "lzma"
@@ -275,6 +280,8 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
 
 
 def att_verified(clinic, a):
+    if a.get("skip"):
+        return True
     sha = a.get("sha256")
     if not sha:
         return False
@@ -283,8 +290,12 @@ def att_verified(clinic, a):
     return clinic.verify_file(sha) and all(clinic.verify_file(s) for s in a.get("inner_shas") or [])
 
 
+def _rm(a):
+    return not a.get("skip") and logic.removable(a["filename"], a.get("inner"))
+
+
 def rec_removable(atts):
-    return any(logic.removable(a["filename"], a.get("inner")) for a in atts)
+    return any(_rm(a) for a in atts)
 
 
 def log_infos(clinic, atts, log_info_fn, tmp):
@@ -694,7 +705,7 @@ async def _assign_new(clinic, message, infos, log_info_fn, tmpdir):
 
 def _exported(clinic, atts):
     for a in atts:
-        if logic.removable(a["filename"], a.get("inner")):
+        if _rm(a):
             if not clinic.exported(a["sha256"]) or not all(clinic.exported(s) for s in a.get("inner_shas") or []):
                 return False
     return True
@@ -721,7 +732,7 @@ def _chunks(text, limit=DISCORD_LIMIT):
 async def _media_files(message, rec, files=None, shared=None):
     """Files to repost in the replacement: pictures and videos that are not removable, within the upload
     cap. Anything else that stays out of the message (text, odd files) is left in the clinic (media note)."""
-    removable_ids = {a["id"] for a in rec["attachments"] if logic.removable(a["filename"], a.get("inner"))}
+    removable_ids = {a["id"] for a in rec["attachments"] if _rm(a)}
     limit = getattr(getattr(message, "guild", None), "filesize_limit", None) or DEFAULT_UPLOAD
     files = [] if files is None else files  # a run shares one list: at most 10 files in one post
     budget = limit if shared is None or shared[0] is None else shared[0]
