@@ -17,7 +17,9 @@ FMG_FILES = {"goods": "アイテム名", "weapon": "武器名", "armor": "防具
 PARAMS = {"weapon": "EquipParamWeapon", "armor": "EquipParamProtector", "accessory": "EquipParamAccessory",
           "goods": "EquipParamGoods"}
 _PLACEHOLDER = re.compile(r"^(\*|NOT NEEDED|en\d+)?$", re.I)
-CACHE_VERSION = 1
+CACHE_VERSION = 2
+EVENT_TEXT = "イベントテキスト"  # menu.msgbnd FMG: the lamp warp list names (id 7000AABn)
+NPC_NAMES = "NPC名"  # item.msgbnd FMG: boss and NPC names by character id
 
 
 def _dcx(b):
@@ -89,6 +91,9 @@ def read_game(game_dir, lang="engus"):
     msg = _bnd4(_dcx((game / "msg" / lang / "item.msgbnd.dcx").read_bytes()))
     par = _bnd4(_dcx((game / "param" / "gameparam" / "gameparam.parambnd.dcx").read_bytes()))
     names = {kind: _fmg(_entry(msg, fn + ".fmg")) for kind, fn in FMG_FILES.items()}
+    names["npc"] = _fmg(_entry(msg, NPC_NAMES + ".fmg"))
+    menu = _bnd4(_dcx((game / "msg" / lang / "menu.msgbnd.dcx").read_bytes()))
+    names["lamp"] = {i: t for i, t in _fmg(_entry(menu, EVENT_TEXT + ".fmg")).items() if 70002100 <= i < 70003600}
     ids = {kind: sorted(_param_ids(_entry(par, pn + ".param"))) for kind, pn in PARAMS.items()}
     return {"names": names, "ids": ids}
 
@@ -150,6 +155,13 @@ class Catalogue:
         elif kind == "armor":
             pass
         return n.get(number)
+
+    def lamp_name(self, flag):
+        """Name of the lamp whose lit flag is 7AAB02nn (the warp list text 7000AABn), None when unknown."""
+        return self._names.get("lamp", {}).get(70000000 + (flag // 10000 % 1000) * 10 + flag % 100)
+
+    def boss_name(self, chr_id):
+        return self._names.get("npc", {}).get(chr_id)
 
     def valid_ids(self, category):
         """The set of row ids the game has for this category (None when unknown)."""
