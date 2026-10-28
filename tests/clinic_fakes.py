@@ -8,6 +8,10 @@ class NotFound(Exception):
     pass
 
 
+class Forbidden(Exception):
+    pass
+
+
 class Att:
     def __init__(self, id, filename, data=b"x", fail=0, size=None, content_type=None):
         self.id, self.filename, self.data, self.fail = id, filename, data, fail
@@ -76,6 +80,8 @@ class Channel:
 
     def history(self, limit=100, around=None, **kw):
         async def gen():
+            if getattr(self, "forbidden", False):
+                raise Forbidden("403 Missing Access")
             for m in self.messages:
                 if not m.deleted:
                     yield m

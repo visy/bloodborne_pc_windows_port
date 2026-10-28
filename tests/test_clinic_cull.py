@@ -43,6 +43,7 @@ def world(tmp_path, n=2):
     th.messages = [F.Msg(1, th, user, "my log, address 203.0.113.9", [F.Att(10, "a.log", LOG)], minutes=0),
                    F.Msg(2, th, user, "and a shot", [F.Att(11, "s.png", b"\x89PNGx")], minutes=1)]
     ch.messages = [F.Msg(3, ch, user, "bug here", [F.Att(12, "b.log", LOG + b"2")], minutes=0)]
+    forum.threads = [th]
     guild = F.Guild([ch], [forum])
     return c, guild, th, ch, calls
 
@@ -202,3 +203,13 @@ def test_announce_needs_yes_and_pins(tmp_path):
     assert run(cull.announce([guild], ["help"], dry_run=False, yes=True, out=out.append)) == 0
     assert len(ch.sent) == 1 and pinned and ch.sent[0].kw["allowed_mentions"].users is False
     assert out[-1] == "help: https://discord.invalid/m/1"
+
+
+def test_harvest_forbidden_place_is_counted_not_fatal(tmp_path):
+    c, guild, th, ch, _ = world(tmp_path)
+    locked = F.Channel(101, "secrets", [])
+    locked.forbidden = True
+    guild.text_channels.insert(0, locked)
+    code, out = harvest(c, guild, tmp_path)
+    assert code == 0 and "no access: secrets" in out and "1 places without access" in out[-1]
+    assert c.message(1)["state"] == "verified"
