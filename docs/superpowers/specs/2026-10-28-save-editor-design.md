@@ -2,6 +2,15 @@
 
 Status: design only, nothing implemented. Branch agent/saveeditor.
 
+## Decisions (user, 2026-10-28)
+
+1. Item catalogue: EVERYTHING. Cut content, unobtainable items and over-normal values are allowed behind one "may crash or break your save" confirm per session plus the automatic backup; the default list shows obtainable items first.
+2. Party saves: FULL editing, with a warning that shared progress follows the host in a party; the repair tools are included.
+3. Level: LOCKED to the stat formula (read-only, recomputed).
+4. Item names are read from the PLAYER'S OWN GAME FOLDER at first use and cached under the user's bbport data folder; never shipped (no game text in the release; `gen_names.py` becomes the runtime loader `names.py`, no committed items_en.json).
+5. Reference credit: Noxde's Bloodborne-save-editor (GPL-3.0) in CHANGES/README; no code copied.
+Rule: every offset written must be pinned from test saves first; anything unverified stays read-only in the UI.
+
 ## 1. Research
 
 ### 1.1 Existing Bloodborne save editors
