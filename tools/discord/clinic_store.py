@@ -180,6 +180,23 @@ class Clinic:
                                "ORDER BY message_id")
         return [self._message(r) for r in rows]
 
+    def messages_near(self, channel_id, created, window, thread_id=None):
+        """Stored messages of one channel (or thread) within +-window seconds of `created`."""
+        where, args = "channel_id=? AND created BETWEEN ? AND ?", [channel_id, created - window, created + window]
+        if thread_id is not None:
+            where += " AND thread_id=?"
+            args.append(thread_id)
+        rows = self.db.execute(f"SELECT message_id, {', '.join(MESSAGE_COLS)} FROM nw_messages WHERE {where} "
+                               "ORDER BY created, message_id", args)
+        return [self._message(r) for r in rows]
+
+    def messages_in_state(self, states):
+        """Messages in any of these states, oldest id first (the cull's work list)."""
+        marks = ",".join("?" * len(states))
+        rows = self.db.execute(f"SELECT message_id, {', '.join(MESSAGE_COLS)} FROM nw_messages "
+                               f"WHERE state IN ({marks}) ORDER BY message_id", list(states))
+        return [self._message(r) for r in rows]
+
     def set_state(self, mid, state, replacement_id=None):
         if replacement_id is None:
             self.db.execute("UPDATE nw_messages SET state=? WHERE message_id=?", (state, mid))

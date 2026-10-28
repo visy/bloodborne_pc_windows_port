@@ -213,3 +213,16 @@ the bbport repo (pass the log files; it prints a connection diagnosis).
 - `export is for visy only`: visy-only command.
 - `no such bug`: the id is typed wrong, or it was never filed; try `list --q`.
 - Empty output from `files`: the filters matched nothing (it prints an empty tar).
+
+## Server side: live duty and the cull (visy)
+
+Flags in `~/.config/netdoctor/env`: `NW_LIVE=1` turns live duty on (archive + replace), `NW_DELETE=1` lets
+it delete (and is required for `cull` and `starter-test`). Both default off; the bot then behaves as
+before. `iosefka_cull.py` phases: `harvest` (resumable; reruns skip verified messages and retry
+`archive_failed` ones; stops with exit code 3 and "disk low, resume later" when a download would leave
+less than 1.5 GB free), `verify`, `report --out PATH`, `starter-test --thread ID`, `cull [--limit N]`
+(deletes only messages whose every removable file is in a confirmed export; posts without pings), and
+`announce --channels general,help [--dry-run] --yes` (posts and pins the announcement and prints the
+links). Places the bot cannot read are logged as `no access: <place>` and counted, never fatal.
+A message holding a video is not deleted until the video has stills in the archive (stills are off while
+the archive is above 2.4 GiB or the disk has under 1 GB free; a warning goes to the first `staff*` channel).

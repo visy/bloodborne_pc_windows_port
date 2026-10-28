@@ -88,3 +88,34 @@ upload folders a crash left in /tmp and trims the bot log past 10 MB.
 Update the doctor's rules: `git -C ~/bbport pull` (the bot loads `net_doctor.py` fresh on every
 command, no restart needed; restart after a change to the bot itself:
 `systemctl --user restart netdoctor`).
+
+## Iosefka's clinic (live duty and the cull)
+
+With `NW_LIVE=1` in the env file the bot also does Iosefka's duty: every log (`.log .txt .dmp .dcx`,
+`userdata*`, zips holding those) posted in any channel, thread or forum post is stored byte-exact in the
+private clinic archive (same SQLite file), joined to a bug `NW-xxxxxxx`, and the message is replaced by one
+note from Iosefka (connection advice from net_doctor with names/IPs hidden, or a thank-you that asks for
+missing host/guest logs) and deleted. Edits that add a file, forwarded messages and DMs are covered; DMs
+are archived and answered but never deleted. Channels `staff*`, `development` and `moderator-only` are
+skipped. An hourly catch-up scans from each place's watermark; every minute the bot posts the developers'
+`--tell` texts; at 04:00 it writes `netdoctor.db.bak` (skipped when the disk is too full).
+
+- `NW_LIVE` unset/0: the bot behaves as before (slash commands, mentions, DMs, reactions); nothing is archived.
+- `NW_LIVE=1` without `NW_DELETE=1`: archives silently, posts nothing, deletes nothing.
+- `NW_LIVE=1 NW_DELETE=1`: full duty.
+- `NW_TMP`: download folder (default `<system temp>/iosefka`); one file at a time, deleted right after storing.
+
+The one-shot cull of the existing server history is `iosefka_cull.py` (phases, in order):
+
+```sh
+PY=~/netdoctor-venv/bin/python; C=~/bbport/tools/discord/iosefka_cull.py
+$PY $C harvest                         # store everything; rerun to resume (exit 3 = disk low, rerun later)
+$PY $C verify                          # exit 1 on any corrupt file
+$PY $C report --out ~/cull-report.txt  # dry run
+$PY $C starter-test --thread <id>      # NW_DELETE=1: deletes a test post's starter, checks the post survives
+NW_DELETE=1 $PY $C cull [--limit N]    # needs a confirmed PC export of every file (see CLINIC.md)
+$PY $C announce --channels general,help --dry-run     # preview
+$PY $C announce --channels announcements,general,help --everyone announcements --yes   # post, pin, @everyone only in announcements
+```
+
+Developer access over SSH: `tools/discord/CLINIC.md`.
