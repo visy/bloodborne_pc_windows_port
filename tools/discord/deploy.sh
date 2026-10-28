@@ -1,12 +1,15 @@
 #!/bin/sh
 # Deploy Iosefka on quad.fi: pull, test, restart, check. Any failure rolls back to the previous commit.
 #   sh tools/discord/deploy.sh [--dry-run]
-# Steps: 1 fetch + record the current commit   2 git pull --ff-only   3 clinic tests with the venv python
+# Rollback target: the commit the RUNNING bot started from ($CONF/running_commit, written by the bot in on_ready),
+# not the tree's HEAD (a half-done earlier run may have pulled already). Without that file HEAD before the pull.
+# Steps: 1 fetch + record the commit to roll back to   2 git pull --ff-only   3 clinic tests with the venv python
 # (pytest is installed into the venv with `uv pip install --python <venv python> pytest` when missing, else
 # `python -m pip install pytest`)   4 kill her process (exact pattern) and start it with keepalive.sh
 # 5 wait for the "netdoctor bot ready" line in bot.log   6 `iosefka_cli.py --as visy health`.
-# On failure: git reset --hard to the recorded commit, restart, and a health alert (Discord REST).
-# --dry-run only prints the steps (it still reads the current commit when the repo is there).
+# On failure before the restart (fetch, pull, tests): git reset --hard to the recorded commit, NO restart (the
+# running process keeps running the old code), one health alert (Discord REST). On failure after the restart:
+# reset, restart, alert. --dry-run only prints the steps; it fetches, pulls, resets and restarts nothing.
 # Overrides: REPO, VENV, NETDOCTOR_DIR (config dir), READY_WAIT (seconds, default 90).
 DRY=0
 [ "$1" = "--dry-run" ] && DRY=1
@@ -25,12 +28,21 @@ run() {
     "$@"
 }
 
+RESTARTED=0
 PREV=""
+HEADNOW="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"
+RUNNING="$(cat "$CONF/running_commit" 2>/dev/null | tr -cd '0-9a-f')"
+if [ -n "$RUNNING" ] && git -C "$REPO" cat-file -e "$RUNNING^{commit}" 2>/dev/null; then
+    PREV="$RUNNING"
+else
+    [ -n "$RUNNING" ] && say "running_commit $RUNNING is not in $REPO, using HEAD"
+    PREV="$HEADNOW"
+fi
 if [ "$DRY" = 1 ]; then
     say "DRY RUN, nothing is changed"
-    PREV="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo '<current commit>')"
+    [ -n "$PREV" ] || PREV='<running commit>'
 else
-    PREV="$(git -C "$REPO" rev-parse HEAD)" || { say "no git repo at $REPO"; exit 1; }
+    [ -n "$PREV" ] || { say "no git repo at $REPO"; exit 1; }
 fi
 
 restart() {
@@ -57,15 +69,20 @@ wait_ready() {
 fail() {
     say "FAILED at step: $1"
     if [ "$DRY" = 1 ]; then
-        echo "  would run: git -C $REPO reset --hard $PREV"; echo "  would restart and send an alert"; exit 1
+        echo "  would run: git -C $REPO reset --hard $PREV"; echo "  would send an alert (restart only after step 4)"; exit 1
     fi
     git -C "$REPO" reset --hard "$PREV"
-    restart
-    "$PY" "$D/clinic_health.py" alert "deploy failed at '$1'; rolled back to ${PREV%${PREV#???????}}." || true
+    if [ "$RESTARTED" = 1 ]; then
+        restart
+        "$PY" "$D/clinic_health.py" alert "deploy failed at '$1'; rolled back to ${PREV%${PREV#???????}} and restarted." || true
+    else
+        say "bot not restarted: the running process keeps the old code"
+        "$PY" "$D/clinic_health.py" alert "deploy failed at '$1' before the restart; tree reset to ${PREV%${PREV#???????}}, the bot keeps running." || true
+    fi
     exit 1
 }
 
-say "1/6 fetch and record the current commit ($PREV)"
+say "1/6 fetch; roll back to the running commit ($PREV; tree HEAD is ${HEADNOW:-none})"
 run git -C "$REPO" fetch --quiet || fail fetch
 say "2/6 pull --ff-only"
 run git -C "$REPO" pull --ff-only --quiet || fail pull
@@ -80,6 +97,7 @@ else (cd "$REPO" && "$PY" -m pytest tests -q -k clinic) || fail tests; fi
 say "4/6 restart"
 START_SIZE=0
 [ "$DRY" = 1 ] || START_SIZE="$(wc -c < "$LOG" 2>/dev/null || echo 0)"
+RESTARTED=1
 restart
 say "5/6 ready line"
 wait_ready || fail "ready line"
