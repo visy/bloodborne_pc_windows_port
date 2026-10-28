@@ -451,3 +451,48 @@ less than 1.5 GB free), `verify`, `report --out PATH`, `starter-test --thread ID
 links). Places the bot cannot read are logged as `no access: <place>` and counted, never fatal.
 A message holding a video is not deleted until the video has stills in the archive (stills are off while
 the archive is above 2.4 GiB or the disk has under 1 GB free; a warning goes to the first `staff*` channel).
+
+## Health, alerts and deploy
+
+Iosefka watches herself so nobody has to. Everything is stored in the clinic database (`nw_health`,
+`nw_alerts`, `nw_errors`, `nw_queue`).
+
+**Where reports go.** The daily report and every alert are posted in the thread `NETDOCTOR_HEALTH_THREAD`
+(default 1563914486996279387, "Iosefka's Triage" in #staff). She only SENDS there: the staff skip rule is
+unchanged, she never reads, archives or culls anything in `staff*` channels or threads. When Discord answers
+403/404 for the thread she logs that once and DMs the owner instead (`NETDOCTOR_ALERT_USER`, the Discord
+user id of visy; set it in `~/.config/netdoctor/env`). With neither, alerts are only logged.
+
+**Daily report** at `NETDOCTOR_HEALTH_AT` (default `08:30`) in `NETDOCTOR_HEALTH_TZ` (default
+`Europe/Helsinki`, DST-aware): uptime and restarts, jobs on time or overdue, errors in 24 h, disk, DB size,
+queue sizes, new bugs and logs. No player names, IPs or log lines. Send one now:
+`iosefka_cull.py health-report [--dry-run]` (the dry run prints it).
+
+**Alerts** (each kind at most once per 6 h, unless it was resolved and came back; none contains names, IPs
+or log lines): a new traceback in her own handling (deduplicated by first line, count per hour), an overdue
+job (hourly sweep > 2.5 h, outbox sender > 10 min, nightly backup > 30 h, Nightwatch sync via the last
+timestamp in `nw_sync.log` > 3 h or a failed last run), Forbidden on a place she needs (once per place),
+disk free < 2 GB, DB above 80% of its cap, `triage=pending` > 15, `unsure` > 15, failed integrity check,
+missing tools. A watchdog task checks every 5 minutes.
+
+**`health` command** (both devs): `ssh iosefka health [--text]` shows the last start, restarts, each job's
+last run, errors of the last 24 h (counts and first lines, IPs masked), disk free, DB size against the cap,
+queue sizes, open alerts, and versions (git commit, discord.py, python, 7z/unrar/ffmpeg present).
+
+**Start-up self-check** (on_ready, logged as `self-check: ...`): permissions per non-skipped place (view,
+read history, send, and manage messages when NW_DELETE=1), `PRAGMA quick_check`, and the 7z, unrar and ffmpeg
+programs. Problems are alerted.
+
+**Weekly DB upkeep** (about 05:00 local, every 7 days): `PRAGMA integrity_check`, WAL checkpoint(TRUNCATE),
+`VACUUM` only when free disk >= 2x the DB size.
+
+**Flood guard**: at most `NETDOCTOR_UPLOADS_PER_HOUR` (default 10, 0 = off) upload messages per author and
+hour are handled live in guild channels. The rest are stored in `nw_queue` and handled by the hourly sweep in
+order (before the catch-up scan): they are still archived and deleted, only later, and never dropped.
+
+**Deploy** on quad.fi: `sh ~/bbport/tools/discord/deploy.sh [--dry-run]`. It records the current commit,
+`git pull --ff-only`, runs `pytest tests -q -k clinic` with `~/netdoctor-venv` (pytest is installed there
+with `uv pip install --python ~/netdoctor-venv/bin/python pytest` if missing), kills her process by the exact
+pattern `[t]ools/discord/netdoctor_bot.py` and starts it with `keepalive.sh`, waits for the `netdoctor bot
+ready as` log line, then runs `iosefka_cli.py --as visy health`. Any failure resets to the recorded commit,
+restarts, and sends an alert (`clinic_health.py alert TEXT`, plain REST, same destination rules).

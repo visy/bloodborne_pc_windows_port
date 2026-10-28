@@ -12,6 +12,7 @@ be stopped and rerun (all state lives in the clinic database).
   iosefka_cull.py retest-asks --version V [--version W] [--track coop|nw] [--dry-run] [--yes]
                                                ask the reporters of fixed bugs to retest a released version
   iosefka_cull.py waiting-logs [--dry-run] [--yes]   one nudge at 14 idle days, close at 30 (the bot also does this hourly)
+  iosefka_cull.py health-report [--dry-run]    post the health report once now (thread NETDOCTOR_HEALTH_THREAD, else DM to NETDOCTOR_ALERT_USER)
   iosefka_cull.py announce --channels a,b [--everyone a] [--dry-run] --yes   post and pin Iosefka's announcement
 
 Exit codes: 0 ok, 1 failure, 2 refused (missing flag), 3 disk low (rerun later).
@@ -34,6 +35,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import clinic_discord as cd  # noqa: E402
+import clinic_health  # noqa: E402
 import clinic_store  # noqa: E402
 
 voice, logic = cd.voice, cd.logic
@@ -465,6 +467,24 @@ async def announce(guilds, names, *, dry_run, yes, everyone=(), out=print):
     return code
 
 
+async def health_report(clinic, client=None, dry_run=False, out=print):
+    """Send the daily health report once, now (not counted as today's report). Returns OK or FAIL."""
+    health = clinic_health.Health(clinic)
+    text = clinic_health.report_text(health.snapshot())
+    if dry_run or client is None:
+        out(text)
+        out("(dry run, nothing posted)")
+        return OK
+    dest = clinic_health.Deliver(client, allowed_mentions=cd.AllowedMentions.none(), out=out)
+    try:
+        where = await dest(text)
+    except Exception as e:
+        out(f"not delivered: {type(e).__name__}: {e}")
+        return FAIL
+    out(f"report posted ({where})")
+    return OK
+
+
 # --- entry -----------------------------------------------------------------------------------------------
 
 def _guilds(client):
@@ -550,6 +570,7 @@ def main(argv=None):
     w = sub.add_parser("waiting-logs")
     w.add_argument("--dry-run", action="store_true")
     w.add_argument("--yes", action="store_true")
+    sub.add_parser("health-report").add_argument("--dry-run", action="store_true")
     a = sub.add_parser("announce")
     a.add_argument("--channels", required=True)
     a.add_argument("--everyone", default="", help="comma list of those channels whose post starts with @everyone")
@@ -560,6 +581,18 @@ def main(argv=None):
     load_env()
     if args.phase == "announce" and args.dry_run:
         return asyncio.run(announce([], [], dry_run=True, yes=False))
+    if args.phase == "health-report":
+        clinic = clinic_store.Clinic(_load_bot().DB_PATH)
+        if args.dry_run:
+            return asyncio.run(health_report(clinic, dry_run=True))
+        token = os.environ.get("NETDOCTOR_TOKEN")
+        if not token:
+            print("set NETDOCTOR_TOKEN", file=sys.stderr)
+            return FAIL
+
+        async def send_report(client):
+            return await health_report(clinic, client)
+        return _run_client(token, send_report)
     if args.phase in ("retest-asks", "waiting-logs"):
         return _asks_phase(args)
     if args.phase == "cull" and os.environ.get("NW_DELETE") != "1":
