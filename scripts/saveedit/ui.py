@@ -17,6 +17,7 @@ RISK_WARNING = ("Editing a save can make the game crash or break the save (cut c
                 "made automatically before every write, and Backups... puts it back.\n\nContinue?")
 PARTY_WARNING = ("This is a party save. In a party, shared progress (lamps, bosses, quests, key items) follows "
                  "the host: what you change here can be overwritten or undone at the next join.\n\nContinue?")
+EMPTY_WEAPONS = (1000, 1000000)  # Bare Fists and its left-hand twin: what an empty hand slot holds
 KIND_FILTERS = (("All", None), ("Weapons", 0), ("Armor", 1), ("Items", 4), ("Runes and gems", 8))
 NAMES = {"vigor": "Vitality", "endurance": "Endurance", "strength": "Strength", "skill": "Skill",
          "bloodtinge": "Bloodtinge", "arcane": "Arcane"}
@@ -118,7 +119,7 @@ class SaveEditorTab(ttk.Frame):
         self.tree.heading("kind", text="Kind")
         self.tree.heading("count", text="Count")
         self.tree.heading("level", text="Level")
-        self.tree.column("#0", width=300)
+        self.tree.column("#0", width=340)
         for c, w in (("kind", 90), ("count", 60), ("level", 50)):
             self.tree.column(c, width=w, anchor="w")
         self.tree.grid(row=1, column=0, sticky="nsew", pady=6)
@@ -279,13 +280,20 @@ class SaveEditorTab(ttk.Frame):
         want = dict(KIND_FILTERS)[self.filter_var.get()]
         text = self.search_var.get().lower()
         rows = []
+        empty_weapons = 0
         for it in self.model.items():
+            if it.category == 0 and it.number in EMPTY_WEAPONS:
+                empty_weapons += 1  # the bare-hand placeholder entries: not real weapons
+                continue
             if want is not None and it.category != want:
                 continue
             name = self._item_name(it)
             if text and text not in name.lower() and text not in str(it.number):
                 continue
             rows.append((self.catalogue.name(it.category, it.number) is None, it.section, it.category, name, it))
+        if empty_weapons and want in (None, 0) and not text:
+            self.tree.insert("", "end", iid="empty", text=f"(empty weapon slot x{empty_weapons}, bare hands)",
+                             values=("(empty)", "", ""))
         for unnamed, sec, cat, name, it in sorted(rows, key=lambda r: (r[0], r[1], r[2], r[3])):
             kind = it.kind + (" (key)" if it.section else "")
             self.tree.insert("", "end", iid=f"{it.section}:{it.slot}", text=name,
@@ -293,7 +301,7 @@ class SaveEditorTab(ttk.Frame):
 
     def _selected_item(self):
         sel = self.tree.selection()
-        if not sel:
+        if not sel or sel[0] == "empty":
             return None
         sec, slot = (int(x) for x in sel[0].split(":"))
         return next((i for i in self.model.items((sec,)) if i.slot == slot), None)
@@ -337,12 +345,17 @@ class SaveEditorTab(ttk.Frame):
         self.flag_tree.delete(*self.flag_tree.get_children())
         if self.model is None:
             return
-        rows = {"Bosses": F.bosses, "Lamps": F.lamps, "Endings": F.endings}[self.group_var.get()]()
-        for fid, label in rows:
-            self.flag_tree.insert("", "end", iid=str(fid), text=label, values=("yes" if self.model.flag(fid) else "no",))
+        which = self.group_var.get()
+        rows = F.bosses(self.catalogue) if which == "Bosses" else F.lamps(self.catalogue) if which == "Lamps" else F.endings()
+        groups = {}
+        for fid, group, label in rows:
+            if group not in groups:
+                groups[group] = self.flag_tree.insert("", "end", iid=f"g:{group}", text=group, open=True)
+            self.flag_tree.insert(groups[group], "end", iid=str(fid), text=label,
+                                  values=("yes" if self.model.flag(fid) else "no",))
 
     def toggle_flag(self):
-        sel = self.flag_tree.selection()
+        sel = [i for i in self.flag_tree.selection() if not i.startswith("g:")]
         if sel and self._risk():
             fid = int(sel[0])
             self.model.set_flag(fid, not self.model.flag(fid))
@@ -350,7 +363,7 @@ class SaveEditorTab(ttk.Frame):
 
     def light_lamps(self):
         if self._risk():
-            for fid, _ in F.lamps():
+            for fid in F.LAMP_IDS:
                 self.model.set_flag(fid, True)
             self.fill_flags()
 

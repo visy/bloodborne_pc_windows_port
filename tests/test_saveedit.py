@@ -408,6 +408,8 @@ def test_flag_lists_match_party_session():
     assert F.BOSS_IDS == ps.BOSS_FLAGS and F.LAMP_IDS == ps.LAMP_FLAGS and F.ENDING_IDS == ps.ENDING_FLAGS
     assert all(M.group_key(f) is not None for f in F.BOSS_IDS + F.LAMP_IDS + F.ENDING_IDS)
     assert len(F.bosses()) == 19 and len(F.lamps()) == 28
+    assert F.lamps()[0][1] == "Abandoned Old Workshop" and F.bosses()[4][1:] == ("Cathedral Ward", "Boss [12401800]")
+    assert {g for _, g, _ in F.bosses() + F.lamps()} <= set(F.AREAS.values())
     assert M.group_key(12401800) == party_group(12401800)
 
 
@@ -485,3 +487,24 @@ def test_tab_refuses_while_game_runs(user, tmp_path, monkeypatch):
 @pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
 def test_catalogue_accepts_the_eboot_folder(tmp_path):
     assert N.Catalogue.load(GAME.parent, tmp_path).ok
+
+
+def test_lamp_and_boss_names_from_the_catalogue():
+    from saveedit import flagsdata as F
+    c = N.Catalogue({"names": {"lamp": {"70002410": "1st Floor Sickroom", "70002401": "Grand Cathedral"},
+                               "npc": {"502000": "Vicar Amelia"}}, "ids": {}})
+    assert c.lamp_name(72410200) == "1st Floor Sickroom" and c.lamp_name(72400201) == "Grand Cathedral"
+    assert c.lamp_name(72500200) is None
+    lamps = {f: l for f, g, l in F.lamps(c)}
+    assert lamps[72410200] == "1st Floor Sickroom [72410200]" and lamps[72500200] == "Lamp 1 [72500200]"
+    assert dict((f, l) for f, g, l in F.bosses(c))[12401800] == "Vicar Amelia [12401800]"
+
+
+@pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
+def test_real_names_of_lamps_and_bosses(tmp_path):
+    from saveedit import flagsdata as F
+    c = N.Catalogue.load(GAME, tmp_path)
+    assert all(c.lamp_name(f) for f in F.LAMP_IDS)  # every lamp flag has a warp-list name
+    assert c.lamp_name(72410200) == "1st Floor Sickroom" and c.lamp_name(72110200) == "Abandoned Old Workshop"
+    named = [c.boss_name(chr_id) for chr_id in F.BOSS_CHR.values() if chr_id]
+    assert all(named) and "Vicar Amelia" in named and "Orphan of Kos" in named
