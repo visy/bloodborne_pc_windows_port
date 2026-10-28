@@ -121,11 +121,23 @@ python tools/mp/smoke_party.py --real-net --only join          # same steps on a
   default 30). A phase's own `"fps"` (rh, rs, fw*, fh: 60, the rate of the report) is only its default
   and yields to the sweep; `"fps_fixed": True` would pin it. The group `physics` is the lift / ladder /
   elevator / fall set (`lifts ladder elevator lifts_together cainhurst_lift research_lift research_solo
-  forbidden_lift* hemwick_lift fall fall_deep host_fall_lamp frontier_fall`):
-  `python tools/mp/smoke_party.py --only physics --fps 30,60,90,60/30`.
-  A maid-dress (Cainhurst cloth) check is not written yet; it would be a screenshot-based visual phase at
-  the Cainhurst maids (a new phase function in `PHASES`, a `GROUPS`/`GROUP_ROWS`/`GROUP_UNTIL` entry, the
-  group name added to `PHYSICS_GROUPS`), with the screenshots compared per `fps*` folder.
+  forbidden_lift* hemwick_lift fall fall_deep host_fall_lamp frontier_fall cainhurst_maid`):
+  `python tools/mp/smoke_party.py --only physics --fps 30,60,90,120,60fg,60/30`.
+  **Frame generation**: a rate with the suffix `fg` runs FSR frame generation 2x on that instance (`60fg`,
+  `60fg/30` = host 60 + FG, guests 30 without, `uncapfg`; `fgdlss` = DLSS, RTX 40/50 only); BB_FPS is then the
+  rendered rate. instances.py sets `BB_FRAME_GENERATION=2x BB_FG_BACKEND=fsr BB_FG_TIMING=1` (and
+  `BB_FRAME_GENERATION=off` without the suffix, so an old bbport.ini cannot turn it on), plus
+  `BB_FRAME_RATE_LOG=10` for every instance. The summary's `measured` lines are the games' own rates (game
+  steps per s; rendered / presented per s with FG) and `FRAME GENERATION NOT RUNNING` (exit 1) when an
+  `fg` instance logged no `Frame generation: FSR 2x on` or presented less than 1.5x its rendered rate. The
+  on-screen counter shows it too (`115 FPS`, `FG 102 / 57 rendered`). Headless instances never run FG.
+- **Cainhurst maids' dress** (`md`, group `cainhurst_maid`, 1 player; report NW-e05d435): the host stands in
+  the library hall among the maids (chr c2150), locks on, hits one. Frame analyzer records (`host_gfx=cap`,
+  `BB_CAPTURE_MESH_COUNTS` = the c2150 face-set index counts, `tools/mp/flver_meshes.py`) before and after
+  the hit list every maid mesh draw with its buffers' statistics; the verdict: every maid drawn with her
+  body also draws her dress (`Material #2`) and cloth meshes (`BD_cloth`, `AM_cloth`) at that LOD. A skirt
+  drawn with collapsed vertices instead of not at all is not caught by it (the records' `vertex stream`
+  boxes and NaN counts are where to look).
 - **Every fix adds or extends a phase** so the bug it fixed stays covered (for example the
   Forbidden Woods lift got `fw`, `fwg`, `fwb`, `fwe` when it was fixed).
 

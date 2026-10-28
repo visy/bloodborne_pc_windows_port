@@ -45,6 +45,14 @@ public:
     /// Contents of a bound buffer (first 1 KiB), kept for small passes and a pass's first draw.
     static void Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size);
     static void Note(const char* text);
+    /// BB_CAPTURE_MESH_COUNTS=N[,N...] (diagnostic): draws of these index counts (a chr mesh's face
+    /// sets, tools/mp/flver_meshes.py) are listed at the end of a record with the statistics of every
+    /// buffer they read: their vertex streams (the first three floats of each element: the position's
+    /// box, NaN count) and their bound constants / storage (NaN, Inf, largest magnitude, zero floats).
+    /// Says whether a mesh that is not seen was drawn with collapsed or broken data.
+    static bool WantsMesh(u32 num_indices);
+    static void Vertex(u32 stream, VAddr address, const void* data, u64 size, u32 stride, bool gpu_written,
+                       bool cpu_modified);
 
     /// BB_DRAW_SKIP_FILE (diagnostic, off by default): draws whose vertex or pixel shader hash
     /// is listed in the file (hex, whitespace-separated; re-read at a flip when it changes) are
