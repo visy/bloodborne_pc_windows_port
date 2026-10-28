@@ -115,7 +115,7 @@ $PY $C report --out ~/cull-report.txt  # dry run
 $PY $C starter-test --thread <id>      # NW_DELETE=1: deletes a test post's starter, checks the post survives
 NW_DELETE=1 $PY $C cull [--limit N]    # needs a confirmed PC export of every file (see CLINIC.md)
 $PY $C announce --channels general,help --dry-run     # preview
-$PY $C announce --channels general,help --yes         # post and pin
+$PY $C announce --channels announcements,general,help --everyone announcements --yes   # post, pin, @everyone only in announcements
 ```
 
 Developer access over SSH: `tools/discord/CLINIC.md`.
