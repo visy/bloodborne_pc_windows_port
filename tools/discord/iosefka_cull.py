@@ -8,6 +8,9 @@ be stopped and rerun (all state lives in the clinic database).
   iosefka_cull.py report --out PATH            dry run: what the cull would replace (no deletions)
   iosefka_cull.py starter-test --thread ID     delete the starter of a test post, check the post survives
   iosefka_cull.py cull [--limit N]             replace + delete the messages holding logs (needs NW_DELETE=1)
+  iosefka_cull.py retest-asks --version V [--version W] [--track coop|nw] [--dry-run] [--yes]
+                                               ask the reporters of fixed bugs to retest a released version
+  iosefka_cull.py waiting-logs [--dry-run] [--yes]   one nudge at 14 idle days, close at 30 (the bot also does this hourly)
   iosefka_cull.py announce --channels a,b [--everyone a] [--dry-run] --yes   post and pin Iosefka's announcement
 
 Exit codes: 0 ok, 1 failure, 2 refused (missing flag), 3 disk low (rerun later).
@@ -442,6 +445,40 @@ def _run_client(token, work):
     return box.get("code", FAIL)
 
 
+def _asks_phase(args):
+    import clinic_asks
+    bot = _load_bot()
+    clinic = clinic_store.Clinic(bot.DB_PATH)
+    if args.phase == "retest-asks":
+        hint = {"coop": " co-op", "nw": " Nightwatch"}.get(args.track, "")
+        text = " ".join(args.version) + hint
+
+        async def run(ctx):
+            res = await clinic_asks.send_retest_asks(ctx, text, dry_run=args.dry_run)
+            print(f"{len(res)} bug(s)" + (" (dry run, nothing posted)" if args.dry_run else ""))
+            return OK
+    else:
+        async def run(ctx):
+            nudged, closed = await clinic_asks.sweep_waiting(ctx, dry_run=args.dry_run)
+            print(f"{len(nudged)} nudge(s), {len(closed)} close(s)" + (" (dry run, nothing changed)" if args.dry_run else ""))
+            return OK
+    if args.dry_run:
+        return asyncio.run(run(bot.Ctx(clinic, live=True, tmp_root=tmp_root())))
+    if not args.yes:
+        print("this posts in Discord: add --yes (preview with --dry-run)")
+        return REFUSED
+    token = os.environ.get("NETDOCTOR_TOKEN")
+    if not token:
+        print("set NETDOCTOR_TOKEN", file=sys.stderr)
+        return FAIL
+    gid = os.environ.get("NETDOCTOR_GUILD")
+
+    async def work(client):
+        return await run(bot.Ctx(clinic, live=True, tmp_root=tmp_root(), client=client,
+                                 guild_id=int(gid) if gid else None))
+    return _run_client(token, work)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="phase", required=True)
@@ -454,6 +491,14 @@ def main(argv=None):
     s.add_argument("--thread", type=int, required=True)
     c = sub.add_parser("cull")
     c.add_argument("--limit", type=int)
+    t = sub.add_parser("retest-asks")
+    t.add_argument("--version", action="append", required=True)
+    t.add_argument("--track", choices=("coop", "nw"))
+    t.add_argument("--dry-run", action="store_true")
+    t.add_argument("--yes", action="store_true")
+    w = sub.add_parser("waiting-logs")
+    w.add_argument("--dry-run", action="store_true")
+    w.add_argument("--yes", action="store_true")
     a = sub.add_parser("announce")
     a.add_argument("--channels", required=True)
     a.add_argument("--everyone", default="", help="comma list of those channels whose post starts with @everyone")
@@ -464,6 +509,8 @@ def main(argv=None):
     load_env()
     if args.phase == "announce" and args.dry_run:
         return asyncio.run(announce([], [], dry_run=True, yes=False))
+    if args.phase in ("retest-asks", "waiting-logs"):
+        return _asks_phase(args)
     if args.phase == "cull" and os.environ.get("NW_DELETE") != "1":
         print("cull deletes messages: set NW_DELETE=1 (and run `report` first)")
         return REFUSED
