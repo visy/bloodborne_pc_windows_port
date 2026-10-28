@@ -342,16 +342,10 @@ async def dispatch_message(message, ctx):
 
 
 async def handle_text_message(message, ctx, *, live):
-    """A message with no files: by an NW id, a reply, its thread or the reporter's own 24 h follow-up it may
-    belong to a bug; then its words are stored there (it stays on the server, nothing is posted). A short
-    reaction tells the poster it was noticed (live duty with posting on, not for thread follow-ups)."""
-    got = cd.link_text(ctx.clinic, message)
-    if got and live and ctx.delete and got[1] != "thread":
-        try:
-            await message.add_reaction(cd.REACT)
-        except Exception as e:
-            print(f"no reaction on {message.id}: {type(e).__name__}", flush=True)
-    return got
+    """A message with no files: by an NW id, a reply, its thread or the reporter's own follow-up it may
+    belong to a bug; then its words are stored there. Silent: it stays on the server, nothing is posted and
+    no reaction is added (a reaction on every "thanks" read as noise to the players)."""
+    return cd.link_text(ctx.clinic, message)
 
 
 async def handle_raw_edit(payload, ctx):

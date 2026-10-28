@@ -307,6 +307,11 @@ class Clinic:
                 out.append((last["created"], b["id"]))
         return [i for _, i in sorted(out, reverse=True)]
 
+    def followups(self, bug_id):
+        """How many messages joined this bug by the plain-channel follow-up rule."""
+        return self.db.execute("SELECT COUNT(*) FROM nw_notes WHERE bug_id=? AND kind='auto-link' AND "
+                               "text LIKE 'followup rule:%'", (bug_id,)).fetchone()[0]
+
     def move_message(self, message_id, bug_id):
         """Re-point one message (and so its files) to another bug; returns the old bug id."""
         row = self.db.execute("SELECT bug_id FROM nw_messages WHERE message_id=?", (message_id,)).fetchone()
