@@ -177,7 +177,7 @@ struct TravelStep {
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
         HostSpfx, // host_spfx=ENTITY:ID: SpEffect ID on that entity's chr by its ApplySpEffect (D7 doping dedupe)
         HostPoise, // host_poise=N: the Enemy poise setting (party_enemy_poise, % of the step) set live, not saved (D7 A/B)
-        HostGfx,   // host_gfx=lod:N|cap|log: graphics test aid (model LOD bias, frame record, camera values; GfxTestStep)
+        HostGfx,   // host_gfx=lod:N|cap|stallcap|log: graphics test aid (model LOD bias, frame record, camera values; GfxTestStep)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestFixture, // guest_fixture@S: the BB_PARTY_WORLDACT_TEST objects / pickups again (worldact::FixtureRearm)
@@ -1403,7 +1403,13 @@ void GfxTestStep(const std::string& arg) {
         const std::int32_t want = std::clamp(std::atoi(arg.c_str() + 4), -2, 2);
         SafeWrite(cfg + 0x530, &want, sizeof want);
         Log("test: host_gfx: model LOD bias %d -> %d", bias, want);
-    } else if (arg == "cap") {
+    } else if (arg == "cap" || arg == "stallcap") {
+        // stallcap: the next frame stalls (BB_TEST_FRAME_STALL_FILE, bbport_frame_rate.cpp) and the record follows
+        if (arg == "stallcap") {
+            if (const char* path = std::getenv("BB_TEST_FRAME_STALL_FILE"); path && *path) {
+                if (FILE* f = std::fopen(path, "w")) std::fclose(f);
+            }
+        }
         for (const char* env : {"BB_CAPTURE_TRIGGER", "BB_PRESENT_DUMP_TRIGGER"}) {
             if (const char* path = std::getenv(env); path && *path) {
                 if (FILE* f = std::fopen(path, "w")) std::fclose(f);
