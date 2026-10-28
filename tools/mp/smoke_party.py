@@ -4291,6 +4291,71 @@ def fps_summary(results, entries):
     return "\n".join(lines), sensitive
 
 
+FR_LINE = re.compile(r"Frame rate: [\d.]+ s real, \d+ steps \(([\d.]+) per s\)")
+FG_LINE = re.compile(r"FG pacing: source ([\d.]+) presented ([\d.]+)")
+FG_STATE = re.compile(r"Frame generation: (\w+) (?:(\d)x on|unavailable)")
+
+
+def _median(xs):
+    xs = sorted(xs)
+    return xs[len(xs) // 2] if xs else None
+
+
+def measured_rates(lines):
+    """One instance's log lines -> what it really ran: {'steps': median game steps per s (the frame-rate
+    hooks' BB_FRAME_RATE_LOG lines; None at the game's own 30), 'fg': 'FSR 2x on' / 'FSR unavailable' /
+    None (no frame-generation line), 'source' / 'presented': median FG pacing rates per s}. The first
+    samples (start, loading) are dropped when there are more than four."""
+    steps = [float(m.group(1)) for m in map(FR_LINE.search, lines) if m]
+    fg = [(float(m.group(1)), float(m.group(2))) for m in map(FG_LINE.search, lines) if m]
+    if len(steps) > 4:
+        steps = steps[2:]
+    if len(fg) > 4:
+        fg = fg[2:]
+    state = None
+    for ln in lines:
+        m = FG_STATE.search(ln)
+        if m:
+            state = "%s %sx on" % (m.group(1), m.group(2)) if m.group(2) else "%s unavailable" % m.group(1)
+    return {"steps": _median(steps), "fg": state, "source": _median([x[0] for x in fg]),
+            "presented": _median([x[1] for x in fg])}
+
+
+def measured_summary(sub, entry):
+    """A sweep entry's out dir -> (text lines: per instance what it ran, over every phase's logs; problems:
+    frame generation asked but not on)."""
+    sys.path.insert(0, str(HERE))
+    import instances as _inst
+    want_fg = _inst.parse_fg(entry, 4)
+    per = {}
+    for log in sorted(Path(sub).glob("*/inst[0-9].log")):
+        i = int(log.stem[-1])
+        try:
+            meta = json.loads((log.parent / "instances.json").read_text())
+            drawn = i < meta["count"] - meta["headless"]
+        except (OSError, ValueError, KeyError):
+            drawn = True
+        r = measured_rates(log.read_text(encoding="utf-8", errors="replace").splitlines())
+        r["drawn"] = drawn  # headless: no present, no frame generation
+        per.setdefault(i, []).append(r)
+    lines, problems = [], []
+    for i in sorted(per):
+        rs = per[i]
+        steps = _median([r["steps"] for r in rs if r["steps"]])
+        fg = next((r["fg"] for r in rs if r["fg"]), None)
+        src = _median([r["source"] for r in rs if r["source"]])
+        pres = _median([r["presented"] for r in rs if r["presented"]])
+        text = "inst%d: game steps %s/s" % (i, "%.1f" % steps if steps else "30 (own rate)")
+        if want_fg[i] and any(r["drawn"] for r in rs):
+            text += ", frame generation %s" % (fg or "NO LOG LINE")
+            if src and pres:
+                text += " (rendered %.1f, presented %.1f per s)" % (src, pres)
+            if not fg or "on" not in fg or not (src and pres and pres > 1.5 * src):
+                problems.append("@%s inst%d: frame generation asked, not running (%s)" % (entry, i, fg or "no log line"))
+        lines.append(text)
+    return lines, problems
+
+
 def run_phase(a, ph, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     root = Path(a.root)
@@ -4386,6 +4451,8 @@ def run_phase(a, ph, out: Path):
         with open(p, "rb") as f:
             f.seek(starts[i][1] if os.fstat(f.fileno()).st_ino == starts[i][0] else 0)
             (out / f"inst{i}.log").write_bytes(f.read())
+    # the sweep's measured rates: which instances drew (a headless one runs no frame generation)
+    (out / "instances.json").write_text(json.dumps({"count": ph.get("count", 3), "headless": ph.get("headless", 1)}))
     try:
         (root / "noreap").unlink()
     except OSError:
@@ -6813,7 +6880,7 @@ def sweep_main(a, only):
         k = [i for i, t in enumerate(base) if t == "--only"]
         if len(k) > 1:  # the original --only stays first: drop it, keep the expanded one
             del base[k[0]:k[0] + 2]
-    results, codes = {}, {}
+    results, codes, measured = {}, {}, {}
     for e in entries:
         sub = out / fps_dir_name(e)
         print("[smoke] === frame rate %s -> %s" % (e, sub), flush=True)
@@ -6825,11 +6892,20 @@ def sweep_main(a, only):
             except (OSError, ValueError):
                 continue
             results[e][rj.parent.name] = [sum(1 for r in rows if r[1]), sum(1 for r in rows if not r[1])]
+        measured[e] = measured_summary(sub, e)
     text, sensitive = fps_summary(results, entries)
+    problems = []
+    text += "\nmeasured (the games' own rate lines, median over the phases):"
+    for e in entries:
+        ml, pr = measured.get(e, ([], []))
+        text += "\n  @%s: %s" % (e, "; ".join(ml) or "no logs")
+        problems += pr
+    if problems:
+        text += "\nFRAME GENERATION NOT RUNNING: " + "; ".join(problems)
     out.mkdir(parents=True, exist_ok=True)
     (out / "fps_summary.txt").write_text(text + "\n", encoding="utf-8")
     print("\n[smoke] frame-rate sweep summary\n" + text + "\n[smoke] " + str(out / "fps_summary.txt"), flush=True)
-    sys.exit(1 if any(codes.values()) or any(r[1] for d in results.values() for r in d.values()) else 0)
+    sys.exit(1 if problems or any(codes.values()) or any(r[1] for d in results.values() for r in d.values()) else 0)
 
 
 def main():
@@ -6841,8 +6917,8 @@ def main():
     ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--fps", default=None,
-                    help="frame-rate sweep: comma list, each one rate or a per-instance mix: 30,60,90,60/30 (60/30 = host "
-                         "at 60, guests at 30). The phases run once per entry into <out>/fps<entry, / -> x>, then one "
+                    help="frame-rate sweep: comma list, each one rate or a per-instance mix: 30,60,90,120,60fg,60/30 (60/30 = host "
+                         "at 60, guests at 30; a fg suffix = FSR frame generation 2x on that rate: 60fg, 60fg/30, uncapfg). The phases run once per entry into <out>/fps<entry, / -> x>, then one "
                          "summary. Without it: BB_MP_FPS (default 30), a phase's own fps")
     ap.add_argument("--sweep-fps", default=None, help=argparse.SUPPRESS)  # one sweep entry (a --fps child run)
     ap.add_argument("--check-only", action="store_true")
