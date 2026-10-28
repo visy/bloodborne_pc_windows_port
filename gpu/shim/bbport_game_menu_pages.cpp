@@ -1523,9 +1523,9 @@ void DefineAll() {
     scale_row(&Values::party_boss_poise, kPoiseTable, "Boss poise", "Стойкость боссов", 2);
     scale_row(&Values::party_enemy_poise, kPoiseTable, "Enemy poise", "Стойкость врагов", 5);
 
-    // ---- Party rules: Bosses (0.7.7, bosstarget): a boss turns on every player in reach in turn. The
+    // ---- My party: Bosses (0.7.7, bosstarget): a boss turns on every player in reach in turn. The
     // switch acts on the host's game (the boss AI's owner); a guest's value is unused. ----
-    AddPage("Party rules: Bosses", "Правила: боссы",
+    AddPage("My party: Bosses", "Моя группа: боссы",
             "Host's rule: bosses turn on every hunter in reach in turn, not only on one (bbport)",
             "Правило хоста: боссы поочерёдно атакуют каждого охотника поблизости (bbport)");
     own(&Values::party_boss_share, "Bosses share attention", "Боссы делят внимание",

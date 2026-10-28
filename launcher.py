@@ -235,11 +235,6 @@ PARTY_RULES_TAB = [
          "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
          "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
          "System > Party rules: World)."),
-        ("check", "party_boss_share", "Bosses share their attention",
-         "In a party boss fight the boss turns on each player within reach in turn (about every eight "
-         "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
-         "few metres further is attacked too. The host's game decides it. Default: on (bbport.ini "
-         "party_boss_share; in the game: System > Party rules: Bosses)."),
         ("check", "party_travel_vote", "Party votes on travel",
          "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
          "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
@@ -405,6 +400,13 @@ MY_PARTY_TAB_TITLE = "My Party"
 MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what the party brings into your own save "
                       "and items, and your saves. Each player chooses them for itself (in the game: System > My party).")
 MY_PARTY_TAB = [
+    (0, 1, "Bosses", [
+        ("check", "party_boss_share", "Bosses share their attention",
+         "In a party boss fight the boss turns on each player within reach in turn (about every eight "
+         "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
+         "few metres further is attacked too. Takes effect when you host. Default: on (bbport.ini "
+         "party_boss_share; in the game: System > My party: Bosses)."),
+    ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
          "Your companions' names and health in the bottom left corner of the game, "
