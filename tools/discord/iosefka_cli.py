@@ -25,6 +25,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import clinic_changes  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_cl  # noqa: E402
 from clinic_logic import mask_ips  # noqa: E402
@@ -158,7 +159,8 @@ def _summary(c, b):
     notes = c.notes(b["id"])
     last = notes[-1] if notes else None
     return {"id": b["id"], "title": b["title"], "status": b["status"], "tags": b["tags"],
-            "assignee": b["assignee"], "created": _iso(b["created"]), "updated": _iso(b["updated"]),
+            "assignee": b["assignee"], "reported": _iso(b["reported"]), "filed": _iso(b["created"]),
+            "created": _iso(b["created"]), "updated": _iso(b["updated"]),
             "counts": c.counts(b["id"]), "nd_refs": json.loads(b["nd_refs"] or "[]") if isinstance(
                 b["nd_refs"], str) else b["nd_refs"], "dup_of": b["dup_of"],
             "last_note": {"who": last["who"], "kind": last["kind"], "at": _iso(last["at"]),
@@ -203,11 +205,13 @@ def _query(c, a):
     bugs = c.bugs(status=a.status or None, tag=a.tag or None, q=a.q, since=since,
                   assignee=a.assignee, exclude_status=CLOSED if a.open else None)
     if older is not None:
-        bugs = [b for b in bugs if b["created"] < older]
+        bugs = [b for b in bugs if b["reported"] < older]
     if idle is not None:
         bugs = [b for b in bugs if _last_activity(b) < idle]
     if a.sort == "oldest":
-        bugs.sort(key=lambda b: b["created"])
+        bugs.sort(key=lambda b: (b["reported"], b["id"]))
+    elif a.sort == "newest":
+        bugs.sort(key=lambda b: (b["reported"], b["id"]), reverse=True)
     elif a.sort == "activity":
         bugs.sort(key=_last_activity, reverse=True)
     return bugs
@@ -286,12 +290,13 @@ def _text_out(out, cmd, data):
     lines = []
     if cmd == "cl" and isinstance(data, list) and all("section" in x for x in data):
         for i in data:
-            lines.append(f"{i['id']}  {i['track']} {i['version']}  {i['status']}  {i['section']}  {i['text']}")
+            lines.append(f"{i['id']}  {i['track']} {i['version']}  {i['status']}  {i['section']}  "
+                         f"{(i.get('dated') or '-')[:10]}  {i['text']}")
     elif cmd in ("list", "new", "triage-queue") and "bugs" in data or cmd == "list":
         bugs = data if isinstance(data, list) else data["bugs"]
         for b in bugs:
             k = b["counts"]
-            lines.append(f"{b['id']}  {b['status']:<12} {b['title']}  "
+            lines.append(f"{b['id']}  {b['status']:<12} {(b['reported'] or '-')[:10]}  {b['title']}  "
                          f"[{k['messages']} msg, {k['logs']} log, {k['images']} img, {k['stills']} still]")
         if cmd == "triage-queue":
             for n in data["auto_links"]:
@@ -307,6 +312,7 @@ def _text_out(out, cmd, data):
     elif cmd == "show":
         b = data["bug"]
         lines.append(f"{b['id']}  {b['status']}  {b['title']}")
+        lines.append(f"reported: {b['reported']}  filed: {b['filed']}")
         lines.append(f"tags: {json.dumps(b['tags'])}  assignee: {b['assignee']}")
         for n in data["notes"]:
             lines.append(f"  [{n['at']}] {n['who']} {n['kind']}: {n['text']}")
@@ -408,6 +414,10 @@ def _do_import(c, who, stdin, out):
             title = str(case["title"])
         except (ValueError, KeyError, TypeError):
             raise CliError(f"bad case.json in {folder or '.'}")
+        try:
+            reported = clinic_changes.parse_when(case.get("reported"), "reported")
+        except ValueError as e:
+            raise CliError(f"bad case.json in {folder or '.'}: {e}")
         bug_id = c.new_bug(title, "local", 0, None)
         tags = case.get("tags") or {}
         status = case.get("status")
@@ -423,7 +433,7 @@ def _do_import(c, who, stdin, out):
             sha = c.put_file(data, _safe_name(fn), kind)
             atts.append({"sha256": sha, "filename": _safe_name(fn), "kind": kind, "size": len(data)})
         low = c.db.execute("SELECT MIN(message_id) FROM nw_messages").fetchone()[0] or 0
-        c.upsert_message({"message_id": min(low, 0) - 1, "author_name": "local", "created": time.time(),
+        c.upsert_message({"message_id": min(low, 0) - 1, "author_name": "local", "created": reported or time.time(),
                           "content": str(case.get("text", "")), "attachments": atts, "bug_id": bug_id,
                           "state": "kept"})
         for n in case.get("notes") or []:

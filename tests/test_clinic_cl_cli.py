@@ -23,7 +23,7 @@ def test_cl_add_list_show(tmp_path):
     assert d["bugs"][0]["id"] == b and d["bugs"][0]["title"] == "Chalice lamp stays dark"
     assert any(n["kind"] == "add" and n["who"] == "vlad" for n in d["notes"])
     code, out = run(db, "vlad", "cl", "list", "--text")
-    assert code == 0 and out.decode().startswith(f"{it['id']}  coop 0.7.7  planned  fixed  Guest lamp")
+    assert code == 0 and out.decode().startswith(f"{it['id']}  coop 0.7.7  planned  fixed  -  Guest lamp")
     assert run(db, "vlad", "cl", "show", "CL-ffffff")[0] == 1
     assert run(db, "vlad", "cl", "show", "nope")[0] == 2
     assert run(db, "vlad", "cl", "add", "coop", "0.7.7", "bogus", "x")[0] == 2
@@ -123,6 +123,7 @@ def test_list_age_and_sort(tmp_path):
     for bid, created, act in ((a, now - 20 * day, now - 1 * day), (b, now - 12 * day, now - 9 * day),
                               (d, now - 2 * day, now - 2 * day)):
         c.db.execute("UPDATE nw_bugs SET created=?, activity=?, updated=? WHERE id=?", (created, act, act, bid))
+        c.db.execute("UPDATE nw_messages SET created=? WHERE bug_id=?", (created, bid))  # reported follows
     c.db.commit()
 
     def ids(*x):

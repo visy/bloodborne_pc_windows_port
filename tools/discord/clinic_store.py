@@ -48,10 +48,14 @@ BUG_FIELDS = ("title", "source", "channel_id", "thread_id", "status", "dup_of", 
               "reporter_id")
 BUG_COLS = ("id", "title", "source", "channel_id", "thread_id", "status", "dup_of", "tags", "assignee",
             "nd_refs", "created", "updated", "reporter_id", "activity")
+# `reported` is computed, never stored: the earliest original message time of the bug (so merges and
+# moves stay right), else the bug's own `created` (the filing time).
+BUG_SELECT = (", ".join(f"nw_bugs.{c}" for c in BUG_COLS) + ", COALESCE((SELECT MIN(m.created) FROM nw_messages m "
+              "WHERE m.bug_id = nw_bugs.id AND m.created IS NOT NULL), nw_bugs.created) AS reported")
 
 
 def _bug_dict(row):
-    d = dict(zip(BUG_COLS, row))
+    d = dict(zip((*BUG_COLS, "reported"), row))
     d["tags"] = json.loads(d["tags"] or "{}")
     return d
 
@@ -313,17 +317,17 @@ class Clinic:
         return row[0] or ""
 
     def bug(self, bug_id):
-        row = self.db.execute(f"SELECT {', '.join(BUG_COLS)} FROM nw_bugs WHERE id=?", (bug_id,)).fetchone()
+        row = self.db.execute(f"SELECT {BUG_SELECT} FROM nw_bugs WHERE id=?", (bug_id,)).fetchone()
         return _bug_dict(row) if row else None
 
     def bugs(self, status=None, tag=None, q=None, since=None, assignee=None, exclude_status=None):
         """Bugs newest first; every given filter must match. `status`/`tag` take one value or a list
         (statuses: any of them; tags: all of them). A tag is "key=value", compared case-insensitively, and
         a stored value may be a list (matches when any element equals). `q` matches title, notes and
-        message text. `since` is an epoch time (created at or after). `exclude_status` drops those."""
+        message text. `since` is an epoch time (reported at or after). `exclude_status` drops those."""
         statuses = [status] if isinstance(status, str) else list(status or [])
         tags = [tag] if isinstance(tag, str) else list(tag or [])
-        rows = self.db.execute(f"SELECT {', '.join(BUG_COLS)} FROM nw_bugs ORDER BY created DESC, id")
+        rows = self.db.execute(f"SELECT {BUG_SELECT} FROM nw_bugs ORDER BY nw_bugs.created DESC, id")
         out = []
         for row in rows:
             b = _bug_dict(row)
@@ -331,7 +335,7 @@ class Clinic:
                 continue
             if exclude_status and b["status"] in exclude_status:
                 continue
-            if since is not None and b["created"] < since:
+            if since is not None and b["reported"] < since:
                 continue
             if assignee and (b["assignee"] or "").lower() != assignee.lower():
                 continue
@@ -471,13 +475,13 @@ class Clinic:
         """Bugs created after t and notes added after t. A `share` note addressed to someone else is left
         out when `who` is given."""
         bugs = [_bug_dict(r) for r in self.db.execute(
-            f"SELECT {', '.join(BUG_COLS)} FROM nw_bugs WHERE created>? ORDER BY created", (t,))]
+            f"SELECT {BUG_SELECT} FROM nw_bugs WHERE nw_bugs.created>? ORDER BY nw_bugs.created", (t,))]
         notes = [dict(zip(("bug_id", "at", "who", "kind", "text", "to"), r)) for r in self.db.execute(
             "SELECT bug_id, at, who, kind, text, to_who FROM nw_notes WHERE at>? ORDER BY at, rowid", (t,))]
         if who:
             notes = [n for n in notes if n["kind"] != "share" or n["to"] == who]
         updated = [_bug_dict(r) for r in self.db.execute(
-            f"SELECT {', '.join(BUG_COLS)} FROM nw_bugs WHERE activity>? AND created<=? ORDER BY activity", (t, t))]
+            f"SELECT {BUG_SELECT} FROM nw_bugs WHERE activity>? AND nw_bugs.created<=? ORDER BY activity", (t, t))]
         return {"bugs": bugs, "notes": notes, "updated_bugs": updated}
 
     # exports (the PC copy before the cull)

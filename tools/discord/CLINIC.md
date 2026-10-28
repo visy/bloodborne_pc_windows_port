@@ -76,13 +76,19 @@ Filters combine with AND. `--status` and `--tag` can repeat. `--open` means ever
 closed and duplicate. A tag value matches case-insensitively, and a tag holding a list matches when any
 element equals it (`feature=chalice` finds `["chalice","lamps"]`); `--tag area` (no value) means "has this
 tag". `--q` searches title, message texts and notes.
-`--older-than DAYS` keeps bugs created more than
-DAYS days ago; `--idle DAYS` keeps bugs with no activity (message, note or status change) for DAYS days.
-`--sort` is `newest` (default, by creation), `oldest`, or `activity` (most recently active first).
+
+**Two times per bug.** `reported` is when the player wrote the earliest message of the bug (the Discord
+message time, computed from the bug's messages, so merges and moves keep it right; a bug without messages
+falls back to `filed`). `filed` is when Iosefka created the bug record (also in `created`, kept for
+compatibility). `--since` and `--older-than DAYS` (reported more than DAYS days ago) use `reported`, as does
+`--sort newest|oldest`; `--idle DAYS` keeps bugs with no activity (message, note or status change) for DAYS
+days. `--sort` is `newest` (default, by reported), `oldest`, or `activity` (most recently active first).
+`list --text` shows the reported date (YYYY-MM-DD) after the status.
 
 ```json
 [{"id": "NW-1a2b3c4", "title": "Chalice lamp stays dark", "status": "open",
   "tags": {"component": "coop-mod", "feature": ["chalice", "lamps"]}, "assignee": "vlad",
+  "reported": "2026-10-20T16:40:00Z", "filed": "2026-10-27T18:02:11Z",
   "created": "2026-10-27T18:02:11Z", "updated": "2026-10-28T09:00:00Z",
   "counts": {"messages": 4, "logs": 2, "images": 1, "stills": 12}, "nd_refs": [], "dup_of": null,
   "last_note": {"who": "vlad", "kind": "note", "at": "2026-10-28T09:00:00Z", "text": "reproduced..."}}]
@@ -201,7 +207,9 @@ posts): `{"ref", "channel_id", "guild_id", "bot_message_id", "files", "text", "c
 
 `export` streams the whole archive as a tar (`manifest.json`, `archive.json`, `files/<sha256>`);
 `confirm-export` takes the PC's re-hash JSON on stdin; `import` takes a tar of local cases (a folder per
-case with `case.json` `{title, tags, notes, files, status?}` and the files) and creates `local` bugs.
+case with `case.json` `{title, tags, notes, files, status?, reported?}` and the files) and creates `local` bugs.
+`reported` (ISO date, ISO datetime with or without Z/offset, or epoch seconds) is the time of the case's
+message, so the bug's `reported` is when it really happened; without it, now.
 
 ## Changelists
 
@@ -217,6 +225,14 @@ Concepts:
 - Item `CL-xxxxxx`: one change, with a section (`added`, `changed`, `fixed`), a `text`, an optional private
   `dev` text, a status (`planned`, `in-progress`, `done`, `dropped`), tags, and links to bugs (`NW-...`),
   player_logs case folders and commit hashes.
+- Two times per item. `dated` is when the change itself happened: the NW commit date, the coop release's
+  published date, the linked bug's `reported` for items made by `status ... fixed --in`, or whatever you set
+  with `cl add --dated` / `cl edit --dated` (ISO date, ISO datetime or epoch; a hand-set `dated` is locked).
+  `added` (also `created`) is when the item reached Iosefka. Imports carry `dated` too (JSONL field
+  `dated`); re-importing the same lines fills `dated` on existing unlocked items, which is how old rows get
+  backfilled. `cl list` shows both (`--text` prints dated as YYYY-MM-DD or `-`), sorts with
+  `--sort added|dated` (default added, newest first; undated last for `dated`) and `--dated-since
+  YYYY-MM-DD` filters on `dated`. `--since` / `--older-than` / `--idle` on items stay on `added`.
 - Locks: any field you set by hand (`cl edit`, `cl move`, `cl status`, ...) is locked. Later imports and
   syncs never overwrite a locked field, so tidy up freely (a version status you set by hand is locked too).
 

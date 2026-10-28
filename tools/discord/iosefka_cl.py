@@ -31,7 +31,8 @@ def _iso(t):
 
 
 def _item_out(it):
-    return dict(it, created=_iso(it["created"]), updated=_iso(it["updated"]))
+    return dict(it, created=_iso(it["created"]), added=_iso(it["created"]), updated=_iso(it["updated"]),
+                dated=_iso(it.get("dated")))
 
 
 def _version_out(v):
@@ -127,6 +128,8 @@ def add_parser(sub, common):
     s.add_argument("--since")
     s.add_argument("--older-than", dest="older_than")
     s.add_argument("--idle")
+    s.add_argument("--sort", default="added")
+    s.add_argument("--dated-since", dest="dated_since")
     s = add("show")
     s.add_argument("cl_id")
     s = add("add")
@@ -140,11 +143,13 @@ def add_parser(sub, common):
     s.add_argument("--commit", dest="cl_commits", action="append", default=[])
     s.add_argument("--status", default="planned")
     s.add_argument("--dev")
+    s.add_argument("--dated")
     s = add("edit", parents=False)  # takes its own --text VALUE, so no human-output flag here
     s.add_argument("cl_id")
     s.add_argument("--text", dest="edit_text")
     s.add_argument("--section")
     s.add_argument("--dev")
+    s.add_argument("--dated")
     s.add_argument("--tag", action="append", default=[])
     s = add("status")
     s.add_argument("cl_id")
@@ -182,13 +187,21 @@ def _list(ch, a):
         kw["older_than"] = _days(a.older_than, "--older-than")
     if a.idle is not None:
         kw["idle"] = _days(a.idle, "--idle")
+    if a.sort not in ("added", "dated"):
+        raise ClError(f"--sort wants added or dated: {a.sort!r}")
+    if a.dated_since:
+        kw["dated_since"] = _date(a.dated_since, "--dated-since")
+    kw["sort"] = a.sort
     if a.current or a.next:
         out = []
         for t in ([a.track] if a.track else cc.TRACKS):
             v = ch.current(t) if a.current else ch.next(t)
             if v:
                 out += ch.items(track=t, version=v, **kw)
-        out.sort(key=lambda i: (i["created"], i["id"]), reverse=True)
+        if a.sort == "dated":
+            out.sort(key=lambda i: (i["dated"] is not None, i["dated"] or 0, i["created"], i["id"]), reverse=True)
+        else:
+            out.sort(key=lambda i: (i["created"], i["id"]), reverse=True)
         return out
     return ch.items(track=a.track, version=a.ver, **kw)
 
@@ -206,6 +219,12 @@ def _show(ch, clinic, cid):
     return {"item": _item_out(it), "notes": notes, "bugs": bugs}
 
 
+def _dated(clinic, bug_id):
+    """The bug's `reported` time: the date a fix item gets (the change belongs to when it was reported)."""
+    b = clinic.bug(bug_id)
+    return b["reported"] if b else None
+
+
 def fixed_in(clinic, who, bug_id, spec):
     """`status NW-x fixed --in TRACK:VERSION`: the bug's live (non-dropped) item in TRACK moves forward to
     done and, when its version is not locked, to VERSION (created if missing); a version-locked item keeps
@@ -216,6 +235,7 @@ def fixed_in(clinic, who, bug_id, spec):
         it = ch.item_for_bug(track, bug_id)
         if it is not None:
             changed = ch.set_status(it["id"], "done", who=who, human=False)
+            ch.fill_dated(it["id"], _dated(clinic, bug_id), who=who)
             if "version" not in it["locked"] and it["version"] != version:
                 ch.move(it["id"], track, version, who=who)
                 changed = True
@@ -227,7 +247,7 @@ def fixed_in(clinic, who, bug_id, spec):
         v = next((x for x in ch.versions(track) if x["version"] == version), None)
         status = "done" if v is not None and v["status"] != "planned" else "planned"
         cid = ch.add(track, version, "fixed", text, source_key=f"bug:{track}:{bug_id}", bugs=[bug_id],
-                     status=status, who=who)
+                     status=status, who=who, dated=bug["reported"])
         return {"id": cid, "created": True}
     except ValueError as e:
         raise ClError(str(e), 1 if str(e).startswith("no such") else 2)
@@ -259,11 +279,11 @@ def _run(a, clinic, who, emit, stdin):
     if cmd == "add":
         cid = ch.add(a.track, a.ver, a.section, a.item_text, who=who, status=a.status,
                      tags=_tag_pairs(a.tag), bugs=_bug_ids(a.cl_bugs), cases=_cases(a.cl_cases),
-                     commits=_commits(a.cl_commits), dev=a.dev or "")
+                     commits=_commits(a.cl_commits), dev=a.dev or "", dated=a.dated)
         return emit(_item_out(ch.get(cid)))
     if cmd == "edit":
         it = ch.edit(_cl_id(a.cl_id), who=who, text=a.edit_text, section=a.section, dev=a.dev,
-                     tags=_tag_pairs(a.tag) if a.tag else None)
+                     dated=a.dated, tags=_tag_pairs(a.tag) if a.tag else None)
         return emit(_item_out(it))
     if cmd == "status":
         _cl_id(a.cl_id)
