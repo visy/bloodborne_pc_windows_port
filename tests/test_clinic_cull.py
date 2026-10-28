@@ -364,3 +364,63 @@ def test_cull_stops_on_first_forbidden_and_retries_delete_only(tmp_path):
     ch.messages[0].delete_error = None
     assert run(cull.cull(client, c, delay=0, out=lambda x: None, env=FLAG)) == cull.OK
     assert ch.messages[0].deleted and len(ch.sent) == 2  # message 1: no second note; run 3-4: one note
+
+
+# --- unpack: backfill of logs inside stored archives -------------------------------------------------------
+
+def _zip(members):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n, d in members.items():
+            z.writestr(n, d)
+    return buf.getvalue()
+
+
+def test_unpack_backfill(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    inner_zip = _zip({"deep/guest.log": LOG + b"deep"})
+    data = _zip({"last_session.log": LOG, "more.zip": inner_zip, "shot.png": b"x"})
+    sha = c.put_file(data, "saves.zip", "archive")      # stored whole, as an old harvest left it
+    bug = c.new_bug("Crash with zip", "thread", 1, 11)
+    for mid in (1, 2):                                   # two messages hold the same archive
+        c.upsert_message({"message_id": mid, "bug_id": bug, "created": 1.0, "state": "verified",
+                          "attachments": [{"id": mid, "sha256": sha, "filename": "saves.zip", "kind": "archive",
+                                           "size": len(data), "inner": None}]})
+    junk = c.put_file(b"7z junk", "stuff.7z", "archive")
+    bug2 = c.new_bug("Junk", "thread", 1, 12)
+    c.upsert_message({"message_id": 3, "bug_id": bug2, "created": 2.0, "state": "verified",
+                      "attachments": [{"id": 3, "sha256": junk, "filename": "stuff.7z", "kind": "archive",
+                                       "size": 7}]})
+    out = []
+    tmp = tmp_path / "tmp"
+    assert cull.unpack(c, info, tmp, out=out.append) == 0
+    for mid in (1, 2):
+        a = c.message(mid)["attachments"][0]
+        names = sorted(f["name"] for f in a["inner_files"])
+        assert names == ["last_session.log", "more.zip/deep/guest.log"]
+        assert a["inner_shas"] == [f["sha256"] for f in a["inner_files"]] and "more.zip/deep/guest.log" in a["inner"]
+        assert all(c.verify_file(f["sha256"]) and c.file_info(f["sha256"])["kind"] == "log" for f in a["inner_files"])
+    assert set(c.all_loginfos()) >= {f["sha256"] for f in c.message(1)["attachments"][0]["inner_files"]}
+    files = c.files_for_bug(bug)
+    assert {f.get("path") for f in files if f.get("parent")} == {"last_session.log", "more.zip/deep/guest.log"}
+    assert c.message(3)["attachments"][0]["inner"] is None and c.message(3)["attachments"][0]["inner_files"] == []
+    assert c.bug(bug2)["tags"]["unsure"] == ["unreadable-file"] and "unsure" not in c.bug(bug)["tags"]
+    assert not list(tmp.iterdir())  # temp files removed
+    # idempotent: a second run changes nothing
+    n_files, n_info = len(c.all_files()), len(c.all_loginfos())
+    out2 = []
+    assert cull.unpack(c, info, tmp, out=out2.append) == 0
+    assert len(c.all_files()) == n_files and len(c.all_loginfos()) == n_info and "0 archive" in out2[-1]
+
+
+def test_unpack_stops_when_disk_low(tmp_path, monkeypatch):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    data = _zip({"a.log": LOG})
+    sha = c.put_file(data, "s.zip", "archive")
+    c.upsert_message({"message_id": 1, "created": 1.0, "state": "verified",
+                      "attachments": [{"id": 1, "sha256": sha, "filename": "s.zip", "kind": "archive", "size": 1}]})
+    monkeypatch.setattr(cd.media, "enough_disk", lambda *a, **k: False)
+    assert cull.unpack(c, info, tmp_path / "tmp", out=lambda s: None) == cull.DISK_LOW
+    assert "inner_files" not in c.message(1)["attachments"][0]
