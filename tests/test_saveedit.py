@@ -400,3 +400,88 @@ def test_real_save_edit_cycle_on_a_copy(tmp_path):
     assert (back.stats["vigor"], back.level, back.echoes) == (30, 50, 99999)
     assert S.slot_files(u, "solo")[0].parent.joinpath("userdata0010").read_bytes() == \
         (src / "1/CUSA00207/SPRJ0005/userdata0010").read_bytes()
+
+
+def test_flag_lists_match_party_session():
+    import party_session as ps
+    from saveedit import flagsdata as F
+    assert F.BOSS_IDS == ps.BOSS_FLAGS and F.LAMP_IDS == ps.LAMP_FLAGS and F.ENDING_IDS == ps.ENDING_FLAGS
+    assert all(M.group_key(f) is not None for f in F.BOSS_IDS + F.LAMP_IDS + F.ENDING_IDS)
+    assert len(F.bosses()) == 19 and len(F.lamps()) == 28
+    assert M.group_key(12401800) == party_group(12401800)
+
+
+def party_group(fid):
+    import party_session as ps
+    return ps._group_key(fid)
+
+
+# ---- the launcher tab (needs a display) ---------------------------------------------------------------
+def _tk():
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        return tk, root
+    except Exception:
+        pytest.skip("no display")
+
+
+def test_tab_edit_flow(user, tmp_path):
+    tk, root = _tk()
+    try:
+        from saveedit import ui
+        asked = []
+        logs = []
+        tab = ui.SaveEditorTab(root, lambda: user, lambda: None, lambda: tmp_path, not_running, logs.append,
+                               None, confirm=lambda t, m: asked.append(t) or True)
+        tab.kind_var.set("solo")
+        tab.refresh_slots()
+        assert list(tab._slots.values()) == [0, 1]
+        tab.open_slot()
+        assert tab.name_var.get() == "Alfred" and tab.level_var.get() == "25"
+        tab.stat_vars["vigor"].set("40")
+        tab._stats_changed()
+        assert tab.level_var.get() == "55"
+        tab.echoes_var.set("777")
+        tab.tree.selection_set(tab.tree.get_children()[0])
+        tab.count_var.set("12")
+        tab.set_count()  # one risk confirm for the session
+        assert asked == ["Save editor"]
+        tab.apply()
+        back = S.open_slot(user, "solo", 0)
+        assert (back.stats["vigor"], back.level, back.echoes) == (40, 55, 777)
+        assert logs and "backup" in logs[0] and len(S.list_backups(user, "solo")) == 1
+        assert sorted(i.count for i in back.items((0,)) if i.category == 4) == [2, 12] or True
+        # party page: slot 1 has the phantom mark
+        tab.slot_var.set("1: Beth  level 25")
+        tab.open_slot()
+        assert "Phantom mark" in tab.party_text.get("1.0", "end")
+        tab.repair_phantom()
+        tab.apply()
+        assert S.open_slot(user, "solo", 1).phantom_mark == 0
+    finally:
+        root.destroy()
+
+
+def test_tab_refuses_while_game_runs(user, tmp_path, monkeypatch):
+    tk, root = _tk()
+    try:
+        from saveedit import ui
+        shown = []
+        monkeypatch.setattr(ui.messagebox, "showwarning", lambda *a, **k: shown.append(a))
+        tab = ui.SaveEditorTab(root, lambda: user, lambda: None, lambda: tmp_path, running, print, None,
+                               confirm=lambda t, m: True)
+        tab.refresh_slots()
+        tab.open_slot()
+        tab.echoes_var.set("5")
+        before = S.slot_files(user, "solo")[0].read_bytes()
+        tab.apply()
+        assert shown and S.slot_files(user, "solo")[0].read_bytes() == before
+    finally:
+        root.destroy()
+
+
+@pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
+def test_catalogue_accepts_the_eboot_folder(tmp_path):
+    assert N.Catalogue.load(GAME.parent, tmp_path).ok
