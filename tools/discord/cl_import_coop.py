@@ -17,6 +17,8 @@ from clinic_changes import clean_text, norm_version  # noqa: E402
 API = "https://api.github.com/repos/visy/bloodborne_pc_windows_port/releases?per_page=100"
 HEAD_RX = re.compile(r"^\s{0,3}#{2,3}\s+(.+?)\s*#*\s*$")
 BULLET_RX = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
+DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+BS_W = r"\w"
 SAFE_TEXT = "Change from a player report (details private)"
 
 
@@ -59,15 +61,23 @@ def parse_release(tag, body):
 
 
 def unmatched(player_logs, names):
-    """Case folder names (sorted) that no entry of names equals or overlaps (case-insensitive)."""
+    """Cases ("YYYY-MM-DD/case_folder", sorted) that no entry of names mentions. Layout is
+    <player_logs>/<date>/<case>/; top-level dirs that are not dates are ignored. A case is named when a
+    name equals "date/case" or the bare case folder, contains "date/case", or contains the folder as a
+    whole word/path segment (case-insensitive, no loose substring)."""
     low = [n.lower() for n in names if isinstance(n, str) and n.strip()]
     out = []
-    for d in sorted(Path(player_logs).iterdir()):
-        if not d.is_dir():
+    root = Path(player_logs)
+    for day in sorted(root.iterdir()):
+        if not day.is_dir() or not DATE_RX.match(day.name):
             continue
-        n = d.name.lower()
-        if not any(x in n or n in x for x in low):
-            out.append(d.name)
+        for case in sorted(day.iterdir()):
+            if not case.is_dir():
+                continue
+            key, c = f"{day.name}/{case.name}".lower(), case.name.lower()
+            word = re.compile(r"(?<!"+BS_W+r")" + re.escape(c) + r"(?!"+BS_W+r")")
+            if not any(n == key or n == c or key in n or word.search(n) for n in low):
+                out.append(f"{day.name}/{case.name}")
     return out
 
 
