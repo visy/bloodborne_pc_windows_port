@@ -6619,6 +6619,8 @@ struct UntargetedChr {
     u64 chr = 0, entry = 0;
     u32 handle = ~0u;
     size_t size_before = 0;  // the bank's size when it was taken out: room for it is still allocated
+    double next_check = 0;
+    bool readded_logged = false;
 };
 std::vector<UntargetedChr> g_untargeted;  // main thread only
 
@@ -6635,12 +6637,43 @@ void DeadPlayerUntargetTick(const GameSnapshot& s, double now) {
         if (c) players.push_back(c);
     }
     const auto entry_of = [](u64 chr) { return Field<u64>(Field<u64>(Field<u64>(chr, 0x3b0), 0x40), 8); };
+    // The bank vector [begin, end) now; take_out removes one entry as the chr teardown does.
+    const auto read_bank = [bank](std::vector<u64>& v) {
+        const u64 b = Field<u64>(bank, 8), e = Field<u64>(bank, 0x10);
+        const size_t n = b && e >= b ? size_t((e - b) / 8) : 0;
+        v.assign(n, 0);
+        return n <= 4096 && (n == 0 || SafeRead(b, v.data(), n * 8));
+    };
+    const auto in_bank = [&](u64 ent) {
+        std::vector<u64> v;
+        return read_bank(v) && std::find(v.begin(), v.end(), ent) != v.end();
+    };
+    const auto take_out = [&](u64 ent) -> size_t {
+        std::vector<u64> v;
+        if (!ent || !read_bank(v) || v.empty() || !enemyai_rules::BankRemove(v.data(), v.data() + v.size(), ent)) return 0;
+        const u64 b = Field<u64>(bank, 8);
+        SafeWrite(b, v.data(), (v.size() - 1) * 8);
+        const u64 e = b + (v.size() - 1) * 8;
+        SafeWrite(bank + 0x10, &e, 8);
+        return v.size();
+    };
     // Back in: got up, the fight is over, or not the owner any more. A chr that is gone (a load, a
     // member left) took its entry with it: forgotten, never put back.
     for (auto it = g_untargeted.begin(); it != g_untargeted.end();) {
         const bool live = std::find(players.begin(), players.end(), it->chr) != players.end() && entry_of(it->chr) == it->entry;
         const bool keep_out = live && enemyai_rules::DeadPlayerOutOfBank(on, Role() == RoleHost, fight, ChrHp(it->chr));
         if (keep_out) {
+            // Does the game put it back by itself (its own registration)? Then take it out again.
+            if (now >= it->next_check) {
+                it->next_check = now + 1.0;
+                if (in_bank(it->entry)) {
+                    if (!it->readded_logged) {
+                        it->readded_logged = true;
+                        Log("dead untarget: chr %08x was put back into the bank by the game: taken out again", it->handle);
+                    }
+                    take_out(it->entry);
+                }
+            }
             ++it;
             continue;
         }
@@ -6658,8 +6691,9 @@ void DeadPlayerUntargetTick(const GameSnapshot& s, double now) {
                 e += 8;
                 SafeWrite(bank + 0x10, &e, 8);
             }
+            const bool there = !ok && in_bank(it->entry);
             Log("dead untarget: chr %08x (hp %d) back in the enemies' target bank%s", it->handle, ChrHp(it->chr),
-                ok ? "" : " (already there or no room: left to the game)");
+                ok ? "" : there ? " (the game had put it back already)" : " (no room: left to the game)");
         } else {
             Log("dead untarget: chr %08x gone (%s): its entry is not put back", it->handle, up ? "left" : "a load");
         }
@@ -6670,24 +6704,16 @@ void DeadPlayerUntargetTick(const GameSnapshot& s, double now) {
         if (!enemyai_rules::DeadPlayerOutOfBank(on, Role() == RoleHost, fight, ChrHp(c))) continue;
         if (std::any_of(g_untargeted.begin(), g_untargeted.end(), [c](const UntargetedChr& u) { return u.chr == c; })) continue;
         const u64 ent = entry_of(c);
-        u64 b = Field<u64>(bank, 8), e = Field<u64>(bank, 0x10);
-        const size_t n = b && e >= b ? size_t((e - b) / 8) : 0;
-        if (!ent || n == 0 || n > 4096) continue;
-        std::vector<u64> v(n);
-        if (!SafeRead(b, v.data(), n * 8) || !enemyai_rules::BankRemove(v.data(), v.data() + n, ent)) {
-            continue;
-        }
-        SafeWrite(b, v.data(), (n - 1) * 8);
-        e -= 8;
-        SafeWrite(bank + 0x10, &e, 8);
-        g_untargeted.push_back({c, ent, Field<u32>(c, 8), n});
+        const u64 b = Field<u64>(bank, 8);
+        const size_t n = take_out(ent);
+        if (n == 0) continue;
+        g_untargeted.push_back({c, ent, Field<u32>(c, 8), n, now + 1.0, false});
         Log("dead untarget: chr %08x (%s, hp %d) out of the enemies' target bank (%zu -> %zu entries, capacity word "
             "%lld)%s",
             Field<u32>(c, 8), c == s.player ? "this player" : "a member's copy", ChrHp(c), n, n - 1,
             (long long)((Field<u64>(bank, 0x18) - b) / 8),
             g_host_limbo.load() ? " in the host's limbo" : " in a boss fight");
     }
-    (void)now;
 }
 
 /// Main thread, host: the alive snapshot, the taken death's revive (or a wipe's vanilla funnel)

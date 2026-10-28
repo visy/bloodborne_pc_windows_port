@@ -67,6 +67,31 @@ taken at all (a host death with no boss bar up is the whole party's respawn load
 for the ~10 s of the death sequence by the game's own rule). The AI log switch above is for the next
 report: ask for `BB_PARTY_AI_LOG=1` and `BB_PARTY_TARGET_ANIM=1` logs of both games.
 
+## Dead players in the target bank (0.7.7, bossai077: "the boss stops when the host dies")
+
+Root cause found from the player's screenshot (NW-ca9ed04): it is the **host's** screen, spectating
+(empty HP bar, echoes 0), the followed guest at **0.2 m** and the Cleric Beast idle beside them. The
+spectate (C5, smooth follow since 0.7.0) carries the dead host chr onto the followed member's own spot
+so that the camera follows it. The enemies' target search (`SprjTargetBankManager` *0x553B098, a vector
+at +0x8 / +0x10 of every chr's target entry; read by 0x12ADC50, which filters on team and entry flags,
+**no HP check**) still holds the dead host chr: it is now as near to the boss as the living guest, so
+the boss's target search can pick the corpse and idle over it; the once-a-second ChangeTarget only
+pulled it back for a moment. Loopback runs looked fine because the boss's actions at the corpse
+look the same as actions at the guest standing on it, and the scripted guest never moves away.
+The same holds for a dead guest's copy on the host's game (kept at its death spot with HP 0):
+the 4-player report "the boss stops attacking the last one after the 3rd death".
+
+Fix (`DeadPlayerUntargetTick`, party_b2.cpp; rules `DeadPlayerOutOfBank` / `BankRemove` / `BankInsert`
+in party_enemyai_rules.h): on the host's game (the AI owner), a player chr (its own or a member's copy)
+at HP 0 while a boss bar is up or in the host's limbo is taken out of the bank vector as the chr
+teardown 0x18BC110 does it (chr +0x3B0 -> +0x40 -> +0x8 is its entry) and put back at the end when it
+gets up (arena revive), when the fight ends, or never when the chr is gone (a load or a member that
+left took the entry with it; a load builds a new one). Put back only into room the vector already had
+(its size at removal; capacity word +0x18 when it grew meanwhile). `BB_PARTY_DEAD_UNTARGET=0` off (A/B).
+Log: `dead untarget: chr ... out of / back in the enemies' target bank`. Smoke phases `bh` (mortal
+guest gets hit after the host's death) and `bk` (boss killed in limbo, host up, back in the bank),
+group `boss_dead`.
+
 ## Evidence (one PC, 2 instances, loopback; agents/enemyai/smoke)
 
 * `la9` (fix on): the Ward enemy 2400421 (182 HP, awake, on a ledge 22 m from the lamp) beside the lone
