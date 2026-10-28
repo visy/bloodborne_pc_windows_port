@@ -1553,9 +1553,67 @@ void LevelSyncTick(bool rule_on, bool phantom_hp_on, Clock::time_point now) {
     }
 }
 
+/// Cainhurst, Queen Annalise (entity 2500600; NW-a1c18ef, 0.7.7): her init event 12500010 sets her map hit
+/// off and forces the throne animation 103010 once at the load. In a party the lamp's menu (the rest) resets
+/// the chr and she drops through her throne into the void, on the host's and on every guest's game (solo
+/// she stays; live anl run: y 130.5 -> 87 within 3 s, 2 s after the menu opened). This tick remembers her
+/// height once the world has stood and, when she sinks, forces the animation again (Lua ForcePlayAnimation
+/// 0x13CBFD0 as the event does; it holds her where she is, nothing moves her back). BB_PARTY_ANNALISE_SIT=0 switches it off.
+struct SitState {
+    Clock::time_point steady_since{}, next{}, last_fix{};
+    std::uint32_t map = 0;
+    float home[3] = {}, prev_y = 0;
+    bool have_home = false;
+    int fixes = 0;
+};
+
+void AnnaliseSitTick(const GameSnapshot& s, party::PartyLink* link) {
+    static const bool enabled = [] {
+        const char* v = std::getenv("BB_PARTY_ANNALISE_SIT");
+        return !(v && v[0] == '0');
+    }();
+    static SitState st;
+    constexpr int kAnnalise = 2500600;
+    constexpr u32 kSitAnim = 103010;
+    const auto now = Clock::now();
+    if (!enabled || !link || !s.world_up || s.loading || !s.player || s.map_id != 0x19000000u) {
+        st.steady_since = {};
+        st.have_home = false;
+        return;
+    }
+    if (st.map != s.map_id) {
+        st.map = s.map_id;
+        st.have_home = false;
+    }
+    if (st.steady_since == Clock::time_point{}) st.steady_since = now;
+    if (now - st.steady_since < std::chrono::seconds(3) || now < st.next) return;
+    st.next = now + std::chrono::milliseconds(200);
+    const u64 wcm = Slot(kSlotWorldChrMan);
+    const u64 chr = wcm ? ChrByEntity(kAnnalise) : 0;
+    float p[3] = {};
+    if (!chr || IsPlayer(wcm, chr) || ChrOff(chr) || !ChrPosition(chr, p)) return;
+    if (!st.have_home) {
+        std::memcpy(st.home, p, sizeof p);
+        st.have_home = true;
+        return;
+    }
+    const float prev = st.prev_y;
+    st.prev_y = p[1];
+    // sinking = below her spot and still going down (the animation settles her ~0.3 m lower and she stays), or far below it
+    if (!(p[1] < st.home[1] - 1.0f || (p[1] < st.home[1] - 0.1f && p[1] < prev - 0.04f))) return;
+    if (now - st.last_fix < std::chrono::milliseconds(400)) return;
+    st.last_fix = now;
+    ++st.fixes;
+    reinterpret_cast<void(BB_COOP_SYSV*)(u32, u32, u32, u32)>(Guest(0x13cbfd0))(u32(kAnnalise), kSitAnim, 0, 0);
+    if (st.fixes <= 6 || st.fixes % 50 == 0)
+        Log("Annalise: sinking (y %.1f, spot %.1f): ForcePlayAnimation(%d, %u) #%d", double(p[1]), double(st.home[1]),
+            kAnnalise, kSitAnim, st.fixes);
+}
+
 void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
     ChrDumpTick(s);
     NpcMirrorTick(s, link, host);
+    AnnaliseSitTick(s, link);
     KillEchoTick(s);
     EnemyHpTestTick(s);
     if (!On()) return;

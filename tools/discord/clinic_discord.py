@@ -776,7 +776,7 @@ async def _gate(clinic, message, bug_id, delete, need_export):
     return None, message, rec
 
 
-async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_export, extra=""):
+async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_export, extra="", short=False):
     """Post the replacement note, delete the original, record. Returns the final state, "would-replace"
     when delete is False, or "blocked:<why>" (not-archived, dm, skipped, not-verified, not-exported). A
     message already `replaced` skips the post. A delete the bot may not do is recorded as
@@ -797,7 +797,8 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
         if rec["state"] != "replaced":
             files, left_out = await _media_files(message, rec)
             note = MEDIA_NOTE if left_out else ""
-            text = voice.replacement(f"<@{message.author.id}>", bug_id, message.content or "", note)
+            rep = voice.replacement_short if short else voice.replacement
+            text = rep(f"<@{message.author.id}>", bug_id, message.content or "", note)
             more = []
             if extra:
                 if len(text) + 2 + len(extra) <= DISCORD_LIMIT:
@@ -813,7 +814,7 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
             except Exception as e:
                 if not files or _status(e) not in (400, 413):  # only "payload too large" drops the files
                     raise
-                text = voice.replacement(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE)
+                text = rep(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE)
                 sent = await ch.send(text, **kw)
             clinic.set_state(mid, "replaced", sent.id)
             for part in more:

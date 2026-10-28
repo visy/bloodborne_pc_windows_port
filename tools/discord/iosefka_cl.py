@@ -17,7 +17,7 @@ BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 HASH_RX = re.compile(r"^[0-9a-fA-F]{4,64}$")
 CASE_RX = re.compile(r"^(?:\d{4}-\d{2}-\d{2}/)?[A-Za-z0-9._() -]{1,120}$")
-SUBCOMMANDS = ("versions, version, list, show, add, edit, status, move, link, merge, import, related, notes")
+SUBCOMMANDS = ("versions, version, list, show, add, edit, status, move, link, merge, import, related, notes, release")
 
 
 class ClError(Exception):
@@ -173,6 +173,11 @@ def add_parser(sub, common):
     s = add("notes")
     s.add_argument("track")
     s.add_argument("ver")
+    s = add("release")
+    s.add_argument("track")
+    s.add_argument("ver")
+    s.add_argument("--next", dest="next_ver")
+    s.add_argument("--dry-run", action="store_true")
     return p
 
 
@@ -316,6 +321,10 @@ def _run(a, clinic, who, emit, stdin):
         if a.track not in cc.TRACKS:
             raise ClError(f"bad track {a.track!r} (one of {', '.join(cc.TRACKS)})")
         return emit(ch.render_notes(a.track, cc.norm_version(a.ver)).encode("utf-8"))
+    if cmd == "release":
+        if a.track not in cc.TRACKS:
+            raise ClError(f"bad track {a.track!r} (one of {', '.join(cc.TRACKS)})")
+        return emit(ch.release(a.track, a.ver, a.next_ver, who=who, dry_run=a.dry_run))
     raise ClError(f"unknown cl command {cmd!r}")
 
 
