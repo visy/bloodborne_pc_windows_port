@@ -246,3 +246,40 @@ def test_triage_queue(tmp_path):
     code, text = cli(tmp_path, "triage-queue")
     q = json.loads(text)
     assert [b["id"] for b in q["bugs"]] == [second] and q["auto_links"] == []
+
+
+def test_unreadable_marks_unsure(tmp_path):
+    import zipfile
+    c, ctx = make(tmp_path)
+    ch = F.Channel(100, "help")
+    z = F.Msg(6, ch, F.User(13), "see rar", [F.Att(60, "stuff.rar", b"Rar!\x1a\x07 junk")], minutes=0)
+    run(bot.dispatch_message(z, ctx))
+    assert "unreadable-file" in c.bug(c.message(6)["bug_id"])["tags"]["unsure"]
+    # a readable zip without logs is not "unreadable" (and is not removable)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("shot.png", b"x")
+    other_day(ctx, "q")
+    ok = F.Msg(7, ch, F.User(14), "just a picture zip", [F.Att(70, "pics.zip", buf.getvalue())], minutes=3000)
+    run(bot.dispatch_message(ok, ctx))
+    rec = c.message(7)
+    assert rec["attachments"][0]["inner"] == ["shot.png"] and not rec.get("bug_id")
+    # a zip with a log inside a nested zip is stored with its inner log and no unsure
+    buf2 = io.BytesIO()
+    with zipfile.ZipFile(buf2, "w") as zf:
+        zf.writestr("inner.zip", _zip_of({"last_session.log": LOG}))
+    other_day(ctx, "r")
+    nz = F.Msg(8, ch, F.User(15), "nested", [F.Att(80, "n.zip", buf2.getvalue())], minutes=6000)
+    run(bot.dispatch_message(nz, ctx))
+    a = c.message(8)["attachments"][0]
+    assert [f["name"] for f in a["inner_files"]] == ["inner.zip/last_session.log"]
+    assert "unreadable-file" not in (c.bug(c.message(8)["bug_id"])["tags"].get("unsure") or [])
+
+
+def _zip_of(members):
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n, d in members.items():
+            z.writestr(n, d)
+    return buf.getvalue()

@@ -196,6 +196,7 @@ def _show(c, b, brief=False):
     notes = [{"at": _iso(n["at"]), "who": n["who"], "kind": n["kind"], "text": n["text"],
               "to": n["to"] or None} for n in c.notes(b["id"])]
     files = [{"sha256": f["sha256"], "filename": f["filename"], "kind": f["kind"], "size": f["raw_size"]}
+             | ({"inside": f["parent"], "path": f.get("path") or f["filename"]} if f.get("parent") else {})
              for f in c.files_for_bug(b["id"])]
     return {"bug": _summary(c, b) | {"source": b["source"], "channel_id": b["channel_id"],
                                      "thread_id": b["thread_id"]},
@@ -227,6 +228,12 @@ def _write_bug_tar(c, bug_ids, out, media):
                     if not media:
                         continue
                     folder = "images" if f["kind"] == "image" else "stills"
+                elif f.get("parent"):  # a log from inside an archive: logs/<archive name>/<inner path>
+                    inner = "/".join(_safe_name(p) for p in (f.get("path") or f["filename"]).split("/") if p.strip(". "))
+                    name, data, _codec = c.get_file(f["sha256"])
+                    _add_bytes(tar, f"{base}/logs/{_safe_name(f['parent'])}/{inner or _safe_name(name)}", data,
+                               b["created"])
+                    continue
                 else:
                     folder = "logs"
                 name, data, _codec = c.get_file(f["sha256"])
@@ -265,7 +272,8 @@ def _text_out(out, cmd, data):
         for m in data["messages"]:
             lines.append(f"  <{m['author']} {m['at']}> {m['content']}")
         for f in data["files"]:
-            lines.append(f"  file {f['kind']} {f['filename']} {f['sha256'][:8]}")
+            where = f" (in {f['inside']}: {f['path']})" if f.get("inside") else ""
+            lines.append(f"  file {f['kind']} {f['filename']} {f['sha256'][:8]}{where}")
     else:
         lines.append(json.dumps(data, indent=2, ensure_ascii=False))
     out.write(("\n".join(lines) + "\n").encode("utf-8"))
