@@ -3492,7 +3492,7 @@ class BloodborneLauncher(tk.Tk):
 
         tab = saveedit_ui.SaveEditorTab(self.notebook, party_user_dir, game_dir, lambda: party_user_dir() / "cache",
                                         running_instances, lambda m: self.log(m), update_party)
-        self.notebook.add(tab, text="Save editor")
+        self.notebook.add(tab, text="Saves")
         self.saveedit_tab = tab
         self.notebook.bind("<<NotebookTabChanged>>",
                            lambda e: tab.refresh_slots() if self.notebook.select() == str(tab) and tab.model is None else None,
