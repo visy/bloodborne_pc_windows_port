@@ -151,7 +151,10 @@ def _unrar_list(path: Path) -> list[tuple[str, int | None]] | None:
     if r.returncode != 0:
         return None
     names = [ln.rstrip("\r") for ln in r.stdout.decode("utf-8", "replace").split("\n")]
-    return [(n, None) for n in names if n]
+    names = [n for n in names if n]
+    # exit 0 with nothing listed is what some unrar builds do with a damaged/foreign file: unreadable, as
+    # without the tool (a real rar always has a member)
+    return [(n, None) for n in names] or None
 
 
 def _unrar_read(path: Path, member: str, limit: int) -> bytes | None:
@@ -311,7 +314,7 @@ def _scan_level(path: Path, prefix: str, depth: int, st: _Scan) -> None:
         full = prefix + clean
         st.names.append(full)
         kind = _logic.file_kind(clean)
-        if kind in _logic.REMOVABLE_KINDS or kind == "archive":
+        if kind in _logic.STORE_INNER_KINDS or kind == "archive":
             if size is not None and size > MAX_FILE_BYTES:
                 if kind == "archive":
                     st.ok = False  # cannot look inside: unreadable

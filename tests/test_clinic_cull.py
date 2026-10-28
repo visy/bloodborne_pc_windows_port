@@ -456,3 +456,15 @@ def test_resave_backfill(tmp_path):
     out2 = []
     cull.resave(c, True, tmp_path / "tmp", out=out2.append)                        # idempotent
     assert "0 file(s) become save, 0 archive(s)" in out2[-1]
+
+
+def test_cullable_ignores_save_image_video_only(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    def rec(mid, atts):
+        c.upsert_message({"message_id": mid, "channel_id": 1, "thread_id": None, "author_id": 7, "author_name": "p",
+                          "created": mid, "content": "", "attachments": atts, "state": "verified", "dm": 0})
+    rec(1, [{"id": 1, "filename": "userdata0000", "kind": "save", "sha256": "a"}])
+    rec(2, [{"id": 2, "filename": "s.png", "kind": "image", "sha256": "b"}])
+    rec(3, [{"id": 3, "filename": "big.zip", "kind": "archive", "sha256": None, "skip": "big"}])
+    rec(4, [{"id": 4, "filename": "a.log", "kind": "log", "sha256": "c"}])
+    assert [m["message_id"] for m in cull.cullable(c)] == [4]
