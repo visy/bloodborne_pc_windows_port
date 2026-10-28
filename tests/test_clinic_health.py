@@ -160,11 +160,89 @@ def test_self_check_permissions_db_and_tools(tmp_path):
     g.me = object()
     problems = h.self_check([g], delete=True, skip=cd.place_skipped,
                             which=lambda n: None if n == "unrar" else "/bin/" + n)
-    assert any("channel 2" in p and "read_message_history" in p and "manage_messages" in p for p in problems)
-    assert "unrar missing" in problems and not any("channel 3" in p or "channel 1:" in p for p in problems)
+    assert any("#bugs" in p and "read_message_history" in p and "manage_messages" in p for p in problems)
+    assert "unrar missing" in problems and not any("staff-chat" in p or "#help" in p for p in problems)
     run(h.flush())
-    assert any("channel 2" in t for t in sent) and any("unrar" in t for t in sent)
+    assert any("#bugs" in t for t in sent) and any("unrar" in t for t in sent)
     assert "database quick_check failed" not in problems
+
+
+def _guild_for_rules(tmp_path):
+    c, h, clock, sent = make(tmp_path)
+    everyone = object()
+    me = object()
+    ro = F.Channel(10, "rules")      # members cannot post; I cannot send either
+    ann = F.Channel(11, "releases")
+    forum = F.Channel(12, "pre-release-bug-reports")
+    help_ = F.Channel(13, "help")    # members post here: I must be able to send
+
+    def pf(ch, post_everyone, mine):
+        def f(who):
+            if who is everyone:
+                return Perms(send_messages=post_everyone, attach_files=post_everyone,
+                             send_messages_in_threads=post_everyone)
+            return Perms(view_channel=True, read_message_history=True, **mine)
+        ch.permissions_for = f
+    pf(ro, False, dict(send_messages=False))
+    pf(ann, False, dict(send_messages=False))
+    pf(forum, False, dict(send_messages=False, send_messages_in_threads=True, manage_threads=True))
+    pf(help_, True, dict(send_messages=False))
+    g = F.Guild([ro, ann, help_], forums=[forum])
+    g.me, g.default_role = me, everyone
+    return c, h, sent, g, (ro, ann, forum, help_), pf
+
+
+def test_self_check_only_requires_send_where_players_post(tmp_path):
+    c, h, sent, g, (ro, ann, forum, help_), pf = _guild_for_rules(tmp_path)
+    h.forbidden(10, "missing send_messages")   # an old per-channel alert from the previous rule
+    h.forbidden(13, "missing send_messages")
+    problems = h.self_check([g], which=lambda n: "/bin/" + n)
+    assert [p for p in problems if "channel" in p] == ["channel #help: missing send_messages"]
+    run(h.flush())
+    perm = [t for t in sent if "permissions" in t]
+    assert len(perm) == 1 and "#help" in perm[0] and "#rules" not in perm[0] and "13" not in perm[0]
+    assert "forbidden:10" not in h.active_alerts() and "forbidden:13" in h.active_alerts()
+    # forum: needs send in threads + manage threads/messages
+    pf(forum, True, dict(send_messages=False, send_messages_in_threads=True, manage_threads=False, manage_messages=False))
+    assert any("pre-release-bug-reports" in p and "manage_threads" in p
+               for p in h.self_check([g], which=lambda n: "/bin/" + n))
+    pf(forum, True, dict(send_messages=False, send_messages_in_threads=False, manage_threads=True))
+    assert any("pre-release-bug-reports" in p and "send_messages_in_threads" in p
+               for p in h.self_check([g], which=lambda n: "/bin/" + n))
+    # all fixed: the permission alert resolves
+    pf(help_, True, dict(send_messages=True))
+    pf(forum, True, dict(send_messages_in_threads=True, manage_threads=True))
+    assert not [p for p in h.self_check([g], which=lambda n: "/bin/" + n) if "channel" in p]
+    assert "self-check-permissions" not in h.active_alerts()
+
+
+def test_self_check_ignores_private_places_and_forbidden_hook_skips(tmp_path):
+    c, h, sent, g, (ro, ann, forum, help_), pf = _guild_for_rules(tmp_path)
+    pf(help_, True, dict(send_messages=True))
+    everyone = g.default_role
+    priv = F.Channel(1562986604342026291, "Voice lounge")
+    priv.permissions_for = lambda who: Perms(view_channel=False)   # neither @everyone nor she can view it
+    g.text_channels.append(priv)
+    h.forbidden(priv.id)
+    h.trigger(f"forbidden:{priv.id}", "old")
+    assert f"forbidden:{priv.id}" in h.active_alerts()
+    problems = h.self_check([g], skip=lambda ch: False, which=lambda n: "/bin/" + n)
+    assert not [p for p in problems if "channel" in p]
+    assert f"forbidden:{priv.id}" not in h.active_alerts()
+    # skipped by name (Dev Test) is closed too
+    dev = F.Channel(77, "Dev Test")
+    dev.permissions_for = lambda who: Perms(view_channel=True, read_message_history=False)
+    g.text_channels.append(dev)
+    h.trigger("forbidden:77", "old")
+    assert not [p for p in h.self_check([g], skip=lambda ch: ch.name.lower().startswith("dev"),
+                                        which=lambda n: "/bin/" + n) if "channel" in p]
+    assert "forbidden:77" not in h.active_alerts()
+    h.is_skipped = lambda pid: pid == 555
+    h.forbidden(555, "read or post")
+    assert "forbidden:555" not in h.active_alerts()
+    h.forbidden(556)
+    assert "forbidden:556" in h.active_alerts()
+    assert "self-check-permissions" not in h.active_alerts()
 
 
 def test_upkeep_vacuum_only_with_room(tmp_path):

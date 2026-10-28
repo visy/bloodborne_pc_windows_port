@@ -25,7 +25,7 @@ ARCHIVE_EXT = {".zip", ".7z", ".rar"}
 
 def skipped_channel(name: str) -> bool:
     n = (name or "").lower()
-    return n.startswith("staff") or n in ("development", "moderator-only")
+    return n.startswith(("staff", "dev")) or n == "moderator-only"
 
 
 # Bloodborne save files (PS4 / shadPS4 layout): userdata0000..0010, backup0000.., with suffixes such as

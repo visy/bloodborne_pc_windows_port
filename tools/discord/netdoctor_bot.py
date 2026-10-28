@@ -26,7 +26,7 @@ Environment:
                        are dropped hourly)
   NETDOCTOR_DB_MAX_MB  size cap of that file, MiB (default 3072, never above 3072): oldest analysis rows go first;
                        the clinic's nw_* tables are never pruned
-  NW_LIVE              1 = Iosefka's live duty: every log posted anywhere (except staff*, development,
+  NW_LIVE              1 = Iosefka's live duty: every log posted anywhere (except staff*, dev*,
                        moderator-only) is archived in the clinic and replaced by her note; also edits, forwards,
                        DMs (archived, never deleted; answered only with NW_DELETE=1), hourly catch-up, outbox, nightly backup.
                        Default off: the bot then behaves exactly as before (no archive, no new replies).
@@ -208,6 +208,11 @@ class Ctx:
         self.warned_day = None
         self.flood = hl.FloodGuard(int(hl.env_float("NETDOCTOR_UPLOADS_PER_HOUR", 10)))
         self.health = hl.Health(clinic, expect=("sweep", "outbox", "backup") if live else ())
+        self.health.is_skipped = self._place_id_skipped
+
+    def _place_id_skipped(self, place_id):
+        ch = self.client.get_channel(int(place_id)) if self.client is not None else None
+        return ch is not None and cd.place_skipped(ch)
 
 
 CTX = None
@@ -1084,6 +1089,7 @@ def main():
         if not pruner:
             pruner.append(asyncio.create_task(prune_hourly()))
             hl.record_start(CTX.clinic)
+            hl.record_running_commit()
             try:
                 problems = CTX.health.self_check([g for g in client.guilds if not guild or g.id == guild.id],
                                                  delete=CTX.delete, skip=cd.place_skipped)

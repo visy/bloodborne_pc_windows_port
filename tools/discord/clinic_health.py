@@ -66,6 +66,31 @@ def record_start(clinic, now=None):
     record_job(clinic, "start", ",".join(f"{x:.0f}" for x in starts), now)
 
 
+def running_commit_file(conf=None):
+    return Path(conf or os.environ.get("NETDOCTOR_DIR") or Path.home() / ".config" / "netdoctor") / "running_commit"
+
+
+def record_running_commit(repo_dir=None, conf=None, run=subprocess.run):
+    """Write `git rev-parse HEAD` of the code this process was started from to <conf>/running_commit, for
+    deploy.sh to roll back to. Returns the commit or None (not a git checkout: the old file is removed)."""
+    f = running_commit_file(conf)
+    try:
+        r = run(["git", "-C", str(repo_dir or Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        commit = r.stdout.decode().strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        commit = ""
+    try:
+        if commit:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(commit + "\n")
+        elif f.exists():
+            f.unlink()
+    except OSError:
+        pass
+    return commit or None
+
+
 def nw_sync_state(log_path=None):
     """(last timestamp or None, last line failed?) from nw_sync.log; (None, False) when there is no log."""
     path = Path(log_path or Path.home() / ".config" / "netdoctor" / "nw_sync.log")
@@ -191,6 +216,7 @@ class Health:
         self.free_fn = free_fn or (lambda p: shutil.disk_usage(p).free)
         self.started = started if started is not None else now()
         self.send = None   # async callable(text), set by the bot; None = log only
+        self.is_skipped = None   # callable(place_id) -> True for a skipped place: never alerted about
 
     # alerts: trigger/resolve are sync (callable from anywhere), flush sends
 
@@ -294,28 +320,70 @@ class Health:
         self.clinic.db.commit()
 
     def forbidden(self, place_id, what="read or post"):
-        """Discord said 403 on a place she needs: one alert per place, ever."""
+        """Discord said 403 on a place she needs: one alert per place, ever. Never for a skipped place."""
+        try:
+            if self.is_skipped is not None and self.is_skipped(place_id):
+                return
+        except Exception:
+            pass
         self.trigger_once(f"forbidden:{place_id}", f"Discord refuses me ({what}) in channel {place_id}.")
 
     # self-check at start
 
     def self_check(self, guilds, *, delete=False, skip=lambda ch: False, which=shutil.which):
-        """Permissions preflight, quick_check and tools. Returns a list of problem texts (also alerted)."""
-        problems = []
-        need = ["view_channel", "read_message_history", "send_messages"] + (["manage_messages"] if delete else [])
+        """Permissions preflight, quick_check and tools. Returns a list of problem texts (also alerted, as ONE
+        alert for all channels). Send Messages is only required where @everyone can post or attach files (a
+        player could upload a log there); a forum needs Send Messages in Threads + Manage Threads/Messages
+        instead; read-only places need View Channel + Read Message History."""
+        problems, bad_names, scanned, bad_ids = [], [], set(), set()
         for g in guilds:
             me = getattr(g, "me", None)
-            for ch in list(getattr(g, "text_channels", None) or []) + list(getattr(g, "forums", None) or []):
-                if me is None or not hasattr(ch, "permissions_for") or skip(ch):
+            everyone = getattr(g, "default_role", None)
+
+            def skip_private(ch, me, everyone):
+                """A private place nobody but staff can view and she was never given: no reason to be there."""
+                if everyone is None:
+                    return False
+                try:
+                    return not getattr(ch.permissions_for(everyone), "view_channel", True) and                         not getattr(ch.permissions_for(me), "view_channel", True)
+                except Exception:
+                    return False
+            forums = list(getattr(g, "forums", None) or [])
+            for ch in list(getattr(g, "text_channels", None) or []) + forums:
+                if me is None or not hasattr(ch, "permissions_for"):
+                    continue
+                if skip(ch):
+                    scanned.add(str(ch.id))   # never her place: an old forbidden alert for it is closed
                     continue
                 try:
                     perms = ch.permissions_for(me)
+                    ev = ch.permissions_for(everyone) if everyone is not None else None
                 except Exception:
                     continue
+                scanned.add(str(ch.id))
+                if skip_private(ch, me, everyone):
+                    continue
+                need = ["view_channel", "read_message_history"]
+                if ch in forums:
+                    if ev is None or getattr(ev, "send_messages_in_threads", True):
+                        need.append("send_messages_in_threads")
+                        if not (getattr(perms, "manage_threads", True) or getattr(perms, "manage_messages", True)):
+                            need.append("manage_threads")
+                else:
+                    if ev is None or getattr(ev, "send_messages", True) or getattr(ev, "attach_files", True):
+                        need.append("send_messages")
+                    if delete:
+                        need.append("manage_messages")
                 miss = [p for p in need if not getattr(perms, p, True)]
                 if miss:
-                    problems.append(f"channel {ch.id}: missing {', '.join(miss)}")
-                    self.forbidden(ch.id, "missing " + ", ".join(miss))
+                    problems.append(f"channel #{ch.name}: missing {', '.join(miss)}")
+                    bad_names.append(f"#{ch.name} ({', '.join(miss)})")
+                    bad_ids.add(str(ch.id))
+        self.set_condition("self-check-permissions", bool(bad_names),
+                           "at startup Discord permissions are missing in " + "; ".join(bad_names) + ".")
+        for kind in self.active_alerts():
+            if kind.startswith("forbidden:") and kind[10:] in scanned and kind[10:] not in bad_ids:
+                self.resolve(kind)
         qc = [r[0] for r in self.clinic.db.execute("PRAGMA quick_check")]
         if qc != ["ok"]:
             problems.append("database quick_check failed")
