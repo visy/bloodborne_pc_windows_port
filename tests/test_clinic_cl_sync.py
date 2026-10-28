@@ -1,0 +1,147 @@
+"""tools/discord/cl_sync_nw.py and cl_import_coop.py: PC-side changelist import scripts."""
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DISCORD = ROOT / "tools" / "discord"
+sys.path.insert(0, str(DISCORD))
+
+
+def _load(name):
+    s = importlib.util.spec_from_file_location(name, DISCORD / f"{name}.py")
+    m = importlib.util.module_from_spec(s)
+    s.loader.exec_module(m)
+    return m
+
+
+cs = _load("clinic_store")
+cc = _load("clinic_changes")
+nw = _load("cl_sync_nw")
+coop = _load("cl_import_coop")
+
+LOG = (  # newest first, as git prints it
+    "fff6666\x1f2026-10-05T10:00:00+03:00\x1fLauncher: Fix crash on start\x1f\x1e\n"
+    "ccc3333\x1f2026-10-03T10:00:00+03:00\x1fMerge branch x\x1f\x1e\n"
+    "bbb2222\x1f2026-10-02T10:00:00+03:00\x1f0.2.5 Beta 3; Fix firewall prompt\x1f\x1e\n"
+    "aaa1111\x1f2026-10-01T10:00:00+03:00\x1f0.2.5 beta 2 (tester build)\x1fSee NW-1234567\x1e\n"
+    "ccc4444\x1f2026-09-20T10:00:00+03:00\x1fMap: added lamp\x1f\x1e\n"
+    "ddd4444\x1f2026-09-01T09:00:00+03:00\x1f0.9.1: Add logs menu\x1f\x1e\n"
+)
+
+
+def test_parse_log_versions():
+    items, vers = nw.parse_log(LOG)
+    by = {i["source_key"]: i for i in items}
+    assert set(by) == {"git:fff6666", "git:bbb2222", "git:aaa1111", "git:ccc4444", "git:ddd4444"}
+    assert by["git:bbb2222"]["section"] == "fixed" and by["git:bbb2222"]["version"] == "0.2.5 beta 3"
+    assert by["git:fff6666"]["section"] == "fixed" and by["git:fff6666"]["text"].startswith("Launcher:")
+    assert by["git:fff6666"]["version"] == "0.2.5 beta 3"  # newer than last prefixed -> current
+    assert by["git:ccc4444"]["version"] == "0.2.5 beta 2"  # shipped in the next prefixed commit
+    assert by["git:ccc4444"]["section"] == "added"
+    assert by["git:aaa1111"]["bugs"] == ["NW-1234567"]
+    assert by["git:aaa1111"]["text"] == "tester build)"
+    assert all(i["status"] == "done" and i["track"] == "nw" for i in items)
+    vv = {v["version"]: v for v in vers}
+    assert vv["0.2.5 beta 3"]["status"] == "current"  # chronologically newest, not highest number
+    assert vv["0.9.1"]["released"] == "2026-09-01" and vv["0.9.1"]["status"] == "released"
+    assert vv["0.2.5 beta 2"]["released"] == "2026-10-01"
+
+
+def test_current_override():
+    items, vers = nw.parse_log(LOG, current="0.2.5-beta.3")
+    assert {v["version"] for v in vers if v["status"] == "current"} == {"0.2.5 beta 3"}
+    _, vers = nw.parse_log(LOG, current="0.3.0")
+    assert {v["version"] for v in vers if v["status"] == "current"} == {"0.3.0"}
+
+
+def test_sync_rerun_idempotent(tmp_path):
+    ch = cc.Changes(cs.Clinic(tmp_path / "nd.db"))
+    items, vers = nw.parse_log(LOG)
+    lines = [json.dumps(r) for r in vers + items]
+    r = ch.import_lines(lines, who="sync")
+    assert not r["skipped"]
+    cid = ch.items(track="nw", version="0.2.5 beta 3", section="fixed")[0]["id"]
+    ch.move(cid, "nw", "0.2.4", who="visy")
+    ch.import_lines(lines, who="sync")
+    assert len(ch.items(track="nw")) == 5
+    assert ch.get(cid)["version"] == "0.2.4"
+
+
+def test_unsafe_text_skipped(capsys):
+    log = "eee5555\x1f2026-10-03T10:00:00+03:00\x1f0.2.5: fix 12345678901234567890 crash\x1f\x1e\n"
+    items, _ = nw.parse_log(log)
+    assert items == []
+    assert "eee5555" in capsys.readouterr().err
+
+
+def test_parse_release():
+    body = "## Notes\n\n### Added\n- Party chat\n* Colored names\n### Fixed\n- Crash on load\n"
+    items = coop.parse_release("v0.7.6", body)
+    assert [(i["section"], i["text"]) for i in items] == [
+        ("added", "Party chat"), ("added", "Colored names"), ("fixed", "Crash on load")]
+    assert items[0]["source_key"] == "release:v0.7.6:1"
+    assert items[0]["version"] == "0.7.6" and items[0]["status"] == "done" and items[0]["track"] == "coop"
+    flat = coop.parse_release("v0.7.5", "- one thing\n- two thing\n")
+    assert [i["section"] for i in flat] == ["changed", "changed"]
+    priv = coop.parse_release("v0.7.4", "- Fixed crash seen in player_logs/case1/x.log\n")
+    assert "player_logs" not in priv[0]["text"] and "player_logs" in priv[0]["dev"]
+    cc.clean_text(priv[0]["text"])
+
+
+def test_unmatched(tmp_path):
+    for d in ("2026-10-25/chalice_vase_shop", "2026-10-25/lamp", "2026-10-25/lamp_after_join",
+              "2026-10-26/boss_hang", "2026-10-26/other", "nw_clinic/2026-10-26", "nw_clinic/stuff"):
+        (tmp_path / d).mkdir(parents=True)
+    (tmp_path / "readme.txt").write_text("x")
+    names = ["2026-10-25/chalice_vase_shop", "Boss_Hang", "see 2026-10-25/lamp_after_join notes"]
+    out = coop.unmatched(tmp_path, names)
+    assert out == ["2026-10-25/lamp", "2026-10-26/other"]
+
+
+def test_noise_word_boundary():
+    log = ("a1\x1f2026-10-01T10:00:00+03:00\x1fDocstrings fix\x1f\x1e\n"
+           "a2\x1f2026-10-02T10:00:00+03:00\x1fwiping saves\x1f\x1e\n"
+           "a3\x1f2026-10-03T10:00:00+03:00\x1fDocs: update\x1f\x1e\n"
+           "a4\x1f2026-10-04T10:00:00+03:00\x1f0.2.5: x\x1f\x1e\n")
+    items, _ = nw.parse_log(log)
+    assert sorted(i["source_key"] for i in items) == ["git:a1", "git:a2", "git:a4"]
+
+
+def test_section_keywords():
+    assert nw._section("VRAM cleanup, fixes a crash") == "fixed"
+    assert nw._section("Launcher: new language list") == "added"
+    assert nw._section("Docstrings") == "changed"
+    assert nw._section("Renewal of stuff") == "changed"
+
+
+def test_output_is_utf8_bytes(tmp_path, monkeypatch, capsys):
+    import io
+    raw = io.BytesIO()
+    cp = io.TextIOWrapper(raw, encoding="cp1252", errors="strict", write_through=True)
+    monkeypatch.setattr(sys, "stdout", cp)
+    nw.out_bytes("lamp \u2192 ok\n".encode("utf-8"))
+    assert raw.getvalue() == "lamp \u2192 ok\n".encode("utf-8")
+    err = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", write_through=True)
+    monkeypatch.setattr(sys, "stderr", err)
+    nw.note("skipped \u2192 thing")  # must not raise
+    assert err.buffer.getvalue().startswith(b"skipped ? thing")
+
+
+def test_releases_json_main_and_sections(tmp_path, monkeypatch):
+    import io
+    body = ("Intro bullet\n- before heading\n## Added\n- Arrow \u2192 thing\n#### fixed\n- Crash\n"
+            "## Install\n- run setup\n## Known issues\n- bug\n## Changed\n- Tweak\n")
+    items = coop.parse_release("v0.7.9", body)
+    assert [(i["section"], i["text"]) for i in items] == [
+        ("changed", "before heading"), ("added", "Arrow \u2192 thing"), ("fixed", "Crash"), ("changed", "Tweak")]
+    assert [i["source_key"] for i in items][-1] == "release:v0.7.9:4"
+    f = tmp_path / "rel.json"
+    f.write_text(json.dumps([{"tag_name": "v0.7.9", "body": body, "published_at": "2026-10-20T10:00:00Z"}]),
+                 encoding="utf-8")
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252", write_through=True))
+    assert coop.main(["--releases-json", str(f)]) == 0
+    lines = [json.loads(x) for x in raw.getvalue().decode("utf-8").splitlines()]
+    assert lines[0]["kind"] == "version" and lines[0]["released"] == "2026-10-20" and len(lines) == 5
