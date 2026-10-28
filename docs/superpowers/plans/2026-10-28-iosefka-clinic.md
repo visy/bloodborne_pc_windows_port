@@ -37,6 +37,12 @@ live duty by calling the same Discord-operation functions the cull uses.
 - Size: whole DB file ceiling 3 GiB (`NETDOCTOR_DB_MAX_MB` capped at 3072); ND cache rows pruned after 180
   days; `nw_*` tables never pruned automatically. At 2.4 GiB or free disk < 1 GB: stills off + one warning
   in the first channel whose name starts with `staff`.
+- Disk (quad.fi has ~5 GB free): never write an archive/export/tar to the server's disk (stream to
+  stdout); one download at a time in a temp dir, deleted right after storing; before each download
+  require `free_disk >= attachment.size + 1.5 GB`, else stop the harvest/cull cleanly with a message
+  (resume later); videos are streamed to temp, stilled, deleted (largest is < 500 MB); the nightly
+  backup is skipped when free < 2x DB size; no VACUUM during the harvest. Expected peak use: DB ~0.4 GB
+  + one temp file.
 - Video stills: one frame per 4 s, at most 48 evenly spread, 1280 px wide, WebP q60 (JPEG q70 without
   WebP). Images > 2 MB re-encoded WebP q85, max side 2560 px; key stays the original sha256.
 - No player data in the repo: tests use invented names/IPs from documentation ranges
