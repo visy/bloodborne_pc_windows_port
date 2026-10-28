@@ -63,7 +63,7 @@ instances over SSH. Reporting a bug stays painless for players and safe for them
   Bot uploads are capped by the server's boost level (25 MB base).
 - Server shape: text channels, news channels, forums `#bug-reports` (~80 posts), `#suggestions`,
   `#pre-release-bug-reports`, threads in `#help`. Skip: names starting with `staff`, and `development`
-  (user rule). `#moderator-only` is included.
+  (user rule), and `#moderator-only` (visy, later).
 - Volume (read-only count 2026-10-28, skip rule applied): 5418 messages; 188 log/txt files (357 MB raw,
   ~25 MB LZMA), 243 images (282 MB), 40 videos (857 MB, stills only), 4 zips, 1 crash dump (.dmp),
   1 game file (.dcx). Logs by place: #bug-reports 135 (79 posts), #help 42, #general 9, #co-op 2.
@@ -255,7 +255,7 @@ Builder's calls (visy can override):
   the venv; WebP when Pillow has it, else JPEG.
 - Bug merges: `merge NW-a NW-b` re-points messages and notes, NW-b becomes `duplicate` of NW-a.
 
-- `#moderator-only` is NOT skipped (visy): only `#staff*` and `#development` are.
+- `#moderator-only` is skipped too (visy, after the permission change): skipped = `#staff*`, `#development`, `#moderator-only`.
 
 ## Open questions
 
