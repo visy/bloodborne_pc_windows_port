@@ -51,6 +51,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import clinic_asks as asks  # noqa: E402
 import clinic_discord as cd  # noqa: E402
+import clinic_health as hl  # noqa: E402
 import clinic_logic  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_voice as voice  # noqa: E402
@@ -205,6 +206,8 @@ class Ctx:
         self.busy = set()
         self.ask_delay = asks.ASK_DELAY  # seconds between two retest asks / nudges
         self.warned_day = None
+        self.flood = hl.FloodGuard(int(hl.env_float("NETDOCTOR_UPLOADS_PER_HOUR", 10)))
+        self.health = hl.Health(clinic, expect=("sweep", "outbox", "backup") if live else ())
 
 
 CTX = None
@@ -288,6 +291,8 @@ async def handle_log_message(message, *, live, ctx=None):
                                           extra=extra, short=short)
         if not short and out in ("deleted", "delete_forbidden"):
             clinic.add_note(bug, "iosefka", FULL_REPLY, "full reply posted", to=str(message.author.id))
+        if out == "delete_forbidden":
+            ctx.health.forbidden(message.channel.id, "delete messages")
         return out
     finally:
         ctx.busy.discard(message.id)
@@ -382,6 +387,9 @@ async def dispatch_message(message, ctx):
                       (ctx.guild_id and message.guild.id != ctx.guild_id)):
         return False
     if all_attachments(message):
+        if guild_msg and not ctx.flood.allow(message.author.id):
+            hl.queue_upload(ctx.clinic, message)  # too many uploads from one author this hour: the sweep takes it
+            return True
         return await handle_log_message(message, live=True, ctx=ctx) == "deleted"
     await handle_text_message(message, ctx, live=True)
     return False
@@ -453,12 +461,41 @@ async def retry_unfinished(ctx, skip=(), out=print):
                 ctx.clinic.set_state(rec["message_id"], "deleted")
             elif kind != "Forbidden":
                 raise
+            else:
+                ctx.health.forbidden(cid)
             continue
         r = await handle_log_message(message, live=False, ctx=ctx)
         if r == "disk-low":
             out("disk low during retries, the next sweep continues")
             break
         n += r not in ("none", "off", "skipped", "kept")
+    return n
+
+
+async def drain_queue(ctx, out=print):
+    """The flood guard's queue, oldest first: each upload message is handled like a sweep message (no ping,
+    and a log message is still replaced and deleted, only later). Rows leave the queue when the message is
+    done or gone; a message that could not finish stays queued."""
+    n = 0
+    for row in hl.queued_uploads(ctx.clinic, RETRY_PER_SWEEP):
+        try:
+            place = ctx.client.get_channel(row["channel_id"]) or await ctx.client.fetch_channel(row["channel_id"])
+            message = await place.fetch_message(row["message_id"])
+        except Exception as e:
+            kind = type(e).__name__
+            if kind == "NotFound":
+                hl.drop_queued(ctx.clinic, row["message_id"])
+            elif kind == "Forbidden":
+                ctx.health.forbidden(row["channel_id"])
+            else:
+                raise
+            continue
+        r = await handle_log_message(message, live=False, ctx=ctx)
+        if r in ("disk-low", "busy"):
+            out("disk low while draining the upload queue, the next sweep continues")
+            break
+        hl.drop_queued(ctx.clinic, row["message_id"])
+        n += 1
     return n
 
 
@@ -510,6 +547,7 @@ async def catch_up(ctx, guilds, archived=True, out=print):
                 if type(e).__name__ != "Forbidden":
                     raise
                 out(f"no access: {getattr(place, 'name', place.id)}")
+                ctx.health.forbidden(place.id)
                 continue
             if last > wm:
                 ctx.clinic.set_watermark(place.id, last)
@@ -561,6 +599,8 @@ async def send_outbox(ctx, out=print):
         except Exception as e:
             if type(e).__name__ in ("Forbidden", "NotFound"):
                 ctx.clinic.add_note(row["bug_id"], "iosefka", "status", f"tell not delivered: {type(e).__name__}")
+                if type(e).__name__ == "Forbidden":
+                    ctx.health.forbidden(place.id, "post")
                 ctx.clinic.outbox_sent(row["id"])
                 continue
             raise
@@ -977,6 +1017,7 @@ def main():
             await handle_raw_edit(payload, CTX)
         except Exception as e:
             print(f"edit handling failed: {type(e).__name__}: {e}", flush=True)
+            hl.note_error(CTX.clinic, "edit handling", e)
 
     async def clinic_loops():
         """Live duty background work: catch-up (start, then hourly), outbox (60 s), backup (04:00), guards."""
@@ -987,30 +1028,70 @@ def main():
         while True:
             try:
                 if tick % 60 == 0:
+                    await drain_queue(CTX)
                     await catch_up(CTX, guilds, archived=first)
                     await asks.sweep_waiting(CTX)
                     await disk_guard(CTX, guilds)
                     first = False
+                    hl.record_job(CTX.clinic, "sweep")
                 await send_outbox(CTX)
+                hl.record_job(CTX.clinic, "outbox")
                 if time.time() >= next_backup:
                     next_backup = time.time() + seconds_until(4)
                     ok = await asyncio.get_running_loop().run_in_executor(
                         None, CTX.clinic.backup, Path(str(DB_PATH) + ".bak"))
                     print("backup " + ("written" if ok else "skipped: not enough free disk"), flush=True)
+                    hl.record_job(CTX.clinic, "backup", "written" if ok else "skipped")
             except Exception as e:
                 print(f"clinic loop: {type(e).__name__}: {e}", flush=True)
+                hl.note_error(CTX.clinic, "clinic loop", e)
             tick += 1
             await asyncio.sleep(60)
 
     async def prune_hourly():
         while True:
             await asyncio.sleep(3600)
-            safe_prune(store, db_max)
+            if safe_prune(store, db_max) is None:
+                hl.note_error(CTX.clinic, "db prune", RuntimeError("prune failed"))
+
+    async def health_loop():
+        """Every 5 min, apart from the clinic loop: conditions, alerts, the morning report, weekly upkeep."""
+        h = CTX.health
+        h.send = hl.Deliver(client, allowed_mentions=cd.AllowedMentions.none())
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                hl.record_job(CTX.clinic, "health_tick")
+                h.check()
+                if h.upkeep_due(time.localtime().tm_hour):
+                    await loop.run_in_executor(None, h.run_upkeep)
+                await h.flush()
+                await hl.send_daily_report(h)
+            except Exception as e:
+                print(f"health loop: {type(e).__name__}: {e}", flush=True)
+            await asyncio.sleep(300)
+
+    @client.event
+    async def on_error(event, *args, **kwargs):
+        import traceback
+        traceback.print_exc()
+        exc = sys.exc_info()[1]
+        if exc is not None and CTX is not None:
+            hl.note_error(CTX.clinic, f"event {event}", exc)
 
     @client.event
     async def on_ready():
         if not pruner:
             pruner.append(asyncio.create_task(prune_hourly()))
+            hl.record_start(CTX.clinic)
+            try:
+                problems = CTX.health.self_check([g for g in client.guilds if not guild or g.id == guild.id],
+                                                 delete=CTX.delete, skip=cd.place_skipped)
+                print("self-check: " + ("ok" if not problems else "; ".join(problems)), flush=True)
+            except Exception as e:
+                print(f"self-check failed: {type(e).__name__}: {e}", flush=True)
+                hl.note_error(CTX.clinic, "self-check", e)
+            pruner.append(asyncio.create_task(health_loop()))
             if CTX is not None and CTX.live:
                 pruner.append(asyncio.create_task(clinic_loops()))
         print("in servers: " + (", ".join(f"{g.name} ({g.id})" for g in client.guilds) or "none - invite the "
