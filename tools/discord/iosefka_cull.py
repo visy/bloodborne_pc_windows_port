@@ -139,20 +139,58 @@ def cullable(clinic):
             if cd.rec_removable(m["attachments"]) and not m.get("dm")]
 
 
+CHANNEL_RUN_GAP_S = 300
+
+
+def cull_runs(clinic):
+    """The cullable messages grouped into runs: consecutive (by id, one place) messages of one author for
+    one bug, with no stored message of anyone else between them. Oldest first; a lone message is a run of 1."""
+    todo = cullable(clinic)
+    if not todo:
+        return []
+    stored, mine = {}, {}
+    for m in clinic.all_messages():
+        stored.setdefault(m["thread_id"] or m["channel_id"], []).append(m)
+    for rec in todo:
+        mine.setdefault(rec["thread_id"] or rec["channel_id"], []).append(rec)
+    runs = []
+    for place, recs in mine.items():
+        cur = None
+        for rec in recs:  # oldest id first
+            key = (rec["author_id"], rec.get("bug_id"))
+            # plain channels keep only messages with files, so other people's chat in between is unknown:
+            # there a run also needs the messages to be close in time
+            near = bool(rec["thread_id"]) or cur is None or \
+                (rec.get("created") or 0) - (cur[1][-1].get("created") or 0) <= CHANNEL_RUN_GAP_S
+            if cur is not None and key[1] and cur[0] == key and near and not any(
+                    o["author_id"] != rec["author_id"]
+                    and cur[1][-1]["message_id"] < o["message_id"] < rec["message_id"] for o in stored[place]):
+                cur[1].append(rec)
+                continue
+            cur = (key, [rec])
+            runs.append(cur[1])
+    return sorted(runs, key=lambda r: r[0]["message_id"])
+
+
 def report(clinic, path, resolve_name=None):
     lines = ["Iosefka cull report (dry run): messages that would be replaced and deleted", ""]
-    todo = cullable(clinic)
-    for m in todo:
+    runs = cull_runs(clinic)
+    for run_ in runs:
+        m = run_[0]
         bug = clinic.bug(m["bug_id"]) if m.get("bug_id") else None
-        place = (resolve_name(m["thread_id"] or m["channel_id"]) if resolve_name else None) or \
-            (bug["title"] if bug else "?")
-        lines.append(f"{m['bug_id'] or 'NO-BUG'}  place: {place}  message {m['message_id']}  state {m['state']}")
-        lines.append("  files: " + ", ".join(a["filename"] for a in m["attachments"]))
+        place = (resolve_name(m["thread_id"] or m["channel_id"]) if resolve_name else None) or             (bug["title"] if bug else "?")
+        ids = ", ".join(str(r["message_id"]) for r in run_)
+        if len(run_) > 1:
+            lines.append(f"{m['bug_id'] or 'NO-BUG'}  place: {place}  run of {len(run_)} messages: {ids}  "
+                         f"state {'/'.join(sorted({r['state'] for r in run_}))}")
+        else:
+            lines.append(f"{m['bug_id'] or 'NO-BUG'}  place: {place}  message {m['message_id']}  state {m['state']}")
+        lines.append("  files: " + ", ".join(a["filename"] for r in run_ for a in r["attachments"]))
         lines.append("  would post:")
-        lines += ["    " + ln for ln in voice.replacement(f"<@{m['author_id']}>", m["bug_id"] or "NW-???????",
-                                                           m["content"] or "").splitlines()]
+        lines += ["    " + ln for ln in voice.replacement_many(
+            f"<@{m['author_id']}>", m["bug_id"] or "NW-???????", [r["content"] or "" for r in run_]).splitlines()]
         lines.append("")
-    lines.append(f"{len(todo)} message(s)")
+    lines.append(f"{sum(len(r) for r in runs)} message(s)" + (f" in {len(runs)} run(s)" if any(len(r) > 1 for r in runs) else ""))
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return OK
 
@@ -197,33 +235,38 @@ async def cull(client, clinic, *, limit=None, delay=1.0, out=print, env=os.envir
         out("cull deletes messages: set NW_DELETE=1 (and run `report` first)")
         return REFUSED
     done = 0
-    for rec in cullable(clinic):
+    for run_ in cull_runs(clinic):
         if limit is not None and done >= limit:
             break
-        if not rec.get("bug_id"):
-            out(f"{rec['message_id']}: blocked:no-bug")
+        if not run_[0].get("bug_id"):
+            out(f"{run_[0]['message_id']}: blocked:no-bug")
             continue
-        try:
-            message = await _fetch(client, rec)
-        except Exception as e:
-            if type(e).__name__ == "Forbidden":
-                out(f"{rec['message_id']}: no access to its place")
-                continue
-            if type(e).__name__ != "NotFound":
-                raise
-            clinic.set_state(rec["message_id"], "deleted")  # gone already: after the delete, before the record
-            out(f"{rec['message_id']}: deleted (already gone)")
+        messages = []
+        for rec in run_:
+            try:
+                messages.append(await _fetch(client, rec))
+            except Exception as e:
+                if type(e).__name__ == "Forbidden":
+                    out(f"{rec['message_id']}: no access to its place")
+                    continue
+                if type(e).__name__ != "NotFound":
+                    raise
+                clinic.set_state(rec["message_id"], "deleted")  # gone already: after the delete, before the record
+                out(f"{rec['message_id']}: deleted (already gone)")
+        if not messages:
             continue
+        bug_id = run_[0]["bug_id"]
         try:
-            res = await cd.replace_and_delete(clinic, message, rec["bug_id"], ping=False, delete=True,
-                                              need_export=True)
+            results = await cd.replace_run(clinic, messages, bug_id, ping=False, need_export=True)
         except Exception as e:  # one place the bot may not post in must not stop the whole cull
             if type(e).__name__ != "Forbidden":
                 raise
-            res = "send_forbidden"
-        out(f"{rec['message_id']} {rec['bug_id']}: {res}")
-        if res == "deleted":
-            done += 1
+            results = {m.id: "send_forbidden" for m in messages}
+        for mid, res in results.items():
+            out(f"{mid} {bug_id}: {res}")
+        n = sum(r == "deleted" for r in results.values())
+        done += n
+        if n:
             await asyncio.sleep(delay)
     out(f"cull: {done} message(s) replaced and deleted")
     return OK
