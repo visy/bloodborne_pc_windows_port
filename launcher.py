@@ -189,6 +189,7 @@ PARTY_INI_FLAGS = [
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
+    ("party_item_notices", True),
 ]
 
 # ---- The party settings tabs (0.7.3, user request): the Party tab holds hosting / joining /
@@ -455,6 +456,12 @@ MY_PARTY_TAB = [
          "line. Your own setting, not a host rule. In the game: System > Party members (the other notices are on "
          "System > My party: Look & notices). "
          "Default: on (bbport.ini party_conn_warnings)."),
+        ("check", "party_item_notices", "Shared item notices",
+         "A short notice \"<item>: shared with the party\" on your screen when a key or unique item, a weapon or a "
+         "rune is given to the party (yours or a companion's; never for ordinary pickups). Shows while the "
+         "party notices are on. In the game: System > Party members (the other notices are on "
+         "System > My party: Look & notices). "
+         "Default: on (bbport.ini party_item_notices)."),
         ("check", "party_npc_talk", "Share NPC dialogue",
          "When a companion near you talks to an NPC you get the conversation too: "
          "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
@@ -2863,6 +2870,7 @@ class BloodborneLauncher(tk.Tk):
         # 0.7.3: join/leave notices and guests using lamps (game settings, also in the game's menus)
         self.party_toasts = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_toasts"))
         self.party_conn_warnings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_conn_warnings"))
+        self.party_item_notices = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_item_notices"))
         self.party_guest_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_guest_lamps"))
         # The Party Rules / My Party checkboxes that are one bbport.ini key each (PARTY_INI_FLAGS)
         self.party_flag_vars = {key: getattr(self, key) for key, _ in PARTY_INI_FLAGS}
