@@ -349,3 +349,18 @@ def test_run_split_by_time_gap_in_channel(tmp_path):
     harvest(c, guild, tmp_path)
     confirm_all(c)
     assert [len(r) for r in cull.cull_runs(c)] == [1, 1]  # unseen chat may sit in a 30 min gap
+
+
+class Forbidden(Exception):
+    pass
+
+
+def test_cull_stops_on_first_forbidden_and_retries_delete_only(tmp_path):
+    c, guild, ch, calls, client = run_world(tmp_path, between=(1, other_msg), ids=(1, 3, 4))
+    ch.messages[0].delete_error = Forbidden("no manage messages")
+    assert run(cull.cull(client, c, delay=0, out=lambda x: None, env=FLAG)) == cull.FAIL
+    assert len(ch.sent) == 1 and c.message(1)["state"] == "delete_forbidden"
+    assert not ch.messages[2].deleted  # stopped: the next run was not touched
+    ch.messages[0].delete_error = None
+    assert run(cull.cull(client, c, delay=0, out=lambda x: None, env=FLAG)) == cull.OK
+    assert ch.messages[0].deleted and len(ch.sent) == 2  # message 1: no second note; run 3-4: one note
