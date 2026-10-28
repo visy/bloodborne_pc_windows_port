@@ -353,6 +353,29 @@ class Changes:
                 return v["version"]
         return None
 
+    def release(self, track, version, next_version=None, *, who, dry_run=False):
+        """Release `version`: status released (released = now), its planned / in-progress items move to the next
+        version (created as planned when missing; default: the track's next()), which becomes current.
+        Returns {"released", "next", "moved": [item ids], "notes": markdown, "dry_run"}; dry_run changes nothing."""
+        track = _enum(track, TRACKS, "track")
+        version = norm_version(version)
+        if self._version(track, version) is None:
+            raise ValueError(f"no such version {track} {version}")
+        nxt = norm_version(next_version) if next_version else self.next(track)
+        if nxt is None:
+            raise ValueError(f"no next version for {track}: pass --next VERSION")
+        if nxt == version:
+            raise ValueError("--next must be a different version")
+        unfinished = self.items(track=track, version=version, status=["planned", "in-progress"])
+        moved = [i["id"] for i in sorted(unfinished, key=lambda i: (i["created"], i["id"]))]
+        if not dry_run:
+            self.set_version(track, version, status="released", who=who)
+            for cid in moved:
+                self.move(cid, track, nxt, who=who)
+            self.set_version(track, nxt, status="current", who=who)
+        return {"track": track, "released": version, "next": nxt, "moved": moved, "dry_run": dry_run,
+                "notes": self.render_notes(track, version)}
+
     # items
 
     def _new_id(self):

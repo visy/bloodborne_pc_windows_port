@@ -93,4 +93,24 @@ inline bool BankInsert(T* b, T* e, T* cap, T x) {
     return true;
 }
 
+/// Boss attention sharing (0.7.7): the boss's own target search keeps the player it first took (or the
+/// nearest one), so a guest who fights from a few metres more than the host is ignored. On the AI
+/// owner's game, in a boss fight with two or more living players within `reach` of the boss, the
+/// target is handed on every `hold` seconds to the one who was the target longest ago (never targeted
+/// = oldest). `d2` squared distances to the boss (negative: dead / unreadable), `last` the time each
+/// was last handed the target (0 = never), `current` the index handed it last (-1 none), `since` the
+/// time it was handed. Returns the index to hand the target now, -1 for no change.
+inline int PickAttention(const float* d2, const double* last, int n, float reach, int current, double since,
+                         double now, double hold) {
+    int live = 0, best = -1;
+    for (int i = 0; i < n; ++i) {
+        if (d2[i] < 0 || d2[i] > reach * reach) continue;
+        ++live;
+        if (best < 0 || last[i] < last[best] || (last[i] == last[best] && d2[i] < d2[best])) best = i;
+    }
+    if (live < 2) return -1;
+    if (current >= 0 && current < n && d2[current] >= 0 && d2[current] <= reach * reach && now - since < hold) return -1;
+    return best == current ? -1 : best;
+}
+
 }  // namespace enemyai_rules
