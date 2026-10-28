@@ -42,7 +42,7 @@ def test_removable_kinds():
     assert cl.removable("saves.zip", None)
     assert cl.file_kind("A.PNG") == "image" and cl.file_kind("b.mp4") == "video"
     assert cl.file_kind("x.7z") == "archive" and cl.file_kind("x.dmp") == "dump"
-    assert cl.file_kind("userdata0001") == "game" and cl.file_kind("readme.md") == "other"
+    assert cl.file_kind("userdata0001") == "save" and cl.file_kind("x.dcx") == "game" and cl.file_kind("readme.md") == "other"
 
 
 def test_mask_ips():
@@ -106,3 +106,27 @@ def test_classify():
     assert cl.classify("the lamp is glitched", set()) == "bug"
     assert cl.classify("nothing special", {"other.x"}) == "bug"
     assert cl.classify("radmin firewall?", set()) == "network"
+
+
+def test_save_kind():
+    for n in ("userdata0000", "USERDATA0009", "userdata0010", "backup0000", "backup0010", "userdata0000.bak",
+              "backup0010.bak", "userdata0000_Hunter (2)", "userdata0003 (2)", "SPRJ0005/param.sfo",
+              "SPRJ0005/sce_sys/icon0.png", "x/savedata/whatever.bin", "C:\\a\\SPRJ0005\\userdata0000"):
+        assert cl.file_kind(n) == "save", n
+        assert cl.removable(n), n
+    assert cl.file_kind("param.sfo") == "other" and cl.file_kind("icon0.png") == "image"
+    assert cl.file_kind("SPRJ0005/notes.txt") == "log" and cl.file_kind("userdata_x") == "game"
+    assert cl.file_kind("SPRJ0005.zip") == "archive" and cl.file_kind("backup.png") == "image"
+    assert cl.removable("SPRJ0005.zip", ["SPRJ0005/userdata0000", "SPRJ0005/backup0000"])
+    assert cl.removable("s.zip", ["a.png"]) is False
+
+
+def test_holds_names_what_was_brought():
+    save_zip = {"filename": "SPRJ0005.zip", "inner": ["SPRJ0005/userdata0000", "SPRJ0005/backup0000", "x.png"]}
+    mixed = {"filename": "m.zip", "inner": ["last_session.log", "userdata0001"]}
+    assert cl.holds([{"filename": "nightwatch.log"}]) == "log"
+    assert cl.holds([{"filename": "userdata0000"}]) == "save"
+    assert cl.holds([save_zip]) == "save" and cl.holds([mixed]) == "both"
+    assert cl.holds([save_zip, {"filename": "a.log"}]) == "both"
+    assert cl.holds([{"filename": "u.zip", "inner": None}]) == "log"  # unreadable: the old assumption
+    assert cl.holds([{"filename": "a.png"}]) == "log"
