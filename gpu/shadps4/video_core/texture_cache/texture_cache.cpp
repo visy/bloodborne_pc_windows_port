@@ -99,13 +99,39 @@ void TextureCache::ProcessDownloadImages() {
     }
     std::unique_lock lk{download_images_mutex};
     downloads_queued.store(false, std::memory_order_relaxed);
+    // Mrsuss60/bloodborne_pc_windows_port f8f450b1 (#176): one flush and one wait for all the
+    // images queued, not one wait per image (multi-second stalls opening menus / item icons).
+    std::vector<BatchedDownload> batch;
+    batch.reserve(download_images.size());
     for (const ImageId image_id : download_images) {
-        DownloadImageMemory(image_id, true);
+        DownloadImageMemory(image_id, true, &batch);
     }
     download_images.clear();
+    if (!batch.empty()) {
+        runtime.FlushBarriers(); // pending barriers go out before the synchronous finish (#129)
+        scheduler.Finish();
+        for (const auto& item : batch) {
+            FinishDownload(item);
+        }
+    }
 }
 
-void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
+void TextureCache::FinishDownload(const BatchedDownload& item) {
+    item.download.Invalidate();
+    BbFreeCheck::Check(item.guest_address, item.size, item.download.mapped,
+                       BbFreeCheck::ImageDownload);
+    Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(item.guest_address),
+                                              item.download.mapped, item.size);
+    if (!WriteTracking()) {
+        buffer_cache.InvalidateMemory(item.guest_address, item.size);
+    }
+}
+
+void TextureCache::DownloadImageMemory(ImageId image_id, bool sync,
+                                       std::vector<BatchedDownload>* batch) {
+    if (!slot_images.is_allocated(image_id)) {
+        return; // Mrsuss60 f8f450b1: a freed slot is not read
+    }
     Image& image = slot_images[image_id];
     if (False(image.flags & ImageFlagBits::GpuModified)) {
         return;
@@ -161,17 +187,12 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
         .imageExtent = {image.info.size.width, image.info.size.height, image.info.size.depth},
     };
     runtime.DownloadImage(&image, download.buffer, std::span{&image_download, 1});
-    if (sync) {
+    if (sync && batch) {
+        batch->push_back({download, image.info.guest_address, download_size});
+    } else if (sync) {
         runtime.FlushBarriers(); // pending barriers go out before the synchronous finish (#129)
         scheduler.Finish();
-        download.Invalidate();
-        BbFreeCheck::Check(image.info.guest_address, download_size, download.mapped,
-                           BbFreeCheck::ImageDownload);
-        Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(image.info.guest_address),
-                                                  download.mapped, download_size);
-        if (!WriteTracking()) {
-            buffer_cache.InvalidateMemory(image.info.guest_address, download_size);
-        }
+        FinishDownload({download, image.info.guest_address, download_size});
     } else {
         scheduler.DeferPriorityOperation(
             [this, device_addr = image.info.guest_address, download, download_size] {
@@ -630,13 +651,20 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (cached.view_mip >= 0 || cached.view_slice >= 0 || !cached.image_id) {
             return false;
         }
+        if (!slot_images.is_allocated(cached.image_id)) {
+            return false; // Mrsuss60 7c0e5f0d: a freed slot is no use-after-free
+        }
         const Image& image = slot_images[cached.image_id];
         return True(image.flags & ImageFlagBits::Registered) &&
                image.info.guest_address == info.guest_address &&
                image.info.guest_size == info.guest_size && image.info.size == info.size &&
                image.info.pixel_format == info.pixel_format;
     };
-    if ((cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
+    if (cached.image_id && !slot_images.is_allocated(cached.image_id)) {
+        cached = {};
+    }
+    if (cached.image_id &&
+        (cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
         cached.address == info.guest_address &&
         cached.size == info.guest_size && cached.extent == info.size &&
         cached.format == info.pixel_format && cached.type == info.type &&
@@ -1060,6 +1088,12 @@ void TextureCache::RegisterImage(ImageId image_id) {
 }
 
 void TextureCache::UnregisterImage(ImageId image_id) {
+    // Mrsuss60 7c0e5f0d: no memoized lookup keeps the id of an image that leaves the registry.
+    for (auto& entry : find_image_cache) {
+        if (entry.image_id == image_id) {
+            entry = {};
+        }
+    }
     Image& image = slot_images[image_id];
     ASSERT_MSG(True(image.flags & ImageFlagBits::Registered),
                "Trying to unregister an already unregistered image");
