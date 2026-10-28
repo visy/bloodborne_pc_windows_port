@@ -80,7 +80,7 @@ def clean_text(t):
     t = " ".join((t or "").split())
     if not t:
         raise ValueError("empty text")
-    if "player_logs" in t:
+    if "player_logs" in t.lower():
         raise ValueError("text mentions player_logs (put paths in dev)")
     if "<@" in t:
         raise ValueError("text contains a Discord mention")
@@ -118,6 +118,18 @@ def _strs(xs):
         x = str(x).strip()
         if x and x not in out:
             out.append(x)
+    return out
+
+
+_CASE_RX = re.compile(r"^(?:\d{4}-\d{2}-\d{2}/)?[A-Za-z0-9._() -]{1,120}$")
+
+
+def _cases_in(xs):
+    """Case folder links: bare names or "YYYY-MM-DD/name". ValueError on anything else."""
+    out = _strs(xs)
+    for x in out:
+        if not _CASE_RX.match(x) or ".." in x:
+            raise ValueError(f"not a case folder name (name or YYYY-MM-DD/name): {x!r}")
     return out
 
 
@@ -226,7 +238,7 @@ class Changes:
                               (track, version)).fetchone()
         return _vrow(row) if row else None
 
-    def _set_version(self, track, version, status, released, notes, who, human):
+    def _set_version(self, track, version, status, released, notes, who, human, kept=None):
         track = _enum(track, TRACKS, "track")
         version = norm_version(version)
         if status is not None:
@@ -249,6 +261,8 @@ class Changes:
             if val is None:
                 continue
             if not human and field in locked:
+                if kept is not None and val != v[field]:
+                    kept.append(field)
                 continue
             if not human and field == "status" and v["status"] == "released" and val != "released":
                 continue  # import never reopens a released version
@@ -256,6 +270,8 @@ class Changes:
                 cur = self.db.execute("SELECT version, locked FROM nw_versions WHERE track=? AND status='current' "
                                       "AND version<>?", (track, version)).fetchall()
                 if not human and any("status" in _jl(c[1], []) for c in cur):
+                    if kept is not None:
+                        kept.append("status")
                     continue  # a human-set current stays; import cannot demote it
                 for c in cur:
                     self.db.execute("UPDATE nw_versions SET status='planned', updated=? WHERE track=? AND version=?",
@@ -333,7 +349,7 @@ class Changes:
         cid, now = self._new_id(), time.time()
         self.db.execute(f"INSERT INTO nw_changes ({', '.join(CHANGE_COLS)}) VALUES ({','.join('?' * 16)})",
                         (cid, track, version, section, text, dev, status, _dumps(_tags_in(tags)),
-                         _dumps(_strs(bugs)), _dumps(_strs(cases)), _dumps(_strs(commits)),
+                         _dumps(_strs(bugs)), _dumps(_cases_in(cases)), _dumps(_strs(commits)),
                          source_key or None, who, "[]", now, now))
         self._note(cid, who, "add", f"added to {track} {version} as {section}/{status}")
         return cid
@@ -462,7 +478,7 @@ class Changes:
             it = self._need(cid)
             f, notes = {}, []
             for name, vals in (("bugs", bugs), ("cases", cases), ("commits", commits)):
-                vals = _strs(vals)
+                vals = _cases_in(vals) if name == "cases" and not unlink else _strs(vals)
                 if not vals:
                     continue
                 have = it[name]
@@ -487,17 +503,24 @@ class Changes:
             return self.get(keep)
 
     def item_for_bug(self, track, bug_id):
-        """The newest item in `track` that links the bug (any version), or None."""
-        for it in self.items(track=track, bug=bug_id):
-            return it
-        return None
+        """The item in `track` that links the bug (any version): a non-dropped one first, most recently
+        updated first; dropped ones (merged duplicates) only count when nothing else links it. None if none."""
+        found = self.items(track=track, bug=bug_id)
+        found.sort(key=lambda i: (i["status"] != "dropped", i["updated"], i["created"]), reverse=True)
+        return found[0] if found and found[0]["status"] != "dropped" else None
+
+    def add_note(self, cid, who, kind, text):
+        """Plain history note on an item."""
+        with self._txn():
+            self._need(cid)
+            self._note(cid, who, kind, text)
 
     # import
 
     def import_lines(self, lines, *, who):
         """Apply JSONL lines (items and versions), each in its own transaction. Bad lines are skipped and
         reported: {"applied": n, "skipped": [{"line": k, "why": ...}]} with 1-based line numbers."""
-        applied, skipped = 0, []
+        applied, skipped, locked = 0, [], []
         for n, line in enumerate(lines, 1):
             if isinstance(line, bytes):
                 line = line.decode("utf-8", "replace")
@@ -510,15 +533,20 @@ class Changes:
                 with self._txn():
                     kind = rec.get("kind", "item")
                     if kind == "version":
-                        self._import_version(rec, who)
+                        kept = self._import_version(rec, who)
                     elif kind == "item":
-                        self._import_item(rec, who)
+                        kept = self._import_item(rec, who)
                     else:
                         raise ValueError(f"unknown kind {kind!r}")
                 applied += 1
-            except (ValueError, TypeError, AttributeError, sqlite3.Error) as e:
-                skipped.append({"line": n, "why": str(e)})
-        return {"applied": applied, "skipped": skipped}
+                if kept:
+                    locked.append({"line": n, "fields": sorted(set(kept))})
+            except (ValueError, TypeError, AttributeError, RecursionError, sqlite3.Error) as e:
+                skipped.append({"line": n, "why": str(e) or type(e).__name__})
+        out = {"applied": applied, "skipped": skipped}
+        if locked:
+            out["locked"] = locked  # lines whose changes a human lock blocked: [{"line", "fields"}]
+        return out
 
     @staticmethod
     def _check_types(rec):
@@ -536,8 +564,10 @@ class Changes:
         for f in ("track", "version"):
             if not rec.get(f):
                 raise ValueError(f"missing {f}")
+        kept = []
         self._set_version(rec["track"], rec["version"], rec.get("status"), rec.get("released"),
-                          rec.get("notes"), who, False)
+                          rec.get("notes"), who, False, kept)
+        return kept
 
     def _import_item(self, rec, who):
         self._check_types(rec)
@@ -550,38 +580,63 @@ class Changes:
             self._add(rec["track"], rec["version"], rec["section"], rec["text"], who,
                       rec.get("status") or "planned", rec.get("tags"), rec.get("bugs") or (),
                       rec.get("cases") or (), rec.get("commits") or (), rec.get("dev"), key)
-            return
+            return []
         it = self.get(row[0])
         locked = it["locked"]
         track = _enum(rec["track"], TRACKS, "track")
         version = norm_version(rec["version"])
         section = _enum(rec["section"], SECTIONS, "section")
-        text = None if "text" in locked else clean_text(rec["text"])
+        if "text" in locked:  # a locked text is never validated, only compared
+            try:
+                new_text = clean_text(rec["text"])
+            except ValueError:
+                new_text = None
+            text = None
+        else:
+            new_text = text = clean_text(rec["text"])
         status = _enum(rec["status"], ITEM_STATUSES, "status") if rec.get("status") else None
-        f = {}
-        if "version" not in locked and (track, version) != (it["track"], it["version"]):
+        f, kept = {}, []
+        if "version" in locked:
+            if (track, version) != (it["track"], it["version"]):
+                kept.append("version")
+        elif (track, version) != (it["track"], it["version"]):
             if self._version(track, version) is None:
                 self._set_version(track, version, None, None, None, who, False)
             f["track"], f["version"] = track, version
-        if "section" not in locked and section != it["section"]:
+        if "text" in locked and new_text != it["text"]:
+            kept.append("text")
+        if "section" in locked:
+            if section != it["section"]:
+                kept.append("section")
+        elif section != it["section"]:
             f["section"] = section
         if text is not None and text != it["text"]:
             f["text"] = text
-        if "dev" not in locked and rec.get("dev") is not None and rec["dev"].strip()[:MAX_DEV] != it["dev"]:
-            f["dev"] = rec["dev"].strip()[:MAX_DEV]
-        if "tags" not in locked and rec.get("tags") is not None:
+        if rec.get("dev") is not None and rec["dev"].strip()[:MAX_DEV] != it["dev"]:
+            if "dev" in locked:
+                kept.append("dev")
+            else:
+                f["dev"] = rec["dev"].strip()[:MAX_DEV]
+        if rec.get("tags") is not None:
             merged = _merge_tags(it["tags"], _tags_in(rec["tags"]))
             if merged != it["tags"]:
-                f["tags"] = merged
-        if "status" not in locked and status in STATUS_ORDER and it["status"] in STATUS_ORDER \
+                if "tags" in locked:
+                    kept.append("tags")
+                else:
+                    f["tags"] = merged
+        if status in STATUS_ORDER and it["status"] in STATUS_ORDER \
                 and STATUS_ORDER[status] > STATUS_ORDER[it["status"]]:
-            f["status"] = status
+            if "status" in locked:
+                kept.append("status")
+            else:
+                f["status"] = status
         for name in ("bugs", "cases", "commits"):  # links only ever add
             new = it[name] + [x for x in _strs(rec.get(name) or ()) if x not in it[name]]
             if new != it[name]:
                 f[name] = new
         if f:
             self._update(it, who, "import", "import updated " + ", ".join(sorted(f)), **f)
+        return kept
 
     # cross-track
 

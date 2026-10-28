@@ -16,7 +16,7 @@ MAX_IMPORT = 8 * 1024 * 1024
 BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 HASH_RX = re.compile(r"^[0-9a-fA-F]{4,64}$")
-CASE_RX = re.compile(r"^[A-Za-z0-9._() -]{1,120}$")
+CASE_RX = re.compile(r"^(?:\d{4}-\d{2}-\d{2}/)?[A-Za-z0-9._() -]{1,120}$")
 SUBCOMMANDS = ("versions, version, list, show, add, edit, status, move, link, merge, import, related, notes")
 
 
@@ -207,22 +207,26 @@ def _show(ch, clinic, cid):
 
 
 def fixed_in(clinic, who, bug_id, spec):
-    """`status NW-x fixed --in TRACK:VERSION`: link the bug's existing item in TRACK (status forward,
-    version untouched) or add `bug:<id>` item. Returns {"id", "created"}. ClError on bad input."""
+    """`status NW-x fixed --in TRACK:VERSION`: the bug's live (non-dropped) item in TRACK moves forward to
+    done and, when its version is not locked, to VERSION (created if missing); a version-locked item keeps
+    its version. With no such item, add `bug:<TRACK>:<id>`. Returns {"id", "created"}. ClError on bad input."""
     track, version = parse_in(spec)
     ch = cc.Changes(clinic)
     try:
         it = ch.item_for_bug(track, bug_id)
         if it is not None:
-            ch.set_status(it["id"], "done", who=who, human=False)
-            with ch._txn():
-                ch._note(it["id"], who, "link", f"bug {bug_id} marked fixed in {track} {version}")
+            changed = ch.set_status(it["id"], "done", who=who, human=False)
+            if "version" not in it["locked"] and it["version"] != version:
+                ch.move(it["id"], track, version, who=who)
+                changed = True
+            if changed:
+                ch.add_note(it["id"], who, "link", f"bug {bug_id} marked fixed in {track} {version}")
             return {"id": it["id"], "created": False}
         bug = clinic.bug(bug_id)
         text = cc.clean_text(bug["title"])
         v = next((x for x in ch.versions(track) if x["version"] == version), None)
         status = "done" if v is not None and v["status"] != "planned" else "planned"
-        cid = ch.add(track, version, "fixed", text, source_key=f"bug:{bug_id}", bugs=[bug_id],
+        cid = ch.add(track, version, "fixed", text, source_key=f"bug:{track}:{bug_id}", bugs=[bug_id],
                      status=status, who=who)
         return {"id": cid, "created": True}
     except ValueError as e:

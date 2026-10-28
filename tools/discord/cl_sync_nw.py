@@ -20,6 +20,23 @@ BUG_RX = re.compile(r"NW-[0-9a-f]{7}")
 LOG_FORMAT = "%H%x1f%cI%x1f%s%x1f%b%x1e"
 
 
+def out_bytes(data):
+    """Write bytes to stdout as is (UTF-8 whatever the console code page)."""
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is not None:
+        sys.stdout.flush()
+        buf.write(data)
+        buf.flush()
+    else:
+        sys.stdout.write(data.decode("utf-8", "replace"))
+
+
+def note(msg):
+    """stderr line that cannot crash on characters the console code page lacks."""
+    enc = getattr(sys.stderr, "encoding", None) or "utf-8"
+    print(msg.encode(enc, "replace").decode(enc, "replace"), file=sys.stderr)
+
+
 FIX_RX = re.compile(r"\b(?:fix|fixed|fixes|crash|crashes|broken)\b", re.I)
 ADD_RX = re.compile(r"\b(?:add|added|adds|new)\b", re.I)
 
@@ -65,7 +82,7 @@ def parse_log(text, current=None):
             try:
                 version = norm_version(m.group(1))
             except ValueError as e:
-                print(f"skipped {sha[:12]}: {e}", file=sys.stderr)
+                note(f"skipped {sha[:12]}: {e}")
                 continue
             last_prefixed = version
             pending.append((sha, when[:10], m.group(2).strip(), subj, body))
@@ -83,7 +100,7 @@ def parse_log(text, current=None):
         try:
             msg = clean_text(rest[:300])
         except ValueError as e:
-            print(f"skipped {sha[:12]}: {e}", file=sys.stderr)
+            note(f"skipped {sha[:12]}: {e}")
             continue
         item = {"kind": "item", "source_key": f"git:{sha}", "track": "nw", "version": version,
                 "section": _section(rest), "text": msg, "status": "done", "commits": [sha[:12]]}
@@ -113,7 +130,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     git = subprocess.run(["git", "-C", a.repo, "log", "--format=" + LOG_FORMAT], capture_output=True)
     if git.returncode:
-        print(git.stderr.decode("utf-8", "replace"), file=sys.stderr)
+        note(git.stderr.decode("utf-8", "replace"))
         return 1
     cur = None
     vf = Path(a.repo) / "VERSION"
@@ -121,17 +138,17 @@ def main(argv=None):
         try:
             cur = norm_version(vf.read_text(encoding="utf-8").strip())
         except ValueError as e:
-            print(f"VERSION ignored: {e}", file=sys.stderr)
+            note(f"VERSION ignored: {e}")
     items, vers = parse_log(git.stdout.decode("utf-8", "replace"), cur)
     data = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in vers + items)
     if a.dry_run:
-        sys.stdout.write(data)
+        out_bytes(data.encode("utf-8"))
         return 0
     r = subprocess.run(["ssh", "-o", "BatchMode=yes", a.host, "cl", "import"],
                        input=data.encode("utf-8"), capture_output=True)
-    sys.stdout.write(r.stdout.decode("utf-8", "replace"))
+    out_bytes(r.stdout)
     if r.returncode:
-        sys.stderr.write(r.stderr.decode("utf-8", "replace"))
+        note(r.stderr.decode("utf-8", "replace"))
     return r.returncode
 
 

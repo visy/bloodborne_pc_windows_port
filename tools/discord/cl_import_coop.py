@@ -1,7 +1,12 @@
 """Import the coop port's GitHub release notes into Iosefka's changelists (track coop), and list
 player_logs case folders no clinic text names. Runs on a dev PC. Standard library only.
 
+Item keys are positional (release:<tag>:<n>): this is a one-time import; if a release body is edited
+and re-imported, unlocked items can be overwritten with other bullets' text.
+
     python cl_import_coop.py --releases > coop.jsonl          (then: ssh host cl import < coop.jsonl)
+    python cl_import_coop.py --releases-json releases.json    (same, from a saved GitHub releases JSON,
+                                                               e.g. curl -o releases.json <API url>)
     python cl_import_coop.py --unmatched <player_logs dir> <names.json>
 """
 import argparse
@@ -13,9 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from clinic_changes import clean_text, norm_version  # noqa: E402
+from cl_sync_nw import note, out_bytes  # noqa: E402
 
 API = "https://api.github.com/repos/visy/bloodborne_pc_windows_port/releases?per_page=100"
-HEAD_RX = re.compile(r"^\s{0,3}#{2,3}\s+(.+?)\s*#*\s*$")
+HEAD_RX = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
 BULLET_RX = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BS_W = r"\w"
@@ -23,12 +29,9 @@ SAFE_TEXT = "Change from a player report (details private)"
 
 
 def _head_section(h):
-    h = h.lower()
-    if "fix" in h:
-        return "fixed"
-    if "add" in h or "new" in h:
-        return "added"
-    return "changed"
+    """The section a heading names (exactly Added / Changed / Fixed, any case), else None."""
+    h = _strip_md(h).rstrip(":").strip().lower()
+    return h if h in ("added", "changed", "fixed") else None
 
 
 def _strip_md(s):
@@ -37,7 +40,8 @@ def _strip_md(s):
 
 
 def parse_release(tag, body):
-    """Item lines from release markdown. Bullets before any heading, or under other headings, are changed."""
+    """Item lines from release markdown. Bullets under an Added / Changed / Fixed heading (any level) get that
+    section; bullets before any heading are changed; bullets under any other heading are skipped."""
     version = norm_version(tag[1:] if tag[:1] in "vV" else tag)
     items, section = [], "changed"
     for line in (body or "").splitlines():
@@ -46,7 +50,7 @@ def parse_release(tag, body):
             section = _head_section(h.group(1))
             continue
         b = BULLET_RX.match(line)
-        if not b:
+        if not b or section is None:
             continue
         raw = _strip_md(b.group(1))
         item = {"kind": "item", "source_key": f"release:{tag}:{len(items) + 1}", "track": "coop",
@@ -91,15 +95,21 @@ def fetch_releases():
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--releases", action="store_true")
+    ap.add_argument("--releases-json", metavar="FILE", help="read the releases JSON from a file")
     ap.add_argument("--unmatched", nargs=2, metavar=("PLAYER_LOGS_DIR", "NAMES_JSON"))
     a = ap.parse_args(argv)
     if a.unmatched:
         names = json.loads(Path(a.unmatched[1]).read_text(encoding="utf-8"))
-        print(json.dumps(unmatched(a.unmatched[0], names), indent=1))
+        out_bytes(json.dumps(unmatched(a.unmatched[0], names), indent=1, ensure_ascii=False).encode("utf-8") + b"\n")
         return 0
-    if not a.releases:
-        ap.error("give --releases or --unmatched")
-    for rel in reversed(fetch_releases()):
+    if not (a.releases or a.releases_json):
+        ap.error("give --releases, --releases-json or --unmatched")
+    if a.releases_json:
+        releases = json.loads(Path(a.releases_json).read_text(encoding="utf-8-sig"))
+    else:
+        releases = fetch_releases()
+    out = []
+    for rel in reversed(releases):
         tag = rel.get("tag_name") or ""
         if rel.get("draft"):
             continue
@@ -107,12 +117,12 @@ def main(argv=None):
             items = parse_release(tag, rel.get("body") or "")
             version = norm_version(tag[1:] if tag[:1] in "vV" else tag)
         except ValueError as e:
-            print(f"skipped {tag}: {e}", file=sys.stderr)
+            note(f"skipped {tag}: {e}")
             continue
         vline = {"kind": "version", "track": "coop", "version": version, "status": "released",
                  "released": (rel.get("published_at") or "")[:10]}
-        for r in [vline] + items:
-            print(json.dumps(r, ensure_ascii=False))
+        out += [json.dumps(r, ensure_ascii=False) + "\n" for r in [vline] + items]
+    out_bytes("".join(out).encode("utf-8"))
     return 0
 
 

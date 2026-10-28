@@ -238,3 +238,55 @@ def test_import_locked_text_not_validated(ch):
     line.update(text="see player_logs/x", status="done")
     assert ch.import_lines([json.dumps(line)], who="sync")["applied"] == 1
     assert ch.get(cid)["text"] == "human" and ch.get(cid)["status"] == "done"
+
+
+def test_item_for_bug_prefers_live_and_add_note(ch):
+    a = ch.add("coop", "0.7.7", "fixed", "A", who="v", bugs=["NW-aaaaaaa"])
+    b = ch.add("coop", "0.7.7", "fixed", "B", who="v", bugs=["NW-aaaaaaa"])
+    ch.merge(a, b, who="v")  # b dropped (newer)
+    assert ch.item_for_bug("coop", "NW-aaaaaaa")["id"] == a
+    ch.set_status(a, "dropped", who="v")
+    assert ch.item_for_bug("coop", "NW-aaaaaaa") is None
+    ch.add_note(a, "v", "link", "hello")
+    assert ch.notes(a)[-1]["text"] == "hello"
+    with pytest.raises(ValueError):
+        ch.add_note("CL-ffffff", "v", "link", "x")
+
+
+def test_import_reports_locked(ch):
+    ch.set_version("nw", "0.2.6", status="current", who="vlad")  # human lock on status
+    item = {"kind": "item", "source_key": "g:1", "track": "nw", "version": "0.2.6", "section": "fixed",
+            "text": "one", "status": "in-progress"}
+    ch.import_lines([json.dumps(item)], who="sync")
+    cid = ch.items()[0]["id"]
+    ch.edit(cid, who="visy", text="mine")
+    ch.set_status(cid, "planned", who="visy")
+    item.update(text="two", status="done")
+    lines = [json.dumps({"kind": "version", "track": "nw", "version": "0.2.6", "status": "released"}),
+             json.dumps({"kind": "version", "track": "nw", "version": "0.2.6", "status": "released"}),
+             json.dumps(item)]
+    r = ch.import_lines(lines, who="sync")
+    assert r["applied"] == 3 and r["skipped"] == []
+    assert r["locked"] == [{"line": 1, "fields": ["status"]}, {"line": 2, "fields": ["status"]},
+                           {"line": 3, "fields": ["status", "text"]}]
+
+
+def test_import_recursion_error_skipped(ch):
+    good = json.dumps({"kind": "item", "source_key": "g:1", "track": "nw", "version": "0.2.6",
+                       "section": "fixed", "text": "ok"})
+    r = ch.import_lines([good, "[" * 200000, good.replace("g:1", "g:2")], who="sync")
+    assert r["applied"] == 2 and [s["line"] for s in r["skipped"]] == [2]
+
+
+def test_cases_accept_date_prefix(ch):
+    cid = ch.add("coop", "0.7.7", "fixed", "A", who="v", cases=["2026-10-25/lamp", "bare_name"])
+    assert ch.get(cid)["cases"] == ["2026-10-25/lamp", "bare_name"]
+    for bad in ("../x", "a/b", "2026-10-25/../x", "x/y/z"):
+        with pytest.raises(ValueError):
+            ch.link(cid, who="v", cases=[bad])
+
+
+def test_clean_text_player_logs_case_insensitive():
+    for t in ("see Player_Logs/x", "PLAYER_LOGS/a"):
+        with pytest.raises(ValueError):
+            cc.clean_text(t)
