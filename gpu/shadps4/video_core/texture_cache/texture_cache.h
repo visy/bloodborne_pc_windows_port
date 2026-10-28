@@ -14,12 +14,14 @@
 #include <unordered_set>
 #include <boost/container/small_vector.hpp>
 #include <queue>
+#include <vector>
 #include <tsl/robin_map.h>
 
 #include "common/lru_cache.h"
 #include "common/slot_vector.h"
 #include "shader_recompiler/resource.h"
 #include "video_core/multi_level_page_table.h"
+#include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/gc_policy.h"
@@ -382,7 +384,15 @@ private:
     }
 
     /// Copies image memory back to CPU.
-    void DownloadImageMemory(ImageId image_id, bool sync = false);
+    /// A synchronous download whose wait is shared by a whole batch (ProcessDownloadImages).
+    struct BatchedDownload {
+        Vulkan::StagingBufferRef download;
+        VAddr guest_address;
+        u32 size;
+    };
+    void DownloadImageMemory(ImageId image_id, bool sync = false,
+                             std::vector<BatchedDownload>* batch = nullptr);
+    void FinishDownload(const BatchedDownload& item);
 
     /// Thread function for copying downloaded images out to CPU memory.
     void DownloadedImagesThread(const std::stop_token& token);

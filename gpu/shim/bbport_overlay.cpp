@@ -1240,10 +1240,10 @@ std::vector<int> BuiltInMouse(int input) {
 std::string KeyList(int input) {
     std::string text;
     for (const int code : key_rows.keys[input]) {
-        text += (text.empty() ? "" : " / ") + std::string(key_name(code));
+        text += (text.empty() ? "" : " / ") + std::string(key_label(code));
     }
     for (const int code : BuiltInMouse(input)) {
-        text += (text.empty() ? "" : " / ") + std::string(key_name(code));
+        text += (text.empty() ? "" : " / ") + std::string(key_label(code));
     }
     return text.empty() ? T("(none)", "(нет)") : text;
 }
@@ -1284,12 +1284,12 @@ void AssignKey(int code) {
             }
             if (keys.empty() && !other_mouse_left && !old.empty() && old[0] != code) {
                 keys.push_back(old[0]);
-                key_rows.message = std::string(key_name(code)) + T(" taken from ", " взята у: ") +
+                key_rows.message = std::string(key_label(code)) + T(" taken from ", " взята у: ") +
                                    InputLabel(other) + T("; it gets ", "; ей назначена ") +
-                                   key_name(old[0]);
+                                   key_label(old[0]);
             } else {
                 key_rows.message =
-                    std::string(key_name(code)) + T(" taken from ", " взята у: ") + InputLabel(other);
+                    std::string(key_label(code)) + T(" taken from ", " взята у: ") + InputLabel(other);
             }
             changed.push_back(other);
         }
@@ -1309,7 +1309,7 @@ void AssignKey(int code) {
     BbSettings::WriteBindingLines(lines);
     key_rows.generation = BbSettings::BindingsGeneration();
     std::printf("Overlay: %s%s = %s%s%s\n", KeyPrefix(key_rows.layout), input_names[input],
-                code >= 0 ? key_name(code) : "(none)", key_rows.message.empty() ? "" : "; ",
+                code >= 0 ? key_label(code) : "(none)", key_rows.message.empty() ? "" : "; ",
                 key_rows.message.c_str());
 }
 
