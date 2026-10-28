@@ -2508,8 +2508,10 @@ def _phase_boss_dead(name, guest_god, kill):
                     (["host_press=0x800@2%m24_01"] * 12 + ["host_die@1%m24_01"] if guest_god else ["host_die@3%m24_01"]) +
                     (["host_kill=2410800@40%m24_01"] if kill else []))
     g1 = ",".join((["god"] if guest_god else []) +
-                  ["guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST] +
-                  ([] if guest_god else ["guest_press=0x0@14%m24_01"]) +   # bh: beside the boss once the host lies in limbo
+                  # bh: the mortal guest waits at the lamp (outside the fog) and comes in once the host
+                  # lies in its limbo (the boss killed it within the death's 9 s otherwise: a wipe)
+                  (["guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST] if guest_god else
+                   ["guest_press=0x0@48%m24_01", "guest_move=%s@1%%m24_01" % CLERIC_SPOT_GUEST]) +
                   ["guest_chr=2410800@3%m24_01"] +
                   ["guest_press=0x800@1.5%m24_01"] * 90 +
                   ["guest_press=0x0@2%m24_01"])
