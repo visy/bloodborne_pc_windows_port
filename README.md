@@ -404,6 +404,21 @@ before anyone is in the game):
   Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
+- **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
+  of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
+  ("Living String: shared with the party"; *Shared item notices* on *System -> Party members*, the launcher's My
+  Party tab, `party_item_notices`, on by default, shown while the party notices are on, at most one every few
+  seconds, never for your own pickups).
+
+  | Shared with the whole party | Stays with the player who found it |
+  |---|---|
+  | Key items (keys, badges, workshop tools, chalices, umbilical cords, the daughter's ribbons and brooch) | Ordinary items: Blood Vials, Quicksilver Bullets, materials, Pebbles, blood gems |
+  | Unique items (hunter tools such as Executioner's Gloves, Choir Bell, Beast Roar) | Armor and rings found in the world |
+  | Weapons, from corpses, NPC gifts and bosses | Messenger gifts, covenant gems and runes, repeatable NPC gifts |
+  | Caryll runes, the world bosses' reward runes | Enemy drops (each player rolls their own copy) |
+  | Boss rewards the party earned together (Gold Pendant, badges, the Living String from the Brain of Mensis) | |
+
+  A boss killed by a guest pays the host as well. The full list of lots is in [docs/party/items_audit.md](docs/party/items_audit.md).
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
   messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
   Hunter Bell go to every player, whoever got them in the host's world.
