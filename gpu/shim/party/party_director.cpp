@@ -1866,9 +1866,12 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
         const std::uint64_t player = LocalPlayer();
         if (now >= next_pos && player && balance::ChrPosition(player, me) && balance::ChrPosition(chr, at)) {
             next_pos = now + std::chrono::seconds(1);
-            Log("test: target pos: entity %u at (%.1f, %.1f, %.1f), %.1f m from this player", entity, double(at[0]),
-                double(at[1]), double(at[2]),
-                double(std::sqrt((at[0] - me[0]) * (at[0] - me[0]) + (at[2] - me[2]) * (at[2] - me[2]))));
+            std::uint64_t pins = 0, pdm = 0;
+            std::int32_t php = -1;
+            if (SafeGet(player + 0x3b0, &pins) && pins && SafeGet(pins + 0x20, &pdm) && pdm) SafeGet(pdm + 0xf8, &php);
+            Log("test: target pos: entity %u at (%.1f, %.1f, %.1f), %.1f m from this player (player HP %d)", entity,
+                double(at[0]), double(at[1]), double(at[2]),
+                double(std::sqrt((at[0] - me[0]) * (at[0] - me[0]) + (at[2] - me[2]) * (at[2] - me[2]))), php);
         }
     }
     SafeGet(cm + 0x20, &dm);
