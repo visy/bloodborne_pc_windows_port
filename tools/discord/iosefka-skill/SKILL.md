@@ -45,25 +45,25 @@ Quote text yourself: the command string is split on the server, so write
 Versioned change items `CL-xxxxxx` per track (`coop`, `nw`); both devs read and write both. Statuses:
 planned, in-progress, done, dropped; sections: added, changed, fixed. Fields a dev sets by hand are
 locked against later syncs. Item `text` is PUBLIC (release notes): no names, IPs, Discord ids or
-player_logs paths; private detail goes in `--dev`. Full reference: the Changelists section of CLINIC.md.
+player_logs paths; private detail goes in `--dev`. Quote multi-word arguments as `"'text'"` (split twice). Full reference: the Changelists section of CLINIC.md.
 
 | user says | run |
 |---|---|
 | show the current NW changelist | `ssh iosefka cl list --track nw --current` |
 | what's planned for coop 0.7.7 | `ssh iosefka cl list --track coop --version 0.7.7` |
-| add these bugs to the next coop version | `ssh iosefka cl versions --track coop`, then `ssh iosefka cl add coop 0.7.8 fixed "public text" --bug NW-1a2b3c4` per item |
+| add these bugs to the next coop version | `ssh iosefka cl versions --track coop`, then `ssh iosefka cl add coop 0.7.8 fixed "'public text'" --bug NW-1a2b3c4` per item |
 | was NW-1a2b3c4 fixed on the NW side | `ssh iosefka cl related NW-1a2b3c4`, `ssh iosefka cl list --track nw --bug NW-1a2b3c4` |
 | mark NW-1a2b3c4 fixed in NW 0.2.6 | `ssh iosefka status NW-1a2b3c4 fixed --in nw:0.2.6` |
 | make the 0.2.6 release notes | `ssh iosefka cl notes nw 0.2.6` (public-safe; re-read before pasting) |
 | move this item to 0.7.8 | `ssh iosefka cl move CL-1a2b3c coop 0.7.8` |
 | drop this item | `ssh iosefka cl status CL-1a2b3c dropped` |
-| fix an item's wording or section | `ssh iosefka cl edit CL-1a2b3c --text "new wording" --section fixed` |
-| sync the NW changelist | on the PC: `python tools/discord/cl_sync_nw.py <NightwatchCoop clone>` (`--dry-run` to preview) |
+| fix an item's wording or section | `ssh iosefka cl edit CL-1a2b3c --text "'new wording'" --section fixed` |
+| sync the NW changelist | on the PC: `python tools/discord/cl_sync_nw.py <NightwatchCoop clone> --host iosefka` (`--dry-run` to preview; default host is visy@quad.fi) |
 
 The NW sync reads git log: `0.2.5 beta 3:` style subject prefixes name the version (unprefixed commits
 join the next prefixed one), the VERSION file is the current version, each commit is one item keyed by
 hash (safe to re-run), and sections are guessed from keywords, so tidy them with `cl edit`. After the
-user pushes NW commits, run the sync and report the new items.
+user pushes NW commits, run the sync and report the new items. `status NW-x fixed --in` marks an existing item done (version kept) or adds a done item (planned if that version is still planned).
 
 ## Procedures
 
