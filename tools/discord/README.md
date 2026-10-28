@@ -28,8 +28,8 @@ replies with a plain-words diagnosis:
 
 ## Memory and lookup by reference
 
-Every analysis ends with `ref ND-xxxxxxxx`. The bot keeps, for 30 days and within a size cap (default
-256 MiB, never above 1 GiB, oldest first): each analysis text, which logs it used, and the log files
+Every analysis ends with `ref ND-xxxxxxxx`. The bot keeps, for 180 days and within a size cap (default
+3 GiB, never above 3 GiB, oldest first): each analysis text, which logs it used, and the log files
 themselves LZMA-compressed (about 14x smaller, deduplicated by content). On the server:
 
 ```sh
