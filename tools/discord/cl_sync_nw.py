@@ -20,12 +20,14 @@ BUG_RX = re.compile(r"NW-[0-9a-f]{7}")
 LOG_FORMAT = "%H%x1f%cI%x1f%s%x1f%b%x1e"
 
 
-def _section(rest):
-    rest = AREA_RX.sub("", rest, count=1)
-    word = (rest.split() or [""])[0].lower().strip(":,.")
-    if word in ("fix", "fixed", "fixes"):
+FIX_RX = re.compile(r"\b(?:fix|fixed|fixes|crash|crashes|broken)\b", re.I)
+ADD_RX = re.compile(r"\b(?:add|added|adds|new)\b", re.I)
+
+
+def _section(text):
+    if FIX_RX.search(text):
         return "fixed"
-    if word in ("add", "added", "new"):
+    if ADD_RX.search(text):
         return "added"
     return "changed"
 

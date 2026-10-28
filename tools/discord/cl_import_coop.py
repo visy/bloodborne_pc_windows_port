@@ -75,8 +75,8 @@ def unmatched(player_logs, names):
             if not case.is_dir():
                 continue
             key, c = f"{day.name}/{case.name}".lower(), case.name.lower()
-            word = re.compile(r"(?<!"+BS_W+r")" + re.escape(c) + r"(?!"+BS_W+r")")
-            if not any(n == key or n == c or key in n or word.search(n) for n in low):
+            word = re.compile(r"(?<!"+BS_W+r")(?:" + re.escape(key) + "|" + re.escape(c) + r")(?!"+BS_W+r")")
+            if not any(n == key or n == c or word.search(n) for n in low):
                 out.append(f"{day.name}/{case.name}")
     return out
 
