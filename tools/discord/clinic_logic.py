@@ -20,7 +20,7 @@ ARCHIVE_EXT = {".zip", ".7z", ".rar"}
 
 def skipped_channel(name: str) -> bool:
     n = (name or "").lower()
-    return n.startswith("staff") or n == "development"
+    return n.startswith("staff") or n in ("development", "moderator-only")
 
 
 def file_kind(filename: str) -> str:

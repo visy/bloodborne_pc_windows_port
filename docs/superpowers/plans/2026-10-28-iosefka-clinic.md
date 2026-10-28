@@ -21,7 +21,7 @@ live duty by calling the same Discord-operation functions the cull uses.
 ## Global Constraints
 
 - Skip rule: a guild channel is skipped when its name starts with `staff` or equals `development`;
-  threads inherit their parent's rule. `#moderator-only` is included. Nothing else is skipped.
+  threads inherit their parent's rule. `#moderator-only` is skipped too (visy). Nothing else is skipped.
 - Bug id: `NW-` + 7 lowercase hex (`secrets.token_hex(4)[:7]`), unique in `nw_bugs`.
 - Removable files: extensions `.log .txt .dmp .dcx`, names starting `userdata`, and zip/7z/rar whose
   listing holds any of those (unreadable archives count as removable). Images/videos never removed
