@@ -244,8 +244,13 @@ async def handle_log_message(message, *, live, ctx=None):
             print("disk low: not archiving now, the next sweep retries", flush=True)
             return "disk-low"
         thread = None if dm else cd.thread_of(message)
-        if not res["removable"]:  # pictures / videos alone stay; in a bug thread they join the bug
-            if thread is not None and clinic.bug_for_thread(thread.id):
+        if not res["removable"]:  # saves / pictures / videos alone: copied, the message stays, no note
+            atts = (clinic.message(message.id) or {}).get("attachments") or []
+            if clinic_logic.has_saves(atts) and res["state"] != "archive_failed":
+                bug, _rule = await cd.assign_bug_ex(clinic, message, res["infos"], log_info_fn=ctx.log_info_fn,
+                                                    tmpdir=ctx.tmp_root)
+                cd.tag_saves(clinic, bug, atts)
+            elif thread is not None and clinic.bug_for_thread(thread.id):
                 clinic.upsert_message({"message_id": message.id, "bug_id": clinic.bug_for_thread(thread.id)})
             return "kept"
         if res["state"] in ("replaced", "deleted"):

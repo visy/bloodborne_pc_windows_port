@@ -419,6 +419,15 @@ the bbport repo (pass the log files; it prints a connection diagnosis).
   goes in `--dev`.
 - Keep extracted logs out of repositories; delete the folder afterwards.
 - Do not run `export`, `confirm-export` or `import` (visy only).
+- Upload policy (2026-10-28): only files that carry names / IPs (logs, text, crash dumps, game files) make
+  Iosefka delete a message and post her replacement note. Saves, pictures and videos hold no personal data:
+  they are copied into the clinic (videos sampled to stills) and the message stays on Discord untouched,
+  with no note and no reaction. A message with a log AND saves is still deleted and replaced.
+- Archives: bigger than 100 MiB (`ARCHIVE_CAP_BYTES` in `clinic_logic.py`) they are never downloaded or
+  touched; a readable archive with no log, save, image or video inside (a mod pack, a tool) is left alone,
+  not copied. Archives with a log inside are deleted and replaced; with only saves / pictures / videos
+  they are copied and the message stays. An unreadable archive still counts as holding a log. The cull
+  uses the same rule, so it never deletes save / picture / video-only messages.
 
 ## Troubleshooting
 

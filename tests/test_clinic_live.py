@@ -262,3 +262,33 @@ def test_dev_gets_short_reply_and_dev_tag(tmp_path):
     t = ch.sent[0].content
     assert "other guests" not in t and "good hunting" not in t and "brought a log" not in t
     assert c.bug(c.message(10)["bug_id"])["tags"]["source"] == "dev"
+
+
+def test_saves_images_videos_only_stay_silent(tmp_path):
+    c, ctx = make(tmp_path)
+    ch = F.Channel(100, "help")
+    m = F.Msg(1, ch, F.User(7, "SecretPlayer"), "my saves", [
+        F.Att(10, "userdata0000", b"\x00" * 64), F.Att(11, "shot.png", b"png"), F.Att(12, "v.mp4", b"vid")])
+    assert run(bot.dispatch_message(m, ctx)) is False
+    assert not m.deleted and not ch.sent and not getattr(m, "reactions", [])
+    rec = c.message(1)
+    assert rec["bug_id"] and {a["kind"] for a in rec["attachments"]} == {"save", "image", "video"}
+    assert c.bug(rec["bug_id"])["tags"]["has_saves"] == "yes"
+
+
+def test_log_with_save_is_still_replaced(tmp_path):
+    c, ctx = make(tmp_path)
+    ch = F.Channel(100, "help")
+    m = F.Msg(1, ch, F.User(7, "SecretPlayer"), "crash", [F.Att(10, "nightwatch-20261025_200000.log", LOG),
+                                                         F.Att(11, "userdata0000", b"\x00" * 64)])
+    assert run(bot.dispatch_message(m, ctx)) is True
+    assert m.deleted and len(ch.sent) == 1
+
+
+def test_big_archive_untouched(tmp_path):
+    c, ctx = make(tmp_path)
+    ch = F.Channel(100, "help")
+    big = F.Att(10, "big.zip", b"PK", size=200 * 2**20)
+    m = F.Msg(1, ch, F.User(7), "big", [big])
+    assert run(bot.dispatch_message(m, ctx)) is False
+    assert big.saves == 0 and not m.deleted and not ch.sent
