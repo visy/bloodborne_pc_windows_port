@@ -982,6 +982,9 @@ def phase_ch(only):
 # maid's meshes were drawn that frame. Screenshots at each record for the eye.
 MD_MAID = "2500234"
 MD_LANDING = CH_TOP_H
+# 4 m west of the maid (-34.35, 65.0, -248.43) facing east (yaw = atan2(-dx, -dz)): the camera behind the player
+# stays in the hall (a host_chr warp left the camera outside the castle wall: no player, no maid on screen)
+MD_SPOT = "-38.4:65.05:-248.4:-1.5708:native:pin=2"
 # c2150.flver (dvdroot_ps4/chr/c2150.chrbnd.dcx): mesh -> index counts of its LOD 0/1/2 face sets (the
 # same counts with flag 0x80000000: the shadow / motion copies). tools/mp/flver_meshes.py prints them.
 MD_MESHES = {
@@ -995,8 +998,8 @@ def phase_md(only):
     cap = "host_gfx=cap@%s%%m25!"
     host = ["god,log_pos=1",
             "host_move=%s@4%%m25" % MD_LANDING,                     # the lift's top landing (native warp)
-            "host_chr=%s:3:0@3%%m25!" % MD_MAID,                    # 3 m in front of the maid, facing her
-            "host_gfx=log@1%m25!",
+            "host_move=%s@3%%m25" % MD_SPOT,                        # in the hall, 4 m west of the maid, facing her
+            "host_gfx=log@3%m25!",
             "host_press=0x4@1%m25!", "host_press=0@1%m25!",         # R3: the camera behind the player
             cap % 2,                                                # before any hit
             "host_press=0x4:lock@1%m25!", "host_press=0@1%m25!",    # R3 lock-on
@@ -1011,7 +1014,8 @@ def phase_md(only):
         name="md", seconds=240, count=1, headless=0,
         env=["BB_PARTY_TEST_START_LAMP=2502950", "BB_PARTY_PROGRESS_TEST_SET=12500000", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
              "BB_PARTY_TEST_COND_TIMEOUT=45",
-             "BB_CAPTURE_TRIGGER={root}/inst{i}/capture.trigger", "BB_CAPTURE_DIR={out}/captures"],
+             "BB_CAPTURE_TRIGGER={root}/inst{i}/capture.trigger", "BB_CAPTURE_DIR={out}/captures",
+             "BB_CAPTURE_MESH_COUNTS=" + ",".join(str(c) for cs in MD_MESHES.values() for c in cs)],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
         watch=["--watch", r"test: host_gfx: capture=cap@0.3"],
         prep=lambda root: None,

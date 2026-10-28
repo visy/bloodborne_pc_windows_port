@@ -2685,6 +2685,17 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                                 : XXH3_64bits(guest_buffers.data(),
                                               guest_buffers.size() * sizeof(AmdGpu::Buffer));
     }
+    // BB_CAPTURE_MESH_COUNTS: the vertex streams of a listed mesh's draw (their position boxes).
+    if (FrameCapture::Active() && FrameCapture::WantsMesh(regs.num_indices)) {
+        u32 stream = 0;
+        for (const auto& vb : guest_buffers) {
+            if (vb.base_address != 0 && vb.GetSize() > 0 && memory->IsValidGpuMapping(vb.base_address, 0)) {
+                FrameCapture::Vertex(stream, vb.base_address, reinterpret_cast<const void*>(vb.base_address),
+                                     memory->ClampRangeSize(vb.base_address, vb.GetSize()), vb.GetStride());
+            }
+            ++stream;
+        }
+    }
     // Object motion research: vertex streams of G-buffer draws.
     if (FrameCapture::Active() && gbuffer_draw) {
         for (const auto& vb : guest_buffers) {
@@ -3101,6 +3112,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     camera_motion->OnConstants(reinterpret_cast<const float*>(ring->address));
                 }
                 push_data.AddOffset(binding.buffer, 0);
+            }
+            if (FrameCapture::Active() && FrameCapture::WantsMesh(Regs().num_indices) &&
+                memory->IsValidGpuMapping(ring->address, 0)) {
+                FrameCapture::Buffer(stage.pgm_hash, binding.buffer, ring->address,
+                                     reinterpret_cast<const void*>(ring->address), ring->size);
             }
             buffer_infos.emplace_back(constant_ring->Handle(), ring->offset, ring->size);
         } else if (desc.IsSpecial()) {
