@@ -213,3 +213,32 @@ def test_harvest_forbidden_place_is_counted_not_fatal(tmp_path):
     code, out = harvest(c, guild, tmp_path)
     assert code == 0 and "no access: secrets" in out and "1 places without access" in out[-1]
     assert c.message(1)["state"] == "verified"
+
+
+def test_announce_everyone_only_for_named_channel(tmp_path):
+    _, guild, th, ch, calls = world(tmp_path)
+    news = F.Channel(102, "announcements", [])
+    news.is_news = lambda: True
+    guild.text_channels.append(news)
+    published = []
+    for c in (ch, news):
+        orig = c.send
+
+        async def send(text, _o=orig, **kw):
+            m = await _o(text, **kw)
+
+            async def pin():
+                pass
+
+            async def publish():
+                published.append(1)
+            m.pin, m.publish, m.jump_url = pin, publish, "u"
+            return m
+        c.send = send
+    out = []
+    code = run(cull.announce([guild], ["announcements", "help"], dry_run=False, yes=True,
+                             everyone={"announcements"}, out=out.append))
+    assert code == 0
+    assert news.sent[0].content.startswith("@everyone ") and news.sent[0].kw["allowed_mentions"].everyone is True
+    assert not ch.sent[0].content.startswith("@everyone") and ch.sent[0].kw["allowed_mentions"].everyone is False
+    assert published == [1]

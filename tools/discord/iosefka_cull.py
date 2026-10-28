@@ -7,7 +7,7 @@ be stopped and rerun (all state lives in the clinic database).
   iosefka_cull.py report --out PATH            dry run: what the cull would replace (no deletions)
   iosefka_cull.py starter-test --thread ID     delete the starter of a test post, check the post survives
   iosefka_cull.py cull [--limit N]             replace + delete the messages holding logs (needs NW_DELETE=1)
-  iosefka_cull.py announce --channels a,b [--dry-run] --yes   post and pin Iosefka's announcement
+  iosefka_cull.py announce --channels a,b [--everyone a] [--dry-run] --yes   post and pin Iosefka's announcement
 
 Exit codes: 0 ok, 1 failure, 2 refused (missing flag), 3 disk low (rerun later).
 Environment as the bot (NETDOCTOR_TOKEN, NETDOCTOR_DB, NETDOCTOR_GUILD; ~/.config/netdoctor/env is read).
@@ -219,7 +219,7 @@ async def cull(client, clinic, *, limit=None, delay=1.0, out=print, env=os.envir
     return OK
 
 
-async def announce(guilds, names, *, dry_run, yes, out=print):
+async def announce(guilds, names, *, dry_run, yes, everyone=(), out=print):
     text = voice.announcement()
     if dry_run:
         out(text)
@@ -234,8 +234,22 @@ async def announce(guilds, names, *, dry_run, yes, out=print):
             out(f"{name}: no such channel")
             code = FAIL
             continue
-        msg = await ch.send(text, allowed_mentions=cd.AllowedMentions.none())
+        ping = name in everyone
+        am = cd.AllowedMentions(everyone=True, users=False, roles=False) if ping else cd.AllowedMentions.none()
+        if ping:
+            try:
+                me = next((g.me for g in guilds if ch in g.text_channels), None)
+                if me is not None and not ch.permissions_for(me).mention_everyone:
+                    out(f"warning: {name}: I lack Mention Everyone, the @everyone will not ping")
+            except Exception:
+                pass
+        msg = await ch.send(("@everyone " if ping else "") + text, allowed_mentions=am)
         await msg.pin()
+        if getattr(ch, "is_news", lambda: False)():
+            try:
+                await msg.publish()
+            except Exception:
+                pass
         out(f"{name}: {msg.jump_url}")
     return code
 
@@ -283,6 +297,7 @@ def main(argv=None):
     c.add_argument("--limit", type=int)
     a = sub.add_parser("announce")
     a.add_argument("--channels", required=True)
+    a.add_argument("--everyone", default="", help="comma list of those channels whose post starts with @everyone")
     a.add_argument("--dry-run", action="store_true")
     a.add_argument("--yes", action="store_true")
     args = ap.parse_args(argv)
@@ -319,7 +334,8 @@ def main(argv=None):
             return await cull(client, clinic, limit=args.limit)
         if args.phase == "announce":
             return await announce(guilds, [x.strip() for x in args.channels.split(",") if x.strip()],
-                                  dry_run=False, yes=True)
+                                  dry_run=False, yes=True,
+                                  everyone={x.strip() for x in args.everyone.split(",") if x.strip()})
         return FAIL
 
     if args.phase == "report":
