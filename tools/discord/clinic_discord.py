@@ -1,0 +1,531 @@
+"""Iosefka's clinic: the Discord side. Walk a server, archive a message's files into the clinic store, give
+the message a bug, and replace-then-delete it. discord.py objects go in, plain values come out; nothing
+here logs in, so the cull runner and the live bot share it and tests drive it with fakes.
+
+The order that matters: files stored and re-verified -> replacement posted -> original deleted -> recorded.
+Every step is recorded in nw_messages.state, so a rerun after a crash neither double-posts nor skips the
+delete.
+"""
+import asyncio
+import hashlib
+import importlib.util
+import shutil
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+def _sib(name):
+    try:
+        return __import__(name)
+    except ImportError:  # loaded by path without tools/discord on sys.path
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + ".py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault(name, mod)
+        spec.loader.exec_module(mod)
+        return mod
+
+
+logic = _sib("clinic_logic")
+media = _sib("clinic_media")
+voice = _sib("iosefka_voice")
+
+try:
+    import discord
+    AllowedMentions = discord.AllowedMentions
+except ImportError:  # the dev PC has no discord.py; the shape is all the tests need
+    class AllowedMentions:
+        def __init__(self, everyone=None, users=True, roles=True, replied_user=True):
+            self.everyone, self.users, self.roles, self.replied_user = everyone, users, roles, replied_user
+
+        @classmethod
+        def none(cls):
+            return cls(everyone=False, users=False, roles=False, replied_user=False)
+
+DOWNLOAD_TRIES = 3
+RETRY_DELAY = 1.0
+DISCORD_LIMIT = 2000
+DEFAULT_UPLOAD = 25 * 1024 * 1024
+MEDIA_NOTE = "(pictures/video kept in the clinic)"
+FILE_KINDS_WITH_STORE = ("log", "dump", "game", "archive", "other")
+
+
+class DiskLow(Exception):
+    """Not enough free disk for the next download: stop cleanly, resume later."""
+
+
+class DownloadError(Exception):
+    pass
+
+
+def all_attachments(message):
+    """The message's own files plus those of messages forwarded in it (Discord keeps a forwarded message's
+    files in its snapshot, not in .attachments)."""
+    out = list(getattr(message, "attachments", None) or [])
+    for snap in getattr(message, "message_snapshots", None) or []:
+        out += list(getattr(snap, "attachments", None) or [])
+    return out
+
+
+def is_thread(ch):
+    return hasattr(ch, "archived") and hasattr(ch, "locked")
+
+
+def place_skipped(ch):
+    """Skip rule for a channel or thread (threads inherit their parent's)."""
+    base = getattr(ch, "parent", None) if is_thread(ch) else ch
+    return logic.skipped_channel(getattr(base or ch, "name", ""))
+
+
+def _not_found(exc):
+    return type(exc).__name__ == "NotFound"
+
+
+# --- walking ---------------------------------------------------------------------------------------------
+
+async def walk_places(guild):
+    """Every text/news channel (and every thread of it, active or archived, public or private) and every
+    forum post, except the skipped channels. Forums themselves have no messages and are not yielded."""
+    forums = list(getattr(guild, "forums", None) or [])
+    seen = set()
+    for ch in list(getattr(guild, "text_channels", None) or []) + forums:
+        if logic.skipped_channel(getattr(ch, "name", "")):
+            continue
+        is_forum = ch in forums
+        if not is_forum:
+            yield ch
+        threads = list(getattr(ch, "threads", None) or [])
+        for private in ((None,) if is_forum else (False, True)):
+            try:
+                it = ch.archived_threads(limit=None) if private is None else \
+                    ch.archived_threads(private=private, limit=None)
+                async for t in it:
+                    threads.append(t)
+            except Exception as e:  # no access to private archives, etc.
+                print(f"cannot list archived threads of {ch.name}: {type(e).__name__}", file=sys.stderr, flush=True)
+        for t in threads:
+            if t.id not in seen:
+                seen.add(t.id)
+                yield t
+
+
+# --- archiving -------------------------------------------------------------------------------------------
+
+def _sha_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def _download(att, dest):
+    last = None
+    for i in range(DOWNLOAD_TRIES):
+        try:
+            await att.save(dest)
+            if att.size and Path(dest).stat().st_size != att.size:
+                raise OSError(f"size mismatch {Path(dest).stat().st_size} != {att.size}")
+            return
+        except Exception as e:
+            last = e
+            Path(dest).unlink(missing_ok=True)
+            if i + 1 < DOWNLOAD_TRIES:
+                await asyncio.sleep(RETRY_DELAY * (i + 1))
+    raise DownloadError(f"{type(last).__name__}: {last}")
+
+
+async def _store_attachment(clinic, att, tmp, stills):
+    name = Path(att.filename or "file").name or "file"
+    kind = logic.file_kind(name)
+    size = int(att.size or 0)
+    if not media.enough_disk(tmp, size):
+        raise DiskLow(f"free disk below {size} bytes + reserve")
+    d = Path(tempfile.mkdtemp(prefix="att_", dir=str(tmp)))
+    try:
+        path = d / name
+        await _download(att, path)
+        rec = {"id": att.id, "filename": name, "kind": kind, "size": path.stat().st_size, "sha256": None}
+        mime = getattr(att, "content_type", None) or ""
+        loop = asyncio.get_running_loop()
+        if kind == "video":
+            rec["sha256"] = sha = await loop.run_in_executor(None, _sha_file, path)
+            if stills and not clinic.stills(sha):
+                frames = await loop.run_in_executor(None, media.video_stills, path)
+                if frames:
+                    clinic.add_stills(sha, frames)
+        else:
+            data = path.read_bytes()
+            if kind == "image":
+                stored, codec = media.shrink_image(data)
+                rec["sha256"] = clinic.put_file(data, name, "image", mime,
+                                                stored=None if codec == "orig" else stored, codec=codec)
+            else:
+                rec["sha256"] = clinic.put_file(data, name, kind, mime)
+            if kind == "archive":
+                rec["inner"] = media.archive_listing(path)
+                rec["inner_shas"] = [clinic.put_file(b, Path(n).name or "inner.log", logic.file_kind(n))
+                                     for n, b in media.archive_inner_logs(path)]
+        return rec
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def att_verified(clinic, a):
+    sha = a.get("sha256")
+    if not sha:
+        return False
+    if a.get("kind") == "video":
+        return bool(clinic.stills(sha))
+    return clinic.verify_file(sha) and all(clinic.verify_file(s) for s in a.get("inner_shas") or [])
+
+
+def rec_removable(atts):
+    return any(logic.removable(a["filename"], a.get("inner")) for a in atts)
+
+
+def log_infos(clinic, atts, log_info_fn, tmp):
+    """net_doctor log_info of every party log in these stored attachments (inner zip logs too)."""
+    if log_info_fn is None:
+        return []
+    todo = [(a["sha256"], a["filename"]) for a in atts if a.get("kind") == "log" and a.get("sha256")]
+    for a in atts:
+        for s in a.get("inner_shas") or []:
+            info = clinic.file_info(s)
+            if info and info["kind"] == "log":
+                todo.append((s, info["filename"]))
+    out = []
+    for sha, name in todo:
+        got = clinic.get_file(sha)
+        if not got:
+            continue
+        d = Path(tempfile.mkdtemp(prefix="info_", dir=str(tmp)))
+        try:
+            p = d / (Path(name).name or "log.log")
+            p.write_bytes(got[1])
+            try:
+                info = log_info_fn(p)
+            except Exception as e:
+                print(f"cannot read {name}: {e}", file=sys.stderr, flush=True)
+                continue
+            if info and info.get("role") is not None:
+                info = dict(info)
+                info["sha256"] = sha
+                out.append(info)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    return out
+
+
+def _place_ids(message):
+    ch = message.channel
+    if is_thread(ch):
+        parent = getattr(ch, "parent", None)
+        return (getattr(ch, "parent_id", None) or getattr(parent, "id", None) or ch.id), ch.id
+    return ch.id, None
+
+
+def _ts(dt):
+    return dt.timestamp() if dt is not None else None
+
+
+async def archive_message(clinic, message, *, log_info_fn=None, tmpdir=None, stills=True):
+    """Download and store every attachment, upsert the message. Returns {"removable", "infos", "state"}.
+    state: verified (all stored and re-verified), archive_failed (a download failed: retried by the next
+    sweep), archived (stored but a video has no stills yet), kept (no files), or replaced/deleted when the
+    message is already past that. Raises DiskLow before a download that would not fit."""
+    tmp = Path(tmpdir or tempfile.gettempdir())
+    tmp.mkdir(parents=True, exist_ok=True)
+    old = clinic.message(message.id)
+    if old and old["state"] in ("replaced", "deleted"):
+        return {"removable": rec_removable(old["attachments"]), "infos": [], "state": old["state"]}
+    prev = {a["id"]: a for a in (old["attachments"] if old else []) if a.get("id") is not None}
+    atts, failed = [], False
+    for a in all_attachments(message):
+        p = prev.get(a.id)
+        if p and att_verified(clinic, p):
+            atts.append(p)
+            continue
+        try:
+            atts.append(await _store_attachment(clinic, a, tmp, stills))
+        except DiskLow:
+            raise
+        except Exception as e:
+            failed = True
+            atts.append({"id": a.id, "filename": Path(a.filename or "file").name, "kind": logic.file_kind(a.filename),
+                         "size": int(a.size or 0), "sha256": None, "error": str(e)[:200]})
+    if failed:
+        state = "archive_failed"
+    elif not atts:
+        state = "kept"
+    else:
+        state = "verified" if all(att_verified(clinic, a) for a in atts) else "archived"
+    channel_id, thread_id = _place_ids(message)
+    ref = getattr(message, "reference", None)
+    clinic.upsert_message({
+        "message_id": message.id, "channel_id": channel_id, "thread_id": thread_id,
+        "author_id": message.author.id, "author_name": str(getattr(message.author, "name", "")),
+        "created": _ts(message.created_at), "edited": _ts(getattr(message, "edited_at", None)),
+        "content": message.content or "", "reply_to": getattr(ref, "message_id", None),
+        "attachments": atts, "state": state, "seen": time.time()})
+    return {"removable": rec_removable(atts), "infos": log_infos(clinic, atts, log_info_fn, tmp), "state": state}
+
+
+def store_text(clinic, message, bug_id):
+    """Keep a message's text (no files) under a bug; never overwrites an archived record's state."""
+    channel_id, thread_id = _place_ids(message)
+    ref = getattr(message, "reference", None)
+    if clinic.message(message.id):
+        clinic.upsert_message({"message_id": message.id, "bug_id": bug_id})
+        return
+    clinic.upsert_message({
+        "message_id": message.id, "channel_id": channel_id, "thread_id": thread_id,
+        "author_id": message.author.id, "author_name": str(getattr(message.author, "name", "")),
+        "created": _ts(message.created_at), "edited": _ts(getattr(message, "edited_at", None)),
+        "content": message.content or "", "reply_to": getattr(ref, "message_id", None),
+        "attachments": [], "bug_id": bug_id, "state": "kept", "seen": time.time()})
+
+
+# --- bugs ------------------------------------------------------------------------------------------------
+
+def thread_of(message):
+    ch = message.channel
+    return ch if is_thread(ch) else getattr(message, "thread", None)
+
+
+def ensure_thread_bug(clinic, thread):
+    bug = clinic.bug_for_thread(thread.id)
+    if bug:
+        return bug
+    parent = getattr(thread, "parent", None)
+    forum = parent is not None and hasattr(parent, "available_tags")
+    pid = getattr(thread, "parent_id", None) or getattr(parent, "id", None)
+    return clinic.new_bug(logic.mask_ips(thread.name or "thread")[:80], "forum post" if forum else "thread",
+                          pid, thread.id)
+
+
+def _title(text):
+    line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    return logic.mask_ips(line)[:60] or "log report"
+
+
+def _log_shas(rec):
+    return [a["sha256"] for a in rec["attachments"]
+            if a.get("sha256") and a.get("kind") in ("log", "dump", "game", "archive")]
+
+
+def light(message, has_log=None):
+    """The fields clinic_logic.cluster needs, plus the ones needed to store a text-only message."""
+    if has_log is None:
+        has_log = any(logic.removable(a.filename) for a in all_attachments(message))
+    ref = getattr(message, "reference", None)
+    return {"id": message.id, "author_id": message.author.id, "created": _ts(message.created_at),
+            "reply_to": getattr(ref, "message_id", None), "has_log": has_log,
+            "content": message.content or "", "author_name": str(getattr(message.author, "name", "")),
+            "channel_id": message.channel.id}
+
+
+def assign_clusters(clinic, lights, infos_by_id, focus=None):
+    """Cluster plain-channel messages into bugs (new, or the one already holding them), store the text of
+    members that are not stored yet. Returns {message id: bug id}. `focus`: only the cluster holding it."""
+    by_id = {m["id"]: m for m in lights}
+    out = {}
+    for g in logic.cluster(lights, infos_by_id):
+        if focus is not None and focus not in g:
+            continue
+        recs = {i: clinic.message(i) for i in g}
+        existing = []
+        for i in g:
+            b = recs[i] and recs[i].get("bug_id")
+            if b and b not in existing:
+                existing.append(b)
+        shas = sorted({s for r in recs.values() if r for s in _log_shas(r)})
+        bug = existing[0] if existing else (clinic.bug_for_files(shas) if shas else None)
+        if not bug:
+            seed = next((by_id[i] for i in g if by_id[i]["has_log"]), by_id[g[0]])
+            first = next((by_id[i] for i in g if by_id[i]["author_id"] == seed["author_id"]
+                          and by_id[i]["content"].strip()), seed)
+            bug = clinic.new_bug(_title(first["content"]), "channel cluster", seed["channel_id"], None)
+        for dup in existing[1:]:
+            if dup != bug:
+                clinic.merge_bugs(bug, dup)
+        for i in g:
+            m = by_id[i]
+            if recs[i]:
+                clinic.upsert_message({"message_id": i, "bug_id": bug})
+            else:
+                clinic.upsert_message({
+                    "message_id": i, "channel_id": m["channel_id"], "thread_id": None, "author_id": m["author_id"],
+                    "author_name": m["author_name"], "created": m["created"], "content": m["content"],
+                    "reply_to": m["reply_to"], "attachments": [], "bug_id": bug, "state": "kept",
+                    "seen": time.time()})
+            out[i] = bug
+    return out
+
+
+async def _neighbors(message, window=logic.WINDOW_S):
+    """Messages around this one in its channel, from Discord when the channel can say (fakes may not)."""
+    hist = getattr(message.channel, "history", None)
+    if hist is None:
+        return []
+    out = []
+    try:
+        async for m in hist(limit=100, around=message):
+            if m.id != message.id and abs(_ts(m.created_at) - _ts(message.created_at)) <= window:
+                out.append(m)
+    except Exception as e:
+        print(f"no history around {message.id}: {type(e).__name__}", file=sys.stderr, flush=True)
+    return out
+
+
+async def assign_bug(clinic, message, infos, *, log_info_fn=None, tmpdir=None):
+    """The bug a log message belongs to: thread/forum post -> that thread's bug; DM -> one per conversation
+    per UTC day; plain channel -> the cluster around the message (the poster's words, replies, peer logs)."""
+    rec = clinic.message(message.id)
+    if rec and rec.get("bug_id"):
+        return rec["bug_id"]
+    t = thread_of(message)
+    if message.guild is None:
+        day = time.strftime("%Y-%m-%d", time.gmtime(_ts(message.created_at)))
+        title = f"DM log report {day}"
+        bug = next((b["id"] for b in clinic.bugs() if b["source"] == "dm" and b["channel_id"] == message.channel.id
+                    and b["title"] == title), None) or clinic.new_bug(title, "dm", message.channel.id, None)
+        clinic.upsert_message({"message_id": message.id, "bug_id": bug})
+        return bug
+    if t is not None:
+        bug = ensure_thread_bug(clinic, t)
+        clinic.upsert_message({"message_id": message.id, "bug_id": bug})
+        return bug
+    tmp = Path(tmpdir or tempfile.gettempdir())
+    lights = [light(message, True)]
+    infos_by_id = {message.id: infos}
+    for m in await _neighbors(message):
+        lights.append(light(m))
+        r = clinic.message(m.id)
+        if r and log_info_fn:
+            infos_by_id[m.id] = log_infos(clinic, r["attachments"], log_info_fn, tmp)
+    # stored neighbours the channel history did not return
+    known = {m["id"] for m in lights}
+    created = _ts(message.created_at)
+    for r in clinic.messages_near(message.channel.id, created, logic.WINDOW_S):
+        if r["message_id"] not in known:
+            lights.append({"id": r["message_id"], "author_id": r["author_id"], "created": r["created"],
+                           "reply_to": r["reply_to"], "has_log": rec_removable(r["attachments"]),
+                           "content": r["content"] or "", "author_name": r["author_name"] or "",
+                           "channel_id": r["channel_id"]})
+            if log_info_fn:
+                infos_by_id[r["message_id"]] = log_infos(clinic, r["attachments"], log_info_fn, tmp)
+    return assign_clusters(clinic, lights, infos_by_id, focus=message.id)[message.id]
+
+
+# --- replace and delete ----------------------------------------------------------------------------------
+
+def _exported(clinic, atts):
+    for a in atts:
+        if logic.removable(a["filename"], a.get("inner")):
+            if not clinic.exported(a["sha256"]) or not all(clinic.exported(s) for s in a.get("inner_shas") or []):
+                return False
+    return True
+
+
+def _chunks(text, limit=DISCORD_LIMIT):
+    out, cur = [], ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > limit:
+            if cur:
+                out.append(cur)
+                cur = ""
+            out.append(line[:limit])
+            line = line[limit:]
+        if len(cur) + len(line) > limit:
+            out.append(cur)
+            cur = ""
+        cur += line
+    if cur:
+        out.append(cur)
+    return out
+
+
+async def _media_files(message, rec):
+    """Files to repost in the replacement: everything that is not removable, within the upload cap."""
+    removable_ids = {a["id"] for a in rec["attachments"] if logic.removable(a["filename"], a.get("inner"))}
+    limit = getattr(getattr(message, "guild", None), "filesize_limit", None) or DEFAULT_UPLOAD
+    files, budget, left_out = [], limit, False
+    for a in all_attachments(message):
+        if a.id in removable_ids:
+            continue
+        if len(files) >= 10 or a.size > budget:
+            left_out = True
+            continue
+        try:
+            files.append(await a.to_file())
+            budget -= a.size
+        except Exception:
+            left_out = True
+    return files, left_out
+
+
+async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_export, extra=""):
+    """Post the replacement note, delete the original, record. Returns the final state, "would-replace"
+    when delete is False, or "blocked:<why>". A message already `replaced` skips the post. `extra`: more
+    of Iosefka's words (bug_filed / network_help) added to the same message when they fit."""
+    mid = message.id
+    rec = clinic.message(mid)
+    if not rec:
+        return "blocked:not-archived"
+    if rec["state"] == "deleted":
+        return "deleted"
+    ids = {a.id for a in all_attachments(message)}
+    stored = {a["id"] for a in rec["attachments"]}
+    if rec["state"] not in ("verified", "replaced") or not rec["attachments"] or not ids <= stored \
+            or not all(att_verified(clinic, a) for a in rec["attachments"]):
+        return "blocked:not-verified"
+    if need_export and not _exported(clinic, rec["attachments"]):
+        return "blocked:not-exported"
+    if not delete:
+        return "replaced" if rec["state"] == "replaced" else "would-replace"
+    if rec.get("bug_id") != bug_id:
+        clinic.upsert_message({"message_id": mid, "bug_id": bug_id})
+    ch = message.channel
+    reopened = None
+    try:
+        if is_thread(ch) and (ch.archived or ch.locked):
+            reopened = (ch.archived, ch.locked)
+            await ch.edit(archived=False, locked=False)
+        if rec["state"] != "replaced":
+            files, left_out = await _media_files(message, rec)
+            note = MEDIA_NOTE if left_out else ""
+            text = voice.replacement(f"<@{message.author.id}>", bug_id, message.content or "", note)
+            more = []
+            if extra:
+                if len(text) + 2 + len(extra) <= DISCORD_LIMIT:
+                    text += "\n\n" + extra
+                else:
+                    more = _chunks(extra)
+            am = AllowedMentions(users=[message.author], everyone=False, roles=False) if ping \
+                else AllowedMentions.none()
+            kw = {"allowed_mentions": am}
+            try:
+                sent = await ch.send(text, files=files, **kw) if files else await ch.send(text, **kw)
+            except Exception:
+                if not files:
+                    raise
+                text = voice.replacement(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE)
+                sent = await ch.send(text, **kw)
+            clinic.set_state(mid, "replaced", sent.id)
+            for part in more:
+                await ch.send(part, **kw)
+        try:
+            await message.delete()
+        except Exception as e:
+            if not _not_found(e):
+                raise
+        clinic.set_state(mid, "deleted")
+        return "deleted"
+    finally:
+        if reopened:
+            try:
+                await ch.edit(locked=reopened[1], archived=reopened[0])
+            except Exception as e:
+                print(f"could not restore thread {ch.id}: {e}", file=sys.stderr, flush=True)
