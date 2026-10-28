@@ -637,7 +637,7 @@ def phase_lf(only):
         # onto the bottom landing beside the car by the game's own in-world warp, then a few seconds for
         # the car object to be active
         "guest_move=%s@8%%m24_0" % LF_LOW_SIDE,
-        "guest_move=%s@4%%m24_0" % LF_CAR_LOW,             # into the car: up it goes
+        "guest_move=%s@9%%m24_0" % LF_CAR_LOW,             # into the car: up it goes (9 s: the block's init must have placed the car; at 4 s a slow rate rode a car still in its init and it "arrived" at once)
         "guest_obj=2401104:1.0:0@0.5%%m24_0?obj=%s:32" % LF_LIFT,  # out at the top on the arrival
         "guest_press=0@10!",                               # (in m24_00 there: no map condition)
     ])
