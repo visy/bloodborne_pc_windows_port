@@ -26,6 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import clinic_store  # noqa: E402
+import iosefka_cl  # noqa: E402
 from clinic_logic import mask_ips  # noqa: E402
 
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
@@ -37,6 +38,7 @@ NAME_RX = re.compile(r"^[a-z0-9_-]{1,32}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 LOG_DIR_KINDS = ("log", "dump", "game", "archive", "text", "other")
 MEDIA_KINDS = ("image", "still")
+SORTS = ("newest", "oldest", "activity")
 
 
 class CliError(Exception):
@@ -62,6 +64,9 @@ def _filters():
     p.add_argument("--q")
     p.add_argument("--since")
     p.add_argument("--assignee")
+    p.add_argument("--older-than", dest="older_than")
+    p.add_argument("--idle")
+    p.add_argument("--sort", default="newest")
     return p
 
 
@@ -98,6 +103,7 @@ def build_parser():
     s.add_argument("new_status", choices=STATUSES)
     s.add_argument("--dup")
     s.add_argument("--tell")
+    s.add_argument("--in", dest="in_ver", metavar="TRACK:VERSION")
     s = add("tag")
     s.add_argument("bug")
     s.add_argument("pairs", nargs="+")
@@ -116,6 +122,7 @@ def build_parser():
     add("export")
     add("confirm-export")
     add("import")
+    iosefka_cl.add_parser(sub, common)
     return top
 
 
@@ -176,12 +183,43 @@ def _query(c, a):
     for t in a.tag:
         if not KEY_RX.match(t.partition("=")[0]):
             raise CliError(f"--tag wants key=value: {t!r}")
-    return c.bugs(status=a.status or None, tag=a.tag or None, q=a.q, since=since,
+    now = time.time()
+    older = idle = None
+    for attr, name in (("older_than", "--older-than"), ("idle", "--idle")):
+        v = getattr(a, attr)
+        if v is not None:
+            try:
+                n = float(v)
+            except ValueError:
+                n = -1
+            if not (n >= 0 and n != float("inf")):
+                raise CliError(f"{name} wants a number of days: {v!r}")
+            if attr == "older_than":
+                older = now - n * 86400
+            else:
+                idle = now - n * 86400
+    if a.sort not in SORTS:
+        raise CliError(f"--sort wants one of {', '.join(SORTS)}: {a.sort!r}")
+    bugs = c.bugs(status=a.status or None, tag=a.tag or None, q=a.q, since=since,
                   assignee=a.assignee, exclude_status=CLOSED if a.open else None)
+    if older is not None:
+        bugs = [b for b in bugs if b["created"] < older]
+    if idle is not None:
+        bugs = [b for b in bugs if _last_activity(b) < idle]
+    if a.sort == "oldest":
+        bugs.sort(key=lambda b: b["created"])
+    elif a.sort == "activity":
+        bugs.sort(key=_last_activity, reverse=True)
+    return bugs
+
+
+def _last_activity(b):
+    return b["activity"] or b["updated"] or b["created"] or 0
 
 
 def _has_filter(a):
-    return bool(a.status or a.open or a.tag or a.q or a.since or a.assignee)
+    return bool(a.status or a.open or a.tag or a.q or a.since or a.assignee or a.older_than is not None
+                or a.idle is not None)
 
 
 def _show(c, b, brief=False):
@@ -246,7 +284,10 @@ def _json_out(out, data):
 
 def _text_out(out, cmd, data):
     lines = []
-    if cmd in ("list", "new", "triage-queue") and "bugs" in data or cmd == "list":
+    if cmd == "cl" and isinstance(data, list) and all("section" in x for x in data):
+        for i in data:
+            lines.append(f"{i['id']}  {i['track']} {i['version']}  {i['status']}  {i['section']}  {i['text']}")
+    elif cmd in ("list", "new", "triage-queue") and "bugs" in data or cmd == "list":
         bugs = data if isinstance(data, list) else data["bugs"]
         for b in bugs:
             k = b["counts"]
@@ -409,7 +450,7 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args(list(argv))
     if not a.cmd:
-        raise CliError("no command (new, triage-queue, title, move, list, show, files, note, status, tag, assign, share, merge, nd)")
+        raise CliError("no command (new, triage-queue, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
     if a.cmd == "nd" and not ND_RX.match(a.ref):
@@ -429,15 +470,30 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--dup only goes with the status duplicate")
     if a.cmd == "tag":
         tags = _tag_pairs(a.pairs)
+    if a.cmd == "status" and a.in_ver:
+        if a.new_status != "fixed":
+            raise CliError("--in only goes with the status fixed")
+        try:
+            iosefka_cl.parse_in(a.in_ver)
+        except iosefka_cl.ClError as e:
+            raise CliError(str(e), e.code)
 
     db_path = db or os.environ.get("NETDOCTOR_DB") or Path.home() / ".config" / "netdoctor" / "netdoctor.db"
     c = clinic_store.Clinic(db_path)
     text = getattr(a, "text", False)
 
     def emit(data):
+        if isinstance(data, bytes):  # raw output (cl notes markdown), also with --text
+            out.write(data)
+            return 0
         _text_out(out, a.cmd, data) if text else _json_out(out, data)
         return 0
 
+    if a.cmd == "cl":
+        try:
+            return iosefka_cl.run(a, c, who, emit, stdin)
+        except iosefka_cl.ClError as e:
+            raise CliError(str(e), e.code)
     if a.cmd == "new":
         since = c.mark_seen(who)
         got = c.changes_since(since, who)
@@ -490,9 +546,18 @@ def _run(argv, who, out, db, stdin):
         if a.dup:
             _need_bug(c, a.dup)
             fields["dup_of"] = a.dup
+        change = None
+        if a.in_ver:  # before the bug changes, so a refused item leaves everything as it was
+            try:
+                change = iosefka_cl.fixed_in(c, who, a.bug, a.in_ver)
+            except iosefka_cl.ClError as e:
+                raise CliError(str(e), e.code)
         c.update_bug(a.bug, **fields)
-        c.add_note(a.bug, who, "status", a.new_status + (f" (duplicate of {a.dup})" if a.dup else ""))
+        c.add_note(a.bug, who, "status", a.new_status + (f" (duplicate of {a.dup})" if a.dup else "")
+                   + (f" in {a.in_ver}" if a.in_ver else ""))
         res = {"ok": True, "bug": a.bug, "status": a.new_status}
+        if change:
+            res["change"] = change
         if a.tell:
             masked = mask_ips(a.tell)
             res["tell_queued"] = c.queue_tell(a.bug, who, masked)
