@@ -166,3 +166,20 @@ describes the expected result; docs must match it.
 7. **Version order.** Split numbers then a stage: alpha < beta < rc < final (no stage = final), stage
    number ascending. "0.2.5 beta 3" < "0.2.5 rc 1" < "0.2.5".
 8. **Item dates.** `--since` / `--older-than` on items use `created`; `--idle` uses `updated`.
+
+## Addendum (user, 2026-10-28): original timestamps
+
+User: "add timestamps from the original messages so that they correlate with bug report times and
+changelist add times can be separate from that / triage time".
+
+- **Bugs: `reported`** = the earliest original message time of the bug (Discord message `created`,
+  computed from nw_messages, so merges/moves stay right); falls back to the bug's `created` when it has no
+  messages. Bug `created` stays the filing/triage time and is shown as `filed`. `list`/`show`/`new` output
+  carries `reported` and `filed`; `list --since`, `--older-than` and `--sort newest|oldest` use `reported`;
+  `--idle` keeps using activity. Local `import` cases take `reported` from case.json (ISO date/datetime or
+  epoch) for their message time instead of now.
+- **Changelist items: `dated`** = when the change itself happened (NW commit date, release published date,
+  linked bug's `reported` for `fixed --in` items, optional `dated` in import lines, `cl add/edit --dated`),
+  separate from `created` (added to Iosefka, shown as `added`). Import fills `dated` unless locked; a human
+  `cl edit --dated` locks it. `cl list` output shows both; `cl list --sort added|dated` (default added,
+  newest first). Existing `--since/--older-than` on items stay on `added`; new `--dated-since DATE`.
