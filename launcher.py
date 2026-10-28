@@ -3249,8 +3249,6 @@ class BloodborneLauncher(tk.Tk):
         self.build_party_settings_tab(PARTY_RULES_TAB_TITLE, PARTY_RULES_TAB_INTRO, PARTY_RULES_TAB)
         self.build_party_settings_tab(MY_PARTY_TAB_TITLE, MY_PARTY_TAB_INTRO, MY_PARTY_TAB)
 
-        # 6b. Save editor (single-player and party character saves)
-        self.build_saveedit_tab()
 
         # 7. Advanced / Debug
         tab = self._tab("Advanced / Debug")
@@ -3472,15 +3470,19 @@ class BloodborneLauncher(tk.Tk):
         return lbl, entry, btn, holder
 
     # ------------------------------------------------------------- party
-    def build_saveedit_tab(self):
-        """The Save editor tab (scripts/saveedit): edits a character save after an automatic backup."""
+    def open_save_editor(self):
+        """The Save editor window (scripts/saveedit): edits a character save after an automatic backup."""
+        win = getattr(self, "saveedit_win", None)
+        if win is not None and win.winfo_exists():
+            win.lift()
+            return
         try:
             scripts_dir = str(APP_DIR / "scripts")
             if scripts_dir not in sys.path:
                 sys.path.insert(0, scripts_dir)
             from saveedit import ui as saveedit_ui
-        except Exception as ex:  # a missing or broken module only removes the tab
-            print(f"Save editor tab unavailable: {ex}", file=sys.stderr)
+        except Exception as ex:  # a missing or broken module only removes the editor
+            messagebox.showerror("Save editor", f"scripts/saveedit is missing or broken: {ex}")
             return
 
         def game_dir():
@@ -3490,13 +3492,15 @@ class BloodborneLauncher(tk.Tk):
         def update_party(user, slot, data):
             save_editor_module()._update_party_characters(user, slot, data)
 
-        tab = saveedit_ui.SaveEditorTab(self.notebook, party_user_dir, game_dir, lambda: party_user_dir() / "cache",
+        win = self.saveedit_win = tk.Toplevel(self)
+        win.title("Save editor")
+        win.configure(bg=self.cget("bg"))
+        win.geometry("780x900")
+        tab = saveedit_ui.SaveEditorTab(win, party_user_dir, game_dir, lambda: party_user_dir() / "cache",
                                         running_instances, lambda m: self.log(m), update_party)
-        self.notebook.add(tab, text="Saves")
+        tab.pack(fill="both", expand=True)
         self.saveedit_tab = tab
-        self.notebook.bind("<<NotebookTabChanged>>",
-                           lambda e: tab.refresh_slots() if self.notebook.select() == str(tab) and tab.model is None else None,
-                           add="+")
+        tab.refresh_slots()
 
     def build_party_tab(self):
         tab = self.party_tab = self._tab("Party")
@@ -3565,6 +3569,12 @@ class BloodborneLauncher(tk.Tk):
                           "user\\save_backups\\party_sessions at every party start. You see what will be "
                           "replaced before anything changes, and your current saves are copied there "
                           "first, so the undo can be undone the same way.")
+        edit_btn = ttk.Button(sec, text="Save editor...", style="Secondary.TButton", command=self.open_save_editor)
+        edit_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        Tooltip(edit_btn, "Edit a single-player or party character: stats, Echoes, Insight, items, bosses, lamps. "
+                          "A backup of the whole save folder is made before every write (Backups... restores it); "
+                          "nothing is written while the game runs.")
         editor_row = ttk.Frame(sec, style="Card.TFrame")
         editor_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
         sec.next_row += 1
