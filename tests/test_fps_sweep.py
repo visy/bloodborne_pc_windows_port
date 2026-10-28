@@ -121,7 +121,9 @@ class FrameGenerationTests(unittest.TestCase):
         self.assertEqual((e["BB_FPS"], e["BB_FRAME_GENERATION"], e["BB_FG_BACKEND"], e["BB_FG_TIMING"]),
                          ("60", "2x", "fsr", "1"))
         e = instances.fps_env("120", None)
-        self.assertEqual((e["BB_FPS"], e["BB_FRAME_GENERATION"]), ("120", "off"))  # an old ini cannot turn it on
+        # 120 is no patch preset: uncapped with the launcher's frame rate limit (as players set it)
+        self.assertEqual((e["BB_FPS"], e["BB_FPS_LIMIT"], e["BB_FRAME_GENERATION"]), ("uncap", "120", "off"))
+        self.assertNotIn("BB_FPS_LIMIT", instances.fps_env("90", None))
         self.assertNotIn("BB_FG_BACKEND", e)
         self.assertEqual(instances.fps_env("60", "fsr", headless=True)["BB_FRAME_GENERATION"], "off")
 
