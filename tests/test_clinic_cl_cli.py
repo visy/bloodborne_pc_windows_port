@@ -73,7 +73,7 @@ def test_fixed_in_links_existing_item(tmp_path):
     r = js(db, "vlad", "status", b, "fixed", "--in", "coop:0.7.7")
     assert r["change"]["created"] is True
     it = js(db, "vlad", "cl", "show", r["change"]["id"])["item"]
-    assert it["source_key"] == f"bug:{b}" and it["section"] == "fixed" and it["bugs"] == [b]
+    assert it["source_key"] == f"bug:coop:{b}" and it["section"] == "fixed" and it["bugs"] == [b]
     assert it["text"] == "Chalice lamp stays dark" and it["status"] == "planned"
     js(db, "vlad", "cl", "version", "coop", "0.7.8", "--status", "released")
     n = cs.Clinic(db).new_bug("Another 198.51.100.7 thing", "thread", 1, 13)
@@ -149,3 +149,47 @@ def test_vlad_can_write_both_tracks(tmp_path):
     assert run(db, "vlad", "cl", "edit", a, "--text", "Better A", "--tag", "k=v")[0] == 0
     assert run(db, "vlad", "cl", "related", a)[0] == 0
     assert run(db, "vlad", "cl", "move", a, "nw", "0.2.7")[0] == 0
+
+
+def test_fixed_in_both_tracks(tmp_path):
+    db, a, b, _ = seed(tmp_path)
+    js(db, "vlad", "cl", "version", "coop", "0.7.7", "--status", "current")
+    js(db, "vlad", "cl", "version", "nw", "0.2.6", "--status", "current")
+    r1 = js(db, "vlad", "status", b, "fixed", "--in", "coop:0.7.7")
+    r2 = js(db, "vlad", "status", b, "fixed", "--in", "nw:0.2.6")
+    assert r1["change"]["created"] and r2["change"]["created"] and r1["change"]["id"] != r2["change"]["id"]
+    keys = {js(db, "vlad", "cl", "show", r["change"]["id"])["item"]["source_key"] for r in (r1, r2)}
+    assert keys == {f"bug:coop:{b}", f"bug:nw:{b}"}
+    assert cs.Clinic(db).bug(b)["status"] == "fixed"
+
+
+def test_fixed_in_skips_dropped_and_no_idle_note(tmp_path):
+    db, a, b, _ = seed(tmp_path)
+    js(db, "vlad", "cl", "version", "coop", "0.7.7", "--status", "current")
+    keep = js(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp one", "--bug", b)["id"]
+    dup = js(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp two", "--bug", b)["id"]
+    js(db, "vlad", "cl", "merge", keep, dup)
+    r = js(db, "vlad", "status", b, "fixed", "--in", "coop:0.7.7")
+    assert r["change"] == {"id": keep, "created": False}
+    assert js(db, "vlad", "cl", "show", keep)["item"]["status"] == "done"
+    assert js(db, "vlad", "cl", "show", dup)["item"]["status"] == "dropped"
+    n = len(js(db, "vlad", "cl", "show", keep)["notes"])
+    js(db, "vlad", "status", b, "fixed", "--in", "coop:0.7.7")  # nothing changes: no new note
+    assert len(js(db, "vlad", "cl", "show", keep)["notes"]) == n
+
+
+def test_fixed_in_moves_unlocked_item(tmp_path):
+    db, a, b, _ = seed(tmp_path)
+    cid = js(db, "vlad", "cl", "add", "coop", "0.7.8", "fixed", "Lamp", "--bug", b)["id"]
+    js(db, "vlad", "status", b, "fixed", "--in", "coop:0.7.7")
+    it = js(db, "vlad", "cl", "show", cid)["item"]
+    assert it["status"] == "done" and it["version"] == "0.7.7"
+    assert {v["version"] for v in js(db, "vlad", "cl", "versions", "--track", "coop")} == {"0.7.7", "0.7.8"}
+
+
+def test_case_with_date_prefix(tmp_path):
+    db, *_ = seed(tmp_path)
+    it = js(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp", "--case", "2026-10-25/lamp_x")
+    assert it["cases"] == ["2026-10-25/lamp_x"]
+    assert run(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp", "--case", "../x")[0] == 2
+    assert run(db, "vlad", "cl", "add", "coop", "0.7.7", "fixed", "Lamp", "--case", "a/b/c")[0] == 2

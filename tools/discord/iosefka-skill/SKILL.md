@@ -63,7 +63,7 @@ player_logs paths; private detail goes in `--dev`. Quote multi-word arguments as
 The NW sync reads git log: `0.2.5 beta 3:` style subject prefixes name the version (unprefixed commits
 join the next prefixed one), the VERSION file is the current version, each commit is one item keyed by
 hash (safe to re-run), and sections are guessed from keywords, so tidy them with `cl edit`. After the
-user pushes NW commits, run the sync and report the new items. `status NW-x fixed --in` marks an existing item done (version kept) or adds a done item (planned if that version is still planned).
+user pushes NW commits, run the sync and report the new items. `status NW-x fixed --in T:V` moves the bug's live item to done (and to V unless its version was set by hand) or adds a done item (planned if that version is still planned); do it per track. Run the NW sync first: it sets NW current from the VERSION file, and a hand-set version status locks it. Check the `locked` list in the import result.
 
 ## Procedures
 

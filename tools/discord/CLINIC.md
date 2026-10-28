@@ -149,13 +149,15 @@ Statuses:
 addresses in it are masked, but write it with no names, IPs or log lines anyway. The text is also kept
 as a `triage` note.
 
-`--in TRACK:VERSION` goes only with `fixed`: it also records the fix in the changelist (see Changelists):
-the bug's existing item in that track moves to done (forward only, version kept), or a new `fixed` item with
-the bug's title is added to that version (done, unless that version is still `planned`). Example: `status NW-1a2b3c4 fixed --in nw:0.2.6`.
-If the bug already has an item in that track, the item moves to done (forward only) and keeps its version.
-Otherwise a new `fixed` item with the bug's title is added to that version: done, unless the version is
-still `planned` (then the item is `planned` and `cl notes` leaves it out). So mark the version `current` or
-`released` first (`cl version nw 0.2.6 --status current`).
+`--in TRACK:VERSION` goes only with `fixed`: it also records the fix in the changelist (see Changelists).
+If the bug already has a live (not dropped) item in that track, the item moves forward to done; an item
+whose version you did not set by hand also moves to VERSION (created if missing), while one with a
+hand-set version keeps it. Otherwise a new `fixed` item with the bug's title is added to that version:
+done, unless the version is still `planned` (then the item is `planned` and `cl notes` leaves it out), so
+make sure the version is `current` or `released` first. For NW, run the sync first: it sets the current
+version from the VERSION file, whereas a version status you set by hand locks it, and the sync then no
+longer moves it. Fixing the same bug on both tracks works: run the command once per track. Example:
+`status NW-1a2b3c4 fixed --in nw:0.2.6`.
 
 ### tag
 
@@ -216,15 +218,15 @@ Concepts:
   `dev` text, a status (`planned`, `in-progress`, `done`, `dropped`), tags, and links to bugs (`NW-...`),
   player_logs case folders and commit hashes.
 - Locks: any field you set by hand (`cl edit`, `cl move`, `cl status`, ...) is locked. Later imports and
-  syncs never overwrite a locked field, so tidy up freely.
+  syncs never overwrite a locked field, so tidy up freely (a version status you set by hand is locked too).
 
 Privacy rule: item `text` is PUBLIC (it ends up in release notes). Write it with no player names, IPs,
 Discord ids or player_logs paths. Put anything private in `--dev`, which never appears in `cl notes`.
 
 All commands are `ssh iosefka cl <command>`. Quoting is the same as for `note` and `--tell`: the string
 is split by your local shell and again by the server, so any argument with spaces goes in single quotes
-inside double quotes, e.g. `"'multi word text'"`. Output is JSON (except `cl notes`, which prints Markdown) (`--text` for a short summary, except on
-`edit`, which takes its own `--text VALUE`).
+inside double quotes, e.g. `"'multi word text'"`. Output is JSON (except `cl notes`, which prints Markdown); `--text` gives a short summary, except on
+`edit`, which takes its own `--text VALUE`.
 
 ```
 ssh iosefka cl versions --track coop                               versions with status and item counts (--track optional)
@@ -273,7 +275,8 @@ account); vlad's key is installed in that account too, but his key is picked by 
 - The current NW version is the one in the clone's `VERSION` file.
 - Each commit becomes one item, keyed by its hash, so re-running is safe and creates no duplicates.
 - Items a dev edited (text, section, status, version, tags) are locked and never overwritten by a later
-  sync.
+  sync. The import result lists what a lock blocked as `"locked": [{"line": k, "fields": [...]}]` (version
+  lines too); look at it, e.g. a hand-set version status keeps NW from moving to a new current version.
 - Sections are guessed from keywords in the subject (fix, fixed, fixes, crash, crashes, broken -> `fixed`; add, added, adds, new -> `added`; else
   `changed`), so tidy them with `cl edit`. Commit subjects become public item text: keep them free of
   names and IPs.
@@ -290,7 +293,7 @@ How vlad keeps NW in sync: after pushing commits, tell Claude "sync the NW chang
 |---|---|
 | show the current NW changelist | `ssh iosefka cl list --track nw --current` |
 | what's planned for coop 0.7.7 | `ssh iosefka cl list --track coop --version 0.7.7` |
-| add the local bug items to the next coop version | `ssh iosefka cl versions --track coop` to find the next version, then per item `ssh iosefka cl add coop <version> fixed "'<public text>'" --case "<folder>"` |
+| add the local bug items to the next coop version | `ssh iosefka cl versions --track coop` to find the next version, then per item `ssh iosefka cl add coop <version> fixed "'<public text>'" --case "'<date>/<folder>'"` |
 | was NW-1a2b3c4 fixed on the NW side | `ssh iosefka cl related NW-1a2b3c4` and `ssh iosefka cl list --track nw --bug NW-1a2b3c4` |
 | mark NW-1a2b3c4 fixed in NW 0.2.6 | `ssh iosefka status NW-1a2b3c4 fixed --in nw:0.2.6` |
 | make the 0.2.6 release notes | `ssh iosefka cl notes nw 0.2.6` |

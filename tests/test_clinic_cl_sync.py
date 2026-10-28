@@ -114,3 +114,34 @@ def test_section_keywords():
     assert nw._section("Launcher: new language list") == "added"
     assert nw._section("Docstrings") == "changed"
     assert nw._section("Renewal of stuff") == "changed"
+
+
+def test_output_is_utf8_bytes(tmp_path, monkeypatch, capsys):
+    import io
+    raw = io.BytesIO()
+    cp = io.TextIOWrapper(raw, encoding="cp1252", errors="strict", write_through=True)
+    monkeypatch.setattr(sys, "stdout", cp)
+    nw.out_bytes("lamp \u2192 ok\n".encode("utf-8"))
+    assert raw.getvalue() == "lamp \u2192 ok\n".encode("utf-8")
+    err = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", write_through=True)
+    monkeypatch.setattr(sys, "stderr", err)
+    nw.note("skipped \u2192 thing")  # must not raise
+    assert err.buffer.getvalue().startswith(b"skipped ? thing")
+
+
+def test_releases_json_main_and_sections(tmp_path, monkeypatch):
+    import io
+    body = ("Intro bullet\n- before heading\n## Added\n- Arrow \u2192 thing\n#### fixed\n- Crash\n"
+            "## Install\n- run setup\n## Known issues\n- bug\n## Changed\n- Tweak\n")
+    items = coop.parse_release("v0.7.9", body)
+    assert [(i["section"], i["text"]) for i in items] == [
+        ("changed", "before heading"), ("added", "Arrow \u2192 thing"), ("fixed", "Crash"), ("changed", "Tweak")]
+    assert [i["source_key"] for i in items][-1] == "release:v0.7.9:4"
+    f = tmp_path / "rel.json"
+    f.write_text(json.dumps([{"tag_name": "v0.7.9", "body": body, "published_at": "2026-10-20T10:00:00Z"}]),
+                 encoding="utf-8")
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252", write_through=True))
+    assert coop.main(["--releases-json", str(f)]) == 0
+    lines = [json.loads(x) for x in raw.getvalue().decode("utf-8").splitlines()]
+    assert lines[0]["kind"] == "version" and lines[0]["released"] == "2026-10-20" and len(lines) == 5
