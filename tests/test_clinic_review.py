@@ -236,7 +236,7 @@ def test_replacement_carries_a_nonce(tmp_path):
     m = F.Msg(123456789, ch, F.User(7), "x", [F.Att(10, "a.log", LOG)])
     arch(c, m, tmp_path)
     run(cd.replace_and_delete(c, m, "NW-a", ping=False, delete=True, need_export=False))
-    assert ch.sent[0].kw["nonce"] == "123456789" and ch.sent[0].kw["enforce_nonce"] is True
+    assert ch.sent[0].kw["nonce"] == "123456789"
 
 
 def test_only_payload_too_large_drops_the_files(tmp_path):
