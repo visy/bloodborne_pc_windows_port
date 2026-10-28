@@ -1,6 +1,7 @@
 """Iosefka's voice: every public text the clinic bot writes. Short, warm, kind (the real Iosefka of the
 clinic, never the Imposter). Pure functions; each result fits one Discord message (<= 2000 chars).
 Personal data is a wound left open: names and addresses are taken inside, never repeated in public."""
+import re
 try:
     import clinic_logic as _logic
 except ImportError:  # loaded by path without tools/discord on sys.path
@@ -18,9 +19,23 @@ def _fit(text: str, limit: int = LIMIT) -> str:
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
+SELF_ID = None  # Iosefka's own Discord user id; set once the client is ready (tests set it directly)
+_SELF_NAME = re.compile(r"@\s*Net\s*Doctor\s*Iosefka", re.I)
+
+
+def strip_self(text: str, self_id=None) -> str:
+    """The text without mentions of Iosefka herself; "" when nothing meaningful (a letter or digit) is left."""
+    text = text or ""
+    sid = self_id or SELF_ID
+    if sid:
+        text = re.sub(rf"<@!?{int(sid)}>", "", text)
+    text = _SELF_NAME.sub("", text)
+    return text.strip() if re.search(r"\w", text) else ""
+
+
 def _quote(text: str, room: int) -> str:
     """The author's words, IPs masked, mass pings defused, as a block quote of at most `room` chars."""
-    text = _logic.mask_ips(text or "").strip()
+    text = _logic.mask_ips(strip_self(text)).strip()
     text = text.replace("@everyone", "@​everyone").replace("@here", "@​here")
     if not text or room < QUOTE_FLOOR:
         return ""
@@ -40,6 +55,18 @@ def replacement(mention: str, bug_id: str, text: str, media_note: str = "") -> s
     room = LIMIT - len(head) - len(tail) - 2
     quote = _quote(text, room)
     return head + (f"\n\n{quote}" if quote else "") + tail
+
+
+def replacement_short(mention: str, bug_id: str, text: str, media_note: str = "") -> str:
+    """One line for a repeat log of the same author on the same bug, or from a dev / staff poster."""
+    variants = (f"Another log from {mention} taken into my clinic with {bug_id}. Thank you.",
+                f"{mention}, one more log, safely inside with {bug_id}. Thank you.",
+                f"Another of {mention}'s logs is now in my care, filed under {bug_id}. Thank you.")
+    head = variants[sum(map(ord, bug_id)) % len(variants)]
+    media_note = media_note[:300]
+    tail = "\n\n" + media_note if media_note else ""
+    quote = _quote(text, LIMIT - len(head) - len(tail) - 2)
+    return head + ("\n\n" + quote if quote else "") + tail
 
 
 def replacement_many(mention: str, bug_id: str, texts: list, media_note: str = "") -> str:

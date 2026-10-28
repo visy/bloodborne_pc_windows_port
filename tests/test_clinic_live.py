@@ -207,3 +207,58 @@ def test_disk_guard_warns_once_a_day(tmp_path, monkeypatch):
     monkeypatch.setattr(cd.media, "free_disk", lambda *a, **k: 100)
     assert run(bot.disk_guard(ctx, [guild])) is True
     assert run(bot.disk_guard(ctx, [guild])) is False and len(staff.sent) == 1
+
+
+class Role:
+    def __init__(self, name):
+        self.name = name
+
+
+def _two_logs(tmp_path, author, texts=("hello", "again"), gap=None):
+    c, ctx = make(tmp_path)
+    ch = F.Channel(100, "help")
+    out = []
+    for i, t in enumerate(texts):
+        m = F.Msg(10 + i, ch, author, t, [F.Att(50 + i, "a.log", LOG + bytes([i]))], minutes=i)
+        run(bot.dispatch_message(m, ctx))
+        out.append(m)
+    return c, ch, out
+
+
+def test_second_log_same_author_gets_short_reply(tmp_path):
+    c, ch, ms = _two_logs(tmp_path, F.User(7, "Poster"))
+    assert all(m.deleted for m in ms) and len(ch.sent) == 2
+    assert c.message(10)["bug_id"] == c.message(11)["bug_id"]
+    assert "other guests' logs" in ch.sent[0].content
+    second = ch.sent[1].content
+    assert "Another log" in second or "one more" in second or "Another of" in second
+    assert "brought a log" not in second and "other guests" not in second and "morning" not in second
+
+
+def test_other_author_or_old_reply_gets_full_again(tmp_path, monkeypatch):
+    c, ctx = make(tmp_path)
+    ch = F.Channel(100, "help")
+    m1 = F.Msg(10, ch, F.User(7), "a", [F.Att(50, "a.log", LOG)])
+    run(bot.dispatch_message(m1, ctx))
+    bug = c.message(10)["bug_id"]
+    real = bot.time.time
+    monkeypatch.setattr(bot.time, "time", lambda: real() + bot.REPLY_WINDOW + 60)
+    assert not bot._full_reply_recent(c, bug, 7)
+    assert not bot._full_reply_recent(c, bug, 8)
+
+
+def test_own_mention_not_quoted(tmp_path, monkeypatch):
+    monkeypatch.setattr(bot.voice, "SELF_ID", 1563878841800327319)
+    c, ch, ms = _two_logs(tmp_path, F.User(7), texts=("<@1563878841800327319>", "<@!1563878841800327319> @Net Doctor Iosefka crash"))
+    assert "\n> " not in ch.sent[0].content and "1563878841800327319" not in ch.sent[0].content
+    assert "1563878841800327319" not in ch.sent[1].content and "> crash" in ch.sent[1].content
+
+
+def test_dev_gets_short_reply_and_dev_tag(tmp_path):
+    dev = F.User(9, "Dev")
+    dev.roles = [Role("Everyone"), Role("Nightwatch Dev")]
+    c, ch, ms = _two_logs(tmp_path, dev, texts=("crash",))
+    assert ms[0].deleted and len(ch.sent) == 1
+    t = ch.sent[0].content
+    assert "other guests" not in t and "good hunting" not in t and "brought a log" not in t
+    assert c.bug(c.message(10)["bug_id"])["tags"]["source"] == "dev"
