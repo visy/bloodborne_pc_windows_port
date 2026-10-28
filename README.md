@@ -215,7 +215,7 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   / adapter name). Or let a player with an open port host.
   The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
   *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
-- **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*).
+- **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*). If the game says the firewall *blocks* it (you cancelled the prompt once), press **Fix firewall issues** in the launcher's party help (one admin prompt: removes the game's inbound Block rules, adds Allow rules for UDP + TCP on the party port), or delete the Block entries by hand (`wf.msc` → Inbound Rules, red block icon).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 
 **5. Still not working?** On every PC: launcher → *Advanced / Debug* → **Save support bundle**, and send the
@@ -656,7 +656,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
 | vladtepes22 | Boss stays dead when the guests finish it while the host lies dead in the fight (PR #6); VPN joins with a host behind a closed NAT (PR #7); Chalice Dungeon entry with a party (PR #8); co-op bug reports |
 | zackcage6 | Testing and bug reports |
-| Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) (GPL-3.0): its save parsing, ported in `tools/party/editor_check.py` to check that exported saves open in it |
+| Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) (GPL-3.0): its save parsing, ported in `tools/party/editor_check.py` to check that exported saves open in it; its feature list is the reference for the launcher's Save editor (`scripts/saveedit`, written from our own test saves, no code copied) |
 
 Also used: half, DejaVu fonts, Libre Baskerville (SIL OFL 1.1), dxil-spirv (MIT). AMD's FSR 4 files and NVIDIA's DLSS SDK are not
 included here. Release packages include NVIDIA's `nvngx_dlss.dll` and `nvngx_dlssg.dll` under its license

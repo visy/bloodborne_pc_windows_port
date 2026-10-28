@@ -628,6 +628,68 @@ def is_bare_address(text: str) -> bool:
     return "." in t  # a host name needs a dot (a lone word is a typo)
 
 
+def ps_quote(text: str) -> str:
+    """A PowerShell single-quoted literal (apostrophes doubled)."""
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+FIREWALL_RULE_NAME = "Bloodborne PC port"
+
+
+def firewall_fix_script(exe: str, port: int, result_file: str) -> str:
+    """The elevated PowerShell script of 'Fix firewall issues': remove the game's inbound Block rules, then
+    (re)create named inbound Allow rules for the game, UDP and TCP on the party port, Private and Public.
+    It writes what it did to result_file (the launcher shows it). Only generated here, run by run_firewall_fix."""
+    e, r, p = ps_quote(exe), ps_quote(result_file), int(port)
+    return "\r\n".join([
+        "$ErrorActionPreference = 'Stop'",
+        "$log = New-Object System.Collections.Generic.List[string]",
+        "try {",
+        f"  $exe = {e}",
+        "  $blocks = @(Get-NetFirewallApplicationFilter | Where-Object Program -eq $exe | Get-NetFirewallRule |",
+        "    Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' })",
+        "  foreach ($b in $blocks) { $log.Add('Removed block rule: ' + $b.DisplayName); $b | Remove-NetFirewallRule }",
+        "  if ($blocks.Count -eq 0) { $log.Add('No inbound block rules for the game.') }",
+        "  foreach ($proto in 'UDP', 'TCP') {",
+        f"    $name = '{FIREWALL_RULE_NAME} ' + $proto + ' {p}'",
+        "    Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule",
+        f"    New-NetFirewallRule -DisplayName $name -Direction Inbound -Action Allow -Program $exe -Protocol $proto -LocalPort {p} -Profile Private,Public | Out-Null",
+        "    $log.Add('Added allow rule: ' + $name + ' (Private, Public)')",
+        "  }",
+        "  $log.Add('OK')",
+        "} catch {",
+        "  $log.Add('ERROR: ' + $_.Exception.Message)",
+        "}",
+        f"Set-Content -LiteralPath {r} -Value $log -Encoding UTF8",
+        "",
+    ])
+
+
+def run_firewall_fix(exe, port) -> str:
+    """Run firewall_fix_script elevated (one UAC prompt, no console window). Returns the report text."""
+    import tempfile
+    if os.name != "nt":
+        return "The firewall fix is for Windows only."
+    tmp = Path(tempfile.mkdtemp(prefix="bbfw_"))
+    script, result = tmp / "fix.ps1", tmp / "result.txt"
+    try:
+        script.write_text(firewall_fix_script(str(exe), int(port), str(result)), encoding="utf-8-sig")
+        inner = ("Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList "
+                 f"'-NoProfile','-ExecutionPolicy','Bypass','-File',{ps_quote(chr(34) + str(script) + chr(34))}")
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        cp = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", inner],
+                            capture_output=True, text=True, timeout=180, creationflags=flags)
+        if result.is_file():
+            return result.read_text(encoding="utf-8-sig").strip()
+        if cp.returncode != 0:
+            return "Windows did not get the administrator permission (the prompt was declined), so nothing was changed."
+        return "The fix ran but wrote no report; nothing was confirmed."
+    except Exception as ex:
+        return f"The firewall fix could not run: {ex}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def with_party_port(text: str, port=PARTY_DEFAULT_PORT) -> str:
     """The join address with the party port: a bare IP / host gets ':<port>' (the host's party_port,
     9307 by default); an explicit ip:port, a party code or anything else is returned as it was."""
@@ -3187,6 +3249,9 @@ class BloodborneLauncher(tk.Tk):
         self.build_party_settings_tab(PARTY_RULES_TAB_TITLE, PARTY_RULES_TAB_INTRO, PARTY_RULES_TAB)
         self.build_party_settings_tab(MY_PARTY_TAB_TITLE, MY_PARTY_TAB_INTRO, MY_PARTY_TAB)
 
+        # 6b. Save editor (single-player and party character saves)
+        self.build_saveedit_tab()
+
         # 7. Advanced / Debug
         tab = self._tab("Advanced / Debug")
         sec = self._section(tab, 0, "Diagnostics")
@@ -3407,6 +3472,32 @@ class BloodborneLauncher(tk.Tk):
         return lbl, entry, btn, holder
 
     # ------------------------------------------------------------- party
+    def build_saveedit_tab(self):
+        """The Save editor tab (scripts/saveedit): edits a character save after an automatic backup."""
+        try:
+            scripts_dir = str(APP_DIR / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            from saveedit import ui as saveedit_ui
+        except Exception as ex:  # a missing or broken module only removes the tab
+            print(f"Save editor tab unavailable: {ex}", file=sys.stderr)
+            return
+
+        def game_dir():
+            text = self.eboot_var.get().strip()
+            return resolve_game_dir(text) if text else None
+
+        def update_party(user, slot, data):
+            save_editor_module()._update_party_characters(user, slot, data)
+
+        tab = saveedit_ui.SaveEditorTab(self.notebook, party_user_dir, game_dir, lambda: party_user_dir() / "cache",
+                                        running_instances, lambda m: self.log(m), update_party)
+        self.notebook.add(tab, text="Save editor")
+        self.saveedit_tab = tab
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           lambda e: tab.refresh_slots() if self.notebook.select() == str(tab) and tab.model is None else None,
+                           add="+")
+
     def build_party_tab(self):
         tab = self.party_tab = self._tab("Party")
         sec = self._section(tab, 0, "Party")
@@ -4213,7 +4304,24 @@ class BloodborneLauncher(tk.Tk):
             guide_btn.pack(side="left", ipady=4)
             Tooltip(guide_btn, f"Opens {PARTY_GUIDE} in your text editor: ports, firewall, what is "
                                "shared, saves and backups, crash recovery, 4 players, troubleshooting.")
+        fw_btn = ttk.Button(bar, text="Fix firewall issues", style="Secondary.TButton",
+                            command=lambda: self.fix_firewall_issues(dlg))
+        fw_btn.pack(side="left", padx=(8, 0), ipady=4)
+        Tooltip(fw_btn, "Asks for administrator rights once, removes the Windows Firewall block rules for the game "
+                        "(saved when the firewall prompt was cancelled) and allows the game on the party port "
+                        "(UDP and TCP, Private and Public). Shows what it removed and added.")
         ttk.Button(bar, text="Close", style="Secondary.TButton", command=dlg.destroy).pack(side="right", ipady=4)
+
+    def fix_firewall_issues(self, parent=None):
+        exe = APP_DIR / "out" / "bbport.exe"
+        port = party_port(self.party_port_var.get()) or PARTY_DEFAULT_PORT
+        if not messagebox.askokcancel("Fix firewall issues",
+                                      f"This removes Windows Firewall block rules for\n{exe}\nand allows it on port {port} "
+                                      "(UDP and TCP).\n\nWindows will ask for administrator rights once.", parent=parent):
+            return
+        report = run_firewall_fix(exe, port)
+        self.log("[FIREWALL] " + report.replace("\n", "; "))
+        messagebox.showinfo("Fix firewall issues", report, parent=parent)
 
     def open_party_guide(self):
         try:

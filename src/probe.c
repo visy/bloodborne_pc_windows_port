@@ -1454,6 +1454,10 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
     veh_write(note);
 }
 
+/* The 1.09 image of the game: the static TLS offset of the thread heap slot is stored in it. */
+static int bb_is_v109_image(void) {
+    return image && image_size >= 0x53e4570 && *(const int64_t *)(image + 0x53e4568) == -1840;
+}
 static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     if (code == EXCEPTION_ACCESS_VIOLATION) {
@@ -1533,6 +1537,48 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
                     veh_write(line);
                 }
                 return EXCEPTION_CONTINUE_EXECUTION;
+            }
+            /* Mrsuss60/bloodborne_pc_windows_port 7c0e5f0d: the Dantelion2 temporary heap of a thread
+             * whose thread-local slot (TCB-1840) was never set up is read through a null pointer
+             * (RCX == 0) in 0x207de20..0x207de2a. A 128 KiB bump arena in guest-low memory is built
+             * with the header the allocator expects and put in that slot, then the access is retried.
+             * Only on the 1.09 image (the slot offset -1840 is checked in the image itself). */
+            if (off >= 0x207de20 && off <= 0x207de2a && ep->ContextRecord->Rcx == 0 &&
+                bb_is_v109_image()) {
+                static volatile LONG arenas;
+                void *tcb = runtime_thread_get_tcb();
+                uint8_t *heap = tcb && InterlockedIncrement(&arenas) <= 128
+                                    ? (uint8_t *)runtime_low_alloc_aligned(131072, 64) : NULL;
+                if (heap) {
+                    uint64_t *hdr = (uint64_t *)heap;
+                    const uint64_t start = (uint64_t)(uintptr_t)(heap + 0x38);
+                    const uint64_t end = (uint64_t)(uintptr_t)(heap + 131072);
+                    hdr[0] = start; hdr[1] = end; hdr[2] = start; hdr[3] = end;
+                    hdr[4] = (uint64_t)(uintptr_t)image + 0x535b540;
+                    hdr[5] = (uint64_t)(uintptr_t)image + 0x53b3150;
+                    hdr[6] = (uint64_t)(uintptr_t)(heap + 0x20);
+                    *(uint64_t *)((char *)tcb - 1840) = (uint64_t)(uintptr_t)heap;
+                    ep->ContextRecord->Rcx = (DWORD64)(uintptr_t)heap;
+                    veh_write("Runtime: DLTemporaryHeap of a thread without one: arena installed\n");
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
+            }
+            /* Mrsuss60/bloodborne_pc_windows_port 7c0e5f0d: the asset structure copy at
+             * 0x21d5b45..0x21d5d70 writes through R13 == 0 (no destination). A buffer in guest-low
+             * memory is given and the copy of the 0x398-byte source (RBX) replayed from its start,
+             * instead of leaving the half-built structure to cascade. At most 64 times. */
+            if (off >= 0x21d5b45 && off < 0x21d5d71 && ep->ContextRecord->R13 == 0 &&
+                bb_is_v109_image()) {
+                static volatile LONG replays;
+                void *dst = InterlockedIncrement(&replays) <= 64 ? runtime_low_alloc_aligned(2048, 64) : NULL;
+                if (dst) {
+                    const uintptr_t src = ep->ContextRecord->Rbx;
+                    if (src && !IsBadReadPtr((const void *)src, 0x398)) memcpy(dst, (const void *)src, 0x398);
+                    ep->ContextRecord->R13 = (DWORD64)(uintptr_t)dst;
+                    ep->ContextRecord->Rip = (uintptr_t)image + 0x21d5b45;
+                    veh_write("Runtime: asset structure copy with no destination: buffer given, copy replayed\n");
+                    return EXCEPTION_CONTINUE_EXECUTION;
+                }
             }
         }
         if (runtime_fault_recover) {

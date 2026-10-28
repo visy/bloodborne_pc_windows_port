@@ -210,6 +210,16 @@ the party is started again from the title screen's *Party* page.
   guests to get in, the guest for the host's replies. The game never changes your firewall; since
   0.7.6 it checks the rules at start and shows a **connection warning** with the shortest fix if
   there is no rule or it is blocked.
+  - **"Windows Firewall blocks your party"**: clicking *Cancel* on the Windows prompt makes Windows
+    save inbound **Block** rules for the game (TCP and UDP, any port). A Block rule beats every Allow
+    rule, the prompt never comes back, and these rules mostly do not show in *Allow an app through
+    firewall*, so allowing the app there changes nothing. Easiest: in the launcher open the party
+    help and press **Fix firewall issues** (one admin prompt; it removes the game's inbound Block
+    rules and adds Allow rules for the game and the party port, UDP and TCP, Private and Public, and
+    reports what it did). By hand: run `wf.msc`, open *Inbound Rules*, delete the game's entries with
+    the red block icon; or in an admin PowerShell:
+    `Get-NetFirewallApplicationFilter | Where-Object Program -eq '<path to bbport.exe>' | Get-NetFirewallRule | Where-Object { $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' } | Remove-NetFirewallRule`
+    Then allow the game as above (Private and Public, UDP and TCP).
 - **Public address**: normally found automatically (STUN server `stun.l.google.com:19302`, or
   UPnP). For a fixed IP, a DNS name or a VPN address, enter it in *Public address* (host only).
   *STUN server* `off` turns the lookup off (LAN / VPN only).
@@ -559,7 +569,7 @@ needs *Join party* (restart).
 | *the party is full* | Max players reached | Raise Max players (on everyone's PC) or wait. |
 | *kicked by the host* | The host kicked you | Ask the host. |
 | Guest stays at *Connecting* | The host's port is not reachable | Host: check UPnP in the log, forward UDP+TCP 9307, allow the firewall prompt on both PCs; strict router / provider NAT: use a VPN or let another player host. |
-| Connection warning: Windows Firewall has no rule / blocks the game | The firewall stops the party port | Allow `bbport.exe` for UDP and TCP on the network type you use (*Windows Security > Firewall > Allow an app through firewall*), on host and guests. |
+| Connection warning: Windows Firewall has no rule / blocks the game | The firewall stops the party port | "has no rule": allow `bbport.exe` for UDP and TCP on the network type you use (*Windows Security > Firewall > Allow an app through firewall*), on host and guests. "blocks the game": press **Fix firewall issues** in the launcher, or delete the game's inbound Block rules by hand (`wf.msc` > Inbound Rules, red block icon; see the Windows Firewall bullet above) and then allow it. |
 | Connection warning: nobody reached your party after 3 minutes | Host: no open port and no VPN in use | Forward UDP+TCP 9307 on the router, or host over a VPN. |
 | Connection warning: a guest is in the party but its game is not heard | Firewall on one side, or the VPN address is not the one used | Allow the game in the firewall on both PCs; on a VPN both set `BB_PARTY_LOCAL_IP` to their own VPN address ([steps](#hosting-over-a-vpn-radmin-vpn-hamachi-zerotier-tailscale)). |
 | Connection warning: you cannot reach the host | Wrong address, host not hosting, different VPN network, or the host's firewall | Check the host is running, the same VPN network, the address or code, and the host's firewall. |
