@@ -2287,29 +2287,31 @@ def phase_hg(only):
     delay = float(os.environ.get("BB_HG_DELAY", "12"))
     hp = os.environ.get("BB_HG_HP", "55")                           # the boss's HP % set on the host: near phase 2
     dist = os.environ.get("BB_HG_HOSTDIST", "16")                   # the host stands far from the boss: who it fights
+    gdist = os.environ.get("BB_HG_GUESTDIST", "2")                  # the guest's distance from the boss at the start
+    mortal = os.environ.get("BB_HG_MORTAL", "0") == "1"            # nobody invincible: the boss's hits show in the HP
     if order == "guest":
         host = ",".join(["god", "host_warp=2412953@8^1",
                          "host_chr=2410810:%s@38%%m24_01" % dist,
                          "host_kill=2410810:hp%s@8%%m24_01" % hp])
-        g1 = ",".join(["god", "guest_press=0x0@4%m24_01!", "guest_obj=2411810@3%m24_01",
+        g1 = ",".join(([] if mortal else ["god"]) + ["guest_press=0x0@4%m24_01!", "guest_obj=2411810@3%m24_01",
                        "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
-                       "guest_chr=2410810:2@25%m24_01"] +
+                       "guest_chr=2410810:%s@25%%m24_01" % gdist] +
                       ["guest_press=0x800@1.5%m24_01"] * 60 + ["guest_press=0x0@2%m24_01"])
     else:
         host = ",".join(["god", "host_warp=2412953@8^1",                      # the party to the Tomb of Oedon
                          "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER,        # the host starts the fight (intro)
                          "host_chr=2410810:%s@12%%m24_01" % dist,
                          "host_kill=2410810:hp%s@%s%%m24_01" % (hp, os.environ.get("BB_HG_HPAT", "25"))])
-        g1 = ",".join(["god",
+        g1 = ",".join(([] if mortal else ["god"]) + [
                        "guest_press=0x0@%g%%m24_01!" % (delay + 3),           # waits for the host's intro
                        "guest_obj=2411810@3%m24_01",                          # at the fog
                        "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",  # through it
-                       "guest_chr=2410810:2@8%m24_01"] +                      # beside the boss
+                       "guest_chr=2410810:%s@8%%m24_01" % gdist] +                      # beside the boss
                       ["guest_press=0x800@1.5%m24_01"] * 80 + ["guest_press=0x0@2%m24_01"])
     return dict(
         name="hg", seconds=360, count=2, headless=0, until_hold=4,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1",
-             "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR] + ([] if mortal else ["BB_PARTY_TEST_INVINCIBLE=1"]) +
+            ["BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         watch=["--watch", r"test: target anim=hganim@0.5"],
         crash=[], until=HG_UNTIL,
@@ -2349,6 +2351,13 @@ def check_hg(v, L):
     v.step("hg the boss acts on the guest (within 4 m of it%s)" % (", the host 8+ m away" if guest_first else ""),
            near_g >= 5 and (far_h >= 5 or not guest_first),
            "guest side %d/%d samples < 4 m; host side %d/%d samples > 8 m" % (near_g, len(dg), far_h, len(dh)))
+    if os.environ.get("BB_HG_MORTAL", "0") == "1":
+        # nobody invincible: the guest is not god, the host is (it only stands beside the boss): the guest's HP
+        # must fall from the boss's own hits (attention shared) -- the boss never sits on the host alone
+        rows = L.all(1, r"target pos: entity 2410810 .*player HP -?\d+\)", tap, tap + 120.0)
+        gh = [int(re.search(r"player HP (-?\d+)\)", ln).group(1)) for _, ln in rows]
+        v.step("hg the boss hits the guest (its HP falls while the host stands by)",
+               bool(gh) and min(gh) < gh[0], "guest HP %s -> min %s over %d samples" % (gh[:1], min(gh) if gh else None, len(gh)))
     beast = need(v, L, "hg phase 2: the beast's animations (1000000+) on the host's game", 0,
                  r"target anim: entity 2410810 animation 10\d{5}", tap)
     if beast is not None:

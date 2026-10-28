@@ -6608,6 +6608,73 @@ void LimboBossTargetTick(double now) {
     }
 }
 
+/// Host (the boss AI's owner), main thread, twice a second: while a boss bar is up and two or more
+/// living players (the host's own chr and the members' copies) are within reach of the boss, the boss
+/// is handed each of them in turn as a forced target (the event ChangeTarget path 0x1299CD0, as the
+/// limbo retarget does) every kAttentionHold seconds, the one targeted longest ago first
+/// (enemyai_rules::PickAttention). The game's own search keeps the nearest / first player, so a guest
+/// fighting a few metres further was ignored (player report: "bosses only target the host").
+/// party_boss_share (System > Party rules: Bosses, launcher, BB_PARTY_BOSS_SHARE=0 off).
+void BossAttentionTick(const GameSnapshot& s, double now) {
+    static double next = 0;
+    if (now < next) return;
+    next = now + 0.5;
+    struct State {
+        u32 handle = 0;
+        int current = -1;
+        double since = 0;
+        std::map<u32, double> last;  // player chr handle -> when it was last handed the target
+    };
+    static std::map<u32, State> st;  // by boss handle
+    static bool fighting = false;
+    const bool on = BbSettings::Get().party_boss_share.load() && Role() == RoleHost && s.world_up && !s.loading;
+    const u64 hud = on ? Slot(0x5562878) : 0;
+    if (!hud) {
+        if (fighting) st.clear();
+        fighting = false;
+        return;
+    }
+    std::vector<u64> players;
+    if (s.player) players.push_back(s.player);
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c) players.push_back(c);
+    }
+    bool any = false;
+    for (int i = 0; i < 3; ++i) {
+        const u32 h = Field<u32>(hud, 0x165c + u64(i) * 0x14, ~0u);
+        const u64 boss = h == ~0u ? 0 : ChrOfHandle(h);
+        if (!boss || ChrHp(boss) <= 0) continue;
+        any = true;
+        float bp[3] = {};
+        if (!ChrPos(boss, bp)) continue;
+        State& e = st[h];
+        std::vector<float> d2(players.size(), -1.0f);
+        std::vector<double> last(players.size(), 0.0);
+        int cur = -1;
+        for (size_t k = 0; k < players.size(); ++k) {
+            float cp[3] = {};
+            const u32 ph = Field<u32>(players[k], 8);
+            if (ChrHp(players[k]) > 0 && ChrPos(players[k], cp))
+                d2[k] = (cp[0] - bp[0]) * (cp[0] - bp[0]) + (cp[1] - bp[1]) * (cp[1] - bp[1]) + (cp[2] - bp[2]) * (cp[2] - bp[2]);
+            const auto it = e.last.find(ph);
+            if (it != e.last.end()) last[k] = it->second;
+            if (ph == e.handle) cur = int(k);
+        }
+        const int pick = enemyai_rules::PickAttention(d2.data(), last.data(), int(players.size()), 30.0f, cur, e.since, now, 8.0);
+        if (pick < 0) continue;
+        const bool ok = reinterpret_cast<bool(BB_COOP_SYSV*)(u64, u64)>(Guest(0x1299cd0))(boss, players[size_t(pick)]);
+        const u32 ph = Field<u32>(players[size_t(pick)], 8);
+        e.handle = ph;
+        e.since = now;
+        e.last[ph] = now;
+        Log("boss attention: boss %08x turns to player chr %08x (%.1f m, ChangeTarget %s)", h, ph,
+            double(std::sqrt(d2[size_t(pick)])), ok ? "ok" : "refused: no AI");
+    }
+    if (!any) st.clear();
+    fighting = any;
+}
+
 /// Host (the AI owner of its world), main thread, every frame: a player chr at HP 0 in a boss fight
 /// or in the host's limbo leaves the enemies' target bank (SprjTargetBankManager *0x553B098: begin
 /// +0x8, end +0x10, capacity +0x18; the chr's entry at chr +0x3B0 -> +0x40 -> +0x8, as the teardown
@@ -11973,6 +12040,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     DeadPlayerUntargetTick(s, now);
+    BossAttentionTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());

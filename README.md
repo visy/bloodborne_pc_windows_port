@@ -391,6 +391,7 @@ before anyone is in the game):
   open for everyone, in the host's world and in each guest's own save; a lift ridden or a ladder
   lowered by anyone is in the same place for everyone, also for a player who was far away. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
+- **Bosses share their attention.** A boss in a party fight turns on every player within reach in turn (about every eight seconds), not only the nearest one or the host. The host's rule *Bosses share attention* (*System → Party rules: Bosses*, the launcher, `party_boss_share`), on by default.
 - **Boss drops for guests.** The item a boss drops for the host (Kin Coldblood from Rom, ...) is also given to every guest
   who is there when it dies, once per kill, in their own save (like the Chalice Dungeon boss rewards). The host's rule *Boss item
   drops for guests* (*System → Party rules: Rewards*, on by default); guests see it read-only.

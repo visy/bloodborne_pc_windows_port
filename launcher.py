@@ -156,6 +156,8 @@ PARTY_INI_SWITCHES = [
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
     # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Party rules: World)
     ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
+    # 0.7.7: bosses share their attention between the players in reach (the host's game acts)
+    ("party_boss_share", "BB_PARTY_BOSS_SHARE", True),
     # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
     # System > Deaths & revives)
     ("party_any_kidnap", "BB_PARTY_ANY_KIDNAP", True),
@@ -233,6 +235,11 @@ PARTY_RULES_TAB = [
          "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
          "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
          "System > Party rules: World)."),
+        ("check", "party_boss_share", "Bosses share their attention",
+         "In a party boss fight the boss turns on each player within reach in turn (about every eight "
+         "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
+         "few metres further is attacked too. The host's game decides it. Default: on (bbport.ini "
+         "party_boss_share; in the game: System > Party rules: Bosses)."),
         ("check", "party_travel_vote", "Party votes on travel",
          "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
          "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
