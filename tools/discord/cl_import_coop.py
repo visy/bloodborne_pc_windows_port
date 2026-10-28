@@ -39,9 +39,10 @@ def _strip_md(s):
     return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s).strip()
 
 
-def parse_release(tag, body):
+def parse_release(tag, body, dated=None):
     """Item lines from release markdown. Bullets under an Added / Changed / Fixed heading (any level) get that
-    section; bullets before any heading are changed; bullets under any other heading are skipped."""
+    section; bullets before any heading are changed; bullets under any other heading are skipped. `dated` (the release's
+    published date) goes on every item line."""
     version = norm_version(tag[1:] if tag[:1] in "vV" else tag)
     items, section = [], "changed"
     for line in (body or "").splitlines():
@@ -55,6 +56,8 @@ def parse_release(tag, body):
         raw = _strip_md(b.group(1))
         item = {"kind": "item", "source_key": f"release:{tag}:{len(items) + 1}", "track": "coop",
                 "version": version, "section": section, "status": "done"}
+        if dated:
+            item["dated"] = dated
         try:
             item["text"] = clean_text(raw[:300])
         except ValueError:
@@ -114,7 +117,7 @@ def main(argv=None):
         if rel.get("draft"):
             continue
         try:
-            items = parse_release(tag, rel.get("body") or "")
+            items = parse_release(tag, rel.get("body") or "", (rel.get("published_at") or "")[:10] or None)
             version = norm_version(tag[1:] if tag[:1] in "vV" else tag)
         except ValueError as e:
             note(f"skipped {tag}: {e}")

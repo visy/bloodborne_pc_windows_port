@@ -32,7 +32,11 @@ than reading by eye. `--text` after the command name gives a human summary.
 - Pull them with logs: `ssh iosefka files --open --tag component=coop-mod --tag feature=chalice > b.tar`
 - Filters (AND): `--status s` (repeatable), `--open`, `--tag k=v` (repeatable, case-insensitive, list
   tags match any element), `--q text`, `--since YYYY-MM-DD`, `--assignee who`, `--older-than DAYS`
-  (created more than DAYS ago), `--idle DAYS` (no activity for DAYS), `--sort newest|oldest|activity`.
+  (reported more than DAYS ago), `--idle DAYS` (no activity for DAYS), `--sort newest|oldest|activity`.
+  Bugs carry two times: `reported` (earliest original Discord message; `--since`, `--older-than` and
+  `--sort newest|oldest` use it) and `filed` (when Iosefka made the record). Changelist items likewise:
+  `dated` (when the change happened: commit / release / the fixed bug's reported date; `cl list --sort
+  dated`, `--dated-since YYYY-MM-DD`, `cl add|edit --dated`) and `added` (when it reached Iosefka).
 - Open bugs older than two weeks: `ssh iosefka list --open --older-than 14`
 - Tag keys: area, feature, component (coop-mod, nw-launcher, nw-port, game-data, network, unknown),
   version, role, plan. Statuses: new, open, analysing, waiting-logs, fixed, closed, duplicate.

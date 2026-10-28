@@ -66,7 +66,7 @@ def parse_log(text, current=None):
     recs.sort(key=lambda r: r[1][:19])  # stable: ties keep log order
     if current:
         current = norm_version(current)
-    pending, entries = [], []  # entries: (sha, day, version, rest, subj, body)
+    pending, entries = [], []  # entries: (sha, commit datetime, version, rest, subj, body)
 
     def flush(version):
         for sha, day, rest, subj, body in pending:
@@ -85,10 +85,10 @@ def parse_log(text, current=None):
                 note(f"skipped {sha[:12]}: {e}")
                 continue
             last_prefixed = version
-            pending.append((sha, when[:10], m.group(2).strip(), subj, body))
+            pending.append((sha, when, m.group(2).strip(), subj, body))
             flush(version)
         else:
-            pending.append((sha, when[:10], subj, subj, body))
+            pending.append((sha, when, subj, subj, body))
     if current is None:
         current = last_prefixed
     if current:
@@ -103,13 +103,14 @@ def parse_log(text, current=None):
             note(f"skipped {sha[:12]}: {e}")
             continue
         item = {"kind": "item", "source_key": f"git:{sha}", "track": "nw", "version": version,
-                "section": _section(rest), "text": msg, "status": "done", "commits": [sha[:12]]}
+                "section": _section(rest), "text": msg, "status": "done", "commits": [sha[:12]],
+                "dated": day}  # the commit's own ISO datetime
         bugs = list(dict.fromkeys(BUG_RX.findall(subj + "\n" + body)))
         if bugs:
             item["bugs"] = bugs
         items.append(item)
-        if day > dates.get(version, ""):
-            dates[version] = day
+        if day[:10] > dates.get(version, ""):
+            dates[version] = day[:10]
     vers = []
     for v in sorted(set(dates) | ({current} if current else set()), key=version_key):
         line = {"kind": "version", "track": "nw", "version": v}

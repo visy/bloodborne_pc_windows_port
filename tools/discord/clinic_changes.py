@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS nw_versions (
 CREATE TABLE IF NOT EXISTS nw_changes (
     id TEXT PRIMARY KEY, track TEXT, version TEXT, section TEXT, text TEXT, dev TEXT, status TEXT,
     tags TEXT, bugs TEXT, cases TEXT, commits TEXT, source_key TEXT UNIQUE, author TEXT, locked TEXT,
-    created REAL, updated REAL);
+    created REAL, updated REAL, dated REAL);
 CREATE INDEX IF NOT EXISTS nw_changes_ver ON nw_changes (track, version);
 CREATE TABLE IF NOT EXISTS nw_change_notes (
     change_id TEXT NOT NULL, at REAL, who TEXT, kind TEXT, text TEXT);
@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS nw_change_notes_id ON nw_change_notes (change_id);
 """
 
 CHANGE_COLS = ("id", "track", "version", "section", "text", "dev", "status", "tags", "bugs", "cases",
-               "commits", "source_key", "author", "locked", "created", "updated")
+               "commits", "source_key", "author", "locked", "created", "updated", "dated")
 VERSION_COLS = ("track", "version", "status", "released", "notes", "locked", "created", "updated")
 STATUS_ORDER = {"planned": 0, "in-progress": 1, "done": 2}
 STAGE_RANK = {"alpha": 0, "beta": 1, "rc": 2}
@@ -169,6 +169,29 @@ def _epoch(v, what="date"):
         raise ValueError(f"bad {what} {v!r}")
 
 
+def parse_when(v, what="date"):
+    """Epoch seconds from an ISO date, an ISO datetime (Z, offset or none = UTC) or an epoch number; None
+    for None/"". ValueError when it is none of those."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        raise ValueError(f"bad {what}")
+    if isinstance(v, (int, float)):
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError(f"bad {what}")
+        return float(v)
+    s = str(v).strip()
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    try:
+        d = datetime.fromisoformat(s[:-1] + "+00:00" if s[-1:] in "zZ" else s)
+    except ValueError:
+        raise ValueError(f"bad {what} {v!r} (ISO date or datetime, or epoch seconds)")
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp()
+
+
 def _tag_values(tags):
     out = set()
     for v in (tags or {}).values():
@@ -215,6 +238,9 @@ class Changes:
         self.clinic = clinic
         self.db = clinic.db
         self.db.executescript(SCHEMA)
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(nw_changes)")}
+        if "dated" not in have:  # database from before the column: add it, rows keep NULL
+            self.db.execute("ALTER TABLE nw_changes ADD COLUMN dated REAL")
         self.db.commit()
 
     @contextlib.contextmanager
@@ -335,31 +361,44 @@ class Changes:
             if not self.db.execute("SELECT 1 FROM nw_changes WHERE id=?", (cid,)).fetchone():
                 return cid
 
-    def _add(self, track, version, section, text, who, status, tags, bugs, cases, commits, dev, source_key):
+    def _add(self, track, version, section, text, who, status, tags, bugs, cases, commits, dev, source_key,
+             dated=None):
         track = _enum(track, TRACKS, "track")
         section = _enum(section, SECTIONS, "section")
         status = _enum(status, ITEM_STATUSES, "status")
         text = clean_text(text)
         version = norm_version(version)
         dev = (dev or "").strip()[:MAX_DEV]
+        dated = parse_when(dated, "dated")
         if source_key and self.db.execute("SELECT 1 FROM nw_changes WHERE source_key=?", (source_key,)).fetchone():
             raise ValueError(f"source_key {source_key} already exists")
         if self._version(track, version) is None:
             self._set_version(track, version, None, None, None, who, False)
         cid, now = self._new_id(), time.time()
-        self.db.execute(f"INSERT INTO nw_changes ({', '.join(CHANGE_COLS)}) VALUES ({','.join('?' * 16)})",
+        self.db.execute(f"INSERT INTO nw_changes ({', '.join(CHANGE_COLS)}) VALUES ({','.join('?' * len(CHANGE_COLS))})",
                         (cid, track, version, section, text, dev, status, _dumps(_tags_in(tags)),
                          _dumps(_strs(bugs)), _dumps(_cases_in(cases)), _dumps(_strs(commits)),
-                         source_key or None, who, "[]", now, now))
+                         source_key or None, who, "[]", now, now, dated))
         self._note(cid, who, "add", f"added to {track} {version} as {section}/{status}")
         return cid
 
     def add(self, track, version, section, text, *, who, status="planned", tags=None, bugs=(), cases=(),
-            commits=(), dev="", source_key=None):
-        """New item; creates the version as planned when missing. Returns the CL id."""
+            commits=(), dev="", source_key=None, dated=None):
+        """New item; creates the version as planned when missing. Returns the CL id. `dated`: when the
+        change itself happened (ISO date/datetime or epoch), apart from `created` (added here)."""
         with self._txn():
             return self._add(track, version, section, text, who, status, tags, bugs, cases, commits, dev,
-                             source_key)
+                             source_key, dated)
+
+    def fill_dated(self, cid, when, *, who):
+        """Automation: set `dated` only when the item has none. Returns True when it changed."""
+        when = parse_when(when, "dated")
+        with self._txn():
+            it = self._need(cid)
+            if it["dated"] is not None or when is None:
+                return False
+            self._update(it, who, "link", "dated filled from the linked bug", dated=when)
+            return True
 
     def get(self, cid):
         row = self.db.execute(f"SELECT {', '.join(CHANGE_COLS)} FROM nw_changes WHERE id=?", (cid,)).fetchone()
@@ -372,10 +411,11 @@ class Changes:
         return it
 
     def items(self, track=None, version=None, status=None, section=None, tag=None, bug=None, q=None,
-              since=None, older_than=None, idle=None):
-        """Items newest created first; every filter must match. `status`/`tag` take one value or a list
-        (statuses: any; tags: all). since/older_than/idle are epoch times: created >= since,
-        created < older_than, updated < idle."""
+              since=None, older_than=None, idle=None, dated_since=None, sort="added"):
+        """Items newest created (added) first, or newest `dated` first with sort="dated" (undated last);
+        every filter must match. `status`/`tag` take one value or a list (statuses: any; tags: all).
+        since/older_than/idle/dated_since are epoch times: created >= since, created < older_than,
+        updated < idle, dated >= dated_since."""
         statuses = [status] if isinstance(status, str) else list(status or [])
         tags = [tag] if isinstance(tag, str) else list(tag or [])
         if version:
@@ -400,11 +440,15 @@ class Changes:
                 continue
             if idle is not None and not it["updated"] < idle:
                 continue
+            if dated_since is not None and not (it["dated"] is not None and it["dated"] >= dated_since):
+                continue
             if not all(_tag_match(it["tags"], t) for t in tags):
                 continue
             if q and q.lower() not in f"{it['text']}\n{it['dev']}\n{it['id']}".lower():
                 continue
             out.append(it)
+        if sort == "dated":
+            out.sort(key=lambda i: (i["dated"] is not None, i["dated"] or 0), reverse=True)
         return out
 
     def _update(self, it, who, kind, note, locks=(), **fields):
@@ -418,9 +462,9 @@ class Changes:
                         (*vals, it["id"]))
         self._note(it["id"], who, kind, note)
 
-    def edit(self, cid, *, who, text=None, section=None, dev=None, tags=None):
+    def edit(self, cid, *, who, text=None, section=None, dev=None, tags=None, dated=None):
         """Human edit: the fields given are locked. `tags` is a dict merged into the item's tags (None value
-        removes a key)."""
+        removes a key). `dated` (ISO date/datetime or epoch) is locked too."""
         with self._txn():
             it = self._need(cid)
             f, locks, notes = {}, [], []
@@ -440,6 +484,10 @@ class Changes:
                 f["tags"] = _merge_tags(it["tags"], _tags_in(tags))
                 locks.append("tags")
                 notes.append("tags")
+            if dated is not None:
+                f["dated"] = parse_when(dated, "dated")
+                locks.append("dated")
+                notes.append("dated")
             if f:
                 self._update(it, who, "edit", "edited " + ", ".join(notes), locks, **f)
             return self.get(cid)
@@ -579,7 +627,7 @@ class Changes:
         if row is None:
             self._add(rec["track"], rec["version"], rec["section"], rec["text"], who,
                       rec.get("status") or "planned", rec.get("tags"), rec.get("bugs") or (),
-                      rec.get("cases") or (), rec.get("commits") or (), rec.get("dev"), key)
+                      rec.get("cases") or (), rec.get("commits") or (), rec.get("dev"), key, rec.get("dated"))
             return []
         it = self.get(row[0])
         locked = it["locked"]
@@ -595,7 +643,13 @@ class Changes:
         else:
             new_text = text = clean_text(rec["text"])
         status = _enum(rec["status"], ITEM_STATUSES, "status") if rec.get("status") else None
+        dated = parse_when(rec.get("dated"), "dated")
         f, kept = {}, []
+        if dated is not None and dated != it["dated"]:
+            if "dated" in locked:
+                kept.append("dated")
+            else:
+                f["dated"] = dated
         if "version" in locked:
             if (track, version) != (it["track"], it["version"]):
                 kept.append("version")
