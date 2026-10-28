@@ -996,9 +996,12 @@ def phase_md(only):
     host = ["god,log_pos=1",
             "host_move=%s@4%%m25" % MD_LANDING,                     # the lift's top landing (native warp)
             "host_chr=%s:3:0@3%%m25!" % MD_MAID,                    # 3 m in front of the maid, facing her
-            cap % 3,                                                # before any hit: first look
-            "host_press=0x4:lock@1%m25!", "host_press=0@1%m25!",    # R3 lock-on (twice: see _s3_enemy)
+            "host_gfx=log@1%m25!",
+            "host_press=0x4@1%m25!", "host_press=0@1%m25!",         # R3: the camera behind the player
+            cap % 2,                                                # before any hit
+            "host_press=0x4:lock@1%m25!", "host_press=0@1%m25!",    # R3 lock-on
             "host_press=0x4:lock@1%m25!", "host_press=0@1%m25!",
+            "host_gfx=log@1%m25!",
             cap % 2, cap % 4,                                       # before the hit, locked on
             "host_press=0x800@1%m25!", "host_press=0@1.5%m25!",     # R1: the hit
             "host_press=0x800@0.5%m25!", "host_press=0@1.5%m25!",
@@ -1010,7 +1013,8 @@ def phase_md(only):
              "BB_PARTY_TEST_COND_TIMEOUT=45",
              "BB_CAPTURE_TRIGGER={root}/inst{i}/capture.trigger", "BB_CAPTURE_DIR={out}/captures"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
-        watch=["--watch", r"test: host_gfx: capture=cap@0.5"],
+        watch=["--watch", r"test: host_gfx: capture=cap@0.3"],
+        prep=lambda root: None,
         crash=[], until=MD_UNTIL,
     )
 
@@ -4466,6 +4470,8 @@ def run_phase(a, ph, out: Path):
     env = dict(os.environ, BB_MP_LEASE=os.environ.get("BB_MP_LEASE", "1200"), BB_MP_PARENT_PID=str(os.getpid()))
     shots = out / "shots"
     shots.mkdir(exist_ok=True)
+    if any("{out}/captures" in e for e in ph["env"]):
+        (out / "captures").mkdir(exist_ok=True)  # the frame analyzer writes into an existing folder
     print("[smoke] %s: %s" % (ph["name"], " ".join(cmd)), flush=True)
     (out / "harness.log").unlink(missing_ok=True)
     shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(shots),
@@ -6990,7 +6996,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "cpa", "el", "lt", "bf", "ch",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "sc", "summonfail", "s3", "sk", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "cpa", "el", "lt", "bf", "ch", "md",
                                      "lp", "gd", "gh", "gm", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "bd", "bdo", "sm", "ef", "da", "cv", "ie", "il", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "pvh", "eh", "bl", "sj", "ou", "mesh", "fp", "po", "pos", "sg", "sg2", "csh", "csh2", "ba", "bh", "bk", "hg", "lw", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
