@@ -168,12 +168,16 @@ struct RiderTrack {
     int puts = 0;                       // lifts2: put-backs this ride
     float off = 0;                      // liftcar: the chr's height over the measured car on the ride
     bool has_off = false;
+    float sy = 0, mv = 0;               // lifts077: the chr's height at the last speed sample, its vertical speed
+    double st = 0;
 };
 constexpr float kRiderSlip = 1.0f;      // m below the car's height before it counts as a drop through it
 constexpr float kRiderSideways = 1.0f;  // m sideways from the last ride sample: stepped off (no put-back)
 constexpr double kRiderWindow = 2.0;    // s after the last ride sample: no longer this ride
 constexpr int kRiderMaxPuts = 3;        // lifts2: put-backs a ride at most
 constexpr int kRiderMaxPutsMeasured = 12;  // liftcar: with the car's real height a put-back lands on its floor
+constexpr float kRiderRising = 1.0f;   // lifts077: m/s up: the chr is still being carried up to the car
+constexpr float kRiderMaxLag = 12.0f;  // lifts077: m under the floor; further behind is put back even rising
 enum class RiderStep { idle, riding, through, off };
 /// liftcar (the Nightmare Frontier report, 26 Oct 2026): at 60 FPS the game can carry a rider on the
 /// Frontier car faster than the car itself (7.8-9.5 m/s against the car's ~4, the ride bit on), so the
@@ -189,7 +193,11 @@ inline RiderStep RiderTickMeasured(RiderTrack& r, bool ride_bit, double t, float
         }
         r.riding = true, r.has_off = true, r.off = y - car_y;
         r.t = t, r.x = x, r.y = y, r.z = z;
+        r.sy = y, r.st = t, r.mv = 0;
         return RiderStep::riding;
+    }
+    if (t - r.st >= 0.1) {  // lifts077: the chr's own vertical speed (a rider still rising is not a drop)
+        r.mv = float((y - r.sy) / (t - r.st)), r.sy = y, r.st = t;
     }
     const float side = std::hypot(x - r.x, z - r.z);
     if (side > kRiderSideways || r.puts >= kRiderMaxPutsMeasured || (!ride_bit && t - r.t > kRiderWindow)) {
@@ -202,8 +210,17 @@ inline RiderStep RiderTickMeasured(RiderTrack& r, bool ride_bit, double t, float
         r.x = x, r.y = y, r.z = z;
         return RiderStep::riding;
     }
+    if (r.mv > kRiderRising && floor - y < kRiderMaxLag) {
+        // lifts077 (NW-666485f, 120 FPS): the car's animation ends (the arrival) before the rider does, and
+        // the car's height reads its end position at once; the rider, still carried up at the ride's speed,
+        // is behind it for a moment. A put-back there lands it on a car still moving up and the car's
+        // stop throws it 3-5 m up. Rising: the car carries it, wait for it.
+        if (ride_bit) r.t = t;
+        return RiderStep::riding;
+    }
     put[0] = r.x, put[1] = floor + 0.3f, put[2] = r.z;
     r.t = t, r.y = floor + 0.3f;
+    r.sy = r.y, r.st = t, r.mv = 0;
     ++r.puts;
     return RiderStep::through;
 }
