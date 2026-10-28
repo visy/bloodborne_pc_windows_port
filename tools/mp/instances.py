@@ -42,6 +42,22 @@ DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", r"E:\games\bloodborne"))
 BASE_PORT = 47600  # default root; see base_port()
 
 
+def parse_fps(spec, count):
+    """--fps / BB_MP_FPS: 'N' (every instance) or 'A/B/C' (per instance, the last value repeats) -> one BB_FPS
+    string per instance (N a positive number, or 'uncap')."""
+    parts = [x.strip() for x in str(spec).split("/")]
+    for x in parts:
+        if x.lower() != "uncap":
+            try:
+                ok = float(x) > 0
+            except ValueError:
+                ok = False
+            if not ok:
+                raise ValueError("bad frame rate %r in --fps %r (a number, uncap, or A/B/C per instance)" % (x, spec))
+    parts = [x.lower() if x.lower() == "uncap" else x for x in parts]
+    return [parts[min(i, len(parts) - 1)] for i in range(count)]
+
+
 def base_port(root) -> int:
     """Each harness root gets its own port range, so agents' parallel runs (tools/agent/agent_env.py
     gives each its own root) never collide: BB_MP_BASE_PORT, else 47600 for the default root, else
@@ -497,12 +513,15 @@ def run(a):
         order = [int(x) for x in a.start_order.split(",") if x.strip()]
         if sorted(order) != list(range(a.count)):
             sys.exit("--start-order must name every instance 0..%d once" % (a.count - 1))
+    inst_fps = parse_fps(a.fps, a.count)
+    print("[instances] frame rate per instance (BB_FPS): %s" % ", ".join("inst%d=%s" % (i, f) for i, f in enumerate(inst_fps)),
+          flush=True)
     for n_started, i in enumerate(order):
         inst = Path(a.root) / f"inst{i}"
         env = os.environ.copy()
         env.update({
             "BB_GAME_DIR": str(a.game), "BB_FROM_LAUNCHER": "1", "BB_NO_LAUNCHER_SETTINGS": "1",
-            "BB_FULLSCREEN": "0", "BB_FPS": str(a.fps), "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
+            "BB_FULLSCREEN": "0", "BB_FPS": inst_fps[i], "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
             "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1",
             "BB_AUDIO": "none",  # test games are silent (timer audio backend, also less CPU)
             "BB_DLSS": "0",  # no DLSS probe or library in test games (upscaler is off anyway)
@@ -988,7 +1007,9 @@ def main():
     ap.add_argument("--headless", type=int, default=0,
                     help="run: the last N instances headless-lite (BB_HEADLESS=1: minimised, no draws, no present)")
     ap.add_argument("--fps", default=os.environ.get("BB_MP_FPS", "30"),
-                    help="frame cap of the test instances (30, 60, 90, uncap: the game patch presets)")
+                    help="frame cap of the test instances (30, 60, 90, uncap: the game patch presets); one value for "
+                         "all, or a per-instance list '60/30' (instance 0 at 60, the rest at 30), '60/30/90' "
+                         "(the last value repeats)")
     ap.add_argument("--stagger", type=float, default=float(os.environ.get("BB_MP_STAGGER", "2")),
                     help="run: s between instance starts (guests wait for the host's party code file anyway)")
     ap.add_argument("--party", action="store_true", help="instance 0 hosts a loopback party, the others join")

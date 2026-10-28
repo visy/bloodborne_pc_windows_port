@@ -111,6 +111,21 @@ python tools/mp/smoke_party.py --real-net --only join          # same steps on a
   `boss`, `wipe`, `gather`, `lifts`, `fall`, `chalice_guest`, `items_leak`, `echo_hold`, ... `--only`
   runs just the phases those groups need and stops each phase once its rows are judged
   (`GROUP_UNTIL` markers), so a short smoke takes minutes, not the full ~15-20.
+- **Frame-rate sweeps** (physics / timing bugs: lifts, ladders, falls, cloth, animations). `instances.py --fps`
+  takes `60` (all instances), or a per-instance list `60/30` (instance 0 = host at 60, the rest at 30) /
+  `60/30/90` (the last value repeats); `BB_MP_FPS` is the same default. Each instance's BB_FPS is printed at
+  the start (`[instances] frame rate per instance`). `smoke_party.py --fps LIST` runs the selected phases once
+  per entry of a comma list (`--fps 30,60,90,60/30`) into `<out>/fps30`, `fps60`, `fps60x30`, ... and ends with
+  `<out>/fps_summary.txt`: a phase x rate table (verdict, passed/total steps) and a line naming the
+  FPS-sensitive phases (pass at some rates, fail at others). Without `--fps` nothing changes (BB_MP_FPS,
+  default 30). A phase's own `"fps"` (rh, rs, fw*, fh: 60, the rate of the report) is only its default
+  and yields to the sweep; `"fps_fixed": True` would pin it. The group `physics` is the lift / ladder /
+  elevator / fall set (`lifts ladder elevator lifts_together cainhurst_lift research_lift research_solo
+  forbidden_lift* hemwick_lift fall fall_deep host_fall_lamp frontier_fall`):
+  `python tools/mp/smoke_party.py --only physics --fps 30,60,90,60/30`.
+  A maid-dress (Cainhurst cloth) check is not written yet; it would be a screenshot-based visual phase at
+  the Cainhurst maids (a new phase function in `PHASES`, a `GROUPS`/`GROUP_ROWS`/`GROUP_UNTIL` entry, the
+  group name added to `PHYSICS_GROUPS`), with the screenshots compared per `fps*` folder.
 - **Every fix adds or extends a phase** so the bug it fixed stays covered (for example the
   Forbidden Woods lift got `fw`, `fwg`, `fwb`, `fwe` when it was fixed).
 
@@ -194,7 +209,7 @@ videos. Intake:
 
 1. **Freeze the round**: all planned branches merged on `master`, or explicitly moved to the next
    round. Nothing half-merged.
-2. **Full smoke on `master`** (all phases, at 60 FPS where frame hooks matter: `BB_MP_FPS=60`).
+2. **Full smoke on `master`** (all phases, at 60 FPS where frame hooks matter: `BB_MP_FPS=60`; physics groups: `--only physics --fps 30,60,90,60/30`).
    Triage every failure: regression (fix it, rerun that group), flake (rerun once, document),
    stale check (fix the check).
 3. **Release build**: LTO (and PGO when the profile is current) via `build.py` in the release build
