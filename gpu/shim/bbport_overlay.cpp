@@ -1833,6 +1833,12 @@ void PartyTab() {
              "Короткое уведомление в верхнем углу, когда охотник входит или выходит или группа "
              "перемещается. Не перехватывает ввод."),
            on);
+    Toggle("party_item_notices", T("Shared item notices", "Уведомления об общих предметах"), s.party_item_notices,
+           T("A short notice \"<item>: shared with the party\" when a key or unique item, a weapon or a rune is "
+             "given to the party. Never for ordinary pickups.",
+             "Короткое уведомление «<предмет>: передан группе», когда ключевой или уникальный предмет, оружие "
+             "или руна переданы группе. Не для обычных предметов."),
+           on);
     Toggle("party_conn_warnings", T("Connection warnings", "Предупреждения о связи"), s.party_conn_warnings,
            T("A notice with the fix when the Windows Firewall, the router or a wrong address keeps the party "
              "from working (nobody reaches your party, a guest's game is not heard, the host cannot be "
