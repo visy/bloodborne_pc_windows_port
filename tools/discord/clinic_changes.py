@@ -170,13 +170,17 @@ def _tokens(*texts):
     return {w for t in texts for w in _TOKEN_RX.findall((t or "").lower()) if w not in _STOP}
 
 
-def bug_track(bug):
-    """A bug counts as track nw when a tag name or value starts with `nw-`, else coop."""
-    for k, v in (bug.get("tags") or {}).items():
-        for x in [k] + (v if isinstance(v, list) else [v]):
-            if isinstance(x, str) and x.lower().startswith("nw-"):
-                return "nw"
-    return "coop"
+def bug_tracks(bug):
+    """Tracks a bug counts for, from its `component` tag: nw-* -> nw, coop-mod -> coop, anything else
+    (network, game-data, missing) -> both."""
+    comp = (bug.get("tags") or {}).get("component")
+    comp = (comp[0] if isinstance(comp, list) and comp else comp)
+    comp = comp.lower() if isinstance(comp, str) else ""
+    if comp.startswith("nw-"):
+        return {"nw"}
+    if comp == "coop-mod":
+        return {"coop"}
+    return set(TRACKS)
 
 
 def _row(row):
@@ -512,11 +516,23 @@ class Changes:
                     else:
                         raise ValueError(f"unknown kind {kind!r}")
                 applied += 1
-            except (ValueError, TypeError, sqlite3.Error) as e:
+            except (ValueError, TypeError, AttributeError, sqlite3.Error) as e:
                 skipped.append({"line": n, "why": str(e)})
         return {"applied": applied, "skipped": skipped}
 
+    @staticmethod
+    def _check_types(rec):
+        for f in ("source_key", "track", "version", "section", "text", "dev", "notes", "status"):
+            if rec.get(f) is not None and not isinstance(rec[f], str):
+                raise ValueError(f"{f} must be a string")
+        for f in ("bugs", "cases", "commits"):
+            if rec.get(f) is not None and not isinstance(rec[f], (list, str)):
+                raise ValueError(f"{f} must be a list")
+        if rec.get("tags") is not None and not isinstance(rec["tags"], (dict, list, str)):
+            raise ValueError("tags must be an object or list")
+
     def _import_version(self, rec, who):
+        self._check_types(rec)
         for f in ("track", "version"):
             if not rec.get(f):
                 raise ValueError(f"missing {f}")
@@ -524,6 +540,7 @@ class Changes:
                           rec.get("notes"), who, False)
 
     def _import_item(self, rec, who):
+        self._check_types(rec)
         for f in ("source_key", "track", "version", "section", "text"):
             if not rec.get(f):
                 raise ValueError(f"missing {f}")
@@ -539,7 +556,7 @@ class Changes:
         track = _enum(rec["track"], TRACKS, "track")
         version = norm_version(rec["version"])
         section = _enum(rec["section"], SECTIONS, "section")
-        text = clean_text(rec["text"])
+        text = None if "text" in locked else clean_text(rec["text"])
         status = _enum(rec["status"], ITEM_STATUSES, "status") if rec.get("status") else None
         f = {}
         if "version" not in locked and (track, version) != (it["track"], it["version"]):
@@ -548,7 +565,7 @@ class Changes:
             f["track"], f["version"] = track, version
         if "section" not in locked and section != it["section"]:
             f["section"] = section
-        if "text" not in locked and text != it["text"]:
+        if text is not None and text != it["text"]:
             f["text"] = text
         if "dev" not in locked and rec.get("dev") is not None and rec["dev"].strip()[:MAX_DEV] != it["dev"]:
             f["dev"] = rec["dev"].strip()[:MAX_DEV]
@@ -574,17 +591,19 @@ class Changes:
         bugs_by_id = {b["id"]: b for b in self.clinic.bugs()}
         if CL_RX.match(ref or ""):
             me = self._need(ref)
-            track, my_bugs, my_tags = me["track"], set(me["bugs"]), _tag_values(me["tags"])
+            others = {"nw" if me["track"] == "coop" else "coop"}
+            my_bugs, my_tags = set(me["bugs"]), _tag_values(me["tags"])
             my_words = _tokens(me["text"])
             skip_item, skip_bug = me["id"], None
         else:
             b = bugs_by_id.get(ref)
             if b is None:
                 raise ValueError(f"no such item or bug {ref}")
-            track, my_bugs, my_tags = bug_track(b), {b["id"]}, _tag_values(b["tags"])
+            mine = bug_tracks(b)
+            others = set(TRACKS) if len(mine) > 1 else set(TRACKS) - mine
+            my_bugs, my_tags = {b["id"]}, _tag_values(b["tags"])
             my_words = _tokens(b["title"])
             skip_item, skip_bug = None, b["id"]
-        other = "nw" if track == "coop" else "coop"
         out = []
 
         def score(cand_bugs, cand_tags, cand_words):
@@ -601,19 +620,20 @@ class Changes:
                 total += len(words)
             return total, why
 
-        for it in self.items(track=other):
-            if it["id"] == skip_item:
+        for it in self.items():
+            if it["id"] == skip_item or it["track"] not in others:
                 continue
             s, why = score(set(it["bugs"]), _tag_values(it["tags"]), _tokens(it["text"]))
             if s >= 2:
                 out.append({"kind": "item", "id": it["id"], "track": it["track"], "version": it["version"],
                             "status": it["status"], "text": it["text"], "why": why, "score": s})
         for bid, b in bugs_by_id.items():
-            if bid == skip_bug or bug_track(b) != other:
+            bt = bug_tracks(b) & others
+            if bid == skip_bug or not bt:
                 continue
             s, why = score({bid}, _tag_values(b["tags"]), _tokens(b["title"]))
             if s >= 2:
-                out.append({"kind": "bug", "id": bid, "track": other, "status": b["status"],
+                out.append({"kind": "bug", "id": bid, "track": next(iter(bt)) if len(bt) == 1 else "both", "status": b["status"],
                             "title": b["title"], "why": why, "score": s})
         out.sort(key=lambda r: (-r["score"], r["id"]))
         return out[:10]

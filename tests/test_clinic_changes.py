@@ -165,7 +165,7 @@ def test_related(ch):
 
 
 def test_related_bugs(ch):
-    b1 = ch.clinic.new_bug("Elevator softlock in cathedral ward", "discord", 1, 1, tags={"area": "nw-cathedral"})
+    b1 = ch.clinic.new_bug("Elevator softlock in cathedral ward", "discord", 1, 1, tags={"component": "nw-port"})
     ch.add("coop", "0.7.7", "fixed", "Cathedral ward elevator softlock", who="visy")
     rel = ch.related(b1)
     assert [r["kind"] for r in rel] == ["item"] and rel[0]["track"] == "coop"
@@ -202,3 +202,39 @@ def test_edit_link_notes(ch):
     assert [n["who"] for n in ch.notes(cid)] == ["v", "visy", "visy", "visy"]
     with pytest.raises(ValueError):
         ch.edit("CL-000000", who="x", text="y")
+
+
+def test_related_bug_components(ch):
+    it = ch.add("coop", "0.7.7", "fixed", "Cathedral ward elevator softlock", who="visy")
+    nw = ch.add("nw", "0.2.5", "fixed", "Cathedral ward elevator softlock", who="vlad")
+    mk = lambda c: ch.clinic.new_bug("Cathedral ward elevator softlock", "discord", 1, 1, tags={"component": c})
+    b_coop, b_net, b_nw = mk("coop-mod"), mk("network"), mk("nw-launcher")
+    ids = [r["id"] for r in ch.related(it)]
+    assert b_nw in ids and b_net in ids and b_coop not in ids and nw in ids
+    ids = [r["id"] for r in ch.related(b_nw)]
+    assert it in ids and nw not in ids
+    ids = [r["id"] for r in ch.related(b_net)]
+    assert it in ids and nw in ids
+
+
+def test_import_bad_types_do_not_abort(ch):
+    good = {"kind": "item", "source_key": "g:1", "track": "coop", "version": "0.7.7", "section": "added",
+            "text": "ok"}
+    lines = [json.dumps(good), json.dumps(dict(good, source_key="g:2", text=123)),
+             json.dumps(dict(good, source_key="g:3", version=7)),
+             json.dumps(dict(good, source_key="g:4", dev=["x"])),
+             json.dumps({"kind": "version", "track": "coop", "version": "0.7.8", "notes": 5}),
+             json.dumps(dict(good, source_key="g:5")), "[1]"]
+    r = ch.import_lines(lines, who="sync")
+    assert r["applied"] == 2 and [s["line"] for s in r["skipped"]] == [2, 3, 4, 5, 7]
+
+
+def test_import_locked_text_not_validated(ch):
+    line = {"kind": "item", "source_key": "g:1", "track": "coop", "version": "0.7.7", "section": "added",
+            "text": "ok"}
+    ch.import_lines([json.dumps(line)], who="sync")
+    cid = ch.items()[0]["id"]
+    ch.edit(cid, who="visy", text="human")
+    line.update(text="see player_logs/x", status="done")
+    assert ch.import_lines([json.dumps(line)], who="sync")["applied"] == 1
+    assert ch.get(cid)["text"] == "human" and ch.get(cid)["status"] == "done"
