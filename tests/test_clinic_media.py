@@ -186,6 +186,31 @@ def test_7z_without_py7zr_is_unreadable(tmp_path, monkeypatch):
     assert cm.archive_listing(arc) is None
 
 
+def test_7z_one_bad_member_keeps_the_others(tmp_path, monkeypatch):
+    """A CRC error in one member fails py7zr's batch read; the other members are still read one by one."""
+    import io
+    import types
+
+    class FakeArchive:
+        def __init__(self, path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, targets):
+            if len(targets) > 1 or targets == ["bad.log"]:
+                raise ValueError("CRC error")
+            return {targets[0]: io.BytesIO(targets[0].encode())}
+
+    monkeypatch.setitem(sys.modules, "py7zr", types.SimpleNamespace(SevenZipFile=FakeArchive))
+    got = cm._read(tmp_path / "x.7z", "7z", [("a.log", 5), ("bad.log", 7), ("b.log", 5)], 100)
+    assert got == {"a.log": b"a.log", "b.log": b"b.log"}
+
+
 def test_nested_zip_in_zip(tmp_path):
     l2 = zip_bytes({"deep.log": b"deep"})
     l1 = zip_bytes({"mid.log": b"mid", "l2.zip": l2})
