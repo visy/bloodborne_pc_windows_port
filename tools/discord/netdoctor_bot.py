@@ -26,6 +26,13 @@ Environment:
                        are dropped hourly)
   NETDOCTOR_DB_MAX_MB  size cap of that file, MiB (default 3072, never above 3072): oldest analysis rows go first;
                        the clinic's nw_* tables are never pruned
+  NW_LIVE              1 = Iosefka's live duty: every log posted anywhere (except staff*, development,
+                       moderator-only) is archived in the clinic and replaced by her note; also edits, forwards,
+                       DMs (archived and answered, never deleted), hourly catch-up, outbox, nightly backup.
+                       Default off: the bot then behaves exactly as before (no archive, no new replies).
+  NW_DELETE            1 = live duty may delete the original message (after replacement + verified archive).
+                       Without it a live bot archives silently and posts nothing. See CLINIC.md.
+  NW_TMP               temp folder for downloads (default: <system temp>/iosefka)
 Needs the privileged Message Content intent (Developer Portal -> Bot) to read ordinary messages.
 """
 import asyncio
@@ -40,6 +47,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import clinic_discord as cd  # noqa: E402
+import clinic_logic  # noqa: E402
+import clinic_store  # noqa: E402
+import iosefka_voice as voice  # noqa: E402
 SCRIPT = Path(os.environ.get("NETDOCTOR_SCRIPT", HERE.parents[1] / "scripts" / "net_doctor.py"))
 MAX_BYTES = int(float(os.environ.get("NETDOCTOR_MAX_MB", "40")) * 1024 * 1024)
 DISCORD_LIMIT = 2000
@@ -105,13 +118,7 @@ SMALL_TALK = ("thanks", "thank", "you", "thx", "ty", "tysm", "hi", "hello", "hey
 DB_PATH = Path(os.environ.get("NETDOCTOR_DB", Path.home() / ".config" / "netdoctor" / "netdoctor.db"))
 
 
-def all_attachments(message):
-    """The message's own files plus those of messages forwarded in it (Discord keeps a forwarded message's
-    files in its snapshot, not in .attachments)."""
-    out = list(getattr(message, "attachments", None) or [])
-    for snap in getattr(message, "message_snapshots", None) or []:
-        out += list(getattr(snap, "attachments", None) or [])
-    return out
+all_attachments = cd.all_attachments  # lives in clinic_discord now (the cull uses it too)
 
 
 def wants_analysis(content, bot_id):
@@ -150,6 +157,314 @@ def log_info(nd, path):
             "end": getattr(lg, "ended", None), "day": lg.started[0] if lg.started else "", "peers": peers}
 
 
+# --- Iosefka's live duty (NW_LIVE) -------------------------------------------------------------------------
+
+_VERDICTS = (  # headline phrase in net_doctor's "What's wrong" list -> key (net.* nat.* join.* = a network problem)
+    ("Not network", "other.notnet"), ("different sessions", "other.sessions"),
+    ("Different game files", "other.files"), ("Different versions", "other.versions"),
+    ("refused by the host", "join.refused"), ("phone hotspot", "net.hotspot"),
+    ("has no open port", "nat.noport"), ("party port does not answer", "net.udp"),
+    ("cannot send UDP", "net.udp"), ("never reaches the host", "net.udp"),
+    ("never reached the host", "join.noreach"), ("keeps dying", "net.drops"),
+    ("Hole punching", "nat.punch"), ("keeps freezing", "net.freeze"), ("lost the link", "net.drops"),
+    ("High ping", "net.ping"), ("keeps leaving", "net.flap"), ("instead of the VPN", "net.vpn"),
+    ("own address", "net.selfaddr"), ("More players tried", "join.full"), ("LAN code pointed", "join.lan"),
+    ("installed (", "other.vpn"))
+
+
+def verdict_keys(diag_text):
+    """Keys for the problems net_doctor lists under "What's wrong" (see _VERDICTS); empty when it found none.
+    clinic_logic.classify treats net./nat./join./firewall. keys as a connection problem."""
+    keys, inside = set(), False
+    for line in (diag_text or "").splitlines():
+        t = line.strip()
+        if t.startswith("**What's wrong"):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if not t:
+            break
+        if t[:1].isdigit():
+            hit = [k for phrase, k in _VERDICTS if phrase in t]
+            keys.update(hit or ["other.unknown"])
+    return keys
+
+
+class Ctx:
+    """What live duty needs: the archive, the flags, and hooks the tests replace."""
+
+    def __init__(self, clinic, *, live=False, delete=False, tmp_root=None, log_info_fn=None, diagnose_fn=None,
+                 record_logs=None, client=None, guild_id=None):
+        self.clinic, self.live, self.delete = clinic, live, delete
+        self.tmp_root = Path(tmp_root) if tmp_root else Path(tempfile.gettempdir()) / "iosefka"
+        self.tmp_root.mkdir(parents=True, exist_ok=True)
+        self.log_info_fn, self.diagnose_fn, self.record_logs = log_info_fn, diagnose_fn, record_logs
+        self.client, self.guild_id = client, guild_id
+        self.busy = set()
+        self.warned_day = None
+
+
+CTX = None
+
+
+def _stills_ok(ctx):
+    return cd.stills_allowed(ctx.clinic, ctx.tmp_root)
+
+
+def _bug_logs(ctx, bug_id):
+    return [f for f in ctx.clinic.files_for_bug(bug_id) if f["kind"] == "log"]
+
+
+async def handle_log_message(message, *, live, ctx=None):
+    """Archive a message's files, file/join its bug, answer, replace and delete it. `live` = a fresh event
+    (the poster may be pinged); catch-up passes False. Returns a short result word. Does nothing unless the
+    clinic's live duty is on (NW_LIVE=1); deletes only with NW_DELETE=1 (without it: archive, no posts)."""
+    ctx = ctx or CTX
+    if ctx is None or not ctx.live:
+        return "off"
+    atts = all_attachments(message)
+    if not atts or getattr(message.author, "bot", False):
+        return "none"
+    dm = message.guild is None
+    if not dm and cd.place_skipped(message.channel):
+        return "skipped"
+    if message.id in ctx.busy:
+        return "busy"
+    ctx.busy.add(message.id)
+    try:
+        clinic = ctx.clinic
+        try:
+            res = await cd.archive_message(clinic, message, log_info_fn=ctx.log_info_fn, tmpdir=ctx.tmp_root,
+                                           stills=_stills_ok(ctx))
+        except cd.DiskLow:
+            print("disk low: not archiving now, the next sweep retries", flush=True)
+            return "disk-low"
+        thread = None if dm else cd.thread_of(message)
+        if not res["removable"]:  # pictures / videos alone stay; in a bug thread they join the bug
+            if thread is not None and clinic.bug_for_thread(thread.id):
+                clinic.upsert_message({"message_id": message.id, "bug_id": clinic.bug_for_thread(thread.id)})
+            return "kept"
+        if res["state"] in ("replaced", "deleted"):
+            bug = (clinic.message(message.id) or {}).get("bug_id")
+        else:
+            if ctx.record_logs:  # keep the older "@bot update" memory working after the message is gone
+                try:
+                    await ctx.record_logs(message)
+                except Exception as e:
+                    print(f"record_logs failed: {e}", flush=True)
+            if res["state"] != "verified":
+                return res["state"]
+            bug = await cd.assign_bug(clinic, message, res["infos"], log_info_fn=ctx.log_info_fn,
+                                      tmpdir=ctx.tmp_root)
+        if bug is None:
+            return "no-bug"
+        if dm:  # a DM is private and the bot cannot delete it: answer, keep
+            await message.channel.send(voice.dm_ack(bug), allowed_mentions=cd.AllowedMentions.none())
+            return "dm"
+        if not ctx.delete:
+            return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=False, need_export=False)
+        extra = await _reply_text(ctx, message, bug, res["infos"])
+        return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=True, need_export=False,
+                                           extra=extra)
+    finally:
+        ctx.busy.discard(message.id)
+
+
+async def _reply_text(ctx, message, bug, infos):
+    """Iosefka's words for this report: net_doctor's redacted advice for a connection problem, else the
+    bug-filed thanks with the missing roles of the session."""
+    clinic = ctx.clinic
+    logs = _bug_logs(ctx, bug)
+    diag, keys = "", set()
+    if infos and ctx.diagnose_fn:
+        with tempfile.TemporaryDirectory(prefix="nwdiag_", dir=str(ctx.tmp_root)) as tmp:
+            paths = []
+            for n, f in enumerate(logs[-MAX_LOGS:]):
+                got = clinic.get_file(f["sha256"])
+                if got:
+                    d = Path(tmp) / str(n)
+                    d.mkdir()
+                    p = d / (Path(got[0]).name or "log.log")
+                    p.write_bytes(got[1])
+                    paths.append(p)
+            if paths:
+                try:
+                    diag = ctx.diagnose_fn(paths)
+                except Exception as e:
+                    print(f"diagnose failed: {e}", flush=True)
+        keys = verdict_keys(diag)
+    kind = clinic_logic.classify(message.content or "", keys) if infos else "bug"
+    if kind == "network":
+        clinic.update_bug(bug, tags={"triage": "network"})
+        clinic.add_note(bug, "iosefka", "triage", "network question: advice given, logs archived")
+        return voice.network_help(diag)
+    bug_infos = cd.log_infos(clinic, [{"kind": "log", "sha256": f["sha256"], "filename": f["filename"]}
+                                      for f in logs], ctx.log_info_fn, ctx.tmp_root) if ctx.log_info_fn else infos
+    return voice.bug_filed(bug, clinic_logic.missing_roles(bug_infos))
+
+
+async def dispatch_message(message, ctx):
+    """Live duty for one new message. True when the clinic took the message off the server (the older
+    reaction / auto-reply path must then stay quiet)."""
+    if ctx is None or not ctx.live or getattr(message.author, "bot", False):
+        return False
+    guild_msg = message.guild is not None
+    if guild_msg and (cd.place_skipped(message.channel) or
+                      (ctx.guild_id and message.guild.id != ctx.guild_id)):
+        return False
+    if all_attachments(message):
+        return await handle_log_message(message, live=True, ctx=ctx) == "deleted"
+    if guild_msg and cd.is_thread(message.channel):
+        bug = ctx.clinic.bug_for_thread(message.channel.id)
+        if bug:
+            cd.store_text(ctx.clinic, message, bug)  # follow-ups join the bug; they stay on the server
+    return False
+
+
+async def handle_raw_edit(payload, ctx):
+    """An edit (cached or not): fetch the message and handle it if it now holds a file we have not archived."""
+    if ctx is None or not ctx.live or ctx.client is None:
+        return "off"
+    if ctx.guild_id and getattr(payload, "guild_id", None) not in (None, ctx.guild_id):
+        return "other-guild"
+    ch = ctx.client.get_channel(payload.channel_id) or await ctx.client.fetch_channel(payload.channel_id)
+    try:
+        message = await ch.fetch_message(payload.message_id)
+    except Exception as e:
+        if type(e).__name__ in ("NotFound", "Forbidden"):
+            return "gone"
+        raise
+    atts = all_attachments(message)
+    rec = ctx.clinic.message(message.id)
+    known = {a.get("id") for a in (rec["attachments"] if rec else [])}
+    if not atts or all(a.id in known for a in atts):
+        return "known"
+    return await handle_log_message(message, live=True, ctx=ctx)
+
+
+def _after(mid):
+    try:
+        import discord
+        return discord.Object(id=mid)
+    except ImportError:
+        return type("Obj", (), {"id": mid})()
+
+
+async def catch_up(ctx, guilds, archived=True, out=print):
+    """Scan every place from its watermark and handle what was posted while the bot was away (no pings).
+    A place with no watermark yet is scanned over its last 200 messages."""
+    if not ctx.live:
+        return 0
+    n = 0
+    for guild in guilds:
+        async for place in cd.walk_places(guild, archived=archived):
+            wm = ctx.clinic.watermark(place.id)
+            last = wm
+            try:
+                kw = {"after": _after(wm), "limit": None, "oldest_first": True} if wm else \
+                    {"limit": 200, "oldest_first": False}
+                msgs = [m async for m in place.history(**kw)]
+                msgs.sort(key=lambda m: m.id)
+                for m in msgs:
+                    last = max(last, m.id)
+                    if getattr(m.author, "bot", False):
+                        continue
+                    if all_attachments(m):
+                        r = await handle_log_message(m, live=False, ctx=ctx)
+                        n += r not in ("none", "off", "skipped", "kept")
+                    elif cd.is_thread(place) and ctx.clinic.bug_for_thread(place.id):
+                        cd.store_text(ctx.clinic, m, ctx.clinic.bug_for_thread(place.id))
+            except cd.DiskLow:
+                out("disk low during catch-up, the next sweep continues")
+                return n
+            except Exception as e:
+                if type(e).__name__ != "Forbidden":
+                    raise
+                out(f"no access: {getattr(place, 'name', place.id)}")
+                continue
+            if last > wm:
+                ctx.clinic.set_watermark(place.id, last)
+    return n
+
+
+async def send_outbox(ctx, out=print):
+    """Post the developers' --tell texts (queued by iosefka_cli) in the bug's thread or channel, once each."""
+    sent = 0
+    for row in ctx.clinic.outbox_pending():
+        bug = ctx.clinic.bug(row["bug_id"])
+        place = None
+        for cid in ((bug["thread_id"], bug["channel_id"]) if bug else ()):
+            if cid:
+                try:
+                    place = ctx.client.get_channel(cid) or await ctx.client.fetch_channel(cid)
+                    break
+                except Exception as e:
+                    if type(e).__name__ not in ("NotFound", "Forbidden"):
+                        raise
+        if place is None:
+            ctx.clinic.add_note(row["bug_id"], "iosefka", "status", "tell not delivered: no place to post it")
+            ctx.clinic.outbox_sent(row["id"])
+            continue
+        text, am = voice.told(row["text"]), cd.AllowedMentions.none()
+        if not bug["thread_id"]:  # a channel cluster: address the reporter
+            first = next(iter(ctx.clinic.messages_for_bug(bug["id"])), None)
+            if first:
+                text = f"<@{first['author_id']}> " + text
+                am = cd.AllowedMentions(users=[type("U", (), {"id": first["author_id"]})()], everyone=False,
+                                        roles=False)
+        reopened = None
+        try:
+            if cd.is_thread(place) and (place.archived or place.locked):
+                reopened = (place.archived, place.locked)
+                await place.edit(archived=False, locked=False)
+            await place.send(text[:DISCORD_LIMIT], allowed_mentions=am)
+        except Exception as e:
+            if type(e).__name__ in ("Forbidden", "NotFound"):
+                ctx.clinic.add_note(row["bug_id"], "iosefka", "status", f"tell not delivered: {type(e).__name__}")
+                ctx.clinic.outbox_sent(row["id"])
+                continue
+            raise
+        finally:
+            if reopened:
+                try:
+                    await place.edit(locked=reopened[1], archived=reopened[0])
+                except Exception:
+                    pass
+        ctx.clinic.outbox_sent(row["id"])
+        sent += 1
+    return sent
+
+
+async def disk_guard(ctx, guilds, out=print):
+    """Once a day, when the archive nears its ceiling or the disk is nearly full, say so in the first staff* channel."""
+    if _stills_ok(ctx):
+        return False
+    today = time.strftime("%Y-%m-%d")
+    if ctx.warned_day == today:
+        return False
+    ctx.warned_day = today
+    free = cd.media.free_disk(ctx.tmp_root) // 2**20
+    text = (f"Clinic warning: the archive is {ctx.clinic.size_bytes() // 2**20} MiB and the disk has {free} MiB "
+            f"free. Video stills are off until there is room; logs and pictures are still stored.")
+    for g in guilds:
+        ch = next((c for c in sorted(g.text_channels, key=lambda c: c.name) if c.name.startswith("staff")), None)
+        if ch:
+            await ch.send(text, allowed_mentions=cd.AllowedMentions.none())
+            return True
+    out(text)
+    return False
+
+
+def seconds_until(hour, now=None):
+    import datetime as dt
+    now = now or dt.datetime.now()
+    nxt = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if nxt <= now:
+        nxt += dt.timedelta(days=1)
+    return (nxt - now).total_seconds()
+
+
 def main():
     import discord
     from discord import app_commands
@@ -179,6 +494,14 @@ def main():
     # privileged Message Content intent: Developer Portal -> Bot -> Message Content Intent.
     intents.message_content = True
     client = discord.Client(intents=intents)
+    global CTX
+    CTX = Ctx(clinic_store.Clinic(DB_PATH), live=os.environ.get("NW_LIVE") == "1",
+              delete=os.environ.get("NW_DELETE") == "1",
+              tmp_root=os.environ.get("NW_TMP") or None, client=client,
+              guild_id=int(os.environ["NETDOCTOR_GUILD"]) if os.environ.get("NETDOCTOR_GUILD") else None,
+              log_info_fn=lambda p: log_info(load_doctor(), p),
+              diagnose_fn=lambda paths: diagnose(paths, redact=True))
+    print(f"clinic live duty: {'ON' if CTX.live else 'off'}, delete: {'ON' if CTX.delete else 'off'}", flush=True)
     tree = app_commands.CommandTree(client)
     guild = discord.Object(id=int(os.environ["NETDOCTOR_GUILD"])) if os.environ.get("NETDOCTOR_GUILD") else None
     auto = os.environ.get("NETDOCTOR_AUTO", "react").lower()  # off | react | reply
@@ -338,6 +661,8 @@ def main():
             new += 1
         return new
 
+    CTX.record_logs = record_logs
+
     async def analyse_channel(trigger, force=False):
         """(Re)analyse every party log posted in this channel / thread: one post per session; a session
         that already has a post gets it edited, a new session gets a new post."""
@@ -439,8 +764,7 @@ def main():
             return True
         return channel.id in allowed_channels
 
-    @client.event
-    async def on_message(message):
+    async def legacy_on_message(message):
         if message.author.bot:
             return
         ours = message.guild is None or not guild or message.guild.id == guild.id
@@ -482,6 +806,47 @@ def main():
                 old.cancel()
             pending[message.channel.id] = asyncio.create_task(auto_reply(message.channel))
 
+    @client.event
+    async def on_message(message):
+        if message.author.bot:
+            return
+        if mentioned(message) and message.guild is not None:
+            await legacy_on_message(message)  # the analysis reads the logs before the clinic takes them
+            await dispatch_message(message, CTX)
+            return
+        if await dispatch_message(message, CTX):
+            return  # the clinic archived it and replaced it: no stethoscope, no second reply
+        await legacy_on_message(message)
+
+    @client.event
+    async def on_raw_message_edit(payload):
+        try:
+            await handle_raw_edit(payload, CTX)
+        except Exception as e:
+            print(f"edit handling failed: {type(e).__name__}: {e}", flush=True)
+
+    async def clinic_loops():
+        """Live duty background work: catch-up (start, then hourly), outbox (60 s), backup (04:00), guards."""
+        guilds = [g for g in client.guilds if not guild or g.id == guild.id]
+        first = True
+        tick = 0
+        next_backup = time.time() + seconds_until(4)
+        while True:
+            try:
+                if tick % 60 == 0:
+                    await catch_up(CTX, guilds, archived=first)
+                    await disk_guard(CTX, guilds)
+                    first = False
+                await send_outbox(CTX)
+                if time.time() >= next_backup:
+                    next_backup = time.time() + seconds_until(4)
+                    ok = CTX.clinic.backup(Path(str(DB_PATH) + ".bak"))
+                    print("backup " + ("written" if ok else "skipped: not enough free disk"), flush=True)
+            except Exception as e:
+                print(f"clinic loop: {type(e).__name__}: {e}", flush=True)
+            tick += 1
+            await asyncio.sleep(60)
+
     async def prune_hourly():
         while True:
             await asyncio.sleep(3600)
@@ -492,6 +857,8 @@ def main():
     async def on_ready():
         if not pruner:
             pruner.append(asyncio.create_task(prune_hourly()))
+            if CTX is not None and CTX.live:
+                pruner.append(asyncio.create_task(clinic_loops()))
         print("in servers: " + (", ".join(f"{g.name} ({g.id})" for g in client.guilds) or "none - invite the "
               "bot with the OAuth2 URL (scopes bot + applications.commands)"), flush=True)
         try:
