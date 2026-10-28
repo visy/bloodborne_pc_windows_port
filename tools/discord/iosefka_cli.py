@@ -167,6 +167,35 @@ def _summary(c, b):
                           "text": _excerpt(last["text"])} if last else None}
 
 
+CL_NEWS_MAX = 30
+
+
+def _changelist_news(c, since, who):
+    """Changelist items someone else touched since `since`: one entry per item (its latest change), newest
+    first; a bulk import (a sync) is folded into a count per track/version so it cannot flood `new`."""
+    import clinic_changes
+    clinic_changes.Changes(c)  # makes sure the tables exist
+    rows = c.db.execute(
+        "SELECT n.change_id, n.at, n.who, n.kind, n.text, ch.track, ch.version, ch.status, ch.text "
+        "FROM nw_change_notes n JOIN nw_changes ch ON ch.id = n.change_id "
+        "WHERE n.at > ? AND n.who != ? ORDER BY n.at DESC, n.rowid DESC", (since, who)).fetchall()
+    bulk = {}
+    for cid, at, by, kind, note, track, version, *_ in rows:
+        if kind in ("import", "add"):
+            bulk.setdefault((by, track, version), set()).add(cid)
+    folded = {k for k, ids in bulk.items() if len(ids) > 5}  # a sync or an import, not a hand edit
+    latest, imports = {}, {}
+    for cid, at, by, kind, note, track, version, status, text in rows:
+        if kind in ("import", "add") and (by, track, version) in folded:
+            imports[(by, track, version)] = len(bulk[(by, track, version)])
+            continue
+        latest.setdefault(cid, {"id": cid, "track": track, "version": version, "status": status, "text": text,
+                                "at": _iso(at), "who": by, "kind": kind, "note": _excerpt(note or "")})
+    items = list(latest.values())
+    return {"items": items[:CL_NEWS_MAX], "more": max(0, len(items) - CL_NEWS_MAX),
+            "imports": [{"who": k[0], "track": k[1], "version": k[2], "items": n} for k, n in imports.items()]}
+
+
 def _pending(c):
     """Bugs Iosefka filed that wait for a triage pass (tag triage=pending), oldest first."""
     return sorted(c.bugs(tag="triage=pending"), key=lambda b: b["created"])
@@ -307,6 +336,14 @@ def _text_out(out, cmd, data):
                 lines.append(f"  updated {b['id']}  {b['status']:<12} {b['title']}  "
                              f"[{k['messages']} msg, {k['logs']} log, {k['images']} img]")
             lines.append(f"  triage pending: {data['triage_pending']}")
+            cl = data.get("changelist") or {}
+            for i in cl.get("items", []):
+                lines.append(f"  changelist {i['id']}  {i['track']} {i['version']}  {i['status']}  {i['text'][:80]}"
+                             f"  ({i['who']} {i['kind']})")
+            if cl.get("more"):
+                lines.append(f"  changelist: {cl['more']} more items changed")
+            for imp in cl.get("imports", []):
+                lines.append(f"  changelist import by {imp['who']}: {imp['items']} items in {imp['track']} {imp['version']}")
             for n in data["notes"]:
                 lines.append(f"  note {n['bug_id']} {n['who']} ({n['kind']}): {_excerpt(n['text'])}")
     elif cmd == "show":
@@ -511,7 +548,7 @@ def _run(argv, who, out, db, stdin):
                   "text": n["text"]} for n in got["notes"] if n["who"] != who]
         return emit({"since": _iso(since), "bugs": [_summary(c, b) for b in got["bugs"]],
                      "updated_bugs": [_summary(c, b) for b in got["updated_bugs"]], "notes": notes,
-                     "triage_pending": len(_pending(c))})
+                     "changelist": _changelist_news(c, since, who), "triage_pending": len(_pending(c))})
     if a.cmd == "triage-queue":
         since = c.mark_seen(who, "triage")
         links = [{"bug_id": n["bug_id"], "at": _iso(n["at"]), "text": n["text"]}
