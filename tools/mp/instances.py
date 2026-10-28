@@ -81,12 +81,19 @@ def parse_fg(spec, count):
     return [parts[min(i, len(parts) - 1)] for i in range(count)]
 
 
+PRESETS = ("30", "60", "90", "uncap")  # BB_FPS values the game's patch presets know
+
+
 def fps_env(fps, fg, headless=False):
     """The environment one instance gets for its --fps entry: its cap, its frame generation (forced off
     without a suffix, so a bbport.ini left by an earlier run cannot turn it on), and the game's own rate
     lines (BB_FRAME_RATE_LOG: steps per s; BB_FG_TIMING: rendered / presented per s), the proof a sweep
     reads back (smoke_party.measured_rates). A headless instance presents nothing: no frame generation."""
     env = {"BB_FPS": fps, "BB_FRAME_GENERATION": "off"}
+    if fps not in PRESETS:
+        # The game's patch presets are 30 / 60 / 90 / uncap (patches.py --fps); any other rate is the
+        # uncapped preset with the launcher's frame rate limit, as a player sets 120 or 144
+        env.update({"BB_FPS": "uncap", "BB_FPS_LIMIT": fps})
     if os.environ.get("BB_FRAME_RATE_LOG") is None:
         env["BB_FRAME_RATE_LOG"] = "10"
     if fg and not headless:
