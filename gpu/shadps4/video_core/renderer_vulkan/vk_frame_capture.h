@@ -51,7 +51,8 @@ public:
     /// box, NaN count) and their bound constants / storage (NaN, Inf, largest magnitude, zero floats).
     /// Says whether a mesh that is not seen was drawn with collapsed or broken data.
     static bool WantsMesh(u32 num_indices);
-    static void Vertex(u32 stream, VAddr address, const void* data, u64 size, u32 stride);
+    static void Vertex(u32 stream, VAddr address, const void* data, u64 size, u32 stride, bool gpu_written,
+                       bool cpu_modified);
 
     /// BB_DRAW_SKIP_FILE (diagnostic, off by default): draws whose vertex or pixel shader hash
     /// is listed in the file (hex, whitespace-separated; re-read at a flip when it changes) are

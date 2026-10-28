@@ -2690,8 +2690,12 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
         u32 stream = 0;
         for (const auto& vb : guest_buffers) {
             if (vb.base_address != 0 && vb.GetSize() > 0 && memory->IsValidGpuMapping(vb.base_address, 0)) {
-                FrameCapture::Vertex(stream, vb.base_address, reinterpret_cast<const void*>(vb.base_address),
-                                     memory->ClampRangeSize(vb.base_address, vb.GetSize()), vb.GetStride());
+                const u64 size = memory->ClampRangeSize(vb.base_address, vb.GetSize());
+                // gpu-written: the GPU's copy is newer than the game's memory (what the draw must read);
+                // cpu-modified: the game's memory is to be uploaded over the copy
+                FrameCapture::Vertex(stream, vb.base_address, reinterpret_cast<const void*>(vb.base_address), size,
+                                     vb.GetStride(), buffer_cache.IsRegionGpuModified(vb.base_address, size),
+                                     buffer_cache.IsRegionCpuModified(vb.base_address, size));
             }
             ++stream;
         }

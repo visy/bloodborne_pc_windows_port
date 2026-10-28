@@ -386,7 +386,8 @@ bool FrameCapture::WantsMesh(u32 num_indices) {
     return !counts.empty() && std::ranges::find(counts, num_indices) != counts.end();
 }
 
-void FrameCapture::Vertex(u32 stream, VAddr address, const void* data, u64 size, u32 stride) {
+void FrameCapture::Vertex(u32 stream, VAddr address, const void* data, u64 size, u32 stride, bool gpu_written,
+                          bool cpu_modified) {
     if (state.load(std::memory_order_relaxed) != Recording || pending_stats.size() >= 32 || !data ||
         stride < 12) {
         return;
@@ -408,8 +409,9 @@ void FrameCapture::Vertex(u32 stream, VAddr address, const void* data, u64 size,
     }
     pending_stats.push_back(std::format(
         "    vertex stream {} at {:#x} size {} stride {}: {} elements, NaN {}, box ({:.3f} {:.3f} {:.3f}) .. "
-        "({:.3f} {:.3f} {:.3f})",
-        stream, address, size, stride, count, nan, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]));
+        "({:.3f} {:.3f} {:.3f}), gpu-written {}, cpu-modified {}",
+        stream, address, size, stride, count, nan, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], gpu_written ? "yes" : "no",
+        cpu_modified ? "yes" : "no"));
 }
 
 void FrameCapture::Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size) {

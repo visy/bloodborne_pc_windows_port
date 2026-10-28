@@ -170,17 +170,17 @@ class MaidDressTests(unittest.TestCase):
     """The md phase's frame analyzer check (Cainhurst maid c2150: dress and cloth meshes drawn with her body)."""
     REC = ("presented buffer 0x1\n\nmesh draws (BB_CAPTURE_MESH_COUNTS): 4\n"
            "  mesh pass #2 draw 0: indices 12027 instances 1 vs 0000000000000001 ps 0000000000000002\n"
-           "    vertex stream 0 at 0x10 size 3000 stride 20: 150 elements, NaN 0, box (0.000 0.000 0.000) .. (0.000 0.000 0.000)\n"
+           "    vertex stream 0 at 0x10 size 3000 stride 20: 150 elements, NaN 0, box (0.000 0.000 0.000) .. (0.000 0.000 0.000), gpu-written yes, cpu-modified no\n"
            "  mesh pass #2 draw 1: indices 14805 instances 1 vs 0000000000000001 ps 0000000000000002\n"
            "  mesh pass #2 draw 2: indices 657 instances 1 vs 0000000000000003 ps 0000000000000002\n"
-           "    vertex stream 0 at 0x20 size 3000 stride 20: 150 elements, NaN 0, box (-1.000 0.000 0.000) .. (1.000 2.000 0.500)\n"
+           "    vertex stream 0 at 0x20 size 3000 stride 20: 150 elements, NaN 0, box (-1.000 0.000 0.000) .. (1.000 2.000 0.500), gpu-written no, cpu-modified no\n"
            "    vertex stream 1 at 0x30 size 1717128 stride 20: 85856 elements, NaN 3, box (0.000 0.000 0.000) .. (0.000 0.000 0.000)\n"
            "  mesh pass #2 draw 3: indices 534 instances 1 vs 0000000000000003 ps 0000000000000002\n")
 
     def test_record(self):
         draws, cloth = smoke.md_record(self.REC)
         self.assertEqual(draws, {("body", 1): 1, ("dress", 1): 1, ("BD_cloth", 1): 1, ("AM_cloth", 1): 1})
-        self.assertEqual(cloth, [(150, True), (150, False)])  # the shared heap stream is not a cloth stream
+        self.assertEqual(cloth, [(150, True, True), (150, False, False)])  # the shared heap stream is not a cloth stream
 
     def test_missing(self):
         draws, _ = smoke.md_record(self.REC)
