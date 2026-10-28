@@ -266,3 +266,20 @@ def test_files_inner_logs_under_archive_name(tmp_path):
     assert t.extractfile(f"{a}/logs/saves.zip/x.zip/dir/guest.log").read() == b"deep log"
     shown = js(db, "vlad", "show", a)
     assert any(f.get("inside") == "saves.zip" and f["path"] == "x.zip/dir/../guest.log" for f in shown["files"])
+
+
+def test_files_tars_saves_under_saves(tmp_path):
+    db, a, _b, _log = seed(tmp_path)
+    c = cs.Clinic(db)
+    top = c.put_file(b"save0", "userdata0000", "save")
+    inner = c.put_file(b"save1", "backup0000", "save")
+    arch = c.put_file(b"PK fake", "SPRJ0005.zip", "archive")
+    c.upsert_message({"message_id": 300, "bug_id": a, "created": time.time(), "attachments": [
+        {"sha256": top, "filename": "userdata0000", "kind": "save", "size": 5},
+        {"sha256": arch, "filename": "SPRJ0005.zip", "kind": "archive", "size": 7, "inner": ["SPRJ0005/backup0000"],
+         "inner_shas": [inner], "inner_files": [{"sha256": inner, "name": "SPRJ0005/backup0000", "kind": "save"}]}]})
+    _, out = run(db, "vlad", "files", a)
+    names = _tar(out).getnames()
+    assert any(n.startswith(f"{a}/saves/") and n.endswith("userdata0000") for n in names)
+    assert f"{a}/saves/SPRJ0005.zip/SPRJ0005/backup0000" in names
+    assert not any("/logs/" in n and "userdata0000" in n for n in names)

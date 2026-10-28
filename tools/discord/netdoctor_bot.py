@@ -311,7 +311,13 @@ def _flag_unsure(clinic, bug, message):
     if not any((m["content"] or "").strip() for m in msgs):
         why.append("no-text")
     atts = [a for m in msgs for a in m["attachments"]]
-    if not any(a.get("kind") in ("log", "dump", "game") or a.get("inner_shas") for a in atts):
+    def _logish(a):
+        if a.get("kind") in ("log", "dump", "game"):
+            return True
+        if a.get("inner_files") is not None:
+            return any(f.get("kind") in ("log", "dump", "game") for f in a["inner_files"])
+        return bool(a.get("inner_shas"))
+    if not any(_logish(a) for a in atts):
         why.append("no-log")
     if any(a.get("kind") == "archive" and a.get("inner") is None for a in atts):  # listing None: unreadable
         why.append("unreadable-file")
@@ -351,7 +357,8 @@ async def _reply_text(ctx, message, bug, infos):
         return voice.network_help(diag)
     bug_infos = cd.log_infos(clinic, [{"kind": "log", "sha256": f["sha256"], "filename": f["filename"]}
                                       for f in logs], ctx.log_info_fn, ctx.tmp_root) if ctx.log_info_fn else infos
-    return voice.bug_filed(bug, clinic_logic.missing_roles(bug_infos))
+    what = clinic_logic.holds([a for m in clinic.messages_for_bug(bug) for a in m["attachments"]])
+    return voice.bug_filed(bug, clinic_logic.missing_roles(bug_infos), what=what)
 
 
 async def dispatch_message(message, ctx):

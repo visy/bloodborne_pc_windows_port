@@ -12,7 +12,7 @@ except ImportError:  # loaded by path without tools/discord on sys.path
     _spec.loader.exec_module(_ns)
 
 WINDOW_S = 1800
-REMOVABLE_KINDS = {"log", "dump", "game"}
+REMOVABLE_KINDS = {"log", "dump", "game", "save"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 ARCHIVE_EXT = {".zip", ".7z", ".rar"}
@@ -23,9 +23,24 @@ def skipped_channel(name: str) -> bool:
     return n.startswith("staff") or n in ("development", "moderator-only")
 
 
+# Bloodborne save files (PS4 / shadPS4 layout): userdata0000..0010, backup0000.., with suffixes such as
+# `.bak`, `_name`, ` (2)`; sizes are 0x140000 (character slots) or 0x40000 (the system slot)
+SAVE_NAME_RX = re.compile(r"^(?:userdata|backup)\d{4}(?:[ ._\-(].*)?$")
+SAVE_DIRS = {"sprj0005", "savedata"}
+SAVE_SIZES = (0x140000, 0x40000)
+
+
 def file_kind(filename: str) -> str:
-    n = Path(filename or "").name.lower()
+    """log / dump / game / save / archive / image / video / other. The folders in a path count (an archive
+    member `SPRJ0005/x/param.sfo`), a bare name does not."""
+    parts = [p for p in re.split(r"[\\/]", filename or "") if p]
+    n = (parts[-1] if parts else "").lower()
     ext = Path(n).suffix
+    if SAVE_NAME_RX.match(n):
+        return "save"
+    if any(p.lower() in SAVE_DIRS for p in parts[:-1]) and ext not in (".log", ".txt", ".dmp", ".dcx") \
+            and ext not in ARCHIVE_EXT and (ext not in IMAGE_EXT | VIDEO_EXT or n == "icon0.png"):
+        return "save"  # anything else in the save folder: param.sfo, icon0.png, odd copies
     if n.startswith("userdata") or ext == ".dcx":
         return "game"
     if ext in (".log", ".txt"):
@@ -39,6 +54,24 @@ def file_kind(filename: str) -> str:
     if ext in VIDEO_EXT:
         return "video"
     return "other"
+
+
+def holds(attachments: list[dict]) -> str:
+    """What stored attachments carry for the clinic's words: "log" (the default, also unreadable archives),
+    "save" (Bloodborne save files only) or "both". Archives count by their member names (`inner`)."""
+    logs = saves = False
+    for a in attachments or []:
+        kind = file_kind(a.get("filename") or "")
+        if kind == "archive":
+            names = a.get("inner")
+            kinds = ["log"] if names is None else [file_kind(i) for i in names]
+        else:
+            kinds = [kind]
+        saves = saves or "save" in kinds
+        logs = logs or any(k in ("log", "dump", "game") for k in kinds)
+    if saves and not logs:
+        return "save"
+    return "both" if saves else "log"
 
 
 def removable(filename: str, inner_names: list[str] | None = None) -> bool:

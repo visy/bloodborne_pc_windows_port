@@ -50,7 +50,7 @@ RETRY_DELAY = 1.0
 DISCORD_LIMIT = 2000
 DEFAULT_UPLOAD = 25 * 1024 * 1024
 MEDIA_NOTE = "(pictures/video kept in the clinic)"
-FILE_KINDS_WITH_STORE = ("log", "dump", "game", "archive", "other")
+FILE_KINDS_WITH_STORE = ("log", "dump", "game", "save", "archive", "other")
 STREAM_BYTES = 200 * 1024 * 1024   # bigger non-video files are LZMA-compressed in a stream, not read whole
 LENIENT_SIZE_KINDS = ("image", "video")  # the CDN may re-serve these with other bytes than attachment.size
 TRUNCATED_BELOW = 0.5              # ...but not under half of the listed size
@@ -520,6 +520,12 @@ def join_bug(clinic, message, bug, rule, unsure=()):
     return bug
 
 
+def tag_saves(clinic, bug_id, atts):
+    """A bug that was handed Bloodborne save files carries the tag has_saves=yes."""
+    if bug_id and logic.holds(atts) in ("save", "both") and (clinic.bug(bug_id) or {}).get("tags", {}).get("has_saves") != "yes":
+        clinic.update_bug(bug_id, tags={"has_saves": "yes"})
+
+
 def link_text(clinic, message):
     """A text-only message: join the bug the rules name (store its words), or None. Idempotent."""
     got = find_link(clinic, message)
@@ -788,6 +794,8 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
     mid = message.id
     if rec.get("bug_id") != bug_id:
         clinic.upsert_message({"message_id": mid, "bug_id": bug_id})
+    tag_saves(clinic, bug_id, rec["attachments"])
+    what = logic.holds(rec["attachments"])
     ch = message.channel
     reopened = None
     try:
@@ -798,7 +806,7 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
             files, left_out = await _media_files(message, rec)
             note = MEDIA_NOTE if left_out else ""
             rep = voice.replacement_short if short else voice.replacement
-            text = rep(f"<@{message.author.id}>", bug_id, message.content or "", note)
+            text = rep(f"<@{message.author.id}>", bug_id, message.content or "", note, what=what)
             more = []
             if extra:
                 if len(text) + 2 + len(extra) <= DISCORD_LIMIT:
@@ -814,7 +822,7 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
             except Exception as e:
                 if not files or _status(e) not in (400, 413):  # only "payload too large" drops the files
                     raise
-                text = rep(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE)
+                text = rep(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE, what=what)
                 sent = await ch.send(text, **kw)
             clinic.set_state(mid, "replaced", sent.id)
             for part in more:
@@ -878,15 +886,17 @@ async def _run_segment(clinic, seg, bug_id, ping):
         for m, r in seg:
             if r.get("bug_id") != bug_id:
                 clinic.upsert_message({"message_id": m.id, "bug_id": bug_id})
+            tag_saves(clinic, bug_id, r["attachments"])
         if rid is None:
             files, shared, left_out = [], [None], False
+            what = logic.holds([a for _, r in seg for a in r["attachments"]])
             for m, r in seg:
                 _, lo = await _media_files(m, r, files, shared)
                 left_out = left_out or lo
             note = MEDIA_NOTE if left_out else ""
             texts = [m.content or "" for m, _ in seg]
             mention = f"<@{first.author.id}>"
-            text = voice.replacement_many(mention, bug_id, texts, note)
+            text = voice.replacement_many(mention, bug_id, texts, note, what=what)
             am = AllowedMentions(users=[first.author], everyone=False, roles=False) if ping                 else AllowedMentions.none()
             kw = {"allowed_mentions": am, "nonce": str(first.id)[-25:]}
             try:
@@ -894,7 +904,7 @@ async def _run_segment(clinic, seg, bug_id, ping):
             except Exception as e:
                 if not files or _status(e) not in (400, 413):
                     raise
-                sent = await ch.send(voice.replacement_many(mention, bug_id, texts, MEDIA_NOTE), **kw)
+                sent = await ch.send(voice.replacement_many(mention, bug_id, texts, MEDIA_NOTE, what=what), **kw)
             rid = sent.id
         for m, r in seg:
             if r["state"] != "replaced" or r.get("replacement_id") != rid:
