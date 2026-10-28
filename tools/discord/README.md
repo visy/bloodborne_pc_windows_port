@@ -96,7 +96,7 @@ With `NW_LIVE=1` in the env file the bot also does Iosefka's duty: every log (`.
 private clinic archive (same SQLite file), joined to a bug `NW-xxxxxxx`, and the message is replaced by one
 note from Iosefka (connection advice from net_doctor with names/IPs hidden, or a thank-you that asks for
 missing host/guest logs) and deleted. Edits that add a file, forwarded messages and DMs are covered; DMs
-are archived and answered but never deleted. Channels `staff*`, `development` and `moderator-only` are
+are archived and answered but never deleted. Channels `staff*`, `dev*` (development, Dev Test, ...) and `moderator-only` are
 skipped. An hourly catch-up scans from each place's watermark; every minute the bot posts the developers'
 `--tell` texts; at 04:00 it writes `netdoctor.db.bak` (skipped when the disk is too full).
 
