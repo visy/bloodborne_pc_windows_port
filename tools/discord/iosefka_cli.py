@@ -131,6 +131,14 @@ def _iso(t):
     return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if t else None
 
 
+ID_TOKEN_RX = re.compile(r"(?i)(?<![0-9a-z])(nw|cl)-([0-9a-f]{6,7})(?![0-9a-z])")
+
+
+def _norm_ids(arg):
+    """NW-/CL- ids in any case ("cl-1CD510", "nw-ABC1234", "--bug=Nw-...") become the stored form."""
+    return ID_TOKEN_RX.sub(lambda m: f"{m.group(1).upper()}-{m.group(2).lower()}", arg) if isinstance(arg, str) else arg
+
+
 def _bug_id(s):
     if not BUG_RX.match(s or ""):
         raise CliError(f"not a bug id (NW-xxxxxxx): {s!r}")
@@ -495,7 +503,7 @@ def main(argv, who, out=None, *, db=None, stdin=None):
 def _run(argv, who, out, db, stdin):
     if not NAME_RX.match(who or ""):
         raise CliError("--as wants a short lowercase name")
-    a = build_parser().parse_args(list(argv))
+    a = build_parser().parse_args([_norm_ids(x) for x in argv])
     if not a.cmd:
         raise CliError("no command (new, triage-queue, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl)")
     if a.cmd in VISY_ONLY and who != "visy":
