@@ -242,3 +242,95 @@ def test_announce_everyone_only_for_named_channel(tmp_path):
     assert news.sent[0].content.startswith("@everyone ") and news.sent[0].kw["allowed_mentions"].everyone is True
     assert not ch.sent[0].content.startswith("@everyone") and ch.sent[0].kw["allowed_mentions"].everyone is False
     assert published == [1]
+
+
+# --- runs: consecutive messages of one author for one bug get one note ------------------------------------
+
+def run_world(tmp_path, between=None, ids=(1, 2, 3)):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    calls = []
+    ch = F.Channel(100, "help", calls)
+    user = F.User(7, "SecretPlayer")
+    msgs = [F.Msg(ids[0], ch, user, "first log 203.0.113.9", [F.Att(10, "a.log", LOG)], minutes=0),
+            F.Msg(ids[1], ch, user, "second log", [F.Att(11, "b.log", LOG + b"2"), F.Att(14, "s.png", b"\x89PNGx")],
+                  minutes=1),
+            F.Msg(ids[2], ch, user, "third log", [F.Att(12, "c.log", LOG + b"3")], minutes=2)]
+    if between:
+        msgs.insert(between[0], between[1](ch))
+    ch.messages = msgs
+    guild = F.Guild([ch], [])
+    ch.guild = guild
+    for m in msgs:
+        m.guild = guild
+    harvest(c, guild, tmp_path)
+    confirm_all(c)
+    return c, guild, ch, calls, F.Client([guild], [ch])
+
+
+def other_msg(ch):
+    return F.Msg(2, ch, F.User(8, "Other"), "me too", [F.Att(20, "o.png", b"\x89PNGo")], minutes=1)
+
+
+def test_run_one_note_three_deletes(tmp_path):
+    c, guild, ch, calls, client = run_world(tmp_path)
+    assert len({c.message(i)["bug_id"] for i in (1, 2, 3)}) == 1
+    assert [len(r) for r in cull.cull_runs(c)] == [3]
+    out = []
+    assert run(cull.cull(client, c, delay=0, out=out.append, env=FLAG)) == 0
+    assert [x[0] for x in calls] == ["send", "delete", "delete", "delete"]
+    assert len(ch.sent) == 1 and "brought 3 logs" in ch.sent[0].content
+    assert all(m.deleted for m in ch.messages)
+    rids = {c.message(i)["replacement_id"] for i in (1, 2, 3)}
+    assert rids == {ch.sent[0].id} and all(c.message(i)["state"] == "deleted" for i in (1, 2, 3))
+    assert ch.sent[0].kw["nonce"] == "1" and ch.sent[0].kw["files"] == [("file", 14, "s.png")]
+    assert "203.0.113.9" not in ch.sent[0].content and "first log" in ch.sent[0].content
+    p = tmp_path / "r.txt"
+    c.set_state(1, "verified")
+    c.set_state(2, "verified")
+    c.set_state(3, "verified")
+    cull.report(c, p)
+    assert "run of 3 messages" in p.read_text(encoding="utf-8")
+
+
+def test_run_split_by_other_author(tmp_path):
+    c, guild, ch, calls, client = run_world(tmp_path, between=(1, other_msg), ids=(1, 3, 4))
+    assert [[r["message_id"] for r in x] for x in cull.cull_runs(c)] == [[1], [3, 4]]
+    run(cull.cull(client, c, delay=0, out=lambda x: None, env=FLAG))
+    assert len(ch.sent) == 2 and "brought" in ch.sent[1].content and "brought 2" in ch.sent[1].content
+    assert "brought" not in ch.sent[0].content.split(".")[0].replace("brought a log", "")
+    assert not [m for m in ch.messages if m.author.id == 8][0].deleted
+
+
+def test_run_split_by_blocked_message(tmp_path):
+    c, guild, ch, calls, client = run_world(tmp_path)
+    c.db.execute("UPDATE nw_files SET blob=? WHERE sha256=?", (b"junk", c.message(2)["attachments"][0]["sha256"]))
+    c.db.commit()
+    out = []
+    run(cull.cull(client, c, delay=0, out=out.append, env=FLAG))
+    assert any("2 " in x and "blocked:not-verified" in x for x in out)
+    assert ch.messages[0].deleted and not ch.messages[1].deleted and ch.messages[2].deleted
+    assert len(ch.sent) == 2
+    assert not any("brought 2 logs" in m.content for m in ch.sent)
+
+
+def test_run_resume_reuses_replacement(tmp_path):
+    c, guild, ch, calls, client = run_world(tmp_path)
+    ch.messages[1].delete_error = RuntimeError("boom")  # first delete ok, second fails after the note
+    with pytest.raises(RuntimeError):
+        run(cull.cull(client, c, delay=0, out=lambda x: None, env=FLAG))
+    assert len(ch.sent) == 1 and ch.messages[0].deleted and not ch.messages[1].deleted
+    assert c.message(2)["state"] == "replaced" and c.message(3)["state"] == "replaced"
+    ch.messages[1].delete_error = None
+    run(cull.cull(client, c, delay=0, out=lambda x: None, env=FLAG))
+    assert len(ch.sent) == 1  # no second note
+    assert all(m.deleted for m in ch.messages) and c.message(3)["replacement_id"] == ch.sent[0].id
+
+
+def test_replacement_many_fits_2000():
+    voice = cd.voice
+    texts = ["a long wall of words " * 80, "second " * 300, "", "third log text", "x" * 5000]
+    out = voice.replacement_many("<@7>", "NW-0000001", texts, "(pictures/video kept in the clinic)")
+    assert len(out) <= 2000 and "brought 5 logs" in out and "third log text" in out
+    assert out.count("\n> ") + out.startswith("> ") >= 3 and out.endswith("(pictures/video kept in the clinic)")
+    assert voice.replacement_many("<@7>", "NW-0000001", ["only"]) == voice.replacement("<@7>", "NW-0000001", "only")
+    assert "203.0.113.9" not in voice.replacement_many("<@7>", "NW-1", ["ip 203.0.113.9", "b"])
