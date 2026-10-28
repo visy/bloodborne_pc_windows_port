@@ -89,3 +89,10 @@ def test_zip_listing_and_inner_logs(tmp_path):
     assert cm.archive_listing(bad) is None
     assert cm.archive_listing(tmp_path / "x.7z") is None
     assert cm.free_disk(tmp_path / "missing" / "dir") > 0
+
+
+def test_enough_disk(tmp_path):
+    free = cm.free_disk(tmp_path)
+    assert cm.enough_disk(tmp_path, 0, reserve=0)
+    assert not cm.enough_disk(tmp_path, free, reserve=1_500_000_000)
+    assert not cm.enough_disk(tmp_path, free + 10**9, reserve=0)
