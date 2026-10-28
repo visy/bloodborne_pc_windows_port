@@ -213,3 +213,13 @@ def test_new_reports_changelist_news(tmp_path):
     assert js(db, "visy", "new")["changelist"]["items"] == []  # own changes are not news
     code, text = run(db, "vlad", "new", "--text")
     assert code == 0
+
+
+def test_ids_any_case(tmp_path):
+    db = tmp_path / "nd.db"
+    code, out = run(db, "visy", "cl", "add", "coop", "0.7.7", "fixed", "Lamp fix")
+    cid = json.loads(out)["id"]
+    weird = "cl-" + cid[3:].upper()
+    assert js(db, "vlad", "cl", "show", weird)["item"]["id"] == cid
+    assert run(db, "vlad", "cl", "status", weird, "done")[0] == 0
+    assert js(db, "vlad", "cl", "show", cid)["item"]["status"] == "done"
