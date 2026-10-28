@@ -11,8 +11,10 @@ tested without Discord.
 """
 import hashlib
 import json
+import shutil
 import sqlite3
 import time
+from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS logs (
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 class Store:
     def __init__(self, path):
+        self.path = Path(path)
         self.db = sqlite3.connect(str(path))
         self.db.executescript(SCHEMA)
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(logs)")}
@@ -124,10 +127,44 @@ class Store:
         pages = self.db.execute("PRAGMA page_count").fetchone()[0]
         return pages * self.db.execute("PRAGMA page_size").fetchone()[0]
 
+    ND_TABLES = ("logs", "sessions", "analyses", "logdata")
+
+    def nd_bytes(self):
+        """Bytes held by the bot-memory tables only (the clinic's nw_* tables share the file but do not
+        count against its cap): the dbstat page sizes when SQLite has them, else the summed row sizes."""
+        try:
+            marks = ",".join("?" * len(self.ND_TABLES))
+            row = self.db.execute(
+                f"SELECT SUM(pgsize) FROM dbstat WHERE name IN ({marks}) OR name IN "
+                f"(SELECT name FROM sqlite_master WHERE type='index' AND tbl_name IN ({marks}))",
+                self.ND_TABLES + self.ND_TABLES).fetchone()
+            if row and row[0] is not None:
+                return int(row[0])
+        except sqlite3.Error:
+            pass
+        def L(*cols):
+            return "+".join(f"COALESCE(length({c}),0)" for c in cols)
+        q = (f"SELECT COALESCE(SUM({L('filename', 'name', 'role', 'host', 'day', 'peers', 'sha1')}+48),0) FROM logs",
+             f"SELECT COALESCE(SUM({L('session_key', 'members')}+40),0) FROM sessions",
+             f"SELECT COALESCE(SUM({L('ref', 'files', 'text')}+48),0) FROM analyses",
+             f"SELECT COALESCE(SUM({L('sha1', 'filename', 'blob')}+48),0) FROM logdata")
+        return int(sum(self.db.execute(x).fetchone()[0] or 0 for x in q))
+
+    def _vacuum_if_room(self):
+        """VACUUM rewrites the file: only with 2x its size free, or the disk could fill up."""
+        try:
+            free = shutil.disk_usage(self.path).free
+        except OSError:
+            return False
+        if free < 2 * self.size_bytes():
+            return False
+        self.db.execute("VACUUM")
+        return True
+
     def prune(self, days=180, max_bytes=256 * 1024 * 1024):
-        """Drop rows older than `days`; if the file is still over `max_bytes` (hard ceiling 3 GiB), drop
-        the oldest rows until it is under 80% of it, then compact the file. A row is ~200 bytes, so the
-        size cap is a safety net, not the normal path."""
+        """Drop rows older than `days`; if the bot-memory tables are still over `max_bytes` (hard ceiling
+        3 GiB), drop the oldest rows until they are under 80% of it, then compact the file when there is
+        disk for it. The clinic's nw_* tables are not counted and never pruned."""
         max_bytes = ceiling(max_bytes)
         cut = time.time() - days * 86400
         self.db.execute("DELETE FROM logs WHERE posted < ?", (cut,))
@@ -135,27 +172,26 @@ class Store:
         self.db.execute("DELETE FROM analyses WHERE created < ?", (cut,))
         self.db.execute("DELETE FROM logdata WHERE created < ?", (cut,))
         self.db.commit()
-        if self.size_bytes() > max_bytes * 0.8:
-            self.db.execute("VACUUM")
-        while self.size_bytes() > max_bytes * 0.8:
-            n = self.db.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
-            m = self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-            if n == 0 and m == 0 and \
-                    self.db.execute("SELECT COUNT(*) FROM analyses").fetchone()[0] == 0 and \
-                    self.db.execute("SELECT COUNT(*) FROM logdata").fetchone()[0] == 0:
+        trimmed = False
+        while self.nd_bytes() > max_bytes * 0.8:
+            counts = [self.db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in self.ND_TABLES]
+            if not any(counts):
                 break
+            n, m, k, b = counts[0], counts[1], counts[2], counts[3]
             self.db.execute("DELETE FROM logs WHERE rowid IN (SELECT rowid FROM logs ORDER BY posted LIMIT ?)",
                             (max(1, n // 4),))
             self.db.execute("DELETE FROM sessions WHERE rowid IN "
                             "(SELECT rowid FROM sessions ORDER BY updated LIMIT ?)", (max(1, m // 4),))
-            b = self.db.execute("SELECT COUNT(*) FROM logdata").fetchone()[0]
             self.db.execute("DELETE FROM logdata WHERE rowid IN "
                             "(SELECT rowid FROM logdata ORDER BY created LIMIT ?)", (max(1, b // 4),))
-            k = self.db.execute("SELECT COUNT(*) FROM analyses").fetchone()[0]
             self.db.execute("DELETE FROM analyses WHERE rowid IN "
                             "(SELECT rowid FROM analyses ORDER BY created LIMIT ?)", (max(1, k // 4),))
             self.db.commit()
-            self.db.execute("VACUUM")
+            trimmed = True
+        free_pages = self.db.execute("PRAGMA freelist_count").fetchone()[0]
+        total_pages = self.db.execute("PRAGMA page_count").fetchone()[0]
+        if trimmed or free_pages * 4 > total_pages:  # compact after trimming, or when a quarter is free space
+            self._vacuum_if_room()
         return self.size_bytes()
 
 
