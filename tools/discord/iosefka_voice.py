@@ -119,6 +119,8 @@ def announcement() -> str:
         "(and file like it) posted anywhere on this server is taken into my clinic automatically, where it "
         "is kept safe, and I leave a short "
         "note in its place.\n\n"
+        "Forgive the flurry of notes in the threads today: on my first rounds I left one everywhere a log was "
+        "taken in, and some of you saw a great many of them at once. It won't happen like that again.\n\n"
         "**What happens**\n"
         "- Every report gets an **NW id**, and the developers triage it. Nothing is lost; it is only "
         "kept indoors.\n"
