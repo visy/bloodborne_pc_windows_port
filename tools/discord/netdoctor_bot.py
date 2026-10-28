@@ -28,10 +28,10 @@ Environment:
                        the clinic's nw_* tables are never pruned
   NW_LIVE              1 = Iosefka's live duty: every log posted anywhere (except staff*, development,
                        moderator-only) is archived in the clinic and replaced by her note; also edits, forwards,
-                       DMs (archived and answered, never deleted), hourly catch-up, outbox, nightly backup.
+                       DMs (archived, never deleted; answered only with NW_DELETE=1), hourly catch-up, outbox, nightly backup.
                        Default off: the bot then behaves exactly as before (no archive, no new replies).
   NW_DELETE            1 = live duty may delete the original message (after replacement + verified archive).
-                       Without it a live bot archives silently and posts nothing. See CLINIC.md.
+                       Without it a live bot archives silently and posts nothing (DMs included). See CLINIC.md.
   NW_TMP               temp folder for downloads (default: <system temp>/iosefka)
 Needs the privileged Message Content intent (Developer Portal -> Bot) to read ordinary messages.
 """
@@ -259,8 +259,9 @@ async def handle_log_message(message, *, live, ctx=None):
                                       tmpdir=ctx.tmp_root)
         if bug is None:
             return "no-bug"
-        if dm:  # a DM is private and the bot cannot delete it: answer, keep
-            await message.channel.send(voice.dm_ack(bug), allowed_mentions=cd.AllowedMentions.none())
+        if dm:  # a DM is private and never deleted: answer only when live duty may act (archive-only is silent)
+            if ctx.delete:
+                await message.channel.send(voice.dm_ack(bug), allowed_mentions=cd.AllowedMentions.none())
             return "dm"
         if not ctx.delete:
             return await cd.replace_and_delete(clinic, message, bug, ping=live, delete=False, need_export=False)
@@ -351,33 +352,84 @@ def _after(mid):
         return type("Obj", (), {"id": mid})()
 
 
+# handling results after which a message needs no further visit; anything else is retried by the next sweep
+FINAL = ("none", "off", "skipped", "kept", "deleted", "dm", "would-replace", "blocked:dm", "blocked:skipped",
+         "delete_forbidden")
+RETRY_STATES = ("archive_failed", "archived", "verified", "replaced")
+RETRY_PER_SWEEP = 200
+
+
+async def retry_unfinished(ctx, skip=(), out=print):
+    """Re-handle stored guild messages that never reached their end (failed download, stored but not
+    replaced, replaced but not deleted): fetch each from Discord; one that is gone is marked deleted.
+    Stops at low disk. Returns how many were handled."""
+    n = tried = 0
+    for rec in ctx.clinic.messages_in_state(RETRY_STATES):
+        if rec["message_id"] in skip or rec.get("dm"):
+            continue
+        if tried >= RETRY_PER_SWEEP:
+            break
+        tried += 1
+        cid = rec["thread_id"] or rec["channel_id"]
+        try:
+            place = ctx.client.get_channel(cid) or await ctx.client.fetch_channel(cid)
+            if ctx.guild_id and getattr(getattr(place, "guild", None), "id", ctx.guild_id) != ctx.guild_id:
+                continue
+            message = await place.fetch_message(rec["message_id"])
+        except Exception as e:
+            kind = type(e).__name__
+            if kind == "NotFound":
+                ctx.clinic.set_state(rec["message_id"], "deleted")
+            elif kind != "Forbidden":
+                raise
+            continue
+        r = await handle_log_message(message, live=False, ctx=ctx)
+        if r == "disk-low":
+            out("disk low during retries, the next sweep continues")
+            break
+        n += r not in ("none", "off", "skipped", "kept")
+    return n
+
+
 async def catch_up(ctx, guilds, archived=True, out=print):
     """Scan every place from its watermark and handle what was posted while the bot was away (no pings).
-    A place with no watermark yet is scanned over its last 200 messages."""
+    A place with no watermark yet is scanned over its last 200 messages. The watermark stops before the
+    first message whose handling is not final (failed download, low disk, busy...), so the next sweep
+    sees it again; afterwards stored messages that never finished are retried by id."""
     if not ctx.live:
         return 0
     n = 0
+    touched = set()
     for guild in guilds:
         async for place in cd.walk_places(guild, archived=archived):
             wm = ctx.clinic.watermark(place.id)
             last = wm
+            stuck = False
+            stop = False
             try:
                 kw = {"after": _after(wm), "limit": None, "oldest_first": True} if wm else \
                     {"limit": 200, "oldest_first": False}
                 msgs = [m async for m in place.history(**kw)]
                 msgs.sort(key=lambda m: m.id)
                 for m in msgs:
-                    last = max(last, m.id)
                     if getattr(m.author, "bot", False):
+                        if not stuck:
+                            last = max(last, m.id)
                         continue
+                    r = "none"
                     if all_attachments(m):
+                        touched.add(m.id)
                         r = await handle_log_message(m, live=False, ctx=ctx)
                         n += r not in ("none", "off", "skipped", "kept")
                     elif cd.is_thread(place) and ctx.clinic.bug_for_thread(place.id):
                         cd.store_text(ctx.clinic, m, ctx.clinic.bug_for_thread(place.id))
-            except cd.DiskLow:
-                out("disk low during catch-up, the next sweep continues")
-                return n
+                    if r not in FINAL:
+                        stuck = True
+                    if not stuck:
+                        last = max(last, m.id)
+                    if r == "disk-low":
+                        stop = True
+                        break
             except Exception as e:
                 if type(e).__name__ != "Forbidden":
                     raise
@@ -385,7 +437,20 @@ async def catch_up(ctx, guilds, archived=True, out=print):
                 continue
             if last > wm:
                 ctx.clinic.set_watermark(place.id, last)
+            if stop:
+                out("disk low during catch-up, the next sweep continues")
+                return n
+    if ctx.client is not None:
+        n += await retry_unfinished(ctx, skip=touched, out=out)
     return n
+
+
+def _seed_author(clinic, bug_id):
+    """Reporter of a bug made before reporter_id existed: whoever posted its first log."""
+    for m in clinic.messages_for_bug(bug_id):
+        if cd.rec_removable(m["attachments"]):
+            return m["author_id"]
+    return None
 
 
 async def send_outbox(ctx, out=print):
@@ -407,12 +472,10 @@ async def send_outbox(ctx, out=print):
             ctx.clinic.outbox_sent(row["id"])
             continue
         text, am = voice.told(row["text"]), cd.AllowedMentions.none()
-        if not bug["thread_id"]:  # a channel cluster: address the reporter
-            first = next(iter(ctx.clinic.messages_for_bug(bug["id"])), None)
-            if first:
-                text = f"<@{first['author_id']}> " + text
-                am = cd.AllowedMentions(users=[type("U", (), {"id": first["author_id"]})()], everyone=False,
-                                        roles=False)
+        reporter = bug.get("reporter_id") or _seed_author(ctx.clinic, bug["id"])
+        if reporter:  # only the reporter is addressed, never another poster of the bug
+            text = f"<@{reporter}> " + text
+            am = cd.AllowedMentions(users=[type("U", (), {"id": reporter})()], everyone=False, roles=False)
         reopened = None
         try:
             if cd.is_thread(place) and (place.archived or place.locked):
@@ -454,6 +517,18 @@ async def disk_guard(ctx, guilds, out=print):
             return True
     out(text)
     return False
+
+
+def safe_prune(store, max_bytes, out=print):
+    """One hourly prune; a failure (disk full, locked file) is logged, never ends the loop. Returns the
+    size in bytes, or None on failure."""
+    try:
+        size = store.prune(max_bytes=max_bytes)
+        out(f"db pruned: {size // 1024} KiB")
+        return size
+    except Exception as e:
+        out(f"db prune failed: {type(e).__name__}: {e}")
+        return None
 
 
 def seconds_until(hour, now=None):
@@ -501,6 +576,8 @@ def main():
               guild_id=int(os.environ["NETDOCTOR_GUILD"]) if os.environ.get("NETDOCTOR_GUILD") else None,
               log_info_fn=lambda p: log_info(load_doctor(), p),
               diagnose_fn=lambda paths: diagnose(paths, redact=True))
+    if CTX.live:
+        cd.clean_stale_tmp(CTX.tmp_root)
     print(f"clinic live duty: {'ON' if CTX.live else 'off'}, delete: {'ON' if CTX.delete else 'off'}", flush=True)
     tree = app_commands.CommandTree(client)
     guild = discord.Object(id=int(os.environ["NETDOCTOR_GUILD"])) if os.environ.get("NETDOCTOR_GUILD") else None
@@ -840,7 +917,8 @@ def main():
                 await send_outbox(CTX)
                 if time.time() >= next_backup:
                     next_backup = time.time() + seconds_until(4)
-                    ok = CTX.clinic.backup(Path(str(DB_PATH) + ".bak"))
+                    ok = await asyncio.get_running_loop().run_in_executor(
+                        None, CTX.clinic.backup, Path(str(DB_PATH) + ".bak"))
                     print("backup " + ("written" if ok else "skipped: not enough free disk"), flush=True)
             except Exception as e:
                 print(f"clinic loop: {type(e).__name__}: {e}", flush=True)
@@ -850,8 +928,7 @@ def main():
     async def prune_hourly():
         while True:
             await asyncio.sleep(3600)
-            size = store.prune(max_bytes=db_max)
-            print(f"db pruned: {size // 1024} KiB", flush=True)
+            safe_prune(store, db_max)
 
     @client.event
     async def on_ready():

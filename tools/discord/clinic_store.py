@@ -24,11 +24,12 @@ CREATE TABLE IF NOT EXISTS nw_stills (
 CREATE TABLE IF NOT EXISTS nw_messages (
     message_id INTEGER PRIMARY KEY, channel_id INTEGER, thread_id INTEGER, author_id INTEGER,
     author_name TEXT, created REAL, edited REAL, content TEXT, reply_to INTEGER,
-    attachments TEXT, bug_id TEXT, state TEXT, replacement_id INTEGER, seen REAL);
+    attachments TEXT, bug_id TEXT, state TEXT, replacement_id INTEGER, seen REAL, dm INTEGER);
 CREATE INDEX IF NOT EXISTS nw_messages_bug ON nw_messages (bug_id);
 CREATE TABLE IF NOT EXISTS nw_bugs (
     id TEXT PRIMARY KEY, title TEXT, source TEXT, channel_id INTEGER, thread_id INTEGER,
-    status TEXT, dup_of TEXT, tags TEXT, assignee TEXT, nd_refs TEXT, created REAL, updated REAL);
+    status TEXT, dup_of TEXT, tags TEXT, assignee TEXT, nd_refs TEXT, created REAL, updated REAL,
+    reporter_id INTEGER);
 CREATE TABLE IF NOT EXISTS nw_notes (
     bug_id TEXT NOT NULL, at REAL, who TEXT, kind TEXT, text TEXT, to_who TEXT);
 CREATE INDEX IF NOT EXISTS nw_notes_bug ON nw_notes (bug_id);
@@ -41,10 +42,11 @@ CREATE TABLE IF NOT EXISTS nw_outbox (
 
 LZMA_KINDS = ("log", "dump", "game", "archive", "text", "other")
 MESSAGE_COLS = ("channel_id", "thread_id", "author_id", "author_name", "created", "edited", "content",
-                "reply_to", "attachments", "bug_id", "state", "replacement_id", "seen")
-BUG_FIELDS = ("title", "source", "channel_id", "thread_id", "status", "dup_of", "assignee", "nd_refs")
+                "reply_to", "attachments", "bug_id", "state", "replacement_id", "seen", "dm")
+BUG_FIELDS = ("title", "source", "channel_id", "thread_id", "status", "dup_of", "assignee", "nd_refs",
+              "reporter_id")
 BUG_COLS = ("id", "title", "source", "channel_id", "thread_id", "status", "dup_of", "tags", "assignee",
-            "nd_refs", "created", "updated")
+            "nd_refs", "created", "updated", "reporter_id")
 
 
 def _bug_dict(row):
@@ -71,9 +73,44 @@ class Clinic:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
+        for table, col in (("nw_messages", "dm INTEGER"), ("nw_bugs", "reporter_id INTEGER")):
+            have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            if col.split()[0] not in have:  # database from before the column: add it
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
         self.db.commit()
 
     # files
+
+    @staticmethod
+    def prepare_file(data, kind, *, stored=None, codec=None):
+        """(sha256, blob, codec) for one file: the CPU part of put_file, pure and safe in any thread."""
+        sha = hashlib.sha256(data).hexdigest()
+        if stored is not None:
+            return sha, stored, codec or "orig"
+        if kind in LZMA_KINDS:
+            return sha, lzma.compress(data, preset=6), "lzma"
+        return sha, data, "orig"
+
+    @staticmethod
+    def prepare_stream(path, chunk=1 << 20):
+        """(sha256, blob, raw_size) of a big file: hashed and LZMA-compressed chunk by chunk, so the raw
+        bytes are never all in memory. Pure; safe in any thread."""
+        h, comp, parts, n = hashlib.sha256(), lzma.LZMACompressor(preset=6), [], 0
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(chunk), b""):
+                h.update(block)
+                n += len(block)
+                parts.append(comp.compress(block))
+        parts.append(comp.flush())
+        return h.hexdigest(), b"".join(parts), n
+
+    def put_prepared(self, sha, blob, codec, raw_size, filename, kind, mime=""):
+        """Insert what prepare_file / prepare_stream made (main thread, the sqlite connection's). Idempotent."""
+        if not self.db.execute("SELECT 1 FROM nw_files WHERE sha256=?", (sha,)).fetchone():
+            self.db.execute("INSERT INTO nw_files VALUES (?,?,?,?,?,?,?,?)",
+                            (sha, kind, filename, mime, raw_size, codec, blob, time.time()))
+            self.db.commit()
+        return sha
 
     def put_file(self, data, filename, kind, mime="", *, stored=None, codec=None):
         """Store one file under the sha256 of `data`; returns the hash. Idempotent. `stored`/`codec`: an
@@ -81,16 +118,8 @@ class Clinic:
         sha = hashlib.sha256(data).hexdigest()
         if self.db.execute("SELECT 1 FROM nw_files WHERE sha256=?", (sha,)).fetchone():
             return sha
-        if stored is not None:
-            blob, codec = stored, codec or "orig"
-        elif kind in LZMA_KINDS:
-            blob, codec = lzma.compress(data, preset=6), "lzma"
-        else:
-            blob, codec = data, "orig"
-        self.db.execute("INSERT INTO nw_files VALUES (?,?,?,?,?,?,?,?)",
-                        (sha, kind, filename, mime, len(data), codec, blob, time.time()))
-        self.db.commit()
-        return sha
+        sha, blob, codec = self.prepare_file(data, kind, stored=stored, codec=codec)
+        return self.put_prepared(sha, blob, codec, len(data), filename, kind, mime)
 
     def get_file(self, sha):
         """(filename, bytes, codec) with LZMA rows decompressed, or None."""
@@ -118,7 +147,10 @@ class Clinic:
         if row[1] != "lzma":
             return True
         try:
-            return hashlib.sha256(lzma.decompress(row[0])).hexdigest() == sha
+            dec, h, blob = lzma.LZMADecompressor(), hashlib.sha256(), bytes(row[0])
+            for i in range(0, len(blob), 1 << 20):
+                h.update(dec.decompress(blob[i:i + (1 << 20)]))
+            return dec.eof and h.hexdigest() == sha
         except (lzma.LZMAError, EOFError):
             return False
 
@@ -207,14 +239,16 @@ class Clinic:
 
     # bugs
 
-    def new_bug(self, title, source, channel_id, thread_id):
+    def new_bug(self, title, source, channel_id, thread_id, reporter_id=None):
         while True:
             bug_id = "NW-" + secrets.token_hex(4)[:7]
             if not self.db.execute("SELECT 1 FROM nw_bugs WHERE id=?", (bug_id,)).fetchone():
                 break
         now = time.time()
-        self.db.execute("INSERT INTO nw_bugs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (bug_id, title, source, channel_id, thread_id, "new", None, "{}", None, "[]", now, now))
+        self.db.execute("INSERT INTO nw_bugs (id, title, source, channel_id, thread_id, status, dup_of, tags, "
+                        "assignee, nd_refs, created, updated, reporter_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (bug_id, title, source, channel_id, thread_id, "new", None, "{}", None, "[]", now, now,
+                         reporter_id))
         self.db.commit()
         return bug_id
 
@@ -417,15 +451,26 @@ class Clinic:
         return pages * self.db.execute("PRAGMA page_size").fetchone()[0]
 
     def backup(self, dest):
-        """Copy the database with the sqlite3 backup API; False (nothing written) when free disk < 2x size."""
+        """Copy the database with the sqlite3 backup API; False (nothing written) when free disk < 2x size.
+        Uses its own connection, so it may run in an executor thread; a failed copy leaves no .tmp behind."""
         dest = Path(dest)
-        if shutil.disk_usage(dest.parent).free < 2 * self.size_bytes():
-            return False
+        src = sqlite3.connect(str(self.path), timeout=10)
         tmp = dest.with_name(dest.name + ".tmp")
-        out = sqlite3.connect(str(tmp))
+        out = None
         try:
-            self.db.backup(out)
-        finally:
+            size = src.execute("PRAGMA page_count").fetchone()[0] * src.execute("PRAGMA page_size").fetchone()[0]
+            if shutil.disk_usage(dest.parent).free < 2 * size:
+                return False
+            out = sqlite3.connect(str(tmp))
+            src.backup(out)
             out.close()
-        os.replace(tmp, dest)
-        return True
+            out = None
+            os.replace(tmp, dest)
+            return True
+        except BaseException:
+            if out is not None:
+                out.close()
+            tmp.unlink(missing_ok=True)
+            raise
+        finally:
+            src.close()
