@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace coop::worldact {
@@ -2948,6 +2949,20 @@ bool OnMovingLiftCar(const float p[3]) {
     return false;
 }
 
+// liftcar: a lift car's live height. The map entry's matrix keeps the car's placement, not the ride;
+// the car's hit object (entry+0x288, its height at +0xac) moves with it (headless Frontier rides at 30
+// and 60 FPS: 0.27 m under the rider all the way, the placement's height at rest). NaN: not readable
+// or not within a lift's travel of the placement (`placed_y`).
+float LiftCarHeight(std::uint64_t entry, float placed_y) {
+    std::uint64_t hit = 0;
+    float y = 0;
+    if (!entry || !SafeGet(entry + 0x288, &hit) || hit < 0x100000000ull || hit >= 0x7ff000000000ull || (hit & 7) ||
+        !SafeGet(hit + 0xac, &y) || !std::isfinite(y) || std::fabs(y - placed_y) > 80.0f) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return y;
+}
+
 // liftfix: the rider guard (liftrules::RiderTick): every frame while a lift car within reach plays a
 // ride, the local chr's ride bit and position; a drop through the car puts it back on the car.
 void LiftRiderTick(const GameSnapshot& s) {
@@ -2987,6 +3002,7 @@ void LiftRiderTick(const GameSnapshot& s) {
     }
     bool playing = false;
     std::int32_t anim = -1;  // lifts2: the playing car's animation (its arrival / turn is another segment)
+    float car_y = std::numeric_limits<float>::quiet_NaN();  // liftcar: the playing car's live height
     for (const Lift& l : Lifts()) {
         ObjAnimState car;
         float at[3];
@@ -2995,7 +3011,7 @@ void LiftRiderTick(const GameSnapshot& s) {
         }
         for (const std::int32_t e : {l.car, l.gate_rides ? l.gate : 0}) {
             if (e && ObjectPoint(e, 0, 0, at) && std::hypot(me[0] - at[0], me[2] - at[2]) < kLiftCarRadius) {
-                if (!playing) anim = l.car * 100 + car.anim;  // per car and animation
+                if (!playing) anim = l.car * 100 + car.anim, car_y = LiftCarHeight(car.entry, at[1]);
                 playing = true;
             }
         }
@@ -3031,7 +3047,7 @@ void LiftRiderTick(const GameSnapshot& s) {
     }
     float put[3];
     const liftrules::RiderStep step =
-        liftrules::RiderTick(track, playing, ride_bit, Now(), me[0], me[1], me[2], put, anim);
+        liftrules::RiderTick(track, playing, ride_bit, Now(), me[0], me[1], me[2], put, anim, car_y);
     if (step != liftrules::RiderStep::through) {
         return;
     }
