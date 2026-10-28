@@ -5,6 +5,8 @@
 // byte before anything is written. Offsets are ours (raw ELF VA). The game's code is System V:
 // every call into it goes through a BB_COOP_SYSV pointer at Guest(off).
 #include "party_items.h"
+#include "party_kill_award_rules.h"
+#include "party_guestsvc.h"
 #include "party_b2.h"
 #include "party_async_io.h"
 #include "party_perf.h"
@@ -555,7 +557,74 @@ void SetTreasureHider(TreasureHider h) {
     g_treasure_hider = h;
 }
 std::uint32_t TreasureFlagToHide(std::int32_t lot) {
-    return lot > 0 && lot < 10000000 && SharedKeyTreasureLot(lot) ? 50000000u + std::uint32_t(lot) : 0u;
+    if (!(lot > 0 && lot < 10000000 && SharedKeyTreasureLot(lot))) {
+        return 0u;
+    }
+    // The lot's own pickup flag (0.7.7): 50,000,000 + lot only holds for the plain rows (2420231's corpse flag is
+    // 52420230, the Cannon 2400550's 52420550).
+    const std::int32_t f = ItemLotFlag(lot);
+    return f > 0 ? std::uint32_t(f) : 50000000u + std::uint32_t(lot);
+}
+
+SharePath ItemLotSharePath(std::int32_t lot) {
+    const std::int32_t flag = ItemLotFlag(lot);
+    if (ItemLotDenied(lot, flag)) {
+        return SharePath::None;
+    }
+    if (flag > 0) {
+        if (InstancedTreasureFlag(flag, true, false)) {
+            return SharePath::None;  // ordinary world treasure: every player takes their own
+        }
+        return SharedKeyTreasureLot(lot) ? SharePath::Treasure : SharePath::Flag;
+    }
+    if (ItemLedgerIndex(lot) >= 0) {
+        return SharePath::Ledger;
+    }
+    return BossDropArea(lot) >= 0 ? SharePath::BossDrop : SharePath::None;
+}
+
+namespace {
+struct AuditRowData {
+    std::int32_t lot;
+    bool required;
+    const char* note;
+};
+constexpr AuditRowData kAuditRows[] = {
+#define ITEM_REQUIRE_SHARED(lot, kinds) {lot, true, kinds},
+#define ITEM_PER_PLAYER(lot, reason) {lot, false, reason},
+#include "party_items.inc"
+#undef ITEM_REQUIRE_SHARED
+#undef ITEM_PER_PLAYER
+};
+}  // namespace
+
+namespace {
+constexpr KillAwardRow kKillAwards[] = {
+#define ITEM_KILL_AWARD(lot, area, entity, event, spot) {lot, area, entity, event, spot},
+#include "party_items.inc"
+#undef ITEM_KILL_AWARD
+};
+}  // namespace
+
+std::vector<KillAwardRow> KillAwardRows() {
+    return std::vector<KillAwardRow>(std::begin(kKillAwards), std::end(kKillAwards));
+}
+
+std::uint32_t KillAwardEntity(std::int32_t lot) {
+    for (const KillAwardRow& r : kKillAwards) {
+        if (r.lot == lot) {
+            return r.entity;
+        }
+    }
+    return 0;
+}
+
+std::vector<ItemAuditRow> ItemAuditRows() {
+    std::vector<ItemAuditRow> out;
+    for (const AuditRowData& r : kAuditRows) {
+        out.push_back({r.lot, r.required, r.note});
+    }
+    return out;
 }
 
 bool InstancedTreasureFlag(std::int32_t flag, bool instanced, bool captured) {
@@ -2083,6 +2152,74 @@ void HostTestTick(double now) {
             SetFlag(man, f);
             Log("host test: flag %u %d -> %d", f, was ? 1 : 0, IsFlag(man, f) ? 1 : 0);
         }
+    }
+}
+
+/// 0.7.7 (NW-4ae26be): the host's fallback for a kill award that needs entity 10000's blow (party_kill_award_rules.h).
+/// Main thread, host, own world, a cooperator in the map. The entity's HP is read like the enemy census does
+/// (chr +0x3B0 -> +0x20 -> +0xF8); the lot's flag is the "already awarded" bit, so the game's own event and this
+/// fallback can never both give it. The award goes through the game's function with hostOnly 1 and so through our
+/// award hook (ClassifyAward -> the party), exactly like the event's own award.
+void KillAwardTick(double now) {
+    static double next = 0;
+    static std::map<std::int32_t, killaward::State> st;
+    static std::uint32_t last_map = 0;
+    static bool off = EnvOff("BB_PARTY_KILL_AWARD");
+    if (off || Role() != PartyRole::Host || OwnWorld() != 1 || now < next) {
+        return;
+    }
+    next = now + killaward::kPollS;
+    const GameSnapshot quick = ReadGameState(false);
+    if (!quick.world_up || quick.loading || quick.map_id == 0xffffffffu) {
+        st.clear();
+        return;
+    }
+    if (quick.map_id != last_map) {
+        last_map = quick.map_id;
+        st.clear();  // a new map load: a new world, every entity is a new chr
+    }
+    const u64 man = Ptr(kFlagMan);
+    const u64 mim = Ptr(kMapItemMan);
+    if (!man || !mim) {
+        return;
+    }
+    for (const KillAwardRow& r : kKillAwards) {
+        if (static_cast<int>(quick.map_id >> 24) != r.area) {
+            continue;
+        }
+        killaward::State& s = st[r.lot];
+        if (s.done) {
+            continue;
+        }
+        const std::int32_t flag = ItemLotFlag(r.lot);
+        const bool set = flag > 0 && IsFlag(man, flag);
+        bool seen = false, alive = true;
+        if (!set) {
+            const u64 chr = GuestSvcFindChr(r.entity);
+            u64 a = 0, dm = 0;
+            std::int32_t hp = -1;
+            if (chr && SafeGet(chr + 0x3b0, &a) && a && SafeGet(a + 0x20, &dm) && dm) {
+                SafeGet(dm + 0xf8, &hp);
+            }
+            seen = hp >= 0;
+            alive = hp != 0;
+        }
+        if (!killaward::Due(&s, now, seen, alive, set)) {
+            continue;
+        }
+        s.done = true;
+        if (ReadGameState(true).cooperators <= 0) {
+            Log("kill award: entity %u died alone, the game's event %u decides (lot %d flag %d unset)", r.entity, r.event,
+                r.lot, flag);
+            continue;
+        }
+        Log("kill award: entity %u is dead and lot %d (flag %d) was not awarded by event %u (the last blow was a guest's): "
+            "the host awards it through 0x17DDC50 (hostOnly 1)", r.entity, r.lot, flag, r.event);
+        reinterpret_cast<AwardFn>(Guest(kAwardLot))(mim, static_cast<u32>(r.lot), 1);
+        if (r.spot_flag && !IsFlag(man, r.spot_flag)) {
+            SetFlag(man, r.spot_flag);
+        }
+        Log("kill award: lot %d flag %d now %d", r.lot, flag, IsFlag(man, flag) ? 1 : 0);
     }
 }
 
@@ -4058,6 +4195,7 @@ void ItemsTick() {
         g_guest.Offer(g_test);
     }
     HostTestTick(Now());
+    KillAwardTick(Now());
     GiftTick(Now());
     const GameSnapshot gs = ReadGameState(false);
     ItemApplyState s;
