@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iterator>
 #include <new>
 #include <thread>
@@ -72,6 +73,38 @@ Live* live = nullptr;
 std::atomic<double> game_seconds{0.0};
 std::atomic<u64> steps{0};
 
+bool EnvOff(const char* name) {
+    const char* v = std::getenv(name);
+    return v && (!std::strcmp(v, "0") || !std::strcmp(v, "off") || !std::strcmp(v, "false"));
+}
+
+/// Test aid: BB_TEST_FRAME_STALL_FILE + BB_TEST_FRAME_STALL_MS=N: when the file exists (the harness's
+/// host_gfx=stallcap creates it) it is removed and this frame stalls N ms, as a real stutter does (the
+/// next frame measures N ms, then short frames catch up). For the steady-time proof (cloth).
+void TestStall() {
+    static const char* file = std::getenv("BB_TEST_FRAME_STALL_FILE");
+    if (!file || !*file) return;
+    static const int ms = [] {
+        const char* v = std::getenv("BB_TEST_FRAME_STALL_MS");
+        return v ? std::clamp(std::atoi(v), 0, 2000) : 0;
+    }();
+    static u64 n = 0;
+    static int trace = 0;
+    if (trace > 0) { // the cloth's time around the stall: as given / as stepped (the last update of the previous frame)
+        std::printf("Frame rate: test stall trace: dt %.5f s, steady %.5f s, cloth time given %.5f s, stepped %.5f s\n",
+                    double(live->dt), double(live->steady), double(live->cloth_in), double(live->cloth_out));
+        --trace;
+    }
+    if (ms <= 0 || (++n % 4) != 0) return;
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec) || !std::filesystem::remove(file, ec)) return;
+    std::printf("Frame rate: test stall %d ms (step %llu, last dt %.5f s, steady %.5f s)\n", ms,
+                (unsigned long long)steps.load(std::memory_order_relaxed), double(live->dt), double(live->steady));
+    std::fflush(stdout);
+    trace = 14;
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void BB_FR_SYSV FrameStep(u64 pacer) {
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
@@ -97,9 +130,16 @@ void BB_FR_SYSV FrameStep(u64 pacer) {
         return env && *env ? std::strtof(env, nullptr) : -1.0f;
     }();
     Compute(*live, dt, cloth_override);
+    // BB_STEADY_TIME=0 (diagnostics): the cloth's and the plants' time is the frame's, as before.
+    static const bool steady_off = EnvOff("BB_STEADY_TIME");
+    if (steady_off) {
+        live->steady = dt;
+        live->cloth_ratio = 1.0f;
+    }
     if (sweep_step_pending.load(std::memory_order_relaxed)) SweepOnStep();
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
+    TestStall();
 }
 
 // ---- Redirected constants: instruction (its RIP-relative operand), the constant, the value ----
@@ -131,11 +171,13 @@ constexpr Redirect Redirects[] = {
     // (HookSfxStep, both modes).
     {0x227784b, 0x4929b80, LIVE(dt)},  // timers advanced by one frame (0xebbda0)
     {0x2277892, 0x4929b80, LIVE(dt)},
-    {0x2313d8d, 0x4929e70, LIVE(dt)},  // the grass wind's step (0x2313870): its 60 Hz mode path
-                                       // (bbhost b2818b4's frame-time site 0x2713d8d)
-    {0x2313dad, 0x4929e70, LIVE(dt)},  // a simulation step: 1/60 in the game's 60 Hz mode,
-    {0x2313db7, 0x4929e74, LIVE(dt)},  // 1/30 otherwise
-    {0x2315d71, 0x4929e74, LIVE(dt)},
+    // The plants' wind (0x2313870: the grass wind's step, its 60 Hz mode path; bbhost b2818b4's
+    // frame-time site 0x2713d8d): a simulation step, 1/60 in the game's 60 Hz mode, 1/30 otherwise.
+    // The steady time, not the frame's (Supermedo e0bf9f48): frames of uneven length made them jolt.
+    {0x2313d8d, 0x4929e70, LIVE(steady)},
+    {0x2313dad, 0x4929e70, LIVE(steady)},
+    {0x2313db7, 0x4929e74, LIVE(steady)},
+    {0x2315d71, 0x4929e74, LIVE(steady)},
     // Body parts the physics moves (0x1515ec0, each part every frame): their timers advanced by the
     // step they are given (0x180df90 at +0xf0, 0x1811650 at +0xd0), 1/30 s; not in the patches.
     {0x1515fab, 0x4926364, LIVE(dt)},
@@ -300,6 +342,29 @@ bool HookFixedStep(u64 site, std::int8_t offset) {
     const u8 code[] = {0xc7, 0x45, u8(offset), 0x89, 0x88, 0x08, 0x3d};
     Emitter e;
     e.StoreToFrame(&live->dt, offset);
+    e.JmpAbs(image_base + site + sizeof(code));
+    return Detour(site, code, sizeof(code), e);
+}
+
+/// The cloth update (0x76E370, Havok: it splits the frame's time into steps) saves the time it was
+/// given at 0x76E384 (`vmovss [rbp - 0x78], xmm0`). Above 30 FPS a stutter (a 15-35 ms frame, then
+/// 4 ms frames catching up) kicked the cloth even standing still; the time becomes the steady time
+/// (Live::steady: the frame's, 5% a frame at most, never above 1/30 s) by scaling it with
+/// steady / dt, so a time scale the game gave it stays. Supermedo/bloodborne_pc 7a39487f
+/// (cloth_time.py); its code lived in the eboot's last page (0d38fc9b: it overlapped PC Settings'
+/// page table and crashed save loading); this one is in the stub page, written at startup.
+bool HookClothTime() {
+    constexpr u64 site = 0x76e384;
+    constexpr u8 code[] = {0xc5, 0xfa, 0x11, 0x45, 0x88}; // vmovss [rbp - 0x78], xmm0
+    Emitter e;
+    e.Bytes({0x50, 0x48, 0xb8});                       // push rax; movabs rax,
+    e.U64(reinterpret_cast<u64>(&live->cloth_ratio));  //   &cloth_ratio (cloth_max follows)
+    e.Bytes({0xc5, 0xfa, 0x11, 0x40, 0x08});           // vmovss [rax + 8], xmm0 (cloth_in: diagnostics)
+    e.Bytes({0xc5, 0xfa, 0x59, 0x00});                 // vmulss xmm0, xmm0, [rax]
+    e.Bytes({0xc5, 0xfa, 0x5d, 0x40, 0x04});           // vminss xmm0, xmm0, [rax + 4]
+    e.Bytes({0xc5, 0xfa, 0x11, 0x40, 0x0c});           // vmovss [rax + 12], xmm0 (cloth_out)
+    e.Bytes({0x58});                                   // pop rax
+    for (const u8 b : code) e.Bytes({b});              // the site's own instruction
     e.JmpAbs(image_base + site + sizeof(code));
     return Detour(site, code, sizeof(code), e);
 }
@@ -577,6 +642,7 @@ void Install(unsigned char* image, std::uint64_t size) {
     unlocked = true;
     const int fixed = HookFixedStep(0x17f9b71, -0x48) + HookFixedStep(0x1572a7d, -0x30);
     const int run = HookRunSpeed();
+    const bool cloth_time = HookClothTime();
     int redirected = 0;
     for (const Redirect& r : Redirects) {
         if (RedirectOperand(r)) {
@@ -587,6 +653,8 @@ void Install(unsigned char* image, std::uint64_t size) {
     }
     HighRateFixes(true);
     StubWritable(false);
+    std::printf("Frame rate: steady time step (cloth %s, plants via the redirects; BB_STEADY_TIME=0 turns it off)\n",
+                cloth_time ? "on" : "NOT installed");
     std::printf("Frame rate: free (hooks, no patches): the game steps by each frame's time "
                 "(1/%d..1/30 s); %d of 2 fixed steps, %d of %zu per-frame values follow the frame's "
                 "time, the run's wall check %s\n",
