@@ -68,10 +68,17 @@ class Channel:
                 yield t
         return gen()
 
+    async def fetch_message(self, mid):
+        for m in self.messages:
+            if m.id == mid and not m.deleted:
+                return m
+        raise NotFound(f"unknown message {mid}")
+
     def history(self, limit=100, around=None, **kw):
         async def gen():
             for m in self.messages:
-                yield m
+                if not m.deleted:
+                    yield m
         return gen()
 
 
@@ -116,3 +123,17 @@ class Msg:
             raise self.delete_error
         self.deleted = True
         self.channel.calls.append(("delete", self.channel.id, self.id))
+
+
+class Client:
+    def __init__(self, guilds=(), channels=()):
+        self.guilds = list(guilds)
+        self._ch = {c.id: c for c in channels}
+
+    def get_channel(self, cid):
+        return self._ch.get(cid)
+
+    async def fetch_channel(self, cid):
+        if cid not in self._ch:
+            raise NotFound("unknown channel")
+        return self._ch[cid]
