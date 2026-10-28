@@ -111,6 +111,18 @@ static inline const char *key_name(int code) {
     if (code<=SDL_SCANCODE_UNKNOWN || code>=SDL_SCANCODE_COUNT) return "";
     return SDL_GetScancodeName((SDL_Scancode)code);
 }
+/* The label of a key for the player: bindings are SDL scancodes (physical positions, named for a
+ * US keyboard), so on an AZERTY keyboard the key at W's position is printed Z. Letters and
+ * punctuation show the character of the active layout; digits and the rest keep SDL's name.
+ * From Mrsuss60/bloodborne_pc_windows_port 26198d6a (AZERTY / QWERTY labels). The ini keeps the
+ * scancode name (key_name), which does not change with the layout. */
+static inline const char *key_label(int code) {
+    if ((code>=SDL_SCANCODE_A && code<=SDL_SCANCODE_Z) || (code>=SDL_SCANCODE_MINUS && code<=SDL_SCANCODE_SLASH)) {
+        const char *local=SDL_GetKeyName(SDL_GetKeyFromScancode((SDL_Scancode)code,SDL_KMOD_NONE,false));
+        if (local && *local && SDL_strcasecmp(local,"Unknown")) return local;
+    }
+    return key_name(code);
+}
 
 #ifdef __cplusplus
 }

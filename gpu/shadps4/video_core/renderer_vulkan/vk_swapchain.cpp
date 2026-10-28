@@ -238,11 +238,15 @@ bool Swapchain::Present() {
     };
 
     auto result = instance.GetPresentQueue().presentKHR(present_info);
-    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR) {
+    // Mrsuss60/bloodborne_pc_windows_port 7c0e5f0d: a lost surface (and any other failed present)
+    // rebuilds the swapchain instead of stopping the game.
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR ||
+        result == vk::Result::eErrorSurfaceLostKHR) {
         needs_recreation = true;
-    } else {
-        ASSERT_MSG(result == vk::Result::eSuccess, "Swapchain presentation failed: {}",
-                   vk::to_string(result));
+    } else if (result != vk::Result::eSuccess) {
+        LOG_ERROR(Render_Vulkan, "Swapchain presentation returned {}; requesting recreation",
+                  vk::to_string(result));
+        needs_recreation = true;
     }
 
     frame_index = BbSwapchain::NextFrameIndex(frame_index, image_count);
