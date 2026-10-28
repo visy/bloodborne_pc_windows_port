@@ -88,6 +88,10 @@ at the same spot shows draws that went missing (the Lecture Building floor at mo
 each group, `index counts` lists its draws by index count (`7629x2`: two draws of 7629 indices, at
 most 256 counts): one model mesh has one count per level of detail (FLVER face sets), so a model
 that went missing, or changed level, is found by its count. Records are `frame_<time>_<n>.txt`.
+`BB_CAPTURE_MESH_COUNTS=N[,N...]` (developer aid): draws of these index counts (a chr's face sets,
+`python -I tools/mp/flver_meshes.py <chrbnd>`) are listed at the top of a record (`mesh draws`) with every
+buffer they read: vertex streams (the box of each element's first three floats, NaN count) and constants
+(NaN, Inf, zero floats, largest magnitude), read from the game's memory at the draw.
 `BB_DRAW_SKIP_FILE=<file>` (developer aid, off by default): draws whose vertex or pixel shader hash
 (hex, whitespace-separated) is listed in the file are not recorded; the file is re-read at a flip
 when it changes (`Draw skip: N shader(s) ...` in the log). It finds which draw puts a surface on

@@ -2,7 +2,9 @@
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <format>
@@ -54,6 +56,29 @@ constexpr size_t kMaxSizes = 256; ///< distinct index counts listed per group
 std::vector<Entry> entries;
 std::vector<std::pair<Target, bool>> pending_sampled;
 std::vector<std::string> pending_buffers;
+// BB_CAPTURE_MESH_COUNTS: the buffer statistics of the draw being prepared, and the listed draws.
+std::vector<std::string> pending_stats;
+std::vector<std::string> mesh_lines;
+constexpr size_t kMaxMeshLines = 512;
+
+std::string FloatStats(const void* data, u64 size) {
+    const u64 n = size / 4;
+    const auto* f = static_cast<const float*>(data);
+    u64 nan = 0, inf = 0, zero = 0;
+    float big = 0;
+    for (u64 i = 0; i < n; ++i) {
+        const float v = f[i];
+        if (std::isnan(v)) {
+            ++nan;
+        } else if (std::isinf(v)) {
+            ++inf;
+        } else {
+            zero += v == 0.0f;
+            big = std::max(big, std::fabs(v));
+        }
+    }
+    return std::format("{} floats, NaN {}, Inf {}, zero {}, max |v| {:.4g}", n, nan, inf, zero, big);
+}
 
 void AddBuffers(Entry& entry) {
     // Constants of full-screen passes (post-processing: camera matrices) and of the first draw
@@ -113,6 +138,13 @@ void Write(VAddr presented) {
         return;
     }
     std::fprintf(f, "presented buffer %#llx\n", static_cast<unsigned long long>(presented));
+    if (!mesh_lines.empty()) {
+        std::fprintf(f, "\nmesh draws (BB_CAPTURE_MESH_COUNTS): %zu\n", mesh_lines.size());
+        for (const auto& l : mesh_lines) {
+            std::fprintf(f, "%s\n", l.c_str());
+        }
+    }
+    mesh_lines.clear();
     u32 index = 0;
     for (const auto& e : entries) {
         if (e.compute) {
@@ -285,6 +317,15 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
         return;
     }
     auto& e = entries.back();
+    if (WantsMesh(num_indices) && mesh_lines.size() < kMaxMeshLines) {
+        std::string line = std::format("  mesh pass #{} draw {}: indices {} instances {} vs {:016x} ps {:016x}",
+                                       entries.size() - 1, e.draws, num_indices, num_instances, vs_hash, ps_hash);
+        for (const auto& st : pending_stats) {
+            line += "\n" + st;
+        }
+        mesh_lines.push_back(std::move(line));
+    }
+    pending_stats.clear();
     ++e.draws;
     e.indices += u64(num_indices) * std::max(num_instances, 1u);
     AddShader(e, vs_hash);
@@ -325,7 +366,59 @@ void FrameCapture::Dispatch(u64 cs_hash, u32 x, u32 y, u32 z) {
     pass_open = false;
 }
 
+bool FrameCapture::WantsMesh(u32 num_indices) {
+    static const std::vector<u32> counts = [] {
+        std::vector<u32> out;
+        if (const char* env = std::getenv("BB_CAPTURE_MESH_COUNTS")) {
+            for (const char* p = env; *p;) {
+                char* end = nullptr;
+                const unsigned long v = std::strtoul(p, &end, 10);
+                if (end == p) {
+                    ++p;
+                    continue;
+                }
+                out.push_back(u32(v));
+                p = end;
+            }
+        }
+        return out;
+    }();
+    return !counts.empty() && std::ranges::find(counts, num_indices) != counts.end();
+}
+
+void FrameCapture::Vertex(u32 stream, VAddr address, const void* data, u64 size, u32 stride, bool gpu_written,
+                          bool cpu_modified) {
+    if (state.load(std::memory_order_relaxed) != Recording || pending_stats.size() >= 32 || !data ||
+        stride < 12) {
+        return;
+    }
+    const auto* bytes = static_cast<const u8*>(data);
+    float lo[3] = {INFINITY, INFINITY, INFINITY}, hi[3] = {-INFINITY, -INFINITY, -INFINITY};
+    u64 nan = 0, count = size / stride;
+    for (u64 i = 0; i < count; ++i) {
+        float p[3];
+        std::memcpy(p, bytes + i * stride, sizeof p);
+        if (std::isnan(p[0]) || std::isnan(p[1]) || std::isnan(p[2])) {
+            ++nan;
+            continue;
+        }
+        for (int k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], p[k]);
+            hi[k] = std::max(hi[k], p[k]);
+        }
+    }
+    pending_stats.push_back(std::format(
+        "    vertex stream {} at {:#x} size {} stride {}: {} elements, NaN {}, box ({:.3f} {:.3f} {:.3f}) .. "
+        "({:.3f} {:.3f} {:.3f}), gpu-written {}, cpu-modified {}",
+        stream, address, size, stride, count, nan, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], gpu_written ? "yes" : "no",
+        cpu_modified ? "yes" : "no"));
+}
+
 void FrameCapture::Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size) {
+    if (state.load(std::memory_order_relaxed) == Recording && pending_stats.size() < 32 && data) {
+        pending_stats.push_back(std::format("    stage {:08x} slot {} at {:#x} size {}: {}", u32(stage_hash), slot,
+                                            address, size, FloatStats(data, size & ~u64(3))));
+    }
     const u64 bytes = std::min<u64>(size, 1024) & ~u64(3);
     std::string out = std::format("  buffer stage {:016x} slot {} at {:#x} size {}:", stage_hash,
                                   slot, address, size);
