@@ -343,7 +343,9 @@ How vlad keeps NW in sync: after pushing commits, tell Claude "sync the NW chang
   (`list --open --q ...`, then `merge`), check CHANGES.md and the Nightwatch repo for an already fixed
   cause, write a triage `note`, and finish with `tag NW-x triage=done`.
 - Late details: a message with a bug id, a reply to Iosefka's note, a log of the same session or the
-  reporter's follow-up within 24 h joins the bug automatically (see `updated_bugs` in `new`).
+  reporter's follow-up within 24 h joins the bug automatically (see `updated_bugs` in `new`). Outside a
+  thread the follow-up rule takes only messages of 4+ words (no "thanks", emoji) and at most 5 per bug;
+  Iosefka adds no reaction to follow-ups.
 - Working a bug: `show NW-x` -> `files NW-x > x.tar`, extract, analyse the logs locally -> `note` with the
   finding -> `tag` (component, feature, version) -> `status open` / `waiting-logs`.
 - Handing over: `share NW-x visy "'why'"`, or `assign NW-x visy`.
