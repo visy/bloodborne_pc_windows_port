@@ -2502,12 +2502,15 @@ def _phase_boss_dead(name, guest_god, kill):
                      "host_warp=2412952@8^1",
                      "host_move=%s@15%%m24_01" % CLERIC_TRIGGER_HOST,
                      "host_chr=2410800:2@10%m24_01"] +
-                    ["host_press=0x800@2%m24_01"] * 12 +
-                    ["host_die@1%m24_01"] +                                # the boss did not kill it yet (latches)
+                    # bk: R1 taps until the boss kills the frail host (host_die latches if not yet);
+                    # bh: the host dies at once, before the mortal guest is beside the boss (it would
+                    # otherwise die first or with the host: a wipe, no limbo)
+                    (["host_press=0x800@2%m24_01"] * 12 + ["host_die@1%m24_01"] if guest_god else ["host_die@3%m24_01"]) +
                     (["host_kill=2410800@40%m24_01"] if kill else []))
     g1 = ",".join((["god"] if guest_god else []) +
-                  ["guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST,
-                   "guest_chr=2410800@3%m24_01"] +
+                  ["guest_move=%s@25%%m24_01" % CLERIC_SPOT_GUEST] +
+                  ([] if guest_god else ["guest_press=0x0@14%m24_01"]) +   # bh: beside the boss once the host lies in limbo
+                  ["guest_chr=2410800@3%m24_01"] +
                   ["guest_press=0x800@1.5%m24_01"] * 90 +
                   ["guest_press=0x0@2%m24_01"])
     return dict(
