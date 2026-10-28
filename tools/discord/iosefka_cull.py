@@ -74,7 +74,7 @@ async def _harvest_place(clinic, place, log_info_fn, tmpdir, out):
     if cd.is_thread(place):
         forum = hasattr(getattr(place, "parent", None), "available_tags")
         if forum or any(r["removable"] for r in stored.values()):
-            bug = cd.ensure_thread_bug(clinic, place)
+            bug = cd.ensure_thread_bug(clinic, place, msgs[0].author.id if msgs else None)
             for m in msgs:
                 if m.id in stored:
                     clinic.upsert_message({"message_id": m.id, "bug_id": bug})
@@ -134,7 +134,9 @@ def verify(clinic, out=print):
 
 
 def cullable(clinic):
-    return [m for m in clinic.messages_in_state(("verified", "replaced")) if cd.rec_removable(m["attachments"])]
+    """Messages the cull may replace and delete: stored, holding a log, and never a DM."""
+    return [m for m in clinic.messages_in_state(("verified", "replaced"))
+            if cd.rec_removable(m["attachments"]) and not m.get("dm")]
 
 
 def report(clinic, path, resolve_name=None):
@@ -204,13 +206,21 @@ async def cull(client, clinic, *, limit=None, delay=1.0, out=print, env=os.envir
         try:
             message = await _fetch(client, rec)
         except Exception as e:
+            if type(e).__name__ == "Forbidden":
+                out(f"{rec['message_id']}: no access to its place")
+                continue
             if type(e).__name__ != "NotFound":
                 raise
             clinic.set_state(rec["message_id"], "deleted")  # gone already: after the delete, before the record
             out(f"{rec['message_id']}: deleted (already gone)")
             continue
-        res = await cd.replace_and_delete(clinic, message, rec["bug_id"], ping=False, delete=True,
-                                          need_export=True)
+        try:
+            res = await cd.replace_and_delete(clinic, message, rec["bug_id"], ping=False, delete=True,
+                                              need_export=True)
+        except Exception as e:  # one place the bot may not post in must not stop the whole cull
+            if type(e).__name__ != "Forbidden":
+                raise
+            res = "send_forbidden"
         out(f"{rec['message_id']} {rec['bug_id']}: {res}")
         if res == "deleted":
             done += 1
@@ -320,6 +330,7 @@ def main(argv=None):
         print("set NETDOCTOR_TOKEN", file=sys.stderr)
         return FAIL
     nd = bot.load_doctor()
+    cd.clean_stale_tmp(tmp_root())
 
     def log_info_fn(p):
         return bot.log_info(nd, p)

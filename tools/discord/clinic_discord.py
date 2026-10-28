@@ -13,6 +13,7 @@ import shutil
 import sys
 import tempfile
 import time
+import weakref
 from pathlib import Path
 
 
@@ -49,6 +50,9 @@ DISCORD_LIMIT = 2000
 DEFAULT_UPLOAD = 25 * 1024 * 1024
 MEDIA_NOTE = "(pictures/video kept in the clinic)"
 FILE_KINDS_WITH_STORE = ("log", "dump", "game", "archive", "other")
+STREAM_BYTES = 200 * 1024 * 1024   # bigger non-video files are LZMA-compressed in a stream, not read whole
+LENIENT_SIZE_KINDS = ("image", "video")  # the CDN may re-serve these with other bytes than attachment.size
+TRUNCATED_BELOW = 0.5              # ...but not under half of the listed size
 
 
 class DiskLow(Exception):
@@ -73,9 +77,47 @@ def is_thread(ch):
 
 
 def place_skipped(ch):
-    """Skip rule for a channel or thread (threads inherit their parent's)."""
-    base = getattr(ch, "parent", None) if is_thread(ch) else ch
-    return logic.skipped_channel(getattr(base or ch, "name", ""))
+    """Skip rule for a channel or thread (threads inherit their parent's). Fail-closed: a channel that
+    cannot be named (unknown, PartialMessageable) or a thread whose parent cannot be resolved is skipped."""
+    base = ch
+    if is_thread(ch):
+        base = getattr(ch, "parent", None)
+        if base is None:
+            guild, pid = getattr(ch, "guild", None), getattr(ch, "parent_id", None)
+            base = guild.get_channel(pid) if guild is not None and pid and hasattr(guild, "get_channel") else None
+        if base is None:
+            return True
+    name = getattr(base, "name", None)
+    if name is None:
+        return True
+    return logic.skipped_channel(name)
+
+
+async def aplace_skipped(ch):
+    """place_skipped, but a thread's parent missing from the cache is fetched before giving up."""
+    if is_thread(ch) and getattr(ch, "parent", None) is None:
+        guild, pid = getattr(ch, "guild", None), getattr(ch, "parent_id", None)
+        if guild is not None and pid and hasattr(guild, "fetch_channel") and \
+                not (hasattr(guild, "get_channel") and guild.get_channel(pid) is not None):
+            try:
+                base = await guild.fetch_channel(pid)
+            except Exception:
+                return True
+            name = getattr(base, "name", None)
+            return True if name is None else logic.skipped_channel(name)
+    return place_skipped(ch)
+
+
+def clean_stale_tmp(root):
+    """Remove download folders (att_*, info_*) a crashed run left behind under the temp root."""
+    n = 0
+    root = Path(root)
+    if root.is_dir():
+        for d in list(root.glob("att_*")) + list(root.glob("info_*")):
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+                n += 1
+    return n
 
 
 def _not_found(exc):
@@ -85,18 +127,21 @@ def _not_found(exc):
 # --- walking ---------------------------------------------------------------------------------------------
 
 async def walk_places(guild, archived=True):
-    """Every text/news channel (and every thread of it, active or archived, public or private) and every
+    """Every text/news/voice/stage channel (and every thread of it, active or archived, public or private) and every
     forum post, except the skipped channels. Forums themselves have no messages and are not yielded."""
     forums = list(getattr(guild, "forums", None) or [])
     seen = set()
-    for ch in list(getattr(guild, "text_channels", None) or []) + forums:
+    places = list(getattr(guild, "text_channels", None) or []) + \
+        list(getattr(guild, "voice_channels", None) or []) + list(getattr(guild, "stage_channels", None) or [])
+    for ch in places + forums:
         if logic.skipped_channel(getattr(ch, "name", "")):
             continue
         is_forum = ch in forums
         if not is_forum:
             yield ch
         threads = list(getattr(ch, "threads", None) or [])
-        for private in (() if not archived else (None,) if is_forum else (False, True)):
+        can_archive = hasattr(ch, "archived_threads")
+        for private in (() if not archived or not can_archive else (None,) if is_forum else (False, True)):
             try:
                 it = ch.archived_threads(limit=None) if private is None else \
                     ch.archived_threads(private=private, limit=None)
@@ -120,14 +165,18 @@ def _sha_file(path):
     return h.hexdigest()
 
 
-async def _download(att, dest):
+async def _download(att, dest, strict=True):
+    """Save an attachment. `strict`: the bytes must equal attachment.size. Otherwise (pictures and videos,
+    which the CDN may re-serve with other metadata) anything but empty or truncated (< 50%) is accepted.
+    Returns the size served."""
     last = None
     for i in range(DOWNLOAD_TRIES):
         try:
             await att.save(dest)
-            if att.size and Path(dest).stat().st_size != att.size:
-                raise OSError(f"size mismatch {Path(dest).stat().st_size} != {att.size}")
-            return
+            got, want = Path(dest).stat().st_size, int(att.size or 0)
+            if want and (got != want if strict else (got == 0 or got < want * TRUNCATED_BELOW)):
+                raise OSError(f"size mismatch {got} != {want}")
+            return got
         except Exception as e:
             last = e
             Path(dest).unlink(missing_ok=True)
@@ -136,7 +185,43 @@ async def _download(att, dest):
     raise DownloadError(f"{type(last).__name__}: {last}")
 
 
+_LOCKS = weakref.WeakKeyDictionary()
+
+
+def _dl_lock():
+    """The one download+ffmpeg lock of this event loop (one file at a time: 1 CPU, 939 MB RAM)."""
+    loop = asyncio.get_running_loop()
+    if loop not in _LOCKS:
+        _LOCKS[loop] = asyncio.Lock()
+    return _LOCKS[loop]
+
+
+def _prep_small(prepare, path, kind):
+    """(sha, blob, codec, raw size) of a file read whole; the CPU work, for an executor."""
+    data = Path(path).read_bytes()
+    if kind == "image":
+        stored, codec = media.shrink_image(data)
+        sha, blob, codec = prepare(data, kind, stored=None if codec == "orig" else stored, codec=codec)
+    else:
+        sha, blob, codec = prepare(data, kind)
+    return sha, blob, codec, len(data)
+
+
+def _prep_archive(prepare, path):
+    """Zip listing plus the prepared inner logs [(name, kind, (sha, blob, codec), raw size)]."""
+    inner = []
+    for n, b in media.archive_inner_logs(path):
+        k = logic.file_kind(n)
+        inner.append((Path(n).name or "inner.log", k, prepare(b, k), len(b)))
+    return media.archive_listing(path), inner
+
+
 async def _store_attachment(clinic, att, tmp, stills):
+    async with _dl_lock():
+        return await _store_attachment_locked(clinic, att, tmp, stills)
+
+
+async def _store_attachment_locked(clinic, att, tmp, stills):
     name = Path(att.filename or "file").name or "file"
     kind = logic.file_kind(name)
     size = int(att.size or 0)
@@ -145,8 +230,10 @@ async def _store_attachment(clinic, att, tmp, stills):
     d = Path(tempfile.mkdtemp(prefix="att_", dir=str(tmp)))
     try:
         path = d / name
-        await _download(att, path)
-        rec = {"id": att.id, "filename": name, "kind": kind, "size": path.stat().st_size, "sha256": None}
+        served = await _download(att, path, strict=kind not in LENIENT_SIZE_KINDS)
+        rec = {"id": att.id, "filename": name, "kind": kind, "size": served, "sha256": None}
+        if kind in LENIENT_SIZE_KINDS and size and served != size:
+            rec["served_size"] = served
         mime = getattr(att, "content_type", None) or ""
         loop = asyncio.get_running_loop()
         if kind == "video":
@@ -156,17 +243,19 @@ async def _store_attachment(clinic, att, tmp, stills):
                 if frames:
                     clinic.add_stills(sha, frames)
         else:
-            data = path.read_bytes()
-            if kind == "image":
-                stored, codec = media.shrink_image(data)
-                rec["sha256"] = clinic.put_file(data, name, "image", mime,
-                                                stored=None if codec == "orig" else stored, codec=codec)
+            if served > STREAM_BYTES:
+                sha, blob, raw = await loop.run_in_executor(None, clinic.prepare_stream, path)
+                codec = "lzma"
             else:
-                rec["sha256"] = clinic.put_file(data, name, kind, mime)
+                sha, blob, codec, raw = await loop.run_in_executor(None, _prep_small, clinic.prepare_file,
+                                                                   path, kind)
+            rec["sha256"] = clinic.put_prepared(sha, blob, codec, raw, name, kind, mime)
+            del blob
             if kind == "archive":
-                rec["inner"] = media.archive_listing(path)
-                rec["inner_shas"] = [clinic.put_file(b, Path(n).name or "inner.log", logic.file_kind(n))
-                                     for n, b in media.archive_inner_logs(path)]
+                listing, inner = await loop.run_in_executor(None, _prep_archive, clinic.prepare_file, path)
+                rec["inner"] = listing
+                rec["inner_shas"] = [clinic.put_prepared(p[0], p[1], p[2], raw_n, nm, k)
+                                     for nm, k, p, raw_n in inner]
         return rec
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -238,7 +327,7 @@ async def archive_message(clinic, message, *, log_info_fn=None, tmpdir=None, sti
     tmp = Path(tmpdir or tempfile.gettempdir())
     tmp.mkdir(parents=True, exist_ok=True)
     old = clinic.message(message.id)
-    if old and old["state"] in ("replaced", "deleted"):
+    if old and old["state"] == "deleted":
         return {"removable": rec_removable(old["attachments"]), "infos": [], "state": old["state"]}
     prev = {a["id"]: a for a in (old["attachments"] if old else []) if a.get("id") is not None}
     atts, failed = [], False
@@ -261,6 +350,11 @@ async def archive_message(clinic, message, *, log_info_fn=None, tmpdir=None, sti
         state = "kept"
     else:
         state = "verified" if all(att_verified(clinic, a) for a in atts) else "archived"
+    # a replaced message keeps that state in the record (its replacement is posted); the returned state says
+    # whether all its files are stored now
+    saved = "replaced" if old and old["state"] == "replaced" else state
+    if saved == "replaced" and state == "verified":
+        state = "replaced"
     channel_id, thread_id = _place_ids(message)
     ref = getattr(message, "reference", None)
     clinic.upsert_message({
@@ -268,7 +362,8 @@ async def archive_message(clinic, message, *, log_info_fn=None, tmpdir=None, sti
         "author_id": message.author.id, "author_name": str(getattr(message.author, "name", "")),
         "created": _ts(message.created_at), "edited": _ts(getattr(message, "edited_at", None)),
         "content": message.content or "", "reply_to": getattr(ref, "message_id", None),
-        "attachments": atts, "state": state, "seen": time.time()})
+        "attachments": atts, "state": saved, "seen": time.time(),
+        "dm": 1 if message.guild is None else 0})
     return {"removable": rec_removable(atts), "infos": log_infos(clinic, atts, log_info_fn, tmp), "state": state}
 
 
@@ -294,7 +389,8 @@ def thread_of(message):
     return ch if is_thread(ch) else getattr(message, "thread", None)
 
 
-def ensure_thread_bug(clinic, thread):
+def ensure_thread_bug(clinic, thread, reporter_id=None):
+    """The thread's bug (made if missing). The reporter is the thread's owner, else `reporter_id`."""
     bug = clinic.bug_for_thread(thread.id)
     if bug:
         return bug
@@ -302,7 +398,7 @@ def ensure_thread_bug(clinic, thread):
     forum = parent is not None and hasattr(parent, "available_tags")
     pid = getattr(thread, "parent_id", None) or getattr(parent, "id", None)
     return clinic.new_bug(logic.mask_ips(thread.name or "thread")[:80], "forum post" if forum else "thread",
-                          pid, thread.id)
+                          pid, thread.id, getattr(thread, "owner_id", None) or reporter_id)
 
 
 def _title(text):
@@ -346,7 +442,7 @@ def assign_clusters(clinic, lights, infos_by_id, focus=None):
             seed = next((by_id[i] for i in g if by_id[i]["has_log"]), by_id[g[0]])
             first = next((by_id[i] for i in g if by_id[i]["author_id"] == seed["author_id"]
                           and by_id[i]["content"].strip()), seed)
-            bug = clinic.new_bug(_title(first["content"]), "channel cluster", seed["channel_id"], None)
+            bug = clinic.new_bug(_title(first["content"]), "channel cluster", seed["channel_id"], None, seed["author_id"])
         for dup in existing[1:]:
             if dup != bug:
                 clinic.merge_bugs(bug, dup)
@@ -390,11 +486,11 @@ async def assign_bug(clinic, message, infos, *, log_info_fn=None, tmpdir=None):
         day = time.strftime("%Y-%m-%d", time.gmtime(_ts(message.created_at)))
         title = f"DM log report {day}"
         bug = next((b["id"] for b in clinic.bugs() if b["source"] == "dm" and b["channel_id"] == message.channel.id
-                    and b["title"] == title), None) or clinic.new_bug(title, "dm", message.channel.id, None)
+                    and b["title"] == title), None) or clinic.new_bug(title, "dm", message.channel.id, None, message.author.id)
         clinic.upsert_message({"message_id": message.id, "bug_id": bug})
         return bug
     if t is not None:
-        bug = ensure_thread_bug(clinic, t)
+        bug = ensure_thread_bug(clinic, t, message.author.id)
         clinic.upsert_message({"message_id": message.id, "bug_id": bug})
         return bug
     tmp = Path(tmpdir or tempfile.gettempdir())
@@ -448,12 +544,16 @@ def _chunks(text, limit=DISCORD_LIMIT):
 
 
 async def _media_files(message, rec):
-    """Files to repost in the replacement: everything that is not removable, within the upload cap."""
+    """Files to repost in the replacement: pictures and videos that are not removable, within the upload
+    cap. Anything else that stays out of the message (text, odd files) is left in the clinic (media note)."""
     removable_ids = {a["id"] for a in rec["attachments"] if logic.removable(a["filename"], a.get("inner"))}
     limit = getattr(getattr(message, "guild", None), "filesize_limit", None) or DEFAULT_UPLOAD
     files, budget, left_out = [], limit, False
     for a in all_attachments(message):
         if a.id in removable_ids:
+            continue
+        if logic.file_kind(a.filename) not in ("image", "video"):
+            left_out = True
             continue
         if len(files) >= 10 or a.size > budget:
             left_out = True
@@ -466,16 +566,34 @@ async def _media_files(message, rec):
     return files, left_out
 
 
+def _status(exc):
+    return getattr(exc, "status", None)
+
+
 async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_export, extra=""):
     """Post the replacement note, delete the original, record. Returns the final state, "would-replace"
-    when delete is False, or "blocked:<why>". A message already `replaced` skips the post. `extra`: more
-    of Iosefka's words (bug_filed / network_help) added to the same message when they fit."""
+    when delete is False, or "blocked:<why>" (not-archived, dm, skipped, not-verified, not-exported). A
+    message already `replaced` skips the post. A delete the bot may not do is recorded as
+    "delete_forbidden". `extra`: more of Iosefka's words (bug_filed / network_help) added to the same
+    message when they fit. The message is re-fetched first: what is deleted is what Discord holds now."""
     mid = message.id
     rec = clinic.message(mid)
     if not rec:
         return "blocked:not-archived"
     if rec["state"] == "deleted":
         return "deleted"
+    if message.guild is None:  # a DM is private: never touched
+        return "blocked:dm"
+    if await aplace_skipped(message.channel):
+        return "blocked:skipped"
+    if delete:
+        try:
+            message = await message.channel.fetch_message(mid)
+        except Exception as e:
+            if _not_found(e):
+                clinic.set_state(mid, "deleted")
+                return "deleted"
+            raise
     ids = {a.id for a in all_attachments(message)}
     stored = {a["id"] for a in rec["attachments"]}
     if rec["state"] not in ("verified", "replaced") or not rec["attachments"] or not ids <= stored \
@@ -505,20 +623,25 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
                     more = _chunks(extra)
             am = AllowedMentions(users=[message.author], everyone=False, roles=False) if ping \
                 else AllowedMentions.none()
-            kw = {"allowed_mentions": am}
+            # the nonce makes Discord drop a second post of the same replacement (a retry after a lost reply)
+            kw = {"allowed_mentions": am, "nonce": str(mid)[-25:], "enforce_nonce": True}
             try:
                 sent = await ch.send(text, files=files, **kw) if files else await ch.send(text, **kw)
-            except Exception:
-                if not files:
+            except Exception as e:
+                if not files or _status(e) not in (400, 413):  # only "payload too large" drops the files
                     raise
                 text = voice.replacement(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE)
                 sent = await ch.send(text, **kw)
             clinic.set_state(mid, "replaced", sent.id)
             for part in more:
-                await ch.send(part, **kw)
+                await ch.send(part, allowed_mentions=am)
         try:
             await message.delete()
         except Exception as e:
+            if type(e).__name__ == "Forbidden":
+                clinic.set_state(mid, "delete_forbidden")
+                print(f"cannot delete {mid}: Forbidden (the replacement is posted)", file=sys.stderr, flush=True)
+                return "delete_forbidden"
             if not _not_found(e):
                 raise
         clinic.set_state(mid, "deleted")
