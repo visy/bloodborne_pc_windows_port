@@ -188,6 +188,10 @@ std::vector<EmevdSkipRule> BossRoomRules() {
     // role: the music starts once the fight is started (12101852) and the player stands in the
     // fight area (region 2102801), as when playing alone.
     out.push_back(EmevdSkipRule{12104853, 3, 0, 8, false});
+    // Gehrman's boss music (event 12104803, same layout): its wait [8] needs flag 12104801, set only
+    // by the guest fog-entry event 12104811, and Gehrman's fight starts from his talk with no fog
+    // for anyone (CL-19ed70). Skipped for every role, as the Moon Presence's above.
+    out.push_back(EmevdSkipRule{12104803, 3, 0, 8, false});
     return out;
 }
 
