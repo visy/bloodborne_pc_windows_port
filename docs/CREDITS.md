@@ -12,6 +12,7 @@ Special thanks to the original creators and open source projects that made this 
 - **Mrsuss60**: creator of the original native Windows port ([bloodborne_pc_windows_port](https://github.com/Mrsuss60/bloodborne_pc_windows_port)): the Win32 runtime and Vulkan on Windows, the Windows build scripts, character creation and keyboard menu fixes, and merging community pull requests.
 - **shadPS4 Team**: Base Vulkan video core and shader recompiler; after 0.6.9 the texture cache looking up only the first page for an image that starts at an address (shadPS4 145932bf, via Mrsuss60's port cff50085).
 - **FireBurn**: FSR-Vulkan runtime and temporal upscaling backend.
+- **iannitram** (via deadinside28's bbport PR #293, issue #85), ported in 0.7.7: `gpu/patches/fsr-vulkan/0002-ffx_vk-never-pick-a-protected-memory-type.patch`, FSR 3.1 never allocating protected memory types (fixes colour noise on RADV Phoenix handhelds). That patch file is MIT-licensed, like the FFX/FSR-Vulkan code it patches.
 - **Thealexbarney**: LibAtrac9 audio decoding library.
 - **ocornut**: Dear ImGui library for the in-game settings overlay.
 - **Supermedo** and **IFreemz**: DLSS bridge.
