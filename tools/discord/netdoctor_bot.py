@@ -51,6 +51,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import clinic_asks as asks  # noqa: E402
+import clinic_outbox as ob  # noqa: E402
 import clinic_discord as cd  # noqa: E402
 import clinic_health as hl  # noqa: E402
 import clinic_logic  # noqa: E402
@@ -574,64 +575,95 @@ def _seed_author(clinic, bug_id):
 
 
 async def send_outbox(ctx, out=print):
-    """Post the developers' --tell texts (queued by iosefka_cli) in the bug's thread or channel, once each."""
+    """Post the developers' --tell / ask texts (queued by iosefka_cli), once each. Rows for the same person with
+    the same text (several bugs of one reporter) go out as ONE message listing every bug, in the newest bug's place;
+    a text the person already got within the window (NW_TELL_WINDOW_HOURS, 24) is recorded as delivered, not re-sent."""
     sent = 0
-    for row in ctx.clinic.outbox_pending():
-        bug = ctx.clinic.bug(row["bug_id"])
-        if row.get("kind") == "ask":
-            await _send_ask(ctx, row, bug)
-            sent += 1
+    for group in ob.groups(ctx.clinic, ctx.clinic.outbox_pending()):
+        key = ob.key_of(ctx.clinic, group[0])
+        prev = ob.recent_delivery(ctx.clinic, key, exclude={r["id"] for r in group}) if key else None
+        if prev:
+            for r in group:
+                ctx.clinic.add_note(ob.shown_id(r), "iosefka", "status",
+                                    f"not re-sent: this person already got this text (outbox {prev['id']}, "
+                                    f"about {ob.shown_id(prev)}); recorded as delivered")
+                ctx.clinic.outbox_sent(r["id"], merged_into=prev["id"])
             continue
-        place = None
-        for cid in ((bug["thread_id"], bug["channel_id"]) if bug else ()):
-            if cid:
-                try:
-                    place = ctx.client.get_channel(cid) or await ctx.client.fetch_channel(cid)
-                    break
-                except Exception as e:
-                    if type(e).__name__ not in ("NotFound", "Forbidden"):
-                        raise
-        if place is None:
-            ctx.clinic.add_note(row["bug_id"], "iosefka", "status", "tell not delivered: no place to post it")
-            ctx.clinic.outbox_sent(row["id"])
-            continue
-        text, am = voice.told(row["text"]), cd.AllowedMentions.none()
-        reporter = bug.get("reporter_id") or _seed_author(ctx.clinic, bug["id"])
-        if reporter:  # only the reporter is addressed, never another poster of the bug
-            text = f"<@{reporter}> " + text
-            am = cd.AllowedMentions(users=[type("U", (), {"id": reporter})()], everyone=False, roles=False)
-        reopened = None
-        try:
-            if cd.is_thread(place) and (place.archived or place.locked):
-                reopened = (place.archived, place.locked)
-                await place.edit(archived=False, locked=False)
-            await place.send(text[:DISCORD_LIMIT], allowed_mentions=am)
-        except Exception as e:
-            if type(e).__name__ in ("Forbidden", "NotFound"):
-                ctx.clinic.add_note(row["bug_id"], "iosefka", "status", f"tell not delivered: {type(e).__name__}")
-                if type(e).__name__ == "Forbidden":
-                    ctx.health.forbidden(place.id, "post")
+        ids = [ob.shown_id(r) for r in group]
+        lead = None
+        for row in reversed(group):  # newest bug first; an older place only when the newer one is gone
+            res = await _deliver(ctx, row, ids)
+            if res == "sent":
+                lead = row
+                break
+            ctx.clinic.add_note(ob.shown_id(row), "iosefka", "status",
+                                ("tell" if (row.get("kind") or "tell") != "ask" else "ask") + f" not delivered: {res}")
+            if len(group) == 1:
+                break
+        for row in group:
+            if lead is not None and row is lead:
                 ctx.clinic.outbox_sent(row["id"])
-                continue
-            raise
-        finally:
-            if reopened:
-                try:
-                    await place.edit(locked=reopened[1], archived=reopened[0])
-                except Exception:
-                    pass
-        ctx.clinic.outbox_sent(row["id"])
-        sent += 1
+            elif lead is not None:
+                ctx.clinic.add_note(ob.shown_id(row), "iosefka", "status",
+                                    f"told together with {ob.ids_phrase(ids)} in one message (outbox {lead['id']})")
+                ctx.clinic.outbox_sent(row["id"], merged_into=lead["id"])
+            else:
+                ctx.clinic.outbox_sent(row["id"])
+        if lead is not None:
+            sent += 1
     return sent
 
 
-async def _send_ask(ctx, row, bug):
+async def _deliver(ctx, row, ids):
+    """Post one outbox row (naming every bug id in `ids`). Returns "sent" or the reason it was not delivered."""
+    bug = ctx.clinic.bug(row["bug_id"])
+    if row.get("kind") == "ask":
+        return await _send_ask(ctx, row, bug, ids)
+    place = None
+    for cid in ((bug["thread_id"], bug["channel_id"]) if bug else ()):
+        if cid:
+            try:
+                place = ctx.client.get_channel(cid) or await ctx.client.fetch_channel(cid)
+                break
+            except Exception as e:
+                if type(e).__name__ not in ("NotFound", "Forbidden"):
+                    raise
+    if place is None:
+        return "no place to post it"
+    body = row["text"] if len(ids) < 2 else f"About {ob.ids_phrase(ids)}: {row['text']}"
+    text, am = voice.told(body), cd.AllowedMentions.none()
+    reporter = bug.get("reporter_id") or _seed_author(ctx.clinic, bug["id"])
+    if reporter:  # only the reporter is addressed, never another poster of the bug
+        text = f"<@{reporter}> " + text
+        am = cd.AllowedMentions(users=[type("U", (), {"id": reporter})()], everyone=False, roles=False)
+    reopened = None
+    try:
+        if cd.is_thread(place) and (place.archived or place.locked):
+            reopened = (place.archived, place.locked)
+            await place.edit(archived=False, locked=False)
+        await place.send(text[:DISCORD_LIMIT], allowed_mentions=am)
+    except Exception as e:
+        if type(e).__name__ in ("Forbidden", "NotFound"):
+            if type(e).__name__ == "Forbidden":
+                ctx.health.forbidden(place.id, "post")
+            return type(e).__name__
+        raise
+    finally:
+        if reopened:
+            try:
+                await place.edit(locked=reopened[1], archived=reopened[0])
+            except Exception:
+                pass
+    return "sent"
+
+
+async def _send_ask(ctx, row, bug, ids=None):
     """A developer's ask (`ask` / `cl ask`): posted in the record's place to its reporter, once; a staff reporter
-    is never asked."""
+    is never asked. `ids`: every bug the same ask covers (one message). Returns "sent" or why not."""
     clinic_asks = asks
     ask = json.loads(row["text"])
     reporter = clinic_asks.reporter_of(ctx.clinic, bug) if bug else None
-    note_bug = ask["bug"]
+    shown = ob.ids_phrase(ids) if ids else ask["bug"]
     res = "skip:no bug"
     if bug and reporter:
         member = None
@@ -642,10 +674,8 @@ async def _send_ask(ctx, row, bug):
             res = "skip:staff"
         else:
             res = await clinic_asks.post_to_bug(
-                ctx, bug, lambda m: voice.reporter_ask(m, note_bug, ask["issue"], ask["need"]))
-    if res != "sent":
-        ctx.clinic.add_note(note_bug, "iosefka", "status", f"ask not delivered ({row['bug_id']}): {res}")
-    ctx.clinic.outbox_sent(row["id"])
+                ctx, bug, lambda m: voice.reporter_ask(m, shown, ask["issue"], ask["need"]))
+    return res
 
 
 async def disk_guard(ctx, guilds, out=print):
