@@ -39,6 +39,7 @@ import asyncio
 import fnmatch
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -216,7 +217,7 @@ class Ctx:
 
 
 CTX = None
-LATE_RULES = ("explicit", "reply", "session", "followup")  # links to a bug that is already on the table
+LATE_RULES = ("explicit", "reply", "session", "followup", "ask")  # links to a bug that is already on the table
 
 
 def _stills_ok(ctx):
@@ -577,6 +578,10 @@ async def send_outbox(ctx, out=print):
     sent = 0
     for row in ctx.clinic.outbox_pending():
         bug = ctx.clinic.bug(row["bug_id"])
+        if row.get("kind") == "ask":
+            await _send_ask(ctx, row, bug)
+            sent += 1
+            continue
         place = None
         for cid in ((bug["thread_id"], bug["channel_id"]) if bug else ()):
             if cid:
@@ -618,6 +623,29 @@ async def send_outbox(ctx, out=print):
         ctx.clinic.outbox_sent(row["id"])
         sent += 1
     return sent
+
+
+async def _send_ask(ctx, row, bug):
+    """A developer's ask (`ask` / `cl ask`): posted in the record's place to its reporter, once; a staff reporter
+    is never asked."""
+    clinic_asks = asks
+    ask = json.loads(row["text"])
+    reporter = clinic_asks.reporter_of(ctx.clinic, bug) if bug else None
+    note_bug = ask["bug"]
+    res = "skip:no bug"
+    if bug and reporter:
+        member = None
+        guild = ctx.client.get_guild(ctx.guild_id) if ctx.guild_id else None
+        if guild is not None:
+            member = guild.get_member(reporter)
+        if member is not None and is_staff(member):
+            res = "skip:staff"
+        else:
+            res = await clinic_asks.post_to_bug(
+                ctx, bug, lambda m: voice.reporter_ask(m, note_bug, ask["issue"], ask["need"]))
+    if res != "sent":
+        ctx.clinic.add_note(note_bug, "iosefka", "status", f"ask not delivered ({row['bug_id']}): {res}")
+    ctx.clinic.outbox_sent(row["id"])
 
 
 async def disk_guard(ctx, guilds, out=print):
