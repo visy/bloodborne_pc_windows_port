@@ -215,6 +215,8 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   / adapter name). Or let a player with an open port host.
   The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
   *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
+  On the opt-in Nightwatch VPN a host with a password can also turn on *Nightwatch VPN lobby* (off by default):
+  the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password.
 - **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*). If the game says the firewall *blocks* it (you cancelled the prompt once), press **Fix firewall issues** in the launcher's party help (one admin prompt: removes the game's inbound Block rules, adds Allow rules for UDP + TCP on the party port), or delete the Block entries by hand (`wf.msc` → Inbound Rules, red block icon).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 

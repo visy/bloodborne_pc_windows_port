@@ -917,6 +917,125 @@ def discovery_own_ips() -> set:
     return ips
 
 
+# ---- Nightwatch VPN lobby (0.7.7, bbport.ini party_vpn_lobby, off by default). LAN discovery does not cross
+# an OpenVPN tunnel, so hosts on the Nightwatch VPN announce to a small lobby on the VPN server (10.8.0.1,
+# UDP 9310; tools/vpn/lobby/nwlobby.py, docs/party/nightwatch_vpn.md) and this list asks it. The lobby gives
+# the host's tunnel address to join with; it is kept in the row and NEVER shown or saved.
+LOBBY_ADDR = "10.8.0.1"
+LOBBY_PORT = 9310
+LOBBY_POLL_S = 5.0
+LOBBY_MAX_PAGES = 20
+LOBBY_MAGIC = b"\xfaL"
+LOBBY_FLAG_PASSWORD, LOBBY_FLAG_OWN = 1, 2
+
+
+def lobby_tunnel_ip(ips):
+    """This PC's Nightwatch tunnel address (10.8.0.2 - 10.8.0.254) among `ips`, or ''."""
+    for ip in ips:
+        parts = str(ip).split(".")
+        if len(parts) == 4 and parts[:3] == ["10", "8", "0"] and parts[3].isdigit() and 2 <= int(parts[3]) <= 254:
+            return ip
+    return ""
+
+
+def lobby_target():
+    """((host, port), test) of the lobby. BB_PARTY_VPNLOBBY_ADDR=ip:port (tests) points at another lobby and
+    skips the 10.8.0.x address requirement."""
+    t = (os.environ.get("BB_PARTY_VPNLOBBY_ADDR") or "").strip()
+    if t:
+        host, _, port = t.rpartition(":") if ":" in t else (t, "", str(LOBBY_PORT))
+        return (host, int(port) if port.isdigit() else LOBBY_PORT), True
+    return (LOBBY_ADDR, LOBBY_PORT), False
+
+
+def lobby_list_request(offset: int = 0) -> bytes:
+    return LOBBY_MAGIC + bytes([1, 2, (offset >> 8) & 255, offset & 255])
+
+
+def lobby_parse_reply(data: bytes):
+    """(total, offset, entries) of a lobby list reply, or None for anything else (untrusted input: strict).
+    An entry: {'ip', 'port', 'password', 'own', 'players', 'max', 'name', 'build'}."""
+    if not isinstance(data, (bytes, bytearray)) or not 9 <= len(data) <= 1024:
+        return None
+    if data[:2] != LOBBY_MAGIC or data[2] != 1 or data[3] != 3:
+        return None
+    total, offset, count = (data[4] << 8) | data[5], (data[6] << 8) | data[7], data[8]
+    pos = 9
+    out = []
+    for _ in range(count):
+        if pos + 10 > len(data):
+            return None
+        ip = ".".join(str(b) for b in data[pos:pos + 4])
+        port = (data[pos + 4] << 8) | data[pos + 5]
+        flags, players, maxp, n = data[pos + 6], data[pos + 7], data[pos + 8], data[pos + 9]
+        pos += 10
+        if flags & ~3 or port < 1024 or maxp < 1 or maxp > 8 or players > maxp or n == 0 or pos + n + 1 > len(data):
+            return None
+        try:
+            name = bytes(data[pos:pos + n]).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        pos += n
+        b = data[pos]
+        pos += 1
+        if pos + b > len(data):
+            return None
+        raw = bytes(data[pos:pos + b])
+        pos += b
+        if any(c < 0x20 or c >= 0x7F for c in raw):
+            return None
+        # a hostile lobby cannot put control characters into the UI
+        name = "".join(ch for ch in name if ch.isprintable())[:16]
+        if not name:
+            return None
+        out.append({"ip": ip, "port": port, "password": bool(flags & LOBBY_FLAG_PASSWORD),
+                    "own": bool(flags & LOBBY_FLAG_OWN), "players": players, "max": maxp, "name": name,
+                    "build": raw.decode("ascii")})
+    return (total, offset, out) if pos == len(data) else None
+
+
+def lobby_fetch(target, bind_ip: str = "", timeout: float = 1.0):
+    """The lobby's games as a list of entry dicts (all pages), or None when it does not answer."""
+    import socket
+    entries, offset = [], 0
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            if bind_ip:
+                sock.bind((bind_ip, 0))
+            for _ in range(LOBBY_MAX_PAGES):
+                sock.sendto(lobby_list_request(offset), target)
+                while True:  # only the lobby's own answer counts
+                    data, addr = sock.recvfrom(2048)
+                    if addr[0] == target[0] and addr[1] == target[1]:
+                        break
+                parsed = lobby_parse_reply(data)
+                if parsed is None or parsed[1] != offset:
+                    return None if not entries else entries
+                total, _, page = parsed
+                entries += page
+                offset += len(page)
+                if not page or offset >= total:
+                    break
+    except (OSError, ValueError):
+        return None if not entries else entries
+    return entries
+
+
+def lobby_rows(entries: list, my_version: str) -> list:
+    """The lobby list's rows: [{'iid', 'name', 'players', 'password', 'build', 'address', 'ok'}]. Your own game
+    is left out. 'address' is for joining only; the UI never shows it."""
+    rows = []
+    for i, e in enumerate(sorted(entries or [], key=lambda e: (e["name"].lower(), e["ip"]))):
+        if e["own"]:
+            continue
+        rows.append({"iid": f"vpn/{i}", "name": e["name"], "players": f"{e['players']}/{e['max']}",
+                     "password": "yes" if e["password"] else "no", "build": e["build"],
+                     "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
+                     "ok": discovery_build_matches(e["build"], my_version)})
+    return rows
+
+
 def discovery_open_network_warning(mode: str, password: str, vpn_label: str) -> str:
     """A warning for a host without a password over a network strangers can be on (Radmin VPN and
     Hamachi networks may be public); '' when nothing to say."""
@@ -2898,6 +3017,13 @@ class BloodborneLauncher(tk.Tk):
         self.discovery_peers = []
         self.discovery_rows = {}
         self.discovery_warn_var = tk.StringVar(value="")
+        # 0.7.7 Nightwatch VPN lobby (bbport.ini party_vpn_lobby, off by default)
+        self.party_vpn_lobby = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_vpn_lobby", False))
+        self.vpn_lobby_entries = []
+        self.vpn_lobby_rows = {}
+        self.vpn_lobby_info_var = tk.StringVar(value="")
+        self._vpn_lobby_busy = False
+        self._vpn_join_addr = ""
         self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
         self.party_port_suffix_var = tk.StringVar(value="")
         self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
@@ -3770,6 +3896,7 @@ class BloodborneLauncher(tk.Tk):
         self.update_port_suffix()
         self.refresh_vpn()
         self.build_discovery_section(tab)
+        self.build_vpn_lobby_section(tab)
         self.after(2000, self.party_code_tick)
 
     def build_party_settings_tab(self, title: str, intro: str, sections: list) -> ttk.Frame:
@@ -3913,6 +4040,8 @@ class BloodborneLauncher(tk.Tk):
         if hasattr(self, "discovery_tree"):
             self.party_discovery.set(ini_flag_value(ini, "party_discovery", True))
             self.on_discovery_toggle(save=False)
+        if hasattr(self, "vpn_lobby_tree"):
+            self.party_vpn_lobby.set(ini_flag_value(ini, "party_vpn_lobby", False))
 
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
@@ -3996,7 +4125,10 @@ class BloodborneLauncher(tk.Tk):
             problems.append("Your name: 1-16 letters, digits, _ or - (no spaces).")
         if party_port(self.party_port_var.get()) is None:
             problems.append("Port: a number from 1024 to 65535.")
-        if mode == "join":
+        if mode == "join" and self._vpn_join_addr:
+            if not self.party_password_var.get():
+                problems.append("Enter the game's password.")
+        elif mode == "join":
             problem = party_code_problem(self.party_code_var.get())
             if problem:
                 problems.append(f"Party code: {problem}.")
@@ -4119,6 +4251,140 @@ class BloodborneLauncher(tk.Tk):
         self.party_password_var.trace_add("write", lambda *a: self.update_discovery_warning())
         self.on_discovery_toggle(save=False)
         self.after(1000, self.discovery_tick)
+
+    def build_vpn_lobby_section(self, tab):
+        """The Join page's 'Nightwatch VPN games' list: the lobby on the VPN server (never shows an address)."""
+        sec = self._section(tab, 0, "Nightwatch VPN games", row=2)
+        for w in tab.grid_slaves(row=0, column=1):
+            w.grid_configure(rowspan=3)
+        self._check(sec, "Nightwatch VPN lobby", self.party_vpn_lobby,
+                    "Off by default. On the Nightwatch VPN (your 10.8.0.x address), hosting with a password "
+                    "shows your character name, slots and version to the other VPN players, and this list shows "
+                    "theirs. Nobody sees an address, a password or an account name. Needs the VPN connected "
+                    "(bbport.ini party_vpn_lobby; in the game: System > Party network).",
+                    command=self.on_vpn_lobby_toggle)
+        cols = ("name", "players", "password", "build")
+        heads = {"name": "Hunter", "players": "Slots", "password": "Pass", "build": "Build"}
+        widths = {"name": 130, "players": 50, "password": 44, "build": 70}
+        holder = ttk.Frame(sec, style="Card.TFrame")
+        holder.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        self.vpn_lobby_tree = ttk.Treeview(holder, columns=cols, show="headings", height=4, selectmode="browse")
+        for c in cols:
+            self.vpn_lobby_tree.heading(c, text=heads[c])
+            self.vpn_lobby_tree.column(c, width=widths[c], stretch=False, anchor="w")
+        self.vpn_lobby_tree.tag_configure("mismatch", foreground="#6c6c6c")
+        self.vpn_lobby_tree.pack(side="left")
+        self.vpn_lobby_tree.bind("<Double-1>", lambda e: self.join_vpn_lobby_game())
+        row = ttk.Frame(sec, style="Card.TFrame")
+        row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        self.vpn_lobby_join_btn = ttk.Button(row, text="Join", style="Secondary.TButton",
+                                             command=self.join_vpn_lobby_game)
+        self.vpn_lobby_join_btn.pack(side="left")
+        Tooltip(self.vpn_lobby_join_btn, "Asks for the host's password, then starts the game as a guest. "
+                                         "Greyed rows run another bbport version.")
+        ttk.Label(row, textvariable=self.vpn_lobby_info_var, style="Hint.TLabel").pack(side="left", padx=(8, 0))
+        self.after(1000, self.vpn_lobby_tick)
+
+    def on_vpn_lobby_toggle(self):
+        try:
+            update_ini(bbport_ini_path(), {"party_vpn_lobby": "1" if self.party_vpn_lobby.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save party_vpn_lobby to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
+        if not self.party_vpn_lobby.get():
+            self.vpn_lobby_entries = []
+
+    def vpn_lobby_own_ip(self) -> str:
+        ips = set(discovery_own_ips())
+        ips.update(a.get("ip", "") for a in self.vpn_adapters)
+        return lobby_tunnel_ip(sorted(ips))
+
+    def refresh_vpn_lobby(self):
+        """Ask the lobby (in a thread). The test override skips the 10.8.0.x address requirement."""
+        if self._vpn_lobby_busy:
+            return
+        target, test = lobby_target()
+        own = "127.0.0.1" if test else self.vpn_lobby_own_ip()
+        if not own:
+            self.vpn_lobby_entries = None
+            return
+        self._vpn_lobby_busy = True
+
+        def work():
+            try:
+                self.vpn_lobby_entries = lobby_fetch(target, own)
+            finally:
+                self._vpn_lobby_busy = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def vpn_lobby_tick(self):
+        try:
+            on = self.party_vpn_lobby.get()
+            if on:
+                self._lobby_clock = getattr(self, "_lobby_clock", 0) + 1
+                if self._lobby_clock % int(LOBBY_POLL_S) == 1:
+                    self.refresh_vpn_lobby()
+                rows = lobby_rows(self.vpn_lobby_entries or [], PORT_VERSION)
+            else:
+                rows = []
+            self.show_vpn_lobby_rows(rows, on)
+        finally:
+            self.after(1000, self.vpn_lobby_tick)
+
+    def show_vpn_lobby_rows(self, rows: list, on: bool):
+        tree = self.vpn_lobby_tree
+        selected = tree.selection()
+        want = {r["iid"]: r for r in rows}
+        for iid in list(tree.get_children()):
+            if iid not in want:
+                tree.delete(iid)
+        for idx, r in enumerate(rows):
+            values = (r["name"], r["players"], r["password"], r["build"].split(" ")[0])
+            tags = () if r["ok"] else ("mismatch",)
+            if r["iid"] in tree.get_children():
+                tree.item(r["iid"], values=values, tags=tags)
+            else:
+                tree.insert("", idx, iid=r["iid"], values=values, tags=tags)
+        self.vpn_lobby_rows = want
+        if selected and selected[0] in want:
+            tree.selection_set(selected[0])
+        if not on:
+            self.vpn_lobby_info_var.set("Off.")
+        elif self.vpn_lobby_entries is None:
+            self.vpn_lobby_info_var.set("Connect to the Nightwatch VPN first.")
+        else:
+            self.vpn_lobby_info_var.set("" if rows else "No games yet.")
+
+    def join_vpn_lobby_game(self):
+        sel = self.vpn_lobby_tree.selection()
+        row = self.vpn_lobby_rows.get(sel[0]) if sel else None
+        if not row:
+            messagebox.showinfo("Join a game", "Select a game in the list first.")
+            return
+        if not row["ok"] and not messagebox.askyesno(
+                "Other version", f"{row['name']} runs {row['build']}, you run {PORT_VERSION}. The game will "
+                                 "refuse to join. Try anyway?"):
+            return
+        from tkinter import simpledialog
+        password = simpledialog.askstring("Password", f"Password of {row['name']}'s game:", show="*", parent=self)
+        if not password:
+            return
+        before = (self.party_mode_var.get(), self.party_password_var.get(), self.party_code_var.get())
+        self._vpn_join_addr = row["address"]       # for the launch only; not shown, not saved
+        self.party_mode_var.set(PARTY_MODES[2][0])
+        self.party_code_var.set("")
+        self.party_password_var.set(password)
+        try:
+            self.update_party_state()
+            self.launch_game()
+        finally:
+            self._vpn_join_addr = ""
+            self.party_mode_var.set(before[0])
+            self.party_password_var.set(before[1])
+            self.party_code_var.set(before[2])
+            self.update_party_state()
 
     def on_discovery_toggle(self, save: bool = True):
         if save:
@@ -5684,6 +5950,8 @@ class BloodborneLauncher(tk.Tk):
             else:
                 env[key] = value
         env["BB_GAME_DIR"] = str(game_dir)
+        if self._vpn_join_addr and self.party_mode() == "join":
+            env["BB_PARTY_CODE"] = self._vpn_join_addr  # a Nightwatch VPN lobby game: the address stays out of the UI
         if warper:
             warper_env(env, warper_paths())
         elif not self.offer_party_save_copy(env):
