@@ -8,7 +8,7 @@
 // link that stays silent after the load ended is a real outage again, from the load's end on.
 //
 // Pure bookkeeping (no sockets, no logging, no locks - the owner locks) so tests drive it with a
-// fake clock. Scope key 0 is this game's own load; any other key is a peer (the net layer's
+// fake clock. Scope key 0 is this game's own load, 1 the session host's, any other key a peer (the net layer's
 // source_key).
 #include <chrono>
 #include <cstdint>
@@ -19,6 +19,9 @@ namespace bbnet::nr {
 class LoadGapGate {
 public:
     using Clock = std::chrono::steady_clock;
+    static constexpr std::uint64_t kOwn = 0;   // this game's own load
+    static constexpr std::uint64_t kHost = 1;  // the session host's load, seen from a guest: the whole
+                                               // session (guest-guest links too) goes quiet in it
 
     void set_loading(std::uint64_t scope, bool loading, Clock::time_point now) {
         Scope& s = scopes_[scope];
@@ -36,7 +39,7 @@ public:
     // since that load ended; with no load in the gap, the whole gap.
     double effective_silent_s(std::uint64_t peer, Clock::time_point prev, Clock::time_point now) const {
         Clock::time_point from = prev;
-        for (std::uint64_t k : {std::uint64_t(0), peer}) {
+        for (std::uint64_t k : {kOwn, kHost, peer}) {
             auto it = scopes_.find(k);
             if (it == scopes_.end()) continue;
             const Scope& s = it->second;
@@ -52,7 +55,7 @@ public:
     }
     // Whether a load of either side touched the gap at all (for log wording).
     bool load_touched(std::uint64_t peer, Clock::time_point prev) const {
-        for (std::uint64_t k : {std::uint64_t(0), peer}) {
+        for (std::uint64_t k : {kOwn, kHost, peer}) {
             auto it = scopes_.find(k);
             if (it == scopes_.end()) continue;
             const Scope& s = it->second;
