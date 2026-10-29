@@ -232,11 +232,19 @@ class OverUdp(unittest.TestCase):
         th.start()
         try:
             c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            c.settimeout(2)
-            c.sendto(ann(name="Lo"), ("127.0.0.1", port))
-            time.sleep(0.3)
-            c.sendto(nw.encode_list(), ("127.0.0.1", port))
-            total, off, ents = nw.parse_reply(c.recvfrom(2048)[0])
+            c.settimeout(0.3)
+            reply = None
+            for _ in range(20):  # the server thread may not be bound yet (Windows then reports a reset)
+                try:
+                    c.sendto(ann(name="Lo"), ("127.0.0.1", port))
+                    time.sleep(0.05)
+                    c.sendto(nw.encode_list(), ("127.0.0.1", port))
+                    reply = c.recvfrom(2048)[0]
+                    break
+                except (ConnectionResetError, socket.timeout):
+                    time.sleep(0.1)
+            self.assertIsNotNone(reply, "no reply from the lobby")
+            total, off, ents = nw.parse_reply(reply)
             self.assertEqual((total, ents[0]["name"], ents[0]["own"]), (1, "Lo", True))
             c.close()
         finally:
