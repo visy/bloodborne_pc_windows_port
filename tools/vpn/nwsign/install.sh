@@ -86,7 +86,8 @@ ADMIN="runuser -u nwsign -- env NWSIGN_CONF=$ETC/nwsign.json python3 -I $APP/nws
 
 # ---- sub-CA + HTTPS key (as nwsign); sub-CA signed once by the root key (as root) --------------
 PIN=$($ADMIN init)
-if [ ! -f "$STATE/priv/subca.crt" ]; then
+# (re)sign unless a sub-CA cert issued by this root is there (a failed earlier run can leave an empty file)
+if ! openssl verify -CAfile "$OVPN/ca.crt" "$STATE/priv/subca.crt" >/dev/null 2>&1; then
   NWSIGN_CONF=$ETC/nwsign.json python3 -I "$APP/nwsign-admin" sign-subca --root-key "$ROOT_KEY" --root-crt "$OVPN/ca.crt"
 fi
 cp "$OVPN/ca.crt" "$STATE/priv/root-ca.crt"
