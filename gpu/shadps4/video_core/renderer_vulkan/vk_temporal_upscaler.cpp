@@ -2433,6 +2433,10 @@ TemporalUpscaler::GenerationGuides TemporalUpscaler::FrameGenerationGuides(VAddr
     return it != displays.end() && it->second.valid ? it->second.guides : GenerationGuides{};
 }
 
+bool TemporalUpscaler::IsUiColorAddress(VAddr address) const {
+    return ui_color && texture_cache.GetImage(ui_color).info.guest_address == address;
+}
+
 bool TemporalUpscaler::RedirectDepth(VideoCore::ImageId depth, Target& target) {
     if (!ui_phase || depth != ui_depth) {
         return false;
