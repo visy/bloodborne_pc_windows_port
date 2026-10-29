@@ -110,6 +110,17 @@ if [ -f "$FW" ] && ! grep -q "dport $PORT " "$FW"; then
   sed -i "/--dport 1194 -j ACCEPT/a iptables -D INPUT -i eth0 -p tcp --dport $PORT -j ACCEPT 2>/dev/null   # nwsign" "$FWRM"
 fi
 iptables -C INPUT -i eth0 -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i eth0 -p tcp --dport "$PORT" -j ACCEPT
+# A separate nftables table (/etc/nftables.conf, "inet filter", input policy drop) also sees every packet:
+# open the port there too, live and in the file (next to the 1194 rule).
+NFT=/etc/nftables.conf
+if command -v nft >/dev/null && nft list chain inet filter input >/dev/null 2>&1; then
+  nft list chain inet filter input | grep -q "tcp dport $PORT accept" || nft add rule inet filter input tcp dport "$PORT" accept
+  if [ -f "$NFT" ] && ! grep -q "tcp dport $PORT accept" "$NFT"; then
+    cp -an "$NFT" "$NFT.pre-nwsign"
+    sed -i "/^[[:space:]]*udp dport 1194 accept/a\        tcp dport $PORT accept        # nwsign" "$NFT"
+    nft -c -f "$NFT" || { cp -a "$NFT.pre-nwsign" "$NFT"; die "nftables.conf edit did not check; restored"; }
+  fi
+fi
 
 # ---- service -------------------------------------------------------------------------------------
 install -m 644 "$SRC/nwsign.service" /etc/systemd/system/nwsign.service
