@@ -126,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 iid = req.get("install_id")
                 if isinstance(iid, str):
-                    wait = lim.hit(lim.key("r", iid), cfg["renew_per_install_day"], DAY)
+                    wait = lim.hit(lim.key("r", ip) + iid, cfg["renew_per_install_day"], DAY)  # per caller too: an unsigned spam with a victim's id cannot use up its renewals
                     if wait:
                         return self.limited(wait)
                 resp = s.renew(iid, req.get("csr"), req.get("timestamp"), req.get("signature"), req.get("cert"))
