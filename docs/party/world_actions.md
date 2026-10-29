@@ -654,6 +654,27 @@ threshold turns the carry off in the slow ease phases at a real 120 FPS (the pro
 car's build fields; `party_lift_watch.cpp`), smoke phase `lfx` (the lf ride with two players), `BB_LF_PIN` /
 `BB_LF_CAR_DELAY` (shorten the wait on the landing: the ride before the build).
 
+**Walk-in proof (liftwalk077, 2026-10-30, smoke phases `lfw` / `lfwc` / `lfws` / `lfwcs`, groups `lift_walk` / `lift_walk_slow`).**
+Riders are walked onto the car by the left stick (the route walker over positions recorded from real walks, then a stick
+step into the trigger box), starting 60-70 m from the car after an in-world warp to a far spot; the player who does not ride
+walks a few metres by the stick while the car moves.
+* Central Yharnam's lift 2411320 (Gascoigne shortcut), 60 FPS, default switches: ride 1 guest down alone (host waiting at the
+  bottom), ride 2 host up alone (guest waiting at the top): both ended on the arrival floor alive (y -58.1 / -44.3), ride bit
+  on for 16-18 samples, same flags / car end on host and guest worlds, no fall, no jump; the waiting player walked normally
+  both times (live screenshots of both games looked at). Rides 3 and 4 (both together) did not run: the second walker could
+  not enter the car while the first stood on it (test geometry, see TODO).
+* "The other player runs in place while the car moves" (user report during these runs): not party code. The waiting player had
+  been warped to a spot against a wall / railing (navmesh centroid); the chr stood pressed into it (camera inside the wall, the
+  position frozen to 0.01 m). After moving the waiting spots to open floor the waiter walks 4-8 m during the ride on both sides.
+  No party code was found that holds a non-rider; `LiftBuildGuardTick` printed no floor line in these runs.
+* Walker finding: the network manager's position copy (FrpgNetMan +0xAAC) stops updating while the chr rides a moving object, the
+  director now reads the chr's physics position.
+* Test aids added: `BB_TEST_LIFT_BUILD_DELAY` / `_NEAR` / `_DROP` (slow car build, drop of far cars), `BB_TEST_WALK_SPRINT`.
+* NOT proven (TODO): Cathedral Ward 2401102 (`lfwc`, routes computed, never run), the rides together, `lfws` / `lfwcs` slow
+  load + sprint, 120 FPS `BB_TEST_LIFT_PROBE=2` carry threshold, `BB_PARTY_LIFT_PREBUILD=0 BB_PARTY_LIFT_HOLD=0` (expected
+  FAIL), the 150 m prebuild ring was never left (the lamp start is 100-130 m from the car), the top end of 2401102 has a 12 m
+  navmesh pocket only.
+
 ## 11. Interface (for split travel and other callers)
 
 * Wire format: EVENT `world_action` (`worldact::kEventName`), guest -> host, body
