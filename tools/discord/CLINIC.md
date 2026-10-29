@@ -167,6 +167,28 @@ version from the VERSION file, whereas a version status you set by hand locks it
 longer moves it. Fixing the same bug on both tracks works: run the command once per track. Example:
 `status NW-1a2b3c4 fixed --in nw:0.2.6`.
 
+### ask
+
+`ssh iosefka ask NW-1a2b3c4 --need "'host and guest logs of a Queen attempt'" [--issue "'which part'"]
+[--for CL-1a2b3c] [--send] [--force]`: Iosefka asks the ORIGINAL reporter(s) of the bug for logs or details.
+**Default is a dry run**: it prints the exact message(s) and where each would go (thread / channel / DM),
+queues and records nothing. `--send` queues them (the bot posts within a minute, like `--tell`).
+
+- Reporters: the bug's reporter plus the reporters of bugs merged into it, one message per person in that
+  person's own thread (never a duplicate bug id: ask about the kept bug). Skipped (listed under `skipped`):
+  local bugs, merged-in bugs a dev filed, a person already listed; a staff reporter is skipped at send time.
+- Text: names the bug id and the issue (`--issue`, else the item's text for `--for CL-x`, else the bug
+  title), quotes `--need` (max 900 chars), says to answer in the thread and attach the files, and where the
+  game's logs are. IPs are masked, `@everyone` defused, at most 2000 chars; only the reporter is mentioned.
+- With `--send`: a note of kind `ask` per person (who, issue, need, `to` = the person) is added to the bug
+  history (`show` lists it), the status becomes `waiting-logs`, and the 14-day nudge / 30-day close count
+  from the ask. At most one ask per bug per 3 days unless `--force` (a dry run shows the block).
+- Replies: the person's next messages in the place she asked (14 days) join the bug even when short (under
+  4 words) or past the 5-message follow-up cap, and with files of any session (rule `ask`).
+
+`ssh iosefka cl ask CL-1a2b3c --need "'...'" [--issue ...] [--send] [--force]`: the same for every bug linked
+to the item, one message per bug thread, each naming its own bug and the item's text as the issue.
+
 ### tag
 
 `ssh iosefka tag NW-1a2b3c4 component=coop-mod feature=chalice,lamps coop_version=0.7.5`: a comma makes a list;

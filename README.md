@@ -385,7 +385,8 @@ before anyone is in the game):
   into every player's own save; a guest who is behind catches up, including the Blood Moon.
 - **Covenants are your own.** How the covenant quests end stays in the world it happened in:
   Alfred killing Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates
-  never reach another player's save (in the host's world you see the host's state). A covenant
+  never reach another player's save (in the host's world the covenant leaders still show your own
+  state, so you can talk to Valtr and join after the host did). A covenant
   rune an NPC hands you (Valtr's Impurity, for example) is yours, in your own save. A host setting,
   on by default (*Covenants per player* on *System → Party rules: World*).
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
@@ -573,7 +574,7 @@ are capped at 95% too.
 - **The fixes since playtest 2 were tested on one PC** (several game copies, simulated internet lag),
   not yet in a real Internet session. Please send support bundles if something goes wrong (see
   [Reporting a co-op bug](#reporting-a-co-op-bug)).
-- **Reported in real sessions and fixed in 0.7.6 or not yet, none confirmed live on two PCs:** after an ending nobody could join (fixed 0.7.6), a guest's save advancing two New Game+ cycles (fixed 0.7.6), joins over a VPN failing for a guest behind a strict NAT, a 4-player lobby with guests stuck loading, 4-10 s outages on Hamachi or a phone hotspot sending guests home, guests not seeing each other until a teleport, a wrong ending cutscene and late credits for a guest, the boss standing idle while the host is dead and a guest fights, talking to an NPC next to a lamp opening the lamp's travel prompt for a guest, the Moon Presence music missing after Gehrman, and a clip on the edge of descending lifts. Open ones are tracked in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
+- **Reported in real sessions and fixed in 0.7.6 or not yet, none confirmed live on two PCs:** after an ending nobody could join (fixed 0.7.6), a guest's save advancing two New Game+ cycles (fixed 0.7.6), joins over a VPN failing for a guest behind a strict NAT, a 4-player lobby with guests stuck loading, 4-10 s outages on Hamachi or a phone hotspot sending guests home, guests not seeing each other until a teleport, a wrong ending cutscene and late credits for a guest, the boss standing idle while the host is dead and a guest fights, talking to an NPC next to a lamp opening the lamp's travel prompt for a guest, and a clip on the edge of descending lifts. Open ones are tracked in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
 - **The Bath Messengers may pop in and out** (with their sound repeating) for a player watching while
   another browses their shop. Being fixed.
 
