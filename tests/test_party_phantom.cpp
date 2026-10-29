@@ -71,8 +71,8 @@ static void test_skip_rules() {
         // Party mode whatever the open world: 13400010's "not in multiplayer" condition [11]; on a
         // client, the room-open skip of the Ebrietas, Rom, Laurence and Lady Maria re-fight events.
         const std::vector<EmevdSkipRule> rooms = BossRoomRules();
-        // + the Moon Presence's boss music (12104853) and Rom's lake jump (13204820 [8], a client only).
-        CHECK(rooms.size() == 7);
+        // + the Moon Presence's and Gehrman's boss music (12104853, 12104803) and Rom's lake jump (13204820 [8], a client only).
+        CHECK(rooms.size() == 8);
         CHECK(rooms[0].event == 13400010 && rooms[0].bank == 0 && rooms[0].id == 0 && rooms[0].index == 11 &&
               !rooms[0].needs_travel && !rooms[0].client_only);
         std::set<int> refights;
@@ -85,11 +85,11 @@ static void test_skip_rules() {
         CHECK(rooms[5].event == 12104853 && rooms[5].bank == 3 && rooms[5].id == 0 && rooms[5].index == 8 &&
               !rooms[5].client_only);
         // CL-393160: the stale "invincibility off" of the host's lake-landing copy, skipped on a client.
-        CHECK(rooms[6].event == 13204820 && rooms[6].bank == 2004 && rooms[6].id == 15 && rooms[6].index == 8 &&
-              rooms[6].client_only && !rooms[6].needs_travel);
-        CHECK(EmevdSkipMatches(rooms[6], 13204820, 2004, 15, 8));
-        CHECK(!EmevdSkipMatches(rooms[6], 13204820, 2004, 15, 4));  // the "on" ([4]) is the host's own
-        CHECK(!EmevdSkipMatches(rooms[6], 13204821, 2004, 15, 8));  // the guest copy keeps its own on / off
+        CHECK(rooms[7].event == 13204820 && rooms[7].bank == 2004 && rooms[7].id == 15 && rooms[7].index == 8 &&
+              rooms[7].client_only && !rooms[7].needs_travel);
+        CHECK(EmevdSkipMatches(rooms[7], 13204820, 2004, 15, 8));
+        CHECK(!EmevdSkipMatches(rooms[7], 13204820, 2004, 15, 4));  // the "on" ([4]) is the host's own
+        CHECK(!EmevdSkipMatches(rooms[7], 13204821, 2004, 15, 8));  // the guest copy keeps its own on / off
         CHECK(DescribeSkipRule(rooms[1]) == "12424810:1003:5@2 (on a client)");
     }
     // Event 7600 as the data has it (common.emevd), and its Chalice Dungeon copy 12907600
