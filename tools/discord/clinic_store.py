@@ -85,7 +85,7 @@ class Clinic:
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
         for table, col in (("nw_messages", "dm INTEGER"), ("nw_bugs", "reporter_id INTEGER"),
-                           ("nw_bugs", "activity REAL"), ("nw_outbox", "kind TEXT")):
+                           ("nw_bugs", "activity REAL"), ("nw_outbox", "kind TEXT"), ("nw_outbox", "merged_into INTEGER")):
             have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col.split()[0] not in have:  # database from before the column: add it
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
@@ -534,9 +534,16 @@ class Clinic:
                                "WHERE sent IS NULL ORDER BY id")
         return [dict(zip(("id", "bug_id", "text", "who", "created", "kind"), r)) for r in rows]
 
-    def outbox_sent(self, outbox_id):
-        self.db.execute("UPDATE nw_outbox SET sent=? WHERE id=?", (time.time(), outbox_id))
+    def outbox_sent(self, outbox_id, merged_into=None):
+        """Mark a row done. merged_into = id of the row whose message carried it (nothing of its own was posted)."""
+        self.db.execute("UPDATE nw_outbox SET sent=?, merged_into=? WHERE id=?", (time.time(), merged_into, outbox_id))
         self.db.commit()
+
+    def outbox_delivered_since(self, since):
+        """Rows posted for real (not merged away, not failed-by-merge) since `since`: [dict]."""
+        rows = self.db.execute("SELECT id, bug_id, text, who, created, kind, sent FROM nw_outbox "
+                               "WHERE sent IS NOT NULL AND sent>? AND merged_into IS NULL ORDER BY id", (since,))
+        return [dict(zip(("id", "bug_id", "text", "who", "created", "kind", "sent"), r)) for r in rows]
 
     # size and backup
 
