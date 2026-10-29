@@ -105,6 +105,34 @@ void TestStall() {
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
+std::atomic<bool> cloth_hook_on{false};
+float cloth_exponent = -1.725f; ///< Havok's stiffness adaptation exponent (0x48d7bbc), read at start
+std::atomic<u64> cloth_calls{0};
+
+/// Havok's stiffness factor of a constraint set for one substep (0x1167a80, replaced). Ported from
+/// deadinside28's ClothStiffnessFactor (bloodborne_pc 0fc2921c, their issue #58; GPL-2.0-or-later).
+/// `mode` 2 adapts the constraints' stiffness to how often they are solved, (substeps x a x b)^-1.725
+/// (a, b the instance's scales at +0x1d0/+0x1d4); for a set of type 8 the iteration's share instead,
+/// for types 5 and 10 only the last substep. The substeps are per frame, so at a high frame rate the
+/// cloth is solved more often by the same factor and is stiffer by as much (cloaks and hair flutter).
+/// The factor here is the game's x frames (the frame's length in 30 FPS frames): the cloth is pulled
+/// as far per second as at 30 FPS. At 30 FPS it is the game's.
+float BB_FR_SYSV ClothStiffnessFactor(const u8* set, int mode, int iteration, int substeps, float a,
+                                      float b) {
+    const std::uint32_t type = *reinterpret_cast<const std::uint32_t*>(set + 0x18);
+    const u64 n = cloth_calls.fetch_add(1, std::memory_order_relaxed);
+    if (n == 20000) {
+        std::printf("Frame rate: cloth stiffness factor: constraint type %u, %.0f FPS: factor x%.3f\n", type,
+                    1.0f / live->dt, live->dt * 30.0f);
+    }
+    const bool adapts = mode == 2 && !(substeps == 1 && a == 1.0f && b == 1.0f);
+    if (adapts && type == 8) return float(iteration + 1) / float(substeps);
+    if (adapts && (type == 5 || type == 10)) return substeps - 1 == iteration ? 1.0f : 0.0f;
+    const float game = adapts ? std::pow(float(substeps) * a * b, cloth_exponent) : 1.0f;
+    if (type == 5 || type == 8 || type == 10) return game;
+    return game * (live->dt * 30.0f);
+}
+
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void BB_FR_SYSV FrameStep(u64 pacer) {
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
@@ -130,6 +158,9 @@ void BB_FR_SYSV FrameStep(u64 pacer) {
         return env && *env ? std::strtof(env, nullptr) : -1.0f;
     }();
     Compute(*live, dt, cloth_override);
+    // The range checks only warn; the cloth follows the frame rate by ClothStiffnessFactor, so they get
+    // the game's 1.0 while that hook is in (BB_CLOTH_STIFFNESS=value: that value instead).
+    if (cloth_hook_on && !(cloth_override > 0.0f)) live->cloth = 1.0f;
     // BB_STEADY_TIME=0 (diagnostics): the cloth's and the plants' time is the frame's, as before.
     static const bool steady_off = EnvOff("BB_STEADY_TIME");
     if (steady_off) {
@@ -366,6 +397,32 @@ bool HookClothTime() {
     e.Bytes({0x58});                                   // pop rax
     for (const u8 b : code) e.Bytes({b});              // the site's own instruction
     e.JmpAbs(image_base + site + sizeof(code));
+    return Detour(site, code, sizeof(code), e);
+}
+
+/// Havok's stiffness factor (0x1167a80: `push rbp; mov rbp, rsp; push r15`) by ClothStiffnessFactor
+/// (its arguments as they are, a tail call). Off with BB_CLOTH_STIFFNESS=0.
+bool HookClothStiffness() {
+    constexpr u64 site = 0x1167a80;
+    constexpr u8 code[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
+    const char* v = std::getenv("BB_CLOTH_STIFFNESS");
+    if (v && *v && std::strtof(v, nullptr) == 0.0f) {
+        std::printf("Frame rate: cloth stiffness factor off (BB_CLOTH_STIFFNESS=0)\n");
+        return false;
+    }
+    if (std::memcmp(reinterpret_cast<const void*>(image_base + site), code, sizeof(code)) != 0) {
+        std::printf("Frame rate: %#llx is not the expected code: cloth stiffness factor not installed\n",
+                    (unsigned long long)site);
+        return false;
+    }
+    std::memcpy(&cloth_exponent, reinterpret_cast<const void*>(image_base + 0x48d7bbc), sizeof(float));
+    if (!(cloth_exponent < 0.0f && cloth_exponent > -4.0f)) {
+        std::printf("Frame rate: cloth exponent %.3f unexpected: cloth stiffness factor not installed\n",
+                    double(cloth_exponent));
+        return false;
+    }
+    Emitter e;
+    e.JmpAbs(reinterpret_cast<u64>(&ClothStiffnessFactor));
     return Detour(site, code, sizeof(code), e);
 }
 
@@ -643,6 +700,7 @@ void Install(unsigned char* image, std::uint64_t size) {
     const int fixed = HookFixedStep(0x17f9b71, -0x48) + HookFixedStep(0x1572a7d, -0x30);
     const int run = HookRunSpeed();
     const bool cloth_time = HookClothTime();
+    cloth_hook_on = HookClothStiffness();
     int redirected = 0;
     for (const Redirect& r : Redirects) {
         if (RedirectOperand(r)) {
@@ -655,6 +713,8 @@ void Install(unsigned char* image, std::uint64_t size) {
     StubWritable(false);
     std::printf("Frame rate: steady time step (cloth %s, plants via the redirects; BB_STEADY_TIME=0 turns it off)\n",
                 cloth_time ? "on" : "NOT installed");
+    std::printf("Frame rate: cloth stiffness factor %s (BB_CLOTH_STIFFNESS=0 turns it off)\n",
+                cloth_hook_on ? "on" : "NOT installed");
     std::printf("Frame rate: free (hooks, no patches): the game steps by each frame's time "
                 "(1/%d..1/30 s); %d of 2 fixed steps, %d of %zu per-frame values follow the frame's "
                 "time, the run's wall check %s\n",
