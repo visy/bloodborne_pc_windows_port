@@ -50,7 +50,7 @@ RETRY_DELAY = 1.0
 DISCORD_LIMIT = 2000
 DEFAULT_UPLOAD = 25 * 1024 * 1024
 MEDIA_NOTE = "(pictures/video kept in the clinic)"
-FILE_KINDS_WITH_STORE = ("log", "dump", "game", "archive", "other")
+FILE_KINDS_WITH_STORE = ("log", "dump", "game", "save", "archive", "other")
 STREAM_BYTES = 200 * 1024 * 1024   # bigger non-video files are LZMA-compressed in a stream, not read whole
 LENIENT_SIZE_KINDS = ("image", "video")  # the CDN may re-serve these with other bytes than attachment.size
 TRUNCATED_BELOW = 0.5              # ...but not under half of the listed size
@@ -240,6 +240,8 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
     name = Path(att.filename or "file").name or "file"
     kind = logic.file_kind(name)
     size = int(att.size or 0)
+    if kind == "archive" and size > logic.ARCHIVE_CAP_BYTES:  # too big: not downloaded, not touched
+        return {"id": att.id, "filename": name, "kind": kind, "size": size, "sha256": None, "skip": "big"}
     if not media.enough_disk(tmp, size):
         raise DiskLow(f"free disk below {size} bytes + reserve")
     d = Path(tempfile.mkdtemp(prefix="att_", dir=str(tmp)))
@@ -258,6 +260,9 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
                 if frames:
                     clinic.add_stills(sha, frames)
         else:
+            if kind == "archive" and not logic.archive_relevant(await loop.run_in_executor(None, media.archive_listing, path)):
+                return {"id": att.id, "filename": name, "kind": kind, "size": served, "sha256": None,
+                        "skip": "nothing"}  # no log, save, image or video inside: left be, not copied
             if served > STREAM_BYTES:
                 sha, blob, raw = await loop.run_in_executor(None, clinic.prepare_stream, path)
                 codec = "lzma"
@@ -275,6 +280,8 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
 
 
 def att_verified(clinic, a):
+    if a.get("skip"):
+        return True
     sha = a.get("sha256")
     if not sha:
         return False
@@ -283,8 +290,12 @@ def att_verified(clinic, a):
     return clinic.verify_file(sha) and all(clinic.verify_file(s) for s in a.get("inner_shas") or [])
 
 
+def _rm(a):
+    return not a.get("skip") and logic.removable(a["filename"], a.get("inner"))
+
+
 def rec_removable(atts):
-    return any(logic.removable(a["filename"], a.get("inner")) for a in atts)
+    return any(_rm(a) for a in atts)
 
 
 def log_infos(clinic, atts, log_info_fn, tmp):
@@ -520,6 +531,12 @@ def join_bug(clinic, message, bug, rule, unsure=()):
     return bug
 
 
+def tag_saves(clinic, bug_id, atts):
+    """A bug that was handed Bloodborne save files carries the tag has_saves=yes."""
+    if bug_id and logic.holds(atts) in ("save", "both") and (clinic.bug(bug_id) or {}).get("tags", {}).get("has_saves") != "yes":
+        clinic.update_bug(bug_id, tags={"has_saves": "yes"})
+
+
 def link_text(clinic, message):
     """A text-only message: join the bug the rules name (store its words), or None. Idempotent."""
     got = find_link(clinic, message)
@@ -688,7 +705,7 @@ async def _assign_new(clinic, message, infos, log_info_fn, tmpdir):
 
 def _exported(clinic, atts):
     for a in atts:
-        if logic.removable(a["filename"], a.get("inner")):
+        if _rm(a):
             if not clinic.exported(a["sha256"]) or not all(clinic.exported(s) for s in a.get("inner_shas") or []):
                 return False
     return True
@@ -715,7 +732,7 @@ def _chunks(text, limit=DISCORD_LIMIT):
 async def _media_files(message, rec, files=None, shared=None):
     """Files to repost in the replacement: pictures and videos that are not removable, within the upload
     cap. Anything else that stays out of the message (text, odd files) is left in the clinic (media note)."""
-    removable_ids = {a["id"] for a in rec["attachments"] if logic.removable(a["filename"], a.get("inner"))}
+    removable_ids = {a["id"] for a in rec["attachments"] if _rm(a)}
     limit = getattr(getattr(message, "guild", None), "filesize_limit", None) or DEFAULT_UPLOAD
     files = [] if files is None else files  # a run shares one list: at most 10 files in one post
     budget = limit if shared is None or shared[0] is None else shared[0]
@@ -788,6 +805,8 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
     mid = message.id
     if rec.get("bug_id") != bug_id:
         clinic.upsert_message({"message_id": mid, "bug_id": bug_id})
+    tag_saves(clinic, bug_id, rec["attachments"])
+    what = logic.holds(rec["attachments"])
     ch = message.channel
     reopened = None
     try:
@@ -798,7 +817,7 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
             files, left_out = await _media_files(message, rec)
             note = MEDIA_NOTE if left_out else ""
             rep = voice.replacement_short if short else voice.replacement
-            text = rep(f"<@{message.author.id}>", bug_id, message.content or "", note)
+            text = rep(f"<@{message.author.id}>", bug_id, message.content or "", note, what=what)
             more = []
             if extra:
                 if len(text) + 2 + len(extra) <= DISCORD_LIMIT:
@@ -814,7 +833,7 @@ async def replace_and_delete(clinic, message, bug_id, *, ping, delete, need_expo
             except Exception as e:
                 if not files or _status(e) not in (400, 413):  # only "payload too large" drops the files
                     raise
-                text = rep(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE)
+                text = rep(f"<@{message.author.id}>", bug_id, message.content or "", MEDIA_NOTE, what=what)
                 sent = await ch.send(text, **kw)
             clinic.set_state(mid, "replaced", sent.id)
             for part in more:
@@ -878,15 +897,17 @@ async def _run_segment(clinic, seg, bug_id, ping):
         for m, r in seg:
             if r.get("bug_id") != bug_id:
                 clinic.upsert_message({"message_id": m.id, "bug_id": bug_id})
+            tag_saves(clinic, bug_id, r["attachments"])
         if rid is None:
             files, shared, left_out = [], [None], False
+            what = logic.holds([a for _, r in seg for a in r["attachments"]])
             for m, r in seg:
                 _, lo = await _media_files(m, r, files, shared)
                 left_out = left_out or lo
             note = MEDIA_NOTE if left_out else ""
             texts = [m.content or "" for m, _ in seg]
             mention = f"<@{first.author.id}>"
-            text = voice.replacement_many(mention, bug_id, texts, note)
+            text = voice.replacement_many(mention, bug_id, texts, note, what=what)
             am = AllowedMentions(users=[first.author], everyone=False, roles=False) if ping                 else AllowedMentions.none()
             kw = {"allowed_mentions": am, "nonce": str(first.id)[-25:]}
             try:
@@ -894,7 +915,7 @@ async def _run_segment(clinic, seg, bug_id, ping):
             except Exception as e:
                 if not files or _status(e) not in (400, 413):
                     raise
-                sent = await ch.send(voice.replacement_many(mention, bug_id, texts, MEDIA_NOTE), **kw)
+                sent = await ch.send(voice.replacement_many(mention, bug_id, texts, MEDIA_NOTE, what=what), **kw)
             rid = sent.id
         for m, r in seg:
             if r["state"] != "replaced" or r.get("replacement_id") != rid:

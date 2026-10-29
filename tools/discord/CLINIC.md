@@ -311,7 +311,7 @@ bugs to retest (next section). The NW track: run the sync first, so its VERSION 
   short ask in its thread (or channel, replying to her replacement note; a DM bug gets a DM): the fix is in
   <version>, please try and say if it still happens. Only the reporter is mentioned. A note of kind
   `retest-asked` ("<version>: asked to retest") makes it once per bug and version. Skipped: `source=local`
-  bugs, bugs with no reporter, places that are gone or skipped (staff / development / moderator-only). One
+  bugs, bugs with no reporter, places that are gone or skipped (staff* / dev* such as development and "Dev Test" / moderator-only). One
   post every ~5 s. The reporter's reply reopens the bug through the usual follow-up rules.
 - waiting-logs: in the hourly sweep a `waiting-logs` bug with no activity (message, status change, note by
   anyone but her own asks) for 14 days gets ONE nudge (note kind `nudge`); at 30 days it becomes `closed` with
@@ -419,6 +419,15 @@ the bbport repo (pass the log files; it prints a connection diagnosis).
   goes in `--dev`.
 - Keep extracted logs out of repositories; delete the folder afterwards.
 - Do not run `export`, `confirm-export` or `import` (visy only).
+- Upload policy (2026-10-28): only files that carry names / IPs (logs, text, crash dumps, game files) make
+  Iosefka delete a message and post her replacement note. Saves, pictures and videos hold no personal data:
+  they are copied into the clinic (videos sampled to stills) and the message stays on Discord untouched,
+  with no note and no reaction. A message with a log AND saves is still deleted and replaced.
+- Archives: bigger than 100 MiB (`ARCHIVE_CAP_BYTES` in `clinic_logic.py`) they are never downloaded or
+  touched; a readable archive with no log, save, image or video inside (a mod pack, a tool) is left alone,
+  not copied. Archives with a log inside are deleted and replaced; with only saves / pictures / videos
+  they are copied and the message stays. An unreadable archive still counts as holding a log. The cull
+  uses the same rule, so it never deletes save / picture / video-only messages.
 
 ## Troubleshooting
 
@@ -442,3 +451,51 @@ less than 1.5 GB free), `verify`, `report --out PATH`, `starter-test --thread ID
 links). Places the bot cannot read are logged as `no access: <place>` and counted, never fatal.
 A message holding a video is not deleted until the video has stills in the archive (stills are off while
 the archive is above 2.4 GiB or the disk has under 1 GB free; a warning goes to the first `staff*` channel).
+
+## Health, alerts and deploy
+
+Iosefka watches herself so nobody has to. Everything is stored in the clinic database (`nw_health`,
+`nw_alerts`, `nw_errors`, `nw_queue`).
+
+**Where reports go.** The daily report and every alert are posted in the thread `NETDOCTOR_HEALTH_THREAD`
+(default 1563914486996279387, "Iosefka's Triage" in #staff). She only SENDS there: the staff skip rule is
+unchanged, she never reads, archives or culls anything in `staff*` channels or threads. When Discord answers
+403/404 for the thread she logs that once and DMs the owner instead (`NETDOCTOR_ALERT_USER`, the Discord
+user id of visy; set it in `~/.config/netdoctor/env`). With neither, alerts are only logged.
+
+**Daily report** at `NETDOCTOR_HEALTH_AT` (default `08:30`) in `NETDOCTOR_HEALTH_TZ` (default
+`Europe/Helsinki`, DST-aware): uptime and restarts, jobs on time or overdue, errors in 24 h, disk, DB size,
+queue sizes, new bugs and logs. No player names, IPs or log lines. Send one now:
+`iosefka_cull.py health-report [--dry-run]` (the dry run prints it).
+
+**Alerts** (each kind at most once per 6 h, unless it was resolved and came back; none contains names, IPs
+or log lines): a new traceback in her own handling (deduplicated by first line, count per hour), an overdue
+job (hourly sweep > 2.5 h, outbox sender > 10 min, nightly backup > 30 h, Nightwatch sync via the last
+timestamp in `nw_sync.log` > 3 h or a failed last run), Forbidden on a place she needs (once per place),
+disk free < 2 GB, DB above 80% of its cap, `triage=pending` > 15, `unsure` > 15, failed integrity check,
+missing tools. A watchdog task checks every 5 minutes.
+
+**`health` command** (both devs): `ssh iosefka health [--text]` shows the last start, restarts, each job's
+last run, errors of the last 24 h (counts and first lines, IPs masked), disk free, DB size against the cap,
+queue sizes, open alerts, and versions (git commit, discord.py, python, 7z/unrar/ffmpeg present).
+
+**Start-up self-check** (on_ready, logged as `self-check: ...`): permissions per non-skipped place (view,
+read history, send, and manage messages when NW_DELETE=1), `PRAGMA quick_check`, and the 7z, unrar and ffmpeg
+programs. Problems are alerted as ONE message listing channel names. Places whose name is skipped (staff*, dev*,
+moderator-only), and private places neither @everyone nor she can view, are never checked; Send Messages is only
+required where @everyone can post or attach files (forums: Send Messages in Threads + Manage Threads/Messages).
+Open `forbidden:<channel>` alerts of places that are no longer a problem are closed.
+
+**Weekly DB upkeep** (about 05:00 local, every 7 days): `PRAGMA integrity_check`, WAL checkpoint(TRUNCATE),
+`VACUUM` only when free disk >= 2x the DB size.
+
+**Flood guard**: at most `NETDOCTOR_UPLOADS_PER_HOUR` (default 10, 0 = off) upload messages per author and
+hour are handled live in guild channels. The rest are stored in `nw_queue` and handled by the hourly sweep in
+order (before the catch-up scan): they are still archived and deleted, only later, and never dropped.
+
+**Deploy** on quad.fi: `sh ~/bbport/tools/discord/deploy.sh [--dry-run]`. It records the current commit,
+`git pull --ff-only`, runs `pytest tests -q -k clinic` with `~/netdoctor-venv` (pytest is installed there
+with `uv pip install --python ~/netdoctor-venv/bin/python pytest` if missing), kills her process by the exact
+pattern `[t]ools/discord/netdoctor_bot.py` and starts it with `keepalive.sh`, waits for the `netdoctor bot
+ready as` log line, then runs `iosefka_cli.py --as visy health`. Any failure resets to the recorded commit,
+restarts, and sends an alert (`clinic_health.py alert TEXT`, plain REST, same destination rules).

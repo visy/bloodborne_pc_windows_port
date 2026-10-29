@@ -27,22 +27,26 @@ def info(name, role, host, start, end=None, peers=()):
 
 
 def test_skip_rule():
-    for n in ("staff", "staff-archived", "development", "moderator-only"):
+    for n in ("staff", "staff-archived", "development", "moderator-only", "Dev Test", "dev-chat", "DEVELOPMENT-notes"):
         assert cl.skipped_channel(n)
-    for n in ("general", "dev-chat", "development-notes", "moderator"):
+    for n in ("general", "moderator", "help"):
         assert not cl.skipped_channel(n)
 
 
 def test_removable_kinds():
-    for n in ("nightwatch-x.log", "notes.txt", "crash.dmp", "userdata0010", "x.dcx"):
+    for n in ("nightwatch-x.log", "notes.txt", "crash.dmp", "x.dcx"):
         assert cl.removable(n), n
     assert not cl.removable("a.png") and not cl.removable("b.mp4")
     assert cl.removable("saves.zip", ["last_session.log"])
     assert not cl.removable("saves.zip", ["a.png"])
     assert cl.removable("saves.zip", None)
+    for n in ("userdata0001", "SPRJ0005/backup0000", "SPRJ0005/param.sfo"):
+        assert not cl.removable(n), n  # saves carry no PII: archived, the message stays
+    assert not cl.removable("s.zip", ["SPRJ0005/userdata0000", "a.png", "b.mp4"])
+    assert cl.removable("s.zip", ["SPRJ0005/userdata0000", "a.log"])
     assert cl.file_kind("A.PNG") == "image" and cl.file_kind("b.mp4") == "video"
     assert cl.file_kind("x.7z") == "archive" and cl.file_kind("x.dmp") == "dump"
-    assert cl.file_kind("userdata0001") == "game" and cl.file_kind("readme.md") == "other"
+    assert cl.file_kind("userdata0001") == "save" and cl.file_kind("x.dcx") == "game" and cl.file_kind("readme.md") == "other"
 
 
 def test_mask_ips():
@@ -106,3 +110,37 @@ def test_classify():
     assert cl.classify("the lamp is glitched", set()) == "bug"
     assert cl.classify("nothing special", {"other.x"}) == "bug"
     assert cl.classify("radmin firewall?", set()) == "network"
+
+
+def test_save_kind():
+    for n in ("userdata0000", "USERDATA0009", "userdata0010", "backup0000", "backup0010", "userdata0000.bak",
+              "backup0010.bak", "userdata0000_Hunter (2)", "userdata0003 (2)", "SPRJ0005/param.sfo",
+              "SPRJ0005/sce_sys/icon0.png", "x/savedata/whatever.bin", "C:\\a\\SPRJ0005\\userdata0000"):
+        assert cl.file_kind(n) == "save", n
+        assert not cl.removable(n), n
+    assert cl.file_kind("param.sfo") == "other" and cl.file_kind("icon0.png") == "image"
+    assert cl.file_kind("SPRJ0005/notes.txt") == "log" and cl.file_kind("userdata_x") == "game"
+    assert cl.file_kind("SPRJ0005.zip") == "archive" and cl.file_kind("backup.png") == "image"
+    assert not cl.removable("SPRJ0005.zip", ["SPRJ0005/userdata0000", "SPRJ0005/backup0000"])
+    assert cl.removable("s.zip", ["a.png"]) is False
+
+
+def test_holds_names_what_was_brought():
+    save_zip = {"filename": "SPRJ0005.zip", "inner": ["SPRJ0005/userdata0000", "SPRJ0005/backup0000", "x.png"]}
+    mixed = {"filename": "m.zip", "inner": ["last_session.log", "userdata0001"]}
+    assert cl.holds([{"filename": "nightwatch.log"}]) == "log"
+    assert cl.holds([{"filename": "userdata0000"}]) == "save"
+    assert cl.holds([save_zip]) == "save" and cl.holds([mixed]) == "both"
+    assert cl.holds([save_zip, {"filename": "a.log"}]) == "both"
+    assert cl.holds([{"filename": "u.zip", "inner": None}]) == "log"  # unreadable: the old assumption
+    assert cl.holds([{"filename": "a.png"}]) == "log"
+
+
+def test_archive_relevant():
+    assert cl.archive_relevant(None)
+    assert cl.archive_relevant(["a/x.log"]) and cl.archive_relevant(["SPRJ0005/userdata0000"])
+    assert cl.archive_relevant(["a.png"]) and cl.archive_relevant(["v.mp4"])
+    assert not cl.archive_relevant(["mod/dinput8.dll", "readme.md", "x.ini"]) and not cl.archive_relevant([])
+    assert cl.ARCHIVE_CAP_BYTES == 100 * 1024 * 1024
+    assert cl.has_saves([{"filename": "userdata0000"}]) and not cl.has_saves([{"filename": "a.png"}])
+    assert not cl.has_saves([{"filename": "big.zip", "skip": "big"}])
