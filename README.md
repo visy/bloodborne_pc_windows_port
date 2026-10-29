@@ -325,7 +325,8 @@ before anyone is in the game):
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests at a lamp and travels alone gives the host a short loading screen so its
-  world resets too; a guest leaving the Hunter's Dream alone by a headstone is just a trip (no reset).
+  world resets too; a guest leaving the Hunter's Dream alone by a headstone, or travelling from a map
+  (no lamp used), is just a trip (no reset, the others keep playing).
   Resting while the host is in a boss fight takes everyone out of the boss room.
 - **Kidnapped by a Snatcher?** Whoever is grabbed, host or guest, the whole party wakes up together
   in the Hypogean Gaol (Yahar'gul) after one loading screen, and everyone watches the waking scene
