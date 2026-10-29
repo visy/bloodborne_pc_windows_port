@@ -249,9 +249,21 @@ Key findings behind the rows:
   Impurity, Beast's Embrace 250 / 252 / 253 / 6661 / 180050, Milkweed 255 / 257 / 180060; the game's EMEVDs test
   these). Host and guest memorized different oath runes at the Memory Altar in the host's Dream (test aid
   `log_oath`): each game carried only its own covenant's rows, steadily, summoned and after the guest's Leave
-  (Radiance + Impurity, Corruption + Hunter, Beast's Embrace + Milkweed). Unproven: Annalise's kneel talk and
-  Alfred's talk (greeting lines only, `cva`), the numeric effect of Corruption (heal near death) / Hunter (stamina
-  recovery) / Radiance (vial HP) / League and Executioner behaviour.
+  (Radiance + Impurity, Corruption + Hunter, Beast's Embrace + Milkweed).
+  **Numbers (covleft077, `cvr` default pair Beast's Embrace + Milkweed)**: `log_oath` also dumps, once per effect, the
+  SpEffectParam row the player's own active effect node points at (`oath row NAME(ID): node row IS the param row`, node +0x48
+  = the param table's row of that id, every non-zero field): the host's chr holds row 180050 with the Therianthrope resist
+  (+0x1E0 = 15), the guest's chr row 180060 with the item discovery rate (+0x1FC = 0.1), never the other's. The oath MARKER
+  rows (6100 / 6110 / 6120 / 6142 / 250 / 255) carry no number (all rates 1.0, no stat field): Corruption's heal near death,
+  Hunter's stamina recovery, Radiance's vial HP are engine / EMEVD code keyed on the marker being on the chr, so the
+  marker on the right chr is the whole party-side proof; the heal / recovery amounts themselves were not measured.
+  **Annalise's kneel (covleft077, not proven)**: her greeting (`talk 1700050..53`, "Kneel afore Us... or get thee gone")
+  plays by itself on entering her region (flag 72500331 1 -> 0 restarts it: `host_flag=72500331`, `72500331:0`, `72500301:0`),
+  ends with 72500301 = 1; the touchpad gesture menu is CLOSED while it plays, a gesture in the 5 s after it (list rows 4..13,
+  `CVA_SWEEP` / `CVA_KNEEL` of smoke cva, anims logged by `log_anim`) set none of 72500317-319 / 329 / 332-335 (event 12500012
+  `PC kneels` waits for 72500329, 12500019 counts kneels in 317-319). A later Cross talk is the refusing branch (talk
+  1700800, "Such impudence", 72500302). What sets 329 (the ESD t250307's own kneel test) is not found; Alfred's real talk
+  and League / Executioner behaviour were not driven.
 - **Session/runtime**: 2000-2099, 7000-7399 and 7600-7699 (common event completions), 9200-9299,
   zones 1AAB5/6/7nnn, restart events. **boss_area** (1AAB4nnn: fight state, fog, NPC summons) is
   not synced live; the vanilla session already carries it.
