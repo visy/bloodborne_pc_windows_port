@@ -407,7 +407,7 @@ before anyone is in the game):
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
-  ("Living String: shared with the party"; *Shared item notices* on *System -> Party members*, the launcher's My
+  ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My
   Party tab, `party_item_notices`, on by default, shown while the party notices are on, at most one every few
   seconds, never for your own pickups).
 
@@ -518,6 +518,10 @@ before anyone is in the game):
   **Export for save editor** (any single-player or party save, any slot: a copy the editor can open,
   your save is not touched) and **Import from save editor** (the edited copy back into its slot, your
   saves backed up first, put back the way the game wrote them so party progress stays).
+- **Party character offline.** The *Party* tab's **Copy party character to offline...** copies a party
+  character into a single-player slot and cleans it for playing alone (the summoned-guest body type and the
+  host's Chalice Dungeon left in the network slot go; your own dungeons and progress stay). The launcher
+  lists what it cleaned; the party save is not changed and your single-player saves are backed up first.
 
 ### Deaths
 

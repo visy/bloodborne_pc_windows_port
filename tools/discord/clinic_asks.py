@@ -142,8 +142,14 @@ def plan_ask(clinic, bug_id, need, issue="", *, force=False, now=None):
     msgs = []
     for rec, rid in targets:
         text = voice.reporter_ask("<@%d>" % rid if rec["source"] != "dm" else "", bug_id, issue, need)
-        msgs.append({"record": rec["id"], "reporter": rid, "where": _where(rec), "text": text,
-                     "chars": len(text)})
+        m = {"record": rec["id"], "reporter": rid, "where": _where(rec), "text": text, "chars": len(text)}
+        import clinic_outbox as ob  # here: clinic_outbox imports this module
+        pv = ob.preview(clinic, rec["id"], "ask", json.dumps({"bug": bug_id, "issue": issue, "need": need}))
+        if pv["merge_with"]:
+            m["merge_with"] = pv["merge_with"]
+        if pv["already_told"]:
+            m["warning"] = ob.describe({"merge_with": [], "already_told": pv["already_told"]})[0]
+        msgs.append(m)
     blocked = None
     la = last_ask(clinic, bug_id)
     if la and not force and now - la < ASK_GAP_DAYS * 86400:
