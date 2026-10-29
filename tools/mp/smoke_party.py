@@ -1078,12 +1078,12 @@ def phase_mds(only):
 
 # Phase svl (clothfps077, group `save_load`, 1 player): a save loaded from the title at the sweep's frame rate and
 # played for 40 s. Supermedo's steady cloth crashed loading a save in his beta 7 (code over PC Settings' page table);
-# SVL_FIXTURE (env BB_SVL_FIXTURE, a folder of E:\gamesbport	est_saves) picks the slot.
-SVL_UNTIL = r"0:travel step (\d+)/: host_press"
+# SVL_FIXTURE (env BB_SVL_FIXTURE, a folder of E:/games/bbport/test_saves) picks the slot.
+SVL_UNTIL = r"0:travel step (\d+)/\1: host_press"
 
 
 def prep_svl(root: Path):
-    fixture = Path(os.environ.get("BB_SVL_FIXTURE", r"E:\gamesbport	est_saves\cathedral_day")) / "savedata"
+    fixture = Path(os.environ.get("BB_SVL_FIXTURE", "E:/games/bbport/test_saves/cathedral_day")) / "savedata"
     if not fixture.is_dir():
         sys.exit("save_load: the fixture %s is missing (docs/party/test_saves.md)" % fixture)
     _cl_saves(root, fixture)
