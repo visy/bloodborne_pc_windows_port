@@ -3225,9 +3225,43 @@ constexpr float kPrebuildRadius = 150.0f;
 std::atomic<std::uint64_t> g_pre_entry[48];
 std::atomic<bool> g_pre_near[48];
 std::atomic<int> g_pre_n{0};
-void* g_setlevel_orig = nullptr;
 std::atomic<int> g_pre_forced{0};
+// liftwalk077 test aid (BB_TEST_LIFT_BUILD_DELAY=S, BB_TEST_LIFT_BUILD_NEAR=M, default 30): slow resource loading. A full
+// build request (level 2) for a lift car that is not built yet is held back until the local chr has stood within M m of
+// the car for S seconds (whoever asked: the game's cell pass or the prebuild), then passed on. The car then appears S s
+// after a player comes near, as on a slow machine; a walk onto the car right as it builds is the test.
+struct BuildAsk {
+    std::uint64_t entry;
+    double first;  // when the local chr first stood within the near radius with the request pending (0: not yet)
+};
+std::mutex g_bd_mu;
+std::vector<BuildAsk> g_bd;
+double BuildDelaySeconds() {
+    static const double d = [] {
+        const char* e = std::getenv("BB_TEST_LIFT_BUILD_DELAY");
+        return e && *e ? std::atof(e) : 0.0;
+    }();
+    return d;
+}
+bool LiftEntryKnown(std::uint64_t entry);
+void* g_setlevel_orig = nullptr;
+// true: pass the request now; false: held (the tick passes it later)
+bool BuildGate(std::uint64_t entry, std::int32_t level) {
+    if (level != 2 || BuildDelaySeconds() <= 0.0 || !LiftEntryKnown(entry)) return true;
+    std::uint64_t ctrl = 1;
+    if (SafeGet(entry + 0x290, &ctrl) && ctrl) return true;  // built already
+    std::lock_guard<std::mutex> lk(g_bd_mu);
+    for (const BuildAsk& b : g_bd) {
+        if (b.entry == entry) return false;
+    }
+    g_bd.push_back({entry, 0.0});
+    Log("lift car build delay (test aid): car entry %#llx full build held until the local chr has been near it for %.1f s",
+        static_cast<unsigned long long>(entry), BuildDelaySeconds());
+    return false;
+}
+
 BB_COOP_SYSV std::uint64_t SetLevelHook(std::uint64_t entry, std::int32_t level) {
+    if (!BuildGate(entry, level)) return 0;
     if (level != 2) {
         const int n = g_pre_n.load(std::memory_order_relaxed);
         for (int i = 0; i < n; ++i) {
@@ -3245,7 +3279,75 @@ BB_COOP_SYSV std::uint64_t SetLevelHook(std::uint64_t entry, std::int32_t level)
     }
     return reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t)>(g_setlevel_orig)(entry, level);
 }
+bool LiftEntryKnown(std::uint64_t entry) {
+    const int n = g_pre_n.load(std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i) {
+        if (g_pre_entry[i].load(std::memory_order_relaxed) == entry) return true;
+    }
+    return false;
+}
+// the held requests of BuildGate: passed on once the local chr has been near the car long enough
+void LiftBuildDelayTick(const GameSnapshot& s) {
+    // BB_TEST_LIFT_BUILD_DROP=M: a built car whose chr is more than M m away and which is not playing is dropped
+    // (level 3, as the game does for a far cell), so the next approach meets an unbuilt car again.
+    static const double drop_m = [] {
+        const char* e = std::getenv("BB_TEST_LIFT_BUILD_DROP");
+        return e && *e ? std::atof(e) : 0.0;
+    }();
+    if (BuildDelaySeconds() <= 0.0 && drop_m <= 0.0) return;
+    std::lock_guard<std::mutex> lk(g_bd_mu);
+    if (!s.world_up || s.loading) {
+        g_bd.clear();
+        return;
+    }
+    if (drop_m > 0.0 && s.player) {
+        float me2[4], rot2[4];
+        if (LocalChrPose(me2, rot2)) {
+            for (const Lift& l : Lifts()) {
+                ObjAnimState a;
+                float at[3];
+                std::uint64_t ctrl = 0;
+                if (l.car && g_setlevel_orig && ReadObjAnim(l.car, &a) && a.entry && !a.playing && SafeGet(a.entry + 0x290, &ctrl) && ctrl &&
+                    ObjectPoint(l.car, 0, 0, at) && std::hypot(me2[0] - at[0], me2[2] - at[2]) > drop_m) {
+                    Log("lift car build drop (test aid): car %d entry %#llx dropped (local chr %.0f m away)", l.car,
+                        static_cast<unsigned long long>(a.entry), double(std::hypot(me2[0] - at[0], me2[2] - at[2])));
+                    reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t)>(g_setlevel_orig)(a.entry, 3);
+                }
+            }
+        }
+    }
+    if (BuildDelaySeconds() <= 0.0) return;
+    static const double near_m = [] {
+        const char* e = std::getenv("BB_TEST_LIFT_BUILD_NEAR");
+        return e && *e ? std::atof(e) : 30.0;
+    }();
+    float me[4], rot[4];
+    if (!s.player || !LocalChrPose(me, rot)) return;
+    for (std::size_t i = 0; i < g_bd.size();) {
+        BuildAsk& b = g_bd[i];
+        bool near = false;
+        for (const Lift& l : Lifts()) {
+            ObjAnimState a;
+            float at[3];
+            if (l.car && ReadObjAnim(l.car, &a) && a.entry == b.entry && ObjectPoint(l.car, 0, 0, at) &&
+                std::hypot(me[0] - at[0], me[2] - at[2]) < near_m) {
+                near = true;
+            }
+        }
+        if (near && b.first == 0.0) b.first = Now();
+        if (!near) b.first = 0.0;
+        if (b.first != 0.0 && Now() - b.first >= BuildDelaySeconds()) {
+            Log("lift car build delay (test aid): car entry %#llx full build passed on after %.1f s near", static_cast<unsigned long long>(b.entry),
+                Now() - b.first);
+            reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t)>(g_setlevel_orig)(b.entry, 2);
+            g_bd.erase(g_bd.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
+}
 void LiftPrebuildTick(const GameSnapshot& s) {
+    LiftBuildDelayTick(s);
     static const bool off = [] {
         const char* e = std::getenv("BB_PARTY_LIFT_PREBUILD");
         return e && e[0] == '0';
@@ -3271,7 +3373,7 @@ void LiftPrebuildTick(const GameSnapshot& s) {
             static double last_ask[48];
             if (near && g_setlevel_orig && SafeGet(a.entry + 0x1f9, &rq) && rq != 4 && Now() - last_ask[n - 1] > 1.0) {
                 last_ask[n - 1] = Now();
-                reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t)>(g_setlevel_orig)(a.entry, 2);
+                if (BuildGate(a.entry, 2)) reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::int32_t)>(g_setlevel_orig)(a.entry, 2);
                 static int logged = 0;
                 if (logged++ < 8) {
                     Log("lift car prebuild: car %d (entry %#llx) was at level %u: asked to build fully (local chr %.0f m away)", e,
