@@ -2621,6 +2621,64 @@ def check_mw(v, L):
     check_common(v, L, "mw")
 
 
+# Phase px (poison077, 0.7.7, ~4 min, 2 players, group `death_poison`, player report: a member who died
+# poisoned in a party was still poisoned after getting up): the host stands in the Cathedral Ward with
+# the guest alive, takes Poison Knife hits on itself (test aid host_use=1210:take: the knife's attack
+# row effects), is poisoned (log_fx=-1 lists its SpEffects), dies and gets up. No poison state may
+# remain (the SpEffect list shows the poison ids of the poisoned phase gone), the screenshots show the bar.
+PX_LAMP = "2402950"
+PX_UNTIL = [r"0:travel step 4/4: host_press"]
+
+
+def check_px(v, L, who=0):
+    """Phase px / pxg: the member's poison (SpEffect 2120) is on when it dies and gone once it is up again."""
+    tag = "px" if who == 0 else "pxg"
+    role = "host" if who == 0 else "guest"
+    need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
+    on = need(v, L, tag + " the %s is poisoned (SpEffect 2120 in the list)" % role, who, r"test: SpEffects on the local player:.* 2120")
+    die = need(v, L, tag + " the %s dies" % role, who, r"test: die: entity", on or 0.0)
+    up = need(v, L, tag + " the %s gets up" % role, who, r"revive #\d+: after", die or 0.0)
+    if up is None:
+        return
+    need(v, L, tag + " the revive dropped the poison", who, r"revive: poison dropped \(\d+ SpEffect", die or 0.0)
+    # the list lines are logged on a change: none after the revive may name 2120
+    rows = L.all(who, r"test: SpEffects on the local player:", up, up + 40.0)
+    v.step(tag + " no poison state in the SpEffect list after the revive (%d list change(s))" % len(rows),
+           bool(rows) and all(" 2120" not in ln for _, ln in rows), "first: %s" % (rows[0][1][-80:] if rows else "none"))
+    check_common(v, L, tag)
+
+
+PX_CLEAR = ",".join(str(f) for f in list(range(1340, 1348)) + list(range(1349, 1360)) + [12500051, 12500052, 12500053, 12500054] + list(range(72500350, 72500360)))
+
+
+def phase_px(only, guest=False):
+    # Poison Knives (the PvP rule on, party_pvp test aids) poison one member; it dies poisoned with the other
+    # alive and gets up (the host at its lamp, a guest where the party's rules put it).
+    thrower = ["log@22", "face@2", "item=1210@2", "face@1", "use=8@1", "log@30"]
+    if guest:
+        # the guest is poisoned and dies; the host (invincible) throws
+        h_dir = ",".join(["god", "host_warp=2502951@8^1", "host_press=0@150%m25!"])
+        g_dir = ",".join(["log_fx=-1", "guest_press=0@50%m25!", "guest_die@5%m25", "guest_press=0@40%m25!"])
+        hsteps = ["on@3"] + thrower
+        gsteps = ["log@5"]
+        until = [r"1:travel step 3/3: guest_press"]
+    else:
+        h_dir = ",".join(["log_fx=-1", "host_warp=2502951@8^1", "host_press=0@50%m25!", "host_die@5%m25",
+                          "host_press=0@40%m25!"])
+        g_dir = "god"
+        hsteps = ["on@3"]
+        gsteps = thrower
+        until = PX_UNTIL
+    return dict(
+        name="pxg" if guest else "px", seconds=300, count=2, headless=0,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + PX_CLEAR, "BB_PARTY_PROGRESS_TEST_SET=" + NFA_FIXTURE_SET,
+             "BB_PARTY_TEST_COND_TIMEOUT=100"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + h_dir, "0:BB_PARTY_PVP_TEST=" + ",".join(hsteps),
+              "1:BB_PARTY_PVP_TEST=" + ",".join(gsteps), "1:BB_PARTY_DIRECTOR_TEST=" + g_dir],
+        crash=[], until=until,
+    )
+
+
 # Phase hg (bossjoin, 0.7.6, ~4 min, 2 players, group `boss_late`, S1 player reports "boss behaves as if only the
 # host is in the fight"): the HOST walks into Father Gascoigne's fog first (intro, fight), the GUEST
 # follows HG_DELAY seconds later (variants by env BB_HG_DELAY, default 12 = after the intro). Both
@@ -4742,14 +4800,14 @@ def check_lo(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "lg": phase_lg, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "anl": phase_anl, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cla": phase_cla, "cpr": phase_cpr, "chc": phase_chc, "chn": lambda only: phase_chc(only, "chn", True), "chw": phase_chw, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "bv": phase_bv, "ch": phase_ch, "md": phase_md, "mds": phase_mds, "svl": phase_svl, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "gr": phase_gr, "gr2": phase_gr2, "gr3": phase_gr3, "jl": phase_jl, "ml": phase_ml, "mg": phase_mg, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "ff": phase_ff, "lk": phase_lk, "lkc": phase_lkc, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "em": phase_em, "bd": phase_bd, "bdo": phase_bdo, "sm": phase_sm, "ef": phase_ef, "da": phase_da, "cv": phase_cv, "cvt": phase_cvt, "cvh": lambda only: phase_cvt(only, "host"), "ie": phase_ie, "il": phase_il, "rw": phase_rw, "rwe": phase_rwe, "rwt": phase_rwt, "rwl": phase_rwl, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "pvh": phase_pvh, "pvn": phase_pvn, "eh": phase_eh, "bl": phase_bl, "mw": phase_mw, "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp, "lo": phase_lo, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "csh": phase_csh, "csh2": phase_csh2, "ba": phase_ba, "bh": phase_bh, "bk": phase_bk, "hg": phase_hg, "lw": phase_lw, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
+          "s3": phase_s3, "sk": phase_sk, "lg": phase_lg, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "anl": phase_anl, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cla": phase_cla, "cpr": phase_cpr, "chc": phase_chc, "chn": lambda only: phase_chc(only, "chn", True), "chw": phase_chw, "cpa": phase_cpa, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "bv": phase_bv, "ch": phase_ch, "md": phase_md, "mds": phase_mds, "svl": phase_svl, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "gr": phase_gr, "gr2": phase_gr2, "gr3": phase_gr3, "jl": phase_jl, "ml": phase_ml, "mg": phase_mg, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "ff": phase_ff, "lk": phase_lk, "lkc": phase_lkc, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "em": phase_em, "bd": phase_bd, "bdo": phase_bdo, "sm": phase_sm, "ef": phase_ef, "da": phase_da, "cv": phase_cv, "cvt": phase_cvt, "cvh": lambda only: phase_cvt(only, "host"), "ie": phase_ie, "il": phase_il, "rw": phase_rw, "rwe": phase_rwe, "rwt": phase_rwt, "rwl": phase_rwl, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "pvh": phase_pvh, "pvn": phase_pvn, "eh": phase_eh, "bl": phase_bl, "mw": phase_mw, "px": phase_px, "pxg": lambda only: phase_px(only, True), "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp, "lo": phase_lo, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "csh": phase_csh, "csh2": phase_csh2, "ba": phase_ba, "bh": phase_bh, "bk": phase_bk, "hg": phase_hg, "lw": phase_lw, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_wipe": "clw", "chalice_alias": "cla", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
           "rot": "rt", "boss_rooms": "br", "rom_fog": "rf", "emissary": "em", "boss_drops": "bd", "boss_drops_off": "bdo", "scene_mirror": "sm", "ending_flow": "ef", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "fourp_nat": "fp", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "chalice_shop": "csh,csh2", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_visible": "bv", "ludwig_wipe": "lw", "lone_ai": "la,lc"}
+          "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "death_poison": "px,pxg", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "fourp_nat": "fp", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "chalice_shop": "csh,csh2", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_visible": "bv", "ludwig_wipe": "lw", "lone_ai": "la,lc"}
 GROUP_ROWS = {"join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -4760,7 +4818,7 @@ GROUP_ROWS = {"join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"gue
               "lifts": r"^lf (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iwn? ", "cainhurst_annalise": r"^an |^anl ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_curse": r"^ch[cw] ", "chalice_altar": r"^cpa ", "chalice_wipe": r"^clw ", "chalice_alias": r"^cla ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "cainhurst_maid": r"^md ", "cloth_stall": r"^mds ", "save_load": r"^svl ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "join_lamp": r"^jl ", "mensis_lamp": r"^ml ", "mensis_lamp_guest": r"^mg ", "headstone_split": r"^hs ", "ngplus_rejoin": r"^ngj ", "npc_lamp": r"^nl ", "frontier_fall": r"^ff ", "lunarium_key": r"^lkc? ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "rom_fog": r"^rf ", "emissary": r"^em ", "boss_drops": r"^bd ", "boss_drops_off": r"^bdo ", "scene_mirror": r"^sm ", "ending_flow": r"^ef ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
-              "valtr_rune": r"^cv(:| join| rule| rune)", "covenant_talk": r"^cv[th] ", "items_every": r"^ie ", "items_leak": r"^il ", "reward_guest_kill": r"^rw ", "reward_eye": r"^rwe ", "reward_treasure": r"^rwt ", "reward_late": r"^rwl ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "pvp_full_hp": r"^pvh ", "pvp_npc": r"^pvn ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "boss_darkness": r"^mw ", "seam_rejoin": r"^sj ", "outage_short": r"^ou ", "guest_mesh": r"^mesh ", "fourp_nat": r"^fp ", "lan_only": r"^lo ", "phantom_own": r"^po ", "phantom_save": r"^pos ", "shop_repair": r"^sg ", "shop_repair2": r"^sg2 ", "chalice_shop": r"^csh2? ", "boss_ai": r"^ba ", "boss_dead": r"^b[hk][ :]", "boss_late": r"^hg ", "boss_visible": r"^bv ", "ludwig_wipe": r"^lw ", "lone_ai": r"^la |^lc "}
+              "valtr_rune": r"^cv(:| join| rule| rune)", "covenant_talk": r"^cv[th] ", "items_every": r"^ie ", "items_leak": r"^il ", "reward_guest_kill": r"^rw ", "reward_eye": r"^rwe ", "reward_treasure": r"^rwt ", "reward_late": r"^rwl ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "pvp_full_hp": r"^pvh ", "pvp_npc": r"^pvn ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "boss_darkness": r"^mw ", "death_poison": r"^pxg? ", "seam_rejoin": r"^sj ", "outage_short": r"^ou ", "guest_mesh": r"^mesh ", "fourp_nat": r"^fp ", "lan_only": r"^lo ", "phantom_own": r"^po ", "phantom_save": r"^pos ", "shop_repair": r"^sg ", "shop_repair2": r"^sg2 ", "chalice_shop": r"^csh2? ", "boss_ai": r"^ba ", "boss_dead": r"^b[hk][ :]", "boss_late": r"^hg ", "boss_visible": r"^bv ", "ludwig_wipe": r"^lw ", "lone_ai": r"^la |^lc "}
 
 
 # --only: the log lines that end each group's checks (instances.py --until "I:RX"); a phase with
@@ -4861,6 +4919,7 @@ GROUP_UNTIL = {
     "travel_vote": TV_UNTIL,
     "limbo_leave": BL_UNTIL,
     "boss_darkness": MW_UNTIL,
+    "death_poison": PX_UNTIL,
     "boss_ai": BA_UNTIL,
     "boss_dead": BA_UNTIL,
     "boss_late": HG_UNTIL,
@@ -7792,7 +7851,7 @@ CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda 
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "md": check_md, "mds": check_mds, "svl": check_svl, "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "iwn": lambda v, L, d: check_iwn(v, L), "an": lambda v, L, d: check_an(v, L), "anl": lambda v, L, d: check_anl(v, L), "ld": lambda v, L, d: check_ld(v, L),
-          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "chc": lambda v, L, d: check_chc(v, L), "chw": lambda v, L, d: check_chc(v, L, True), "chn": lambda v, L, d: check_chc(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "cla": lambda v, L, d: check_cla(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "gr": lambda v, L, d: check_gr(v, L), "gr2": lambda v, L, d: check_gr(v, L, 2), "gr3": lambda v, L, d: check_gr(v, L, 3), "jl": check_jl, "ml": lambda v, L, d: check_ml(v, L), "mg": lambda v, L, d: check_mg(v, L), "hs": lambda v, L, d: check_hs(v, L), "ngj": lambda v, L, d: check_ngj(v, L), "nl": lambda v, L, d: check_nl(v, L), "ff": lambda v, L, d: check_ff(v, L), "lk": lambda v, L, d: check_lk(v, L), "lkc": lambda v, L, d: check_lkc(v, L), "br": lambda v, L, d: check_br(v, L), "rf": lambda v, L, d: check_rf(v, L), "em": lambda v, L, d: check_em(v, L), "bd": lambda v, L, d: check_bd(v, L), "bdo": lambda v, L, d: check_bd(v, L, True), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "cvt": check_cvt, "cvh": lambda v, L, d: check_cvt(v, L, d, "host"), "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "rw": lambda v, L, d: check_rw(v, L), "rwe": lambda v, L, d: check_rwe(v, L), "rwt": lambda v, L, d: check_rwt(v, L), "rwl": lambda v, L, d: check_rwl(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "pvh": lambda v, L, d: check_pvh(v, L), "pvn": lambda v, L, d: check_pvn(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "mw": lambda v, L, d: check_mw(v, L), "ba": lambda v, L, d: check_ba(v, L), "bh": lambda v, L, d: check_bh(v, L), "bk": lambda v, L, d: check_bk(v, L), "hg": lambda v, L, d: check_hg(v, L), "lw": lambda v, L, d: check_lw(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"), "lc": lambda v, L, d: check_lc(v, L),
+          "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "chc": lambda v, L, d: check_chc(v, L), "chw": lambda v, L, d: check_chc(v, L, True), "chn": lambda v, L, d: check_chc(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "clw": lambda v, L, d: check_clw(v, L), "cla": lambda v, L, d: check_cla(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "gr": lambda v, L, d: check_gr(v, L), "gr2": lambda v, L, d: check_gr(v, L, 2), "gr3": lambda v, L, d: check_gr(v, L, 3), "jl": check_jl, "ml": lambda v, L, d: check_ml(v, L), "mg": lambda v, L, d: check_mg(v, L), "hs": lambda v, L, d: check_hs(v, L), "ngj": lambda v, L, d: check_ngj(v, L), "nl": lambda v, L, d: check_nl(v, L), "ff": lambda v, L, d: check_ff(v, L), "lk": lambda v, L, d: check_lk(v, L), "lkc": lambda v, L, d: check_lkc(v, L), "br": lambda v, L, d: check_br(v, L), "rf": lambda v, L, d: check_rf(v, L), "em": lambda v, L, d: check_em(v, L), "bd": lambda v, L, d: check_bd(v, L), "bdo": lambda v, L, d: check_bd(v, L, True), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "cvt": check_cvt, "cvh": lambda v, L, d: check_cvt(v, L, d, "host"), "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "rw": lambda v, L, d: check_rw(v, L), "rwe": lambda v, L, d: check_rwe(v, L), "rwt": lambda v, L, d: check_rwt(v, L), "rwl": lambda v, L, d: check_rwl(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "pvh": lambda v, L, d: check_pvh(v, L), "pvn": lambda v, L, d: check_pvn(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "mw": lambda v, L, d: check_mw(v, L), "px": lambda v, L, d: check_px(v, L), "pxg": lambda v, L, d: check_px(v, L, 1), "ba": lambda v, L, d: check_ba(v, L), "bh": lambda v, L, d: check_bh(v, L), "bk": lambda v, L, d: check_bk(v, L), "hg": lambda v, L, d: check_hg(v, L), "lw": lambda v, L, d: check_lw(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"), "lc": lambda v, L, d: check_lc(v, L),
           "rt": lambda v, L, d: check_rt(v, L), "tv": lambda v, L, d: check_tv(v, L),
           "eh": lambda v, L, d: check_eh(v, L), "ou": lambda v, L, d: check_ou(v, L), "mesh": lambda v, L, d: check_mesh(v, L), "bv": lambda v, L, d: check_bv(v, L), "fp": lambda v, L, d: check_fp(v, L), "lo": lambda v, L, d: check_lo(v, L), "po": lambda v, L, d: check_po(v, L), "pos": lambda v, L, d: check_pos(v, L), "sg": lambda v, L, d: check_sg(v, L), "sg2": lambda v, L, d: check_sg2(v, L), "csh": lambda v, L, d: check_csh(v, L), "csh2": lambda v, L, d: check_csh2(v, L)}
 
@@ -7891,7 +7950,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "bv", "sc", "summonfail", "s3", "sk", "lg", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "el", "lt", "bf", "ch", "md", "mds", "svl",
-                                     "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "em", "bd", "bdo", "sm", "ef", "da", "cv", "cvt", "cvh", "ie", "il", "rw", "rwe", "rwt", "rwl", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "pvh", "pvn", "eh", "bl", "mw", "sj", "ou", "mesh", "fp", "lo", "po", "pos", "sg", "sg2", "csh", "csh2", "ba", "bh", "bk", "hg", "lw", "la", "lb", "lc")
+                                     "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "em", "bd", "bdo", "sm", "ef", "da", "cv", "cvt", "cvh", "ie", "il", "rw", "rwe", "rwt", "rwl", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "npa", "npd", "pvd", "pvh", "pvn", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "mesh", "fp", "lo", "po", "pos", "sg", "sg2", "csh", "csh2", "ba", "bh", "bk", "hg", "lw", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
