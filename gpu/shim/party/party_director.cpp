@@ -310,6 +310,8 @@ struct Test {
     Clock::time_point st_at{};
     bool god = false;     // god: the own chr kept invincible (test aid)
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
+    int log_fx = 0;       // log_fx=ID (mergo077): every second the local player's SpEffect ID on / off
+    Clock::time_point fx_at{};
     double log_pos_every = 1.0;  // log_pos=S (liftfix): every S s (0.2..10; a lift ride's vertical speed)
     Clock::time_point pos_at{};
     // watch_text=A/B: every new appearance of a game text containing A or B (an action prompt
@@ -2903,6 +2905,19 @@ void RequestGuestSendHome(const std::string& why) {
 
 bool GuestBellEffectOn() { return HasSpEffect(LocalPlayer(), kGuestBellEffect); }
 bool DropGuestBellEffect() { return RemoveSpEffect(kGuestBellEffect); }
+
+// Mergo's Wet Nurse's darkness (SpEffect 5630, 50 s; 5631 on her): her defeat event 12601800 drops 5630 ~21 s
+// after the kill, in the host's game and only on a chr that is up. A member that lay in the fight's limbo and
+// gets up in the arena after the kill (the 0.7.6 report: the dark arena stayed) drops both at once.
+int DropFightDarkness() {
+    int n = 0;
+    for (const int id : {5630, 5631}) {
+        while (n < 8 && RemoveSpEffect(id)) {
+            ++n;
+        }
+    }
+    return n;
+}
 bool ApplyGuestBellEffect() { return ApplySpEffect(kGuestBellEffect); }
 
 bool LeaveGameSession() {
@@ -3219,6 +3234,10 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             SafeWrite(s.player + 0x1e1, &f, 4);
             Log("test: god: invincible (chr +0x1E1 bit 14)");
         }
+    }
+    if (t.log_fx > 0 && s.world_up && !s.loading && s.player && Seconds(t.fx_at, now) >= 1.0) {
+        t.fx_at = now;
+        Log("test: SpEffect %d is %s on the local player", t.log_fx, HasSpEffect(s.player, t.log_fx) ? "ON" : "off");
     }
     if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= t.log_pos_every) {
         // Every second: the physics position (as DescribeHere; the map man's +0xAAC is the last
@@ -4031,6 +4050,8 @@ void PartyDirector::ConfigureFromEnv() {
                 }
             } else if (item == "god") {
                 st.test.god = true;
+            } else if (item.rfind("log_fx=", 0) == 0) {
+                st.test.log_fx = std::atoi(item.c_str() + 7);
             } else if (item == "log_pos") {
                 st.test.log_pos = true;
             } else if (item.rfind("log_pos=", 0) == 0) {

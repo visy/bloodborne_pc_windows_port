@@ -6307,6 +6307,9 @@ bool GuestArenaRevive(const GameSnapshot& s, double held_for) {
         horiz, dy, !c.valid ? ", no corpse spot kept" : !fell ? "" : g_local_safe.valid ? ", a fall death" : ", a fall death, no safe spot kept");
     SpectateEnd();
     ReviveLocal(s, arena, false);
+    if (const int dark = DropFightDarkness()) {
+        Log("guest: the boss's darkness (%d SpEffect(s)) dropped with the revive", dark);
+    }
     party::status::SetLastEvent("The boss fell: you are back on your feet");
     return true;
 }
@@ -6994,6 +6997,9 @@ void HostDownTick(const GameSnapshot& s, double now) {
             dy, !fell ? "" : g_local_safe.valid ? ", a fall death" : ", a fall death, no safe spot kept");
         SpectateEnd();
         ReviveLocal(s, arena, true);
+        if (const int dark = DropFightDarkness()) {
+            Log("host death: the boss's darkness (%d SpEffect(s)) dropped with the revive", dark);
+        }
         party::status::SetLastEvent("The boss fell: you are back on your feet");
         watch_until = now + 10.0;
         next_watch = now + 0.5;
