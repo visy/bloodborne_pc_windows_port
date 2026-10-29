@@ -363,7 +363,8 @@ before anyone is in the game):
   anyone can hurt them, and their death and the quest step after it count for every player's own
   save. A hunter that turns on the host turns on the guests too (*NPC hunters fight all*, a host
   setting on *System → Party rules: World*, on by default). Covenant outcomes, such as the host's Alfred
-  killing Annalise, stay each player's own. Brador and the Fishing Hamlet's hunters
+  killing Annalise, stay each player's own. A hunter summoned with the Old Hunter Bell goes into the
+  boss arena with the party even when a guest goes through the fog first. Brador and the Fishing Hamlet's hunters
   should show for guests too, but that is not tried in a real session yet.
 - **Boss fights need the host's area.** A guest who travelled alone cannot start a boss fight
   where the host is not (the fog stays closed, with a message); if the host leaves during a fight,
