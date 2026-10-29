@@ -429,6 +429,18 @@ if (WIN32)
     endforeach()
 endif()
 
+# bbport: the generated SRT walker with tables that change between draws (null and bad pointers):
+# ninja -C out/gpu srt-walker-test, then run it. No GPU.
+add_executable(srt-walker-test EXCLUDE_FROM_ALL ../tests/test_srt_walker.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(srt-walker-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
+target_compile_options(srt-walker-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../tests/test_srt_walker.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(srt-walker-test PRIVATE bbgpu)
+if (WIN32)
+    target_link_libraries(srt-walker-test PRIVATE onecore dbghelp ntdll winmm)
+endif()
+
 # Party network library (shim/net): STUN, vport framing, the network simulator and a loopback
 # UDP exchange through the guest-facing socket functions. ninja -C out/gpu party-net-test
 file(GLOB PARTY_NET_SOURCES CONFIGURE_DEPENDS shim/net/*.cpp)
