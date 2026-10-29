@@ -27,6 +27,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import clinic_changes  # noqa: E402
 import clinic_health  # noqa: E402
+import clinic_outbox  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_cl  # noqa: E402
 from clinic_logic import mask_ips  # noqa: E402
@@ -671,8 +672,13 @@ def _run(argv, who, out, db, stdin):
             res["change"] = change
         if a.tell:
             masked = mask_ips(a.tell)
+            pv = clinic_outbox.preview(c, a.bug, "tell", masked)
             res["tell_queued"] = c.queue_tell(a.bug, who, masked)
             res["tell_text"] = masked
+            if pv["merge_with"]:
+                res["tell_merge_with"] = pv["merge_with"]
+            if pv["already_told"]:
+                res["tell_warning"] = clinic_outbox.describe({"merge_with": [], "already_told": pv["already_told"]})[0]
             c.add_note(a.bug, who, "triage", "told the player: " + masked)
         return emit(res)
     if a.cmd == "ask":
