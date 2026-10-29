@@ -499,7 +499,11 @@ void VideoOutDriver::Flip(const Request& req) {
                   user_us = BbStats::gpu_user_us.load(), invol = BbStats::gpu_invol_switches.load(),
                   vol = BbStats::gpu_vol_switches.load();
         u64 gpu_ns = 0;
-#ifndef _WIN32
+#ifdef _WIN32
+        // bbport: no thread clock id on Windows; the GPU thread's user + kernel time stands in, so
+        // the stall lines below (guarded by last_gpu_ns != 0) print there too.
+        gpu_ns = (sys_us + user_us) * 1000ull;
+#else
         if (const int clock = BbStats::gpu_thread_clock.load(); clock != -1) {
             timespec ts{};
             clock_gettime(static_cast<clockid_t>(clock), &ts);
@@ -509,12 +513,15 @@ void VideoOutDriver::Flip(const Request& req) {
         const u64 images = BbStats::images_registered.load();
         const u64 image_bytes = BbStats::image_upload_bytes.load();
         const u64 buffer_bytes = BbStats::buffer_upload_bytes.load();
+        const u64 gpu_copy_bytes = BbStats::image_gpu_copy_bytes.load();
+        static u64 last_gpu_copy_bytes;
         if (frame_ms > 40.0 && last_gpu_ns != 0) {
             std::printf("Stall: %.1f ms frame; GPU thread on CPU %.1f ms; %llu images registered, "
-                        "%.1f MB image uploads, %.1f MB buffer uploads\n",
+                        "%.1f MB image uploads (+ %.1f MB GPU-side), %.1f MB buffer uploads\n",
                         frame_ms, (gpu_ns - last_gpu_ns) / 1e6,
                         static_cast<unsigned long long>(images - last_images),
                         (image_bytes - last_image_bytes) / 1e6,
+                        (gpu_copy_bytes - last_gpu_copy_bytes) / 1e6,
                         (buffer_bytes - last_buffer_bytes) / 1e6);
             std::printf("       %llu draws, %llu dispatches, %llu submissions; GPU thread user %.1f ms, "
                         "kernel %.1f ms, %llu preempted, %llu waits\n",
@@ -658,6 +665,7 @@ void VideoOutDriver::Flip(const Request& req) {
         last_gpu_ns = gpu_ns;
         last_images = images;
         last_image_bytes = image_bytes;
+        last_gpu_copy_bytes = gpu_copy_bytes;
         last_buffer_bytes = buffer_bytes;
         ++frames;
         const double window = std::chrono::duration<double>(now - window_start).count();
