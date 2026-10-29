@@ -518,6 +518,10 @@ before anyone is in the game):
   **Export for save editor** (any single-player or party save, any slot: a copy the editor can open,
   your save is not touched) and **Import from save editor** (the edited copy back into its slot, your
   saves backed up first, put back the way the game wrote them so party progress stays).
+- **Party character offline.** The *Party* tab's **Copy party character to offline...** copies a party
+  character into a single-player slot and cleans it for playing alone (the summoned-guest body type and the
+  host's Chalice Dungeon left in the network slot go; your own dungeons and progress stay). The launcher
+  lists what it cleaned; the party save is not changed and your single-player saves are backed up first.
 
 ### Deaths
 
