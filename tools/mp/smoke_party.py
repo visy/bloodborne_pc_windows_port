@@ -3947,8 +3947,8 @@ def phase_cvt(only, who="guest"):
 # `log_oath` reads the oath rune's marker SpEffect (6100 Corruption, 6110 Radiance, 6120 Hunter, 6142 Impurity,
 # 250 Beast's Embrace, 255 Milkweed: what the game's EMEVDs and the NPCs test) on the local player of each game:
 # each must carry ITS OWN covenant and never the other's, while the guest is summoned in the host's world.
-CVR_HOST_LOT = os.environ.get("CVR_HOST_LOT", "17000")    # Corruption
-CVR_GUEST_LOT = os.environ.get("CVR_GUEST_LOT", "35010")  # Hunter
+CVR_HOST_LOT = os.environ.get("CVR_HOST_LOT", "3401850")  # Beast's Embrace (17000 Corruption, 34020 Radiance, 43120 Impurity)
+CVR_GUEST_LOT = os.environ.get("CVR_GUEST_LOT", "43020")  # Milkweed (35010 Hunter)
 CVR_KEYS = os.environ.get("CVR_KEYS", "left,cross,w,w,w,w,w,w")
 CVR_GKEYS = os.environ.get("CVR_GKEYS", CVR_KEYS)
 CVR_UNTIL = [r"1:guest_leave: Party > Leave pressed[\s\S]*1:test: oath: "]
@@ -3981,13 +3981,42 @@ def phase_cva(only):
     env, ienv = _anl_env([])
     env = [(e + ",9042,50000200") if e.startswith("BB_PARTY_PROGRESS_TEST_CLEAR") else e for e in env
            if not e.startswith("BB_PARTY_PROGRESS_TEST_READ")] + ["BB_PARTY_PROGRESS_TEST_READ=" + CVA_READ]
-    ienv = ienv + ["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(["god", "log_oath"] + talk("host", 15)),
+    if os.environ.get("CVA_TRACE") == "1":  # the instructions of Annalise's m25 events (kneel / offer / give blood), every call
+        env = env + ["BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=" + ",".join(str(i) for i in range(12500010, 12500022))]
+    sweep = []
+    if os.environ.get("CVA_SWEEP") == "1":  # exploration: after the host's talk try gesture list rows 0..N one by one (touchpad, Down*k, Cross)
+        env = env + ["BB_PARTY_GESTURE_TEST=" + ",".join(str(g) for g in range(800, 823))]
+        lf = "log_flag=" + "/".join(str(f) for f in list(range(72500300, 72500340)) + [9042, 1040, 1041, 1042, 50000200])
+        sweep = [lf, "log_anim", "host_press=0x4000@2.5%m25_00!", "host_press=0x0@28%m25_00!"]  # one talk, wait for its end
+        gat = os.environ.get("CVA_SWEEP_AT", "3")  # seconds after the talk's first Cross: her "Kneel afore Us" line is ~17 s in
+        if os.environ.get("CVA_KNEEL"):
+            # pre-open the gesture list (the menu cannot be opened during her lines), clear the first-talk state so her greeting plays
+            # again, perform list gesture k at CVA_KNEEL_AT s after that (her "Kneel afore Us" line is ~9 s into the greeting)
+            sweep = sweep[:2]
+            for k in [int(x) for x in os.environ["CVA_KNEEL"].split(",")]:
+                # 331 falling 1 -> 0 (with 301 / 302 clear) starts her greeting again; the gesture menu cannot be open during it
+                # (it is closed), so it is opened CVA_KNEEL_AT s later, right after her lines end (~14 s)
+                sweep += ["host_flag=72500331@1%m25_00", "host_flag=72500301:0@0.1%m25_00", "host_flag=72500302:0@0.1%m25_00",
+                          "host_flag=72500331:0@0.1%m25_00", "host_press=0x100000@" + os.environ.get("CVA_KNEEL_AT", "14.5") + "%m25_00!",
+                          "host_press=0x1000@0.8%m25_00!"] + ["host_press=0x40@0.4%m25_00!"] * k                     + ["host_press=0x8000@0.8%m25_00!", "host_press=0x0@" + os.environ.get("CVA_KNEEL_WAIT", "14") + "%m25_00!"]
+        talk_each = os.environ.get("CVA_SWEEP_TALK") == "1"  # every trial starts its own talk (touchpad at CVA_SWEEP_AT s after its Cross)
+        if talk_each:
+            sweep = sweep[:2]
+        ks = [int(x) for x in os.environ.get("CVA_SWEEP_KS", "").split(",") if x] or range(int(os.environ.get("CVA_SWEEP_FROM", "0")), int(os.environ.get("CVA_SWEEP_TO", "23")))
+        for k in ([] if os.environ.get("CVA_KNEEL") else ks):
+            if talk_each:
+                sweep += ["host_press=0x4000@2.5%m25_00!"]
+            # the touchpad's gesture menu: Triangle (Switch) moves into the list of learned gestures, Down walks it, Square = Test Now
+            sweep += ["host_press=0x100000@" + gat + "%m25_00!", "host_press=0x1000@0.8%m25_00!"] + ["host_press=0x40@0.4%m25_00!"] * k                 + ["host_press=0x8000@0.8%m25_00!", "host_press=0x0@" + os.environ.get("CVA_SWEEP_WAIT", "8") + "%m25_00!"]
+    ienv = ienv + ["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(["god", "log_oath"] + (talk("host", 15) if not sweep else ["host_chr=%s:1.6@15%%m25_00" % CVA_ANNALISE]) + sweep),
                    "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(["god", "log_oath"] + talk("guest", CVS_GUEST_AT) + ["guest_leave@8%m25_00"]),
                    "1:BB_PARTY_GUESTSVC_TEST=buttonprobe;promptlog"]
-    return dict(name="cva", seconds=600, count=2, headless=0, env=env, ienv=ienv,
+    if sweep:
+        ienv = [e.replace(",guest_leave@8%m25_00", "") for e in ienv]
+    return dict(name="cva", seconds=int(os.environ.get("CVA_SECONDS", "900")) if sweep else 600, count=2, headless=0, env=env, ienv=ienv,
                 watch=["--watch", r"npc_talk: local line: talk=cvtalk@1.5,10,30",
                        "--watch", r"npc_talk: local choice: npc=cvchoice@0.5,2"],
-                crash=[], until=[r"1:guest_leave: Party > Leave pressed[\s\S]*test read \(load mode 0"], until_hold=8)
+                crash=[], until=[] if sweep else [r"1:guest_leave: Party > Leave pressed[\s\S]*test read \(load mode 0"], until_hold=8)
 
 
 # Phase cvs / cvo (covenant_seq, 0.7.7, ~7 min, 2 players, group `covenant_seq`; "covenants per player"): in ONE
@@ -8236,10 +8265,10 @@ def check_cvt(v, L, d: Path, who="guest"):
         need(v, L, t + " the rune is given into the guest's inventory (after the Leave, at home)", 1,
              CV_RUNE_GIVEN % (CV_RUNE_LOT, CV_RUNE_FLAG, CV_RUNE_FLAG, CV_RUNE_LOT, CV_RUNE_FLAG), tr or 0)
         none_of(v, L, t + " the trigger never goes to the host", r"world action sent to the host.*%s" % CV_RUNE_TRIGGER, insts=(0, 1))
-        none_of(v, L, t + " the host gets no rune", r"gave #\d+ lot %s" % CV_RUNE_LOT, insts=(0,))
+        none_of(v, L, t + " the host gets no rune", r"gave #\d+ lot %s" % CV_RUNE_LOT, insts=(0,))
     else:
         # the host's rune is the game's own event 12700906 (no mod log line): proved by the host's save below
-        none_of(v, L, t + " the guest gets no rune from the host's talk", r"gave #\d+ lot %s|own talk gift trigger %s" % (CV_RUNE_LOT, CV_RUNE_TRIGGER),
+        none_of(v, L, t + " the guest gets no rune from the host's talk", r"gave #\d+ lot %s|own talk gift trigger %s" % (CV_RUNE_LOT, CV_RUNE_TRIGGER),
                 insts=(1,))
     g = lp_save_flags(d, ti, ids)
     o = lp_save_flags(d, oi, ids)
@@ -8266,13 +8295,27 @@ def check_cvr(v, L, d=None):
         v.step("cvr the %s never carries the other member's covenant effect" % who, not wrong, "%d wrong samples" % len(wrong))
         summ = [ln for t, ln in on if "role 6" in ln or "role 3" in ln]
         v.step("cvr the %s's effect holds in the host's world (summoned / hosting)" % who, len(summ) >= 3, "%d samples" % len(summ))
+    # the numbers (0.7.7 covleft077): the oath rune's SpEffect rows the PLAYER'S OWN active effect nodes point at (log_oath's `oath row`
+    # line: node row IS the param row, every non-zero field): Beast's Embrace row 180050 holds the Therianthrope resist (+0x1E0 = 15),
+    # Milkweed row 180060 the item discovery rate (+0x1FC = 0.1); the oath marker rows (6100 / 6110 / 6120 / 6142 / 250 / 255) carry no
+    # numbers of their own (the engine and the EMEVDs / ESDs act on the marker's presence on the chr)
+    num = {"3401850": ("BeastResist(180050)", r"\+1E0=15"), "43020": ("MilkweedDrop(180060)", r"\+1FC=0\.1")}
+    for i, who, lot, other in ((0, "host", CVR_HOST_LOT, CVR_GUEST_LOT), (1, "guest", CVR_GUEST_LOT, CVR_HOST_LOT)):
+        if lot in num:
+            nm, pat = num[lot]
+            rows = [ln for t, ln in L.all(i, r"test: oath row %s: node row IS the param row" % re.escape(nm), 0)]
+            v.step("cvr the %s's own %s row is attached to its chr with its number (%s)" % (who, nm, pat), any(re.search(pat, ln) for ln in rows), "%d row line(s)" % len(rows))
+            if other in num:
+                onm, _ = num[other]
+                wrong = L.all(i, r"test: oath row %s" % re.escape(onm), 0)
+                v.step("cvr the %s never shows the other member's %s row" % (who, onm), not wrong, "%d" % len(wrong))
     home = [ln for t, ln in L.all(1, r"test: oath: covenant effects on the local player: .*role 0", 0) if re.search(gn + r"\(", ln)]
     v.step("cvr the guest keeps its own covenant effect at home after the Leave", len(home) >= 1, "%d samples" % len(home))
     check_common(v, L, "cvr")
 
 
 def check_cva(v, L, d: Path):
-    """Phase cva: Annalise's greeting lines on the host and on the guest (the kneel gesture itself is NOT driven: unproven)."""
+    """Phase cva: Annalise's greeting lines on the host and on the guest (the kneel itself is NOT proven: docs/party/event_flags.md; CVA_SWEEP / CVA_KNEEL explore it)."""
     j = need(v, L, "cva join: the guest is in", 0, r"cooperators 0 -> 1")
     for i, who in ((0, "host"), (1, "guest")):
         ln = L.all(i, r"npc_talk: local line: talk \d+ .*npc 250307 \(Annalise\)", j or 0)
