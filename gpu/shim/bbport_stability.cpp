@@ -962,6 +962,110 @@ bool InstallKernelSampleClamp() {
     return WriteBranch(kKernelParams, 0xe9, PlaceStub(e), 6 - 5);
 }
 
+// ======================================================================================
+// GX occlusion query guard (ported from deadinside28's InstallGxQueryGuard, upstream 0fc2921c,
+// PR #343 by whp199, issue #336; GPL-2.0-or-later; reduced to the two skip stubs). Crash 0x2169edc on
+// GXRenderThread, address 0, after hours of play: the game's query (0x30 bytes, its handle the first
+// field) is made while the device heap is full and keeps a null handle; the render command then
+// begins it (0xe2f130: state [this + 8] 0 -> 2, reads the handle) and ends it (0xe2f160). A query
+// without a handle is neither begun nor ended: its state stays 0, so its result getter gives 0
+// (nothing visible). BB_GX_QUERY_GUARD=0: off.
+// BB_GX_QUERY_TEST_NULL=N (test aid): the N-th begin of a query with a handle sees a null handle (the
+// real handle is put back at the next begin), to run the skip path in a short session.
+// ======================================================================================
+constexpr u64 kQueryBegin = 0xe2f134;  // cmp dword [rdi + 8], 0; jne 0xe2f157 (begun already)
+constexpr u64 kQueryReturn = 0xe2f157; // mov al, 1; pop rbp; ret
+constexpr u64 kQueryEnd = 0xe2f164;    // mov dword [rdi + 8], 1
+constexpr u64 kQueryEndReturn = 0xe2f181; // mov al, 1; pop rbp; ret
+std::atomic<u64> query_skipped{0};
+u64 query_test_every = 0, query_test_calls = 0, query_test_query = 0, query_test_handle = 0;
+
+/// The begin stub calls this (rdi: the query) for a query without a handle, and in test mode for
+/// every begin; the stub then looks at the handle again.
+BB_SYSV void QueryNoHandle(u64 query) {
+    if (query_test_every) {
+        if (query_test_query) { // the handle of the forced begin comes back
+            *reinterpret_cast<u64*>(query_test_query) = query_test_handle;
+            query_test_query = 0;
+        }
+        const u64 handle = *reinterpret_cast<const u64*>(query);
+        if (handle && (query_test_calls == 0 || (query_test_calls + 1) % 1000 == 0)) {
+            std::printf("GX query guard: test aid saw %llu begins\n", ull(query_test_calls + 1));
+        }
+        if (handle && ++query_test_calls == query_test_every) {
+            query_test_query = query;
+            query_test_handle = handle;
+            *reinterpret_cast<u64*>(query) = 0;
+            std::printf("GX query guard: test aid nulls the handle of query %#llx at begin %llu\n", ull(query),
+                        ull(query_test_calls));
+        }
+    }
+    if (*reinterpret_cast<const u64*>(query) != 0) {
+        return;
+    }
+    const u64 n = query_skipped.fetch_add(1) + 1;
+    if ((n & (n - 1)) == 0) { // the 1st, 2nd, 4th, ...
+        std::printf("GX query guard: null handle skipped (%llu)\n", ull(n));
+    }
+}
+
+bool InstallQueryGuard() {
+    if (!Matches(kQueryBegin, {0x83, 0x7f, 0x08, 0x00, 0x75, 0x1d}) ||
+        !Matches(kQueryEnd, {0xc7, 0x47, 0x08, 0x01, 0x00, 0x00, 0x00}) ||
+        !Matches(kQueryReturn, {0xb0, 0x01}) || !Matches(kQueryEndReturn, {0xb0, 0x01})) {
+        std::printf("Stability: GX query guard: guest +0x%llx / +0x%llx is not the expected code; left alone\n",
+                    ull(kQueryBegin), ull(kQueryEnd));
+        return false;
+    }
+    if (const char* test = std::getenv("BB_GX_QUERY_TEST_NULL")) {
+        query_test_every = std::strtoull(test, nullptr, 10);
+    }
+    const u64 base = reinterpret_cast<u64>(image);
+    Emitter b = NewStub();
+    b.Bytes({0x83, 0x7f, 0x08, 0x00});       // cmp dword [rdi + 8], 0
+    b.Bytes({0x75, 0x00});                   // jne done (begun or ended already)
+    const std::size_t to_done = b.size;
+    b.Bytes({0x80, 0x3d, 0, 0, 0, 0, 0x00}); // cmp byte [rip + test flag], 0
+    const std::size_t flag_disp = b.size - 5;
+    b.Bytes({0x75, 0x00});                   // jne none
+    const std::size_t to_none_a = b.size;
+    b.Bytes({0x48, 0x83, 0x3f, 0x00});       // cmp qword [rdi], 0
+    b.Bytes({0x74, 0x00});                   // je none
+    const std::size_t to_none_b = b.size;
+    const std::size_t body = b.size;
+    b.JmpTo(base + kQueryBegin + 6);         // body: state 2, the begin
+    const std::size_t done = b.size;
+    b.JmpTo(base + kQueryReturn);
+    b.code[to_done - 1] = u8(done - to_done);
+    b.code[to_none_a - 1] = u8(b.size - to_none_a);
+    b.code[to_none_b - 1] = u8(b.size - to_none_b);
+    b.SaveVolatile();                        // none: rdi (the query) kept
+    b.CallAbs(reinterpret_cast<const void*>(&QueryNoHandle));
+    b.RestoreVolatile();
+    b.Bytes({0x48, 0x83, 0x3f, 0x00});       // cmp qword [rdi], 0
+    b.Bytes({0x75, u8(body - (b.size + 2))}); // jne body (test mode: the handle is there)
+    b.Bytes({0xeb, u8(done - (b.size + 2))}); // jmp done: not begun, the state stays 0
+    const std::size_t flag_at = b.size;
+    b.Bytes({u8(query_test_every ? 1 : 0)});
+    const std::int32_t flag_rel = std::int32_t(flag_at) - std::int32_t(flag_disp + 5);
+    std::memcpy(&b.code[flag_disp], &flag_rel, 4);
+    const u64 begin_stub = PlaceStub(b);
+    Emitter e = NewStub();
+    e.Bytes({0x48, 0x83, 0x3f, 0x00});       // cmp qword [rdi], 0
+    e.Bytes({0x74, 0x00});                   // je none
+    const std::size_t to_skip = e.size;
+    e.Bytes({0xc7, 0x47, 0x08, 0x01, 0x00, 0x00, 0x00}); // mov dword [rdi + 8], 1
+    e.JmpTo(base + kQueryEnd + 7);
+    e.code[to_skip - 1] = u8(e.size - to_skip);
+    e.JmpTo(base + kQueryEndReturn);         // none: not ended, the state stays 0
+    const u64 end_stub = begin_stub ? PlaceStub(e) : 0;
+    if (!begin_stub || !end_stub) {
+        std::printf("Stability: GX query guard: no stub space; left alone\n");
+        return false;
+    }
+    return WriteBranch(kQueryBegin, 0xe9, begin_stub, 1) && WriteBranch(kQueryEnd, 0xe9, end_stub, 2);
+}
+
 } // namespace
 
 void PatchImage(unsigned char* image_, std::uint64_t size) {
@@ -998,6 +1102,8 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("resource-cache ") + (cache ? "on" : "off"));
     const bool kernel = On("BB_KERNEL_CLAMP") && stub_page && InstallKernelSampleClamp();
     note(std::string("kernel-clamp ") + (kernel ? "on" : "off"));
+    const bool query = On("BB_GX_QUERY_GUARD") && stub_page && InstallQueryGuard();
+    note(std::string("gx-query-guard ") + (query ? "on" : "off") + (query && query_test_every ? " (test aid)" : ""));
     if (stub_page) {
 #ifdef _WIN32
         DWORD unused = 0;
