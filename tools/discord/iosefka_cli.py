@@ -27,6 +27,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import clinic_changes  # noqa: E402
 import clinic_health  # noqa: E402
+import clinic_vpn  # noqa: E402
 import clinic_outbox  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_cl  # noqa: E402
@@ -359,6 +360,7 @@ def _health_text(d):
                  f"({db['fraction'] * 100:.0f}%)")
     lines.append(f"queues: triage {q['triage']}, unsure {q['unsure']}, uploads waiting {q['uploads']}; "
                  f"24 h: {d['new_bugs_24h']} new bugs, {d['logs_24h']} logs")
+    lines.append(clinic_vpn.line(d.get("vpn") or {"state": "off"}))
     lines.append("open alerts: " + (", ".join(d["alerts_active"]) or "none"))
     v = d["versions"]
     lines.append(f"git {v['git']}, discord.py {v['discord.py']}, python {v['python']}, tools "
