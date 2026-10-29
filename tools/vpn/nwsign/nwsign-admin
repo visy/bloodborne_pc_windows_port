@@ -1,0 +1,54 @@
+#!/usr/bin/python3
+"""nwsign-admin: operator CLI. Run as the service user (install.sh puts a wrapper in /usr/local/sbin)."""
+import argparse, os, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from nwsign_core import CAError, ID_RE, State, load_config
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="nwsign-admin")
+    ap.add_argument("--config")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for c in ("ban", "unban"):
+        sub.add_parser(c).add_argument("install_id")
+    sub.add_parser("list")
+    sub.add_parser("stats")
+    sub.add_parser("regen-crl", help="rebuild CRL bundle + banned.txt, forget long-expired installs")
+    sub.add_parser("init", help="(install) create sub-CA key/CSR and HTTPS key/cert, print the pin")
+    sub.add_parser("pin", help="print the SHA-256 SPKI pin of the HTTPS certificate")
+    sr = sub.add_parser("sign-subca", help="(install, as root) sign the sub-CA CSR with the root CA key")
+    sr.add_argument("--root-key", required=True)
+    sr.add_argument("--root-crt", required=True)
+    a = ap.parse_args()
+    st = State(load_config(a.config))
+    try:
+        if a.cmd in ("ban", "unban"):
+            if not ID_RE.match(a.install_id):
+                sys.exit("install_id must be 32 lowercase hex chars")
+            st.set_ban(a.install_id, a.cmd == "ban")
+            print("%s %s (CRL + banned.txt updated; new connections are refused at once, a running "
+                  "session ends at its next TLS renegotiation, within ~1 h)" % (a.cmd, a.install_id))
+        elif a.cmd == "list":
+            rows = st.list_installs()
+            print("count: %d" % len(rows))
+            for i, e, b in rows:
+                print("%s expires %s%s" % (i, time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(e)), "  BANNED" if b else ""))
+        elif a.cmd == "stats":
+            for k, v in st.stats().items():
+                print("%-20s %d" % (k, v))
+        elif a.cmd == "regen-crl":
+            st.regen_crl()
+            print("ok")
+        elif a.cmd == "init":
+            print(st.init_keys())
+        elif a.cmd == "pin":
+            print(st.https_pin())
+        elif a.cmd == "sign-subca":
+            st.sign_subca(a.root_key, a.root_crt)
+            print("ok")
+    except CAError as e:
+        sys.exit("error: %s" % e)
+
+
+main()
