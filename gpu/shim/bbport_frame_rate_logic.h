@@ -79,7 +79,23 @@ struct alignas(64) Live {
     float step_up = 0.1f;             ///< +0.1 per 30 FPS frame
     float decay08 = 0.8f;             ///< 0.8 per 30 FPS frame
     float cloth = 1.0f;               ///< cloth constraints' stiffness
+    float cloth_ratio = 1.0f;         ///< steady / dt: what the cloth update's time is multiplied by
+    float cloth_max = Frame30;        ///< (read right after cloth_ratio) the cloth's time is at most this
+    float cloth_in = 0.0f;            ///< diagnostics: the last cloth update's time as given / as stepped
+    float cloth_out = 0.0f;
+    float steady = Frame30;           ///< the steady time: the frame's, 5% a frame at most (SteadyStep)
 };
+
+/// A steady time step (Supermedo/bloodborne_pc 7a39487f, cloth_time.py): the frame's time held to
+/// 0.95..1.05 x the one before, never above 1/30 s. A stutter (a 15-35 ms frame, then 4 ms frames
+/// catching up) is then a few frames of slightly slower or faster time, not a kick to capes,
+/// dresses and plants; a lasting change of frame rate is followed in about 15 frames.
+/// `previous` <= 0 or not finite: the first frame, the frame's own time.
+constexpr float SteadyDown = 0.95f, SteadyUp = 1.05f;
+inline float SteadyStep(float previous, float dt) {
+    if (!(previous > 0.0f) || !std::isfinite(previous)) return std::min(dt, Frame30);
+    return std::min(std::clamp(dt, previous * SteadyDown, previous * SteadyUp), Frame30);
+}
 
 /// The step for a measured frame time: clamped to [shortest, 1/30 s] (below 30 FPS the game slows
 /// down, as it always did); a non-finite measurement counts as 1/30 s.
@@ -101,6 +117,8 @@ inline void Compute(Live& live, float dt, float cloth_override = -1.0f) {
     // Cloth is stiffer the more often it is solved: the game's 1.0 at 30 FPS, 0.5 from 60 FPS up
     // (the value the community's 60 FPS patches settled on).
     live.cloth = cloth_override > 0.0f ? cloth_override : std::clamp(frames, 0.5f, 1.0f);
+    live.steady = SteadyStep(live.steady, dt);
+    live.cloth_ratio = dt > 0.0f ? live.steady / dt : 1.0f;
 }
 
 } // namespace BbFrameRate
