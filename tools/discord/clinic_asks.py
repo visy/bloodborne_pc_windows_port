@@ -2,6 +2,7 @@
 logs. Targets are picked from the clinic database (pure, testable); posting reuses one path (post_to_bug).
 Public texts carry no names, IPs or log lines; only the bug's own reporter is ever mentioned."""
 import asyncio
+import json
 import re
 import sys
 import time
@@ -19,6 +20,8 @@ NUDGE_DAYS = 14
 CLOSE_DAYS = 30
 RECENT_POST_DAYS = 7       # catch-up reads release posts no older than this
 QUIET_KINDS = ("nudge", "retest-asked")  # Iosefka's own asks do not count as activity
+ASK_GAP_DAYS = 3           # at most one developer ask per bug in this time (unless forced)
+ASK_REPLY_DAYS = 14        # a reporter's reply in the bug's place this soon after an ask joins the bug
 CLOSE_TEXT = "closed: no logs for 30 days; reopens when logs arrive"
 
 VERSION_RX = re.compile(r"(?<![\w.])v?(\d+\.\d+\.\d+(?:[ -]?(?:alpha|beta|rc)[ .-]?\d+)?)(?![\w.]*\d)", re.I)
@@ -81,6 +84,103 @@ def retest_targets(clinic, text):
                     seen.add((bid, v))
                     out.append((b, v))
     return out
+
+
+# --- developer asks: `ask NW-x --need ...` / `cl ask CL-y --need ...` ---------------------------------------
+
+def merged_records(clinic, bug_id, _seen=None):
+    """The bug and every bug merged into it (directly or through a chain), each with its own place + reporter."""
+    seen = _seen if _seen is not None else {bug_id}
+    out = [clinic.bug(bug_id)]
+    for b in clinic.bugs(status="duplicate"):
+        if b["dup_of"] == bug_id and b["id"] not in seen:
+            seen.add(b["id"])
+            out += merged_records(clinic, b["id"], seen)
+    return out
+
+
+def _where(rec):
+    if rec["source"] == "dm":
+        return "DM to the reporter"
+    if rec["thread_id"]:
+        return f"thread {rec['thread_id']}"
+    return f"channel {rec['channel_id']}"
+
+
+def ask_targets(clinic, bug_id):
+    """([(record, reporter id)], [(record id, why)]): who can be asked about the bug, one per person. Skipped:
+    local bugs, merged-in bugs a dev filed (tag source=dev; a staff reporter is also caught at send time), records with no reporter, a person already listed."""
+    out, skipped, seen = [], [], set()
+    for rec in merged_records(clinic, bug_id):
+        rid = reporter_of(clinic, rec)
+        if rec["source"] == "local":
+            skipped.append((rec["id"], "local bug"))
+        elif rec["id"] != bug_id and rec["tags"].get("source") == "dev":  # a merge copies tags up: only dups count
+            skipped.append((rec["id"], "filed by a dev / staff poster"))
+        elif not rid or rid < 0:
+            skipped.append((rec["id"], "no reporter"))
+        elif rid in seen:
+            skipped.append((rec["id"], "same person as another record"))
+        else:
+            seen.add(rid)
+            out.append((rec, rid))
+    return out, skipped
+
+
+def last_ask(clinic, bug_id):
+    return max([n["at"] or 0 for n in clinic.notes(bug_id) if n["kind"] == "ask"], default=0)
+
+
+def plan_ask(clinic, bug_id, need, issue="", *, force=False, now=None):
+    """What `ask` would do for one bug (pure): the exact messages, where they go, who is skipped, and `blocked`
+    (a reason string) when the bug was asked less than ASK_GAP_DAYS ago and no force."""
+    now = now or time.time()
+    b = clinic.bug(bug_id)
+    targets, skipped = ask_targets(clinic, bug_id)
+    issue = logic.mask_ips(issue or b["title"] or "").strip()[:200]
+    need = logic.mask_ips(need).strip()
+    msgs = []
+    for rec, rid in targets:
+        text = voice.reporter_ask("<@%d>" % rid if rec["source"] != "dm" else "", bug_id, issue, need)
+        msgs.append({"record": rec["id"], "reporter": rid, "where": _where(rec), "text": text,
+                     "chars": len(text)})
+    blocked = None
+    la = last_ask(clinic, bug_id)
+    if la and not force and now - la < ASK_GAP_DAYS * 86400:
+        blocked = f"asked {(now - la) / 86400:.1f} days ago (limit {ASK_GAP_DAYS} days; --force overrides)"
+    elif not msgs:
+        blocked = "nobody to ask: " + ("; ".join(f"{i}: {w}" for i, w in skipped) or "no reporter")
+    return {"bug": bug_id, "issue": issue, "need": need, "messages": msgs,
+            "skipped": [{"record": i, "why": w} for i, w in skipped], "blocked": blocked,
+            "status": "waiting-logs" if b["status"] != "waiting-logs" else "already waiting-logs"}
+
+
+def commit_ask(clinic, plan, who):
+    """Queue the plan's messages for the bot, record the ask in the bug history, set waiting-logs."""
+    bug_id = plan["bug"]
+    for m in plan["messages"]:
+        payload = json.dumps({"bug": bug_id, "issue": plan["issue"], "need": plan["need"]})
+        m["queued"] = clinic.queue_tell(m["record"], who, payload, kind="ask")
+        via = f" (via {m['record']})" if m["record"] != bug_id else ""
+        clinic.add_note(bug_id, who, "ask", f"asked the reporter{via}. issue: {plan['issue']} | need: {plan['need']}",
+                        to=str(m["reporter"]))
+    if clinic.bug(bug_id)["status"] != "waiting-logs":
+        clinic.update_bug(bug_id, status="waiting-logs")
+        clinic.add_note(bug_id, who, "status", "waiting-logs (asked the reporter)")
+    return plan
+
+
+def asked_here(clinic, author_id, place_ids, when=None, days=ASK_REPLY_DAYS):
+    """The bug (merged-into one) in which this person was asked for details in the `days` days before `when`
+    (the time of their message) and `place_ids` (channel / thread ids of the message) is where the ask went."""
+    when = when or time.time()
+    for n in reversed(clinic.notes_of_kind("ask", when - days * 86400)):
+        if n["to"] != str(author_id) or n["at"] > when:
+            continue
+        for rec in merged_records(clinic, n["bug_id"]):
+            if reporter_of(clinic, rec) == author_id and ({rec["thread_id"], rec["channel_id"]} - {None}) & set(place_ids):
+                return n["bug_id"]
+    return None
 
 
 def last_activity(clinic, bug):

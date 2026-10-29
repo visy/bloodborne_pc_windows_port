@@ -85,7 +85,7 @@ class Clinic:
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
         for table, col in (("nw_messages", "dm INTEGER"), ("nw_bugs", "reporter_id INTEGER"),
-                           ("nw_bugs", "activity REAL")):
+                           ("nw_bugs", "activity REAL"), ("nw_outbox", "kind TEXT")):
             have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col.split()[0] not in have:  # database from before the column: add it
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
@@ -522,16 +522,17 @@ class Clinic:
 
     # outbox: player-facing texts from the CLI that the bot posts
 
-    def queue_tell(self, bug_id, who, text):
-        cur = self.db.execute("INSERT INTO nw_outbox (bug_id, text, who, created, sent) VALUES (?,?,?,?,NULL)",
-                              (bug_id, text, who, time.time()))
+    def queue_tell(self, bug_id, who, text, kind="tell"):
+        """Queue a player-facing text for the bot. kind "ask": `text` is the JSON of an ask (see clinic_asks)."""
+        cur = self.db.execute("INSERT INTO nw_outbox (bug_id, text, who, created, sent, kind) VALUES (?,?,?,?,NULL,?)",
+                              (bug_id, text, who, time.time(), kind))
         self.db.commit()
         return cur.lastrowid
 
     def outbox_pending(self):
-        rows = self.db.execute("SELECT id, bug_id, text, who, created FROM nw_outbox WHERE sent IS NULL "
-                               "ORDER BY id")
-        return [dict(zip(("id", "bug_id", "text", "who", "created"), r)) for r in rows]
+        rows = self.db.execute("SELECT id, bug_id, text, who, created, kind FROM nw_outbox "
+                               "WHERE sent IS NULL ORDER BY id")
+        return [dict(zip(("id", "bug_id", "text", "who", "created", "kind"), r)) for r in rows]
 
     def outbox_sent(self, outbox_id):
         self.db.execute("UPDATE nw_outbox SET sent=? WHERE id=?", (time.time(), outbox_id))
