@@ -2684,6 +2684,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             tt.ap_slides_here = 0;
             tt.ap_phase = 0;
             tt.ap_at = now;
+            tt.ap_ref[0] = tt.ap_ref[1] = 1e9f; // a new walk: the stuck check starts afresh (not from the last walk's spot)
+            tt.ap_ref_at = now;
             // Invincible while it walks (EnableInvincible, chr +0x1E1 bit 14, as a11_move): enemies on the
             // way must not end the walk; fights and deaths are the steps after it.
             std::uint32_t f = 0;
@@ -2741,6 +2743,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             tt.ap_slides_here = 0;
             tt.ap_phase = 0;
             tt.ap_at = now;
+            tt.ap_ref[0] = tt.ap_ref[1] = 1e9f; // a new walk: the stuck check starts afresh (not from the last walk's spot)
+            tt.ap_ref_at = now;
             Log("test: %s: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", TravelStepName(step.kind),
                 double(x), double(z), double(r), steps, DescribeHere(s).c_str());
         } else {

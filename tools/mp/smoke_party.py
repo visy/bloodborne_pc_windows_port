@@ -734,10 +734,11 @@ LW = {
         tag="lfw", map="m24_01", car="2411320", pos="12410350", busy="12415350", start="top", top_val=1,
         lamp="2412953", set_flags="12410330,12410350",
         trig={"top": (-128.72, -44.3, -9.73), "bottom": (-128.72, -58.0, -9.73)},
-        side={"top": (-128.45, -44.3, -10.45), "bottom": (-128.45, -58.0, -10.45)},
-        out_h={"top": (-130.27, -44.4, -6.27), "bottom": (-125.28, -58.4, -11.69)},
-        out_g={"top": (-135.70, -44.4, -0.60), "bottom": (-117.10, -58.5, -17.30)},
-        wk={"top": (-130.27, -44.4, -6.27), "bottom": (-121.10, -58.4, -15.60)},
+        side={"top": (-128.19, -44.3, -9.20), "bottom": (-129.25, -58.0, -10.26)},
+        out_h={"top": (-134.70, -44.2, -2.50), "bottom": (-125.28, -58.4, -11.69)},
+        out_g={"top": (-130.80, -44.5, -3.70), "bottom": (-117.10, -58.5, -17.30)},
+        wait={"top": (-140.40, -44.5, 5.20), "bottom": (-117.10, -58.5, -17.30)},
+        wk={"top": (-136.70, -44.5, 1.50), "bottom": (-121.10, -58.4, -15.60)},
         far={"top": (-184.6, -38.7, 32.6), "bottom": (-74.9, -54.8, 17.2)},
         route={"top": "-180.7:-41.5:29.6/-177.6:-41.7:26.7/-173.4:-41.7:26.3/-169.0:-41.7:23.9/-165.4:-41.7:21.5/-161.9:-41.7:17.5/-158.2:-41.7:15.0/-154.3:-41.7:11.6/-151.3:-41.7:9.1/-147.6:-41.7:10.8/-144.8:-43.3:7.6/-140.4:-44.5:5.2/-136.7:-44.5:1.5/-134.7:-44.2:-2.5/-130.8:-44.5:-3.7/-130.0:-44.5:-8.0",
                "bottom": "-78.8:-55.4:14.7/-79.1:-55.5:9.9/-83.5:-55.5:8.9/-88.2:-55.4:6.2/-89.5:-55.5:2.0/-92.6:-55.5:-1.5/-96.6:-55.5:-3.9/-100.3:-55.4:-6.3/-103.5:-55.4:-10.0/-107.9:-55.4:-12.6/-110.3:-55.4:-15.8/-113.0:-56.9:-19.2/-116.5:-58.7:-21.3/-117.1:-58.5:-17.3/-121.1:-58.4:-15.6/-124.4:-58.4:-12.6/-128.1:-58.1:-10.7"},
@@ -766,7 +767,8 @@ LW = {
 def lfw_plan(spec):
     """[(direction, riders, car end before)] for the spec's rides: the car alternates ends from its start."""
     out, end = [], spec["start"]
-    for riders in spec["rides"][:int(os.environ.get("BB_LFW_RIDES", "0")) or None]:  # BB_LFW_RIDES=N: a shorter run
+    kinds = os.environ.get("BB_LFW_KINDS", "").split(",") if os.environ.get("BB_LFW_KINDS") else spec["rides"]
+    for riders in kinds[:int(os.environ.get("BB_LFW_RIDES", "0")) or None]:  # BB_LFW_RIDES=N: a shorter run
         out.append(("down" if end == "top" else "up", riders, end))
         end = "bottom" if end == "top" else "top"
     return out
@@ -793,7 +795,7 @@ def lfw_chains(spec):
             first = k == 0
             if role not in who:
                 # the one who waits: at the other end (the arrival), beside where the rider steps out
-                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec["out_g"][other]), "1" if first else "14", m, gate))
+                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec.get("wait", spec["out_g"])[other]), "1" if first else "14", m, gate))
                 # the player who does not ride walks a few metres by the stick while the car moves (the user's report:
                 # "the other player runs in place and cannot move while the elevator moves"); it starts once the rider
                 # stands in the trigger box
@@ -803,22 +805,30 @@ def lfw_chains(spec):
             second = riders == "both" and role == "guest"
             if first:
                 # the host after its prelude; the guest once the host stands where the first waiter does
-                g0 = "" if role == "host" else "?near=%s:3" % _p(*spec["out_g"]["bottom" if first_end == "top" else "top"])
+                g0 = "" if role == "host" else "?near=%s:12" % _p(*spec["out_h"]["bottom"])  # the prelude's last spot (and the first waiter's)
                 s.append("%s_move=%s:pin=4:ground@1%%%s%s" % (role, _p(*spec["far"][end]), m, g0))
             else:
                 s.append("%s_move=%s:pin=4:ground@14%%%s%s" % (role, _p(*spec["far"][end]), m, gate))
-            s.append("%s_route=%s@9%%%s" % (role, spec["route"][end], m))
+            # the second rider walks in once the first one stands on the car: two walkers on the same route block
+            # each other in its narrow places and in the doorway (live lfw4 / lfw5)
+            rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
+            s.append("%s_route=%s@%s%%%s%s" % (role, spec["route"][end], "1" if second else "9", m, rc))
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
                 s.append("%s_stick=%.2f:%.2f:0.2:14@0.2%%%s" % (role, sx, sz, m))
             else:
                 tx, ty, tz = spec["trig"][end]
-                cond = "?near=%s:1.5" % _p(*spec["side"][end]) if second else ""
+                cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
                 s.append("%s_stick=%.2f:%.2f:0.25:14@0.2%%%s%s" % (role, tx, tz, m, cond))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
-            s.append("%s_stick=%.2f:%.2f:1.5:16@0.3%%%s?obj=%s:%s" % (role, ox, oz, m, car, spec["arr"][d]))
+            if os.environ.get("BB_LFW_EXIT") == "walk":
+                s.append("%s_stick=%.2f:%.2f:1.5:16@0.3%%%s?obj=%s:%s" % (role, ox, oz, m, car, spec["arr"][d]))
+            else:
+                # off the car by the game's own in-world warp at the arrival (as phase lt): a stick walk needs 2-3 s to
+                # find its direction, and a rider still in the arrival end's trigger when the ride ends rides back (live lfw8)
+                s.append("%s_move=%s:0:native@0.3%%%s?obj=%s:%s" % (role, _p(ox, oy, oz), m, car, spec["arr"][d]))
     return steps["host"], steps["guest"]
 
 
