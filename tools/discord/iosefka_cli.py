@@ -107,6 +107,10 @@ def build_parser():
     s.add_argument("--dup")
     s.add_argument("--tell")
     s.add_argument("--in", dest="in_ver", metavar="TRACK:VERSION")
+    s = add("ask")
+    s.add_argument("bug")
+    iosefka_cl.add_ask_args(s)
+    s.add_argument("--for", dest="for_item", metavar="CL-ID")
     s = add("tag")
     s.add_argument("bug")
     s.add_argument("pairs", nargs="+")
@@ -393,6 +397,15 @@ def _text_out(out, cmd, data):
                 lines.append(f"  changelist import by {imp['who']}: {imp['items']} items in {imp['track']} {imp['version']}")
             for n in data["notes"]:
                 lines.append(f"  note {n['bug_id']} {n['who']} ({n['kind']}): {_excerpt(n['text'])}")
+    elif cmd in ("ask", "cl") and isinstance(data, dict) and "asks" in data:
+        lines.append("DRY RUN: nothing queued (add --send)" if data["dry_run"] else "QUEUED")
+        for p in data["asks"]:
+            lines.append(f"{p['bug']}: issue: {p.get('issue')!r}" + (f"  BLOCKED: {p['blocked']}" if p.get("blocked") else ""))
+            for m in p["messages"]:
+                lines.append(f"  -> {m['where']} (record {m['record']}, {m['chars']} chars):")
+                lines += ["     " + x for x in m["text"].splitlines()]
+            for sk in p.get("skipped", []):
+                lines.append(f"  skipped {sk['record']}: {sk['why']}")
     elif cmd == "health":
         lines = _health_text(data)
     elif cmd == "show":
@@ -661,6 +674,23 @@ def _run(argv, who, out, db, stdin):
             res["tell_queued"] = c.queue_tell(a.bug, who, masked)
             res["tell_text"] = masked
             c.add_note(a.bug, who, "triage", "told the player: " + masked)
+        return emit(res)
+    if a.cmd == "ask":
+        b = _need_bug(c, a.bug)
+        default = b["title"]
+        if a.for_item:
+            if not clinic_changes.CL_RX.match(a.for_item):
+                raise CliError(f"not a changelist item id (CL-xxxxxx): {a.for_item!r}")
+            it = clinic_changes.Changes(c).get(a.for_item)
+            if it is None:
+                raise CliError(f"no such item {a.for_item}", 1)
+            default = it["text"]
+        try:
+            res = iosefka_cl.do_ask(c, who, [a.bug], a, default)
+        except iosefka_cl.ClError as e:
+            raise CliError(str(e), e.code)
+        if a.send and res["asks"][0]["blocked"]:
+            raise CliError(res["asks"][0]["blocked"], 1)
         return emit(res)
     if a.cmd == "tag":
         _need_bug(c, a.bug)
