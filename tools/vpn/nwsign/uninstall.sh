@@ -12,6 +12,9 @@ else
 fi
 systemctl disable --now nwsign.service 2>/dev/null
 iptables -D INPUT -i eth0 -p tcp --dport "$PORT" -j ACCEPT 2>/dev/null
+[ -f /etc/nftables.conf.pre-nwsign ] && cp -a /etc/nftables.conf.pre-nwsign /etc/nftables.conf
+h=$(nft -a list chain inet filter input 2>/dev/null | sed -n "s/.*tcp dport $PORT accept # handle \([0-9]*\).*//p" | head -1)
+[ -n "$h" ] && nft delete rule inet filter input handle "$h"
 for f in /etc/iptables/add-openvpn-rules.sh /etc/iptables/rm-openvpn-rules.sh; do
   [ -f "$f.pre-nwsign" ] && cp -a "$f.pre-nwsign" "$f"
 done
