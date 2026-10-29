@@ -380,3 +380,8 @@ once-a-second RIP samples) at no measurable fps cost, since imports keep their d
 (`out/imports_<time>.log`, `[IMPORT CALL]` lines, the main thread's recent imports in hang
 dumps): every import then goes through a logging thunk, about 70% slower (102 -> 31 fps), so use
 it only to find which import a hang or crash is in. `src/probe.c`.
+| `BB_PARTY_LIFT_PREBUILD` | `0`: lift cars near the local chr are not built ahead (liftre077: the game builds a car 2-4 s after a player comes near, see world_actions.md 10.1.2). |
+| `BB_PARTY_LIFT_HOLD` | `0`: a ride animation requested for an unbuilt car is not held, and no floor guard next to an unbuilt car (the pre-0.7.7 instant ride / fall through the car). |
+| `BB_TEST_LIFT_PROBE` | `1` / `2` (liftre077): per-step lift car build state, hit object, chr carry state, node motion vector and the wait check in the log. |
+| `BB_TEST_LIFT_WATCH` | `1` / `2` (with the probe): hardware write breakpoints on the chr's position / ride bit / standing hit (1) or on the car's build fields (2); each write logs the writing instruction. |
+
