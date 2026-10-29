@@ -385,7 +385,8 @@ before anyone is in the game):
   into every player's own save; a guest who is behind catches up, including the Blood Moon.
 - **Covenants are your own.** How the covenant quests end stays in the world it happened in:
   Alfred killing Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates
-  never reach another player's save (in the host's world you see the host's state). A covenant
+  never reach another player's save (in the host's world the covenant leaders still show your own
+  state, so you can talk to Valtr and join after the host did). A covenant
   rune an NPC hands you (Valtr's Impurity, for example) is yours, in your own save. A host setting,
   on by default (*Covenants per player* on *System → Party rules: World*).
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
