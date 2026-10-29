@@ -39,9 +39,15 @@ CREATE TABLE IF NOT EXISTS nw_seen (who TEXT NOT NULL, bug_id TEXT NOT NULL, at 
 CREATE TABLE IF NOT EXISTS nw_exports (sha256 TEXT PRIMARY KEY, export_id TEXT, confirmed REAL);
 CREATE TABLE IF NOT EXISTS nw_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT, bug_id TEXT, text TEXT, who TEXT, created REAL, sent REAL);
+CREATE TABLE IF NOT EXISTS nw_health (key TEXT PRIMARY KEY, at REAL, detail TEXT);
+CREATE TABLE IF NOT EXISTS nw_alerts (kind TEXT PRIMARY KEY, last_sent REAL, active INTEGER, pending TEXT);
+CREATE TABLE IF NOT EXISTS nw_errors (at REAL, sig TEXT, place TEXT, first_line TEXT);
+CREATE INDEX IF NOT EXISTS nw_errors_at ON nw_errors (at);
+CREATE TABLE IF NOT EXISTS nw_queue (
+    message_id INTEGER PRIMARY KEY, channel_id INTEGER, author_id INTEGER, queued REAL);
 """
 
-LZMA_KINDS = ("log", "dump", "game", "archive", "text", "other")
+LZMA_KINDS = ("log", "dump", "game", "save", "archive", "text", "other")
 MESSAGE_COLS = ("channel_id", "thread_id", "author_id", "author_name", "created", "edited", "content",
                 "reply_to", "attachments", "bug_id", "state", "replacement_id", "seen", "dm")
 BUG_FIELDS = ("title", "source", "channel_id", "thread_id", "status", "dup_of", "assignee", "nd_refs",
@@ -117,6 +123,11 @@ class Clinic:
                             (sha, kind, filename, mime, raw_size, codec, blob, time.time()))
             self.db.commit()
         return sha
+
+    def set_file_kind(self, sha, kind):
+        """Re-label a stored file (a backfill fix); the bytes are untouched."""
+        self.db.execute("UPDATE nw_files SET kind=? WHERE sha256=?", (kind, sha))
+        self.db.commit()
 
     def put_file(self, data, filename, kind, mime="", *, stored=None, codec=None):
         """Store one file under the sha256 of `data`; returns the hash. Idempotent. `stored`/`codec`: an

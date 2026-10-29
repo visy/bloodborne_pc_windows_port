@@ -266,12 +266,24 @@ def test_triage_queue(tmp_path):
     assert [b["id"] for b in q["bugs"]] == [second] and q["auto_links"] == []
 
 
-def test_unreadable_marks_unsure(tmp_path):
+def _fake_tools(monkeypatch, present, returncode=2):
+    """Machine-independent: no unrar/7z at all, or present but failing / listing nothing."""
+    import subprocess
+    cm = cd.media
+    monkeypatch.setattr(cm.shutil, "which",
+                        lambda n, *a, **k: ("/fake/" + n) if present and n in ("unrar", "7z", "7zz", "7za") else None)
+    monkeypatch.setattr(cm, "_run", lambda cmd, timeout=120: subprocess.CompletedProcess(cmd, returncode, b"", b""))
+
+
+@pytest.mark.parametrize("mode", ["no-tool", "tool-fails", "tool-empty-ok"])
+def test_unreadable_marks_unsure(tmp_path, monkeypatch, mode):
     import zipfile
+    _fake_tools(monkeypatch, mode != "no-tool", returncode=0 if mode == "tool-empty-ok" else 2)
     c, ctx = make(tmp_path)
     ch = F.Channel(100, "help")
     z = F.Msg(6, ch, F.User(13), "see rar", [F.Att(60, "stuff.rar", b"Rar!\x1a\x07 junk")], minutes=0)
     run(bot.dispatch_message(z, ctx))
+    assert c.message(6)["bug_id"]
     assert "unreadable-file" in c.bug(c.message(6)["bug_id"])["tags"]["unsure"]
     # a readable zip without logs is not "unreadable" (and is not removable)
     buf = io.BytesIO()

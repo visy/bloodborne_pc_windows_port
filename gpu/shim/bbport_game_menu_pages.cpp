@@ -1124,6 +1124,11 @@ void DefineAll() {
     AddRow(Flag(&Values::party_conn_warnings), "Connection warnings", "Предупреждения о связи",
            "A notice with the fix when the firewall, router or address keeps the party from working",
            "Уведомление с решением, когда брандмауэр, роутер или адрес мешают группе", toggle, Kind::Toggle);
+    // 0.7.7: "<item>: shared with the party" when a key / unique item, weapon or rune is given to the party.
+    AddRow(Flag(&Values::party_item_notices), "Shared item notices", "Уведомления об общих предметах",
+           "A short notice when an item is shared with the party (key and unique items, weapons, runes)",
+           "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
+           Kind::Toggle);
 
     // ---- Party network (F2, 0.7.1, party_netroute.h): the link's path, the member relay, IPv6 ----
     AddPage("Party network", "Сеть группы", "The link's path, the public DHT, relaying for members, IPv6 (bbport)",

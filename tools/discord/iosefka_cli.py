@@ -26,6 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import clinic_changes  # noqa: E402
+import clinic_health  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_cl  # noqa: E402
 from clinic_logic import mask_ips  # noqa: E402
@@ -37,7 +38,7 @@ BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 ND_RX = re.compile(r"^ND-[0-9a-f]{8}$")
 NAME_RX = re.compile(r"^[a-z0-9_-]{1,32}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-LOG_DIR_KINDS = ("log", "dump", "game", "archive", "text", "other")
+LOG_DIR_KINDS = ("log", "dump", "game", "save", "archive", "text", "other")
 MEDIA_KINDS = ("image", "still")
 SORTS = ("newest", "oldest", "activity")
 
@@ -81,6 +82,7 @@ def build_parser():
         return sub.add_parser(name, parents=[common, *parents], add_help=False)
     add("new")
     add("triage-queue")
+    add("health")
     s = add("title")
     s.add_argument("bug")
     s.add_argument("title_text")
@@ -307,16 +309,53 @@ def _write_bug_tar(c, bug_ids, out, media):
                     if not media:
                         continue
                     folder = "images" if f["kind"] == "image" else "stills"
-                elif f.get("parent"):  # a log from inside an archive: logs/<archive name>/<inner path>
+                elif f.get("parent"):  # a log (or save) from inside an archive: logs|saves/<archive name>/<path>
                     inner = "/".join(_safe_name(p) for p in (f.get("path") or f["filename"]).split("/") if p.strip(". "))
                     name, data, _codec = c.get_file(f["sha256"])
-                    _add_bytes(tar, f"{base}/logs/{_safe_name(f['parent'])}/{inner or _safe_name(name)}", data,
+                    top = "saves" if f["kind"] == "save" else "logs"
+                    _add_bytes(tar, f"{base}/{top}/{_safe_name(f['parent'])}/{inner or _safe_name(name)}", data,
                                b["created"])
                     continue
                 else:
-                    folder = "logs"
+                    folder = "saves" if f["kind"] == "save" else "logs"
                 name, data, _codec = c.get_file(f["sha256"])
                 _add_bytes(tar, f"{base}/{folder}/{f['sha256'][:8]}_{_safe_name(name)}", data, b["created"])
+
+
+def _health(c):
+    """What the bot recorded about itself plus this machine's state. Error lines are IP-masked."""
+    snap = clinic_health.Health(c).snapshot(with_versions=True)
+    snap["now"] = _iso(snap["now"])
+    for k in ("last_start", "last_tick"):
+        snap[k] = _iso(snap[k]) if snap[k] else None
+    for st in snap["jobs"].values():
+        st["at"] = _iso(st["at"]) if st["at"] else None
+        st["age"] = None if st["age"] is None else round(st["age"])
+    for e in snap["errors_24h"]["kinds"]:
+        e["first_line"] = mask_ips(e["first_line"])
+        e["last"] = _iso(e["last"])
+    at, detail = snap.pop("upkeep")
+    snap["upkeep"] = {"at": _iso(at) if at else None, "result": detail}
+    return snap
+
+
+def _health_text(d):
+    lines = [f"last start {d['last_start']}, {d['restarts_24h']} start(s) in 24 h, last tick {d['last_tick']}"]
+    for j, st in d["jobs"].items():
+        lines.append(f"  job {j}: last {st['at']} ({st['age']} s ago){' OVERDUE' if st['overdue'] else ''}")
+    lines.append(f"errors 24 h: {d['errors_24h']['count']}")
+    for e in d["errors_24h"]["kinds"]:
+        lines.append(f"  {e['count']}x [{e['place']}] {e['first_line']}")
+    db, q = d["db"], d["queues"]
+    lines.append(f"disk free {d['disk_free'] / 2**30:.1f} GB; db {db['size'] / 2**20:.0f} of {db['cap'] / 2**20:.0f} MiB "
+                 f"({db['fraction'] * 100:.0f}%)")
+    lines.append(f"queues: triage {q['triage']}, unsure {q['unsure']}, uploads waiting {q['uploads']}; "
+                 f"24 h: {d['new_bugs_24h']} new bugs, {d['logs_24h']} logs")
+    lines.append("open alerts: " + (", ".join(d["alerts_active"]) or "none"))
+    v = d["versions"]
+    lines.append(f"git {v['git']}, discord.py {v['discord.py']}, python {v['python']}, tools "
+                 + ", ".join(f"{k} {'yes' if ok else 'MISSING'}" for k, ok in v["tools"].items()))
+    return lines
 
 
 def _json_out(out, data):
@@ -354,6 +393,8 @@ def _text_out(out, cmd, data):
                 lines.append(f"  changelist import by {imp['who']}: {imp['items']} items in {imp['track']} {imp['version']}")
             for n in data["notes"]:
                 lines.append(f"  note {n['bug_id']} {n['who']} ({n['kind']}): {_excerpt(n['text'])}")
+    elif cmd == "health":
+        lines = _health_text(data)
     elif cmd == "show":
         b = data["bug"]
         lines.append(f"{b['id']}  {b['status']}  {b['title']}")
@@ -505,7 +546,7 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args([_norm_ids(x) for x in argv])
     if not a.cmd:
-        raise CliError("no command (new, triage-queue, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl)")
+        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
     if a.cmd == "nd" and not ND_RX.match(a.ref):
@@ -557,6 +598,8 @@ def _run(argv, who, out, db, stdin):
         return emit({"since": _iso(since), "bugs": [_summary(c, b) for b in got["bugs"]],
                      "updated_bugs": [_summary(c, b) for b in got["updated_bugs"]], "notes": notes,
                      "changelist": _changelist_news(c, since, who), "triage_pending": len(_pending(c))})
+    if a.cmd == "health":
+        return emit(_health(c))
     if a.cmd == "triage-queue":
         since = c.mark_seen(who, "triage")
         links = [{"bug_id": n["bug_id"], "at": _iso(n["at"]), "text": n["text"]}

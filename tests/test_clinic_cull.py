@@ -424,3 +424,47 @@ def test_unpack_stops_when_disk_low(tmp_path, monkeypatch):
     monkeypatch.setattr(cd.media, "enough_disk", lambda *a, **k: False)
     assert cull.unpack(c, info, tmp_path / "tmp", out=lambda s: None) == cull.DISK_LOW
     assert "inner_files" not in c.message(1)["attachments"][0]
+
+
+def test_resave_backfill(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    data = _zip({"SPRJ0005/userdata0000": b"\0" * 32, "SPRJ0005/backup0000": b"\1" * 32,
+                 "SPRJ0005/sce_sys/param.sfo": b"sfo"})
+    sha = c.put_file(data, "SPRJ0005.zip", "archive")
+    old = c.put_file(b"\0" * 32, "userdata0000", "game")   # stored by the old classifier
+    bug = c.new_bug("saves", "thread", 1, 11)
+    c.upsert_message({"message_id": 1, "bug_id": bug, "created": 1.0, "state": "verified", "attachments": [
+        {"id": 1, "sha256": sha, "filename": "SPRJ0005.zip", "kind": "archive", "size": len(data),
+         "inner": ["SPRJ0005/userdata0000", "SPRJ0005/backup0000", "SPRJ0005/sce_sys/param.sfo"],
+         "inner_shas": [old], "inner_files": [{"sha256": old, "name": "SPRJ0005/userdata0000", "kind": "game"}]}]})
+    plain = c.new_bug("log", "thread", 1, 12)
+    lg = c.put_file(LOG, "a.log", "log")
+    c.upsert_message({"message_id": 2, "bug_id": plain, "created": 2.0, "state": "verified", "attachments": [
+        {"id": 2, "sha256": lg, "filename": "a.log", "kind": "log", "size": len(LOG)}]})
+    out = []
+    assert cull.resave(c, False, tmp_path / "tmp", out=out.append) == 0          # dry run: nothing changes
+    assert "dry run" in out[-1] and "1 file(s) become save" in out[-1] and "1 archive(s)" in out[-1]
+    assert c.file_info(old)["kind"] == "game" and "has_saves" not in c.bug(bug)["tags"]
+    assert c.message(1)["attachments"][0]["inner_files"][0]["kind"] == "game"
+    assert cull.resave(c, True, tmp_path / "tmp", out=out.append) == 0
+    a = c.message(1)["attachments"][0]
+    assert sorted(f["name"] for f in a["inner_files"]) == ["SPRJ0005/backup0000", "SPRJ0005/sce_sys/param.sfo",
+                                                          "SPRJ0005/userdata0000"]
+    assert {f["kind"] for f in a["inner_files"]} == {"save"} and c.file_info(old)["kind"] == "save"
+    assert c.bug(bug)["tags"]["has_saves"] == "yes" and "has_saves" not in c.bug(plain)["tags"]
+    assert c.message(2)["attachments"][0]["kind"] == "log"
+    out2 = []
+    cull.resave(c, True, tmp_path / "tmp", out=out2.append)                        # idempotent
+    assert "0 file(s) become save, 0 archive(s)" in out2[-1]
+
+
+def test_cullable_ignores_save_image_video_only(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    def rec(mid, atts):
+        c.upsert_message({"message_id": mid, "channel_id": 1, "thread_id": None, "author_id": 7, "author_name": "p",
+                          "created": mid, "content": "", "attachments": atts, "state": "verified", "dm": 0})
+    rec(1, [{"id": 1, "filename": "userdata0000", "kind": "save", "sha256": "a"}])
+    rec(2, [{"id": 2, "filename": "s.png", "kind": "image", "sha256": "b"}])
+    rec(3, [{"id": 3, "filename": "big.zip", "kind": "archive", "sha256": None, "skip": "big"}])
+    rec(4, [{"id": 4, "filename": "a.log", "kind": "log", "sha256": "c"}])
+    assert [m["message_id"] for m in cull.cullable(c)] == [4]

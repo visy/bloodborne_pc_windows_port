@@ -189,6 +189,41 @@ inline bool Offer(const Situation& s) {
     return s.world_up && !s.loading && !s.cutscene && !s.boss && area != 21 && s.map != 0xffffffffu;
 }
 
+/// Map travel (the map view's selected lamp, map/map_page.cpp): why it cannot start now. The same
+/// lamp warp as a world lamp's list, from wherever the player stands, so it is refused where a
+/// lamp's list would be (loading, cutscene, boss fight) and also in a Chalice Dungeon (area 29: no
+/// lamps of the world there, and the dungeon's own exit is its lamp), while dead or spectating a
+/// boss fight, and while a lamp's warp menu or another warp is under way. The Hunter's Dream
+/// (area 21) is allowed: its headstones run the same warp.
+enum class MapTravel { Ready, Off, NotInWorld, Cutscene, Boss, Chalice, Dead, Busy };
+struct MapTravelSituation {
+    bool on = false;  ///< lamp travel is installed (BB_LAMP_TRAVEL on, 1.09 code)
+    bool world_up = false, loading = false, cutscene = false, boss = false;
+    std::uint32_t map = 0xffffffffu;
+    int hp = -1;              ///< the player's HP (-1: no chr)
+    bool spectating = false;  ///< dead in a boss-fight limbo, following a member
+    bool busy = false;        ///< a lamp's warp menu is open or a warp is on its way
+};
+inline MapTravel MapTravelState(const MapTravelSituation& s) {
+    if (!s.on) return MapTravel::Off;
+    if (!s.world_up || s.loading || s.map == 0xffffffffu) return MapTravel::NotInWorld;
+    if (s.cutscene) return MapTravel::Cutscene;
+    if (((s.map >> 24) & 0xff) == 29) return MapTravel::Chalice;
+    if (s.hp <= 0 || s.spectating) return MapTravel::Dead;
+    if (s.boss) return MapTravel::Boss;
+    if (s.busy) return MapTravel::Busy;
+    return MapTravel::Ready;
+}
+
+/// Whether the map may travel to lamp `rp`: a lamp of the table other than the Hunter's Dream (the
+/// lamps' own Dream question does that), lit, travel not refused by its flag (as the headstones),
+/// and a ReturnPointParam row the game has. `flag(id)`, `known(rp)` as BuildList's.
+template <class FlagFn, class KnownFn>
+bool MapTravelTarget(std::uint32_t rp, FlagFn flag, KnownFn known) {
+    Lamp l{};
+    return rp != kDreamReturnPoint && LampOf(rp, &l) && known(rp) && flag(LitFlag(l)) && !flag(NameFlag(l));
+}
+
 /// Other observers of the talk command switch 0x203FFD0, which lamp travel replaces (issue #4: the
 /// shared NPC talk's choice observer could not hook it after lamp travel and never ran). They are
 /// registered before the game runs and called first in every call, as a prologue hook would be.

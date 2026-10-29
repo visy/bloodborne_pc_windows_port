@@ -46,10 +46,36 @@ def _quote(text: str, room: int) -> str:
     return out
 
 
-def replacement(mention: str, bug_id: str, text: str, media_note: str = "") -> str:
-    head = (f"{mention} brought a log to my clinic. I've taken it inside, where patients aren't exposed to "
-            f"infection: names and addresses stay off the open streets. It's being triaged as {bug_id}. "
+SAVE_COMFORT = "I'll keep them safe; the developers use them to see what happened."
+
+
+def _what(what: str, n: int = 1) -> tuple[str, str, str]:
+    """(what was brought, "it"/"them", reassurance) for `what` = log / save / both."""
+    if what == "save":
+        return "their saves", "them", " " + SAVE_COMFORT
+    if what == "both":
+        return "logs and saves", "them", " " + SAVE_COMFORT
+    return ("a log", "it", "") if n <= 1 else (f"{n} logs", "them", "")
+
+
+def _save_head(mention: str, bug_id: str, what: str, many: bool = False) -> str:
+    """Saves are a hunter's memories of the night: her words for them (with logs too, for `both`)."""
+    brought = ("the memories of their hunt" if what == "save"
+               else "their logs and the memories of their hunt")
+    return (f"{mention} entrusted me with {brought}: every lamp lit, every scar, every echo spent. I've taken "
+            f"them inside, where nothing from the streets can reach them, and their name stays here with me. "
+            f"I'll keep them safe; the developers will read them to understand what the night did to them. "
+            f"{'They are' if many else 'It is'} being triaged as {bug_id}. Thank you, truly. Now, go. "
+            f"And good hunting.")
+
+
+def replacement(mention: str, bug_id: str, text: str, media_note: str = "", what: str = "log") -> str:
+    thing, it, comfort = _what(what)
+    head = (f"{mention} brought {thing} to my clinic. I've taken {it} inside, where patients aren't exposed to "
+            f"infection: names and addresses stay off the open streets.{comfort} It's being triaged as {bug_id}. "
             f"Thank you, truly. Now, go. And good hunting.")
+    if what in ("save", "both"):
+        head = _save_head(mention, bug_id, what)
     media_note = media_note[:300]  # our own short note; never let it push the message over the limit
     tail = f"\n\n{media_note}" if media_note else ""
     room = LIMIT - len(head) - len(tail) - 2
@@ -57,11 +83,18 @@ def replacement(mention: str, bug_id: str, text: str, media_note: str = "") -> s
     return head + (f"\n\n{quote}" if quote else "") + tail
 
 
-def replacement_short(mention: str, bug_id: str, text: str, media_note: str = "") -> str:
+def replacement_short(mention: str, bug_id: str, text: str, media_note: str = "", what: str = "log") -> str:
     """One line for a repeat log of the same author on the same bug, or from a dev / staff poster."""
-    variants = (f"Another log from {mention} taken into my clinic with {bug_id}. Thank you.",
-                f"{mention}, one more log, safely inside with {bug_id}. Thank you.",
-                f"Another of {mention}'s logs is now in my care, filed under {bug_id}. Thank you.")
+    if what == "log":
+        variants = (f"Another log from {mention} taken into my clinic with {bug_id}. Thank you.",
+                    f"{mention}, one more log, safely inside with {bug_id}. Thank you.",
+                    f"Another of {mention}'s logs is now in my care, filed under {bug_id}. Thank you.")
+    else:
+        noun = "memories of the hunt" if what == "save" else "logs and memories of the hunt"
+        variants = (f"More {noun} from {mention}, safe in my care with {bug_id}. Thank you.",
+                    f"{mention}, I'll keep these {noun} safe too, with {bug_id}. Thank you.",
+                    f"Another night remembered: {mention}'s {noun} are in my care, filed under {bug_id}. "
+                    f"Thank you.")
     head = variants[sum(map(ord, bug_id)) % len(variants)]
     media_note = media_note[:300]
     tail = "\n\n" + media_note if media_note else ""
@@ -69,16 +102,19 @@ def replacement_short(mention: str, bug_id: str, text: str, media_note: str = ""
     return head + ("\n\n" + quote if quote else "") + tail
 
 
-def replacement_many(mention: str, bug_id: str, texts: list, media_note: str = "") -> str:
+def replacement_many(mention: str, bug_id: str, texts: list, media_note: str = "", what: str = "log") -> str:
     """One note for a run of messages by the same author about the same bug. One message: exactly
     `replacement`. Several: "brought N logs", then each non-empty masked text as its own quote block, the
     room shared fairly between them so the whole note stays <= 2000 chars."""
     n = len(texts)
     if n <= 1:
-        return replacement(mention, bug_id, texts[0] if texts else "", media_note)
-    head = (f"{mention} brought {n} logs to my clinic. I've taken them inside, where patients aren't exposed to "
-            f"infection: names and addresses stay off the open streets. They're being triaged as {bug_id}. "
+        return replacement(mention, bug_id, texts[0] if texts else "", media_note, what)
+    thing, it, comfort = _what(what, n)
+    head = (f"{mention} brought {thing} to my clinic. I've taken {it} inside, where patients aren't exposed to "
+            f"infection: names and addresses stay off the open streets.{comfort} They're being triaged as {bug_id}. "
             f"Thank you, truly. Now, go. And good hunting.")
+    if what in ("save", "both"):
+        head = _save_head(mention, bug_id, what, many=True)
     media_note = media_note[:300]
     tail = ("\n\n" + media_note) if media_note else ""
     full = [_quote(t, LIMIT) for t in texts]
@@ -100,8 +136,13 @@ def replacement_many(mention: str, bug_id: str, texts: list, media_note: str = "
     return _fit(out)
 
 
-def bug_filed(bug_id: str, missing: list[str]) -> str:
+def bug_filed(bug_id: str, missing: list[str], what: str = "log") -> str:
     text = f"Thank you. I've written this down as {bug_id}, and the developers will look at it."
+    if what == "save":  # saves alone: no host / guest logs to ask for
+        return _fit(text + " The memories of your hunt are safe with me; the developers will read them to see "
+                    "what the night did to you. This night is long, but morning always comes.")
+    if what == "both":
+        text += " The memories of your hunt are safe with me too."
     asks = []
     if "host" in missing:
         asks.append("your host's log")

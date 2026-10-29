@@ -1080,3 +1080,47 @@ over). Key goods in the list are left out (their own rules share them). Switches
 (Rules `boss_drops`, ini `party_boss_drops`, `BB_PARTY_BOSS_DROPS`).
 Not covered: bosses whose drop is not a `2003[4]` in their defeat event (an enemy-param drop rolls locally on a client).
 Unit: party-items-test `test_boss_drop`. Smoke groups `boss_drops` (phase bd: the party at the Moonside Lake lamp, the host awards Rom's lot 51001900 through the game's award function with hostOnly 1 (`BB_PARTY_ITEMS_HOST_TEST`, which waits for the lot's map area); the guest's item box shows Kin Coldblood, held 0 -> 1, one give) and `boss_drops_off` (bdo: `BB_PARTY_BOSS_DROPS=0` on the host, no grant, no give). Rom's real fight is not started by a test walk (HP 0 on her entity ends nothing), so her real defeat event is unproven live.
+
+## 12. Shared rewards and pickups: the audit, the Living String, the notice (0.7.7, sharing077)
+
+Owner's rule (kept): key items, unique items, weapons and Caryll / world-boss runes are shared both ways; ordinary
+pickups (vials, materials, most treasure, armor and rings from corpses) stay per player. Every shared item must reach
+every member exactly once, whoever picks it up or lands the kill, also members who join later.
+
+| Shared | Per player |
+|---|---|
+| key items (goodsType 1), unique goods (maxNum 1: hunter tools, badges), weapons, Caryll runes (2xxxxx), the world bosses' reward runes, the party-earned kill reward Living String | consumables and stacks, blood gems, armor / rings found as treasure, Messenger gifts (personal flags 6000-8999), covenant gems, rune / gem use, repeatable NPC gifts (common 9100, 13501940), DLC hats, PvP texts, enemy drops |
+
+**The audit** (`tools/party/item_tool.py gen-inc`, output `docs/party/items_audit.md` and the `ITEM_REQUIRE_SHARED` /
+`ITEM_PER_PLAYER` rows of party_items.inc): every ItemLotParam row that gives a key / unique item, a weapon or a rune,
+with where it is awarded (EMEVD 2003[4]/[36] events) and its verdict: `shared` (the path: map treasure replay, flag replay,
+ledger, boss drop), `per-player` (the owner's reason) or `excluded` (Chalice Dungeon rows have their own grants; area 99
+rows and unreferenced rows no script gives). The generator exits 1 on a `GAP` row; `party-items-test` `test_audit` asks
+`ItemLotSharePath` (the shipped tables) for every row; `tests/test_item_audit.py` checks the document against the inc.
+Gaps the audit found (before 0.7.7): 59 map-treasure lots (weapons 25, unique hunter tools 23, Caryll runes 5, the armor
+rows of Gascoigne's set 4, a boss reward rune 1, the Living String 1) that `ITEM_SHARED_TREASURE` (key goods only until then) left per player, and the Living String lot 2605010
+(ITEM_UNSHARED: goods 7200 is an ordinary material by type). The treasure rule is per pickup flag: a corpse's flag is
+shared when any row that carries it gives a shared item (Gascoigne's set: armor rows + a Caryll rune), `TreasureFlagToHide`
+now hides the lot's own flag (2420231 hid 52420231 before). Armor and rings from treasure stay per player.
+
+**Living String / Brain of Mensis (NW-4ae26be).** m26 event 12600029 ("邪眼_殺害で儀式素材入手") awards lot 2605010 (goods
+7200) with 2003[4] and sets 5913, when the Evil Eye (entity 2600129) has HP 0 **and** EMEVD 3[23] "damage to it by entity 10000"
+holds. A guest's blows are credited to entity 10000 on the host through `DamageRecordHook` (0.7.5), but a kill that leaves no
+such record (a last hit by a guest, or any kill the damage step did not record) never fires the event, and nobody got the
+material. It is the only award in the game's scripts behind a 3[23] attacker-10000 condition next to an `item_lot` (scan of
+every EMEVD). Fix: `KillAwardTick` (party_items.cpp, rules in party_kill_award_rules.h, rows `ITEM_KILL_AWARD`): the host,
+in its own world with a party, watches the entity (HP 0 for 2.5 s) and, if the lot's flag 52605010 is still unset, awards
+the lot through 0x17DDC50 (hostOnly 1) and sets 5913; the award hook shares it like the event's own award (the lot is
+no longer unshared), and a rejoin gets it in the full list. The flag is the done bit: the event and the fallback never
+both give it. `BB_PARTY_KILL_AWARD=0` switches the fallback off. Unproven: whether the Eye in the Wulfgar session died to a guest's
+blow the damage hook missed or to something else (the log has no per-hit lines).
+
+**Notice** (`party_item_notice_rules.h`, `ShareNotice`): queued where a shared grant is given or queued for the party
+(the host's award hook and flag report, the home / summoned apply, a guest's pickup report), never for catch-up lists
+(`Full`), marks, tests, Chalice grants or lots without a share path; text `<item>: shared with the party` with the game's
+own item name (runes: "Caryll rune"); at most one every 2.5 s, the same text not again within 20 s, 4 waiting at most;
+shown through the party notice corner, so it follows the party notices (`party_toasts`) and the planned on-screen-messages
+setting; own switch `party_item_notices` (System > Party members, launcher My Party, bbport.ini; default on).
+Test aids: `BB_PARTY_GUEST_PICKUP_TEST=lot,...` (a guest "picks up" shared treasure 20 s after its world is steady: the
+D4 pickup path's flag write and `ReportGuestKeyTreasure`), smoke groups `reward_guest_kill` (rw), `reward_eye` (rwe),
+`reward_treasure` (rwt).

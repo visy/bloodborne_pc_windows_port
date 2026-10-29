@@ -268,3 +268,72 @@ def test_assign_bug_dm_per_day(tmp_path):
     for m in (a, b):
         run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))
     assert run(cd.assign_bug(c, a, [])) == run(cd.assign_bug(c, b, []))
+
+
+def _save_zip():
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    names = [f"SPRJ0005/userdata{i:04d}" for i in range(3)] + [
+        "SPRJ0005/backup0000", "SPRJ0005/userdata0000.bak", "SPRJ0005/userdata0000_Hunter (2)"]
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in names:
+            z.writestr(n, b"\0" * 64)
+    return buf.getvalue()
+
+
+def test_save_zip_is_archived_but_not_removable(tmp_path):
+    c, ch, calls = mk(tmp_path)
+    m = F.Msg(1, ch, F.User(7), "my saves", [F.Att(5, "SPRJ0005.zip", _save_zip())])
+    res = run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))
+    assert not res["removable"] and res["state"] == "verified"
+    att = c.message(1)["attachments"][0]
+    assert len(att["inner_files"]) == 6 and {f["kind"] for f in att["inner_files"]} == {"save"}
+    assert all(c.file_info(f["sha256"])["kind"] == "save" and c.verify_file(f["sha256"]) for f in att["inner_files"])
+
+
+def test_mixed_log_and_save_is_replaced_with_save_wording(tmp_path):
+    c, ch, calls = mk(tmp_path)
+    m = F.Msg(1, ch, F.User(7), "log and saves", [F.Att(4, "a.log", LOG), F.Att(5, "SPRJ0005.zip", _save_zip())])
+    assert run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))["removable"]
+    bug = c.new_bug("x", "channel cluster", 100, None)
+    assert run(cd.replace_and_delete(c, m, bug, ping=False, delete=True, need_export=False)) == "deleted"
+    assert "logs and the memories of their hunt" in ch.sent[0].content
+    assert c.bug(bug)["tags"]["has_saves"] == "yes"
+
+
+def _zip_of(names):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in names:
+            z.writestr(n, b"data")
+    return buf.getvalue()
+
+
+def test_big_archive_is_not_downloaded(tmp_path):
+    c, ch, _ = mk(tmp_path)
+    att = F.Att(5, "huge.zip", _save_zip(), size=cd.logic.ARCHIVE_CAP_BYTES + 1)
+    m = F.Msg(1, ch, F.User(7), "big", [att])
+    res = run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))
+    assert att.saves == 0 and not res["removable"] and res["state"] == "verified"
+    rec = c.message(1)["attachments"][0]
+    assert rec["skip"] == "big" and rec["sha256"] is None
+
+
+def test_archive_with_nothing_relevant_is_left_be(tmp_path):
+    c, ch, _ = mk(tmp_path)
+    m = F.Msg(1, ch, F.User(7), "mod pack", [F.Att(5, "mods.zip", _zip_of(["mod/a.dll", "readme.md"]))])
+    res = run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))
+    assert not res["removable"] and c.message(1)["attachments"][0]["skip"] == "nothing"
+    assert c.message(1)["attachments"][0]["sha256"] is None
+
+
+def test_log_message_gets_no_has_saves_tag(tmp_path):
+    c, ch, _ = mk(tmp_path)
+    m = logmsg(ch)
+    run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))
+    bug = c.new_bug("x", "channel cluster", 100, None)
+    run(cd.replace_and_delete(c, m, bug, ping=False, delete=True, need_export=False))
+    assert "has_saves" not in c.bug(bug)["tags"] and "brought a log" in ch.sent[0].content

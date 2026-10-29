@@ -325,7 +325,8 @@ before anyone is in the game):
   Mark"): alone it takes you to your own last lamp, with the party to the host's.
 - **Resting resets the world for the party.** Enemies respawn; everyone's HP, vials and bullets
   refill. A guest who rests at a lamp and travels alone gives the host a short loading screen so its
-  world resets too; a guest leaving the Hunter's Dream alone by a headstone is just a trip (no reset).
+  world resets too; a guest leaving the Hunter's Dream alone by a headstone, or travelling from a map
+  (no lamp used), is just a trip (no reset, the others keep playing).
   Resting while the host is in a boss fight takes everyone out of the boss room.
 - **Kidnapped by a Snatcher?** Whoever is grabbed, host or guest, the whole party wakes up together
   in the Hypogean Gaol (Yahar'gul) after one loading screen, and everyone watches the waking scene
@@ -341,7 +342,7 @@ before anyone is in the game):
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared
   between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's
-  lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest who dies
+  lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A Cursed dungeon halves every member's maximum health, guests too, whatever the Phantom health cut rule says. A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest who dies
   in the dungeon gets up beside the party; a guest pulled out by a death or a forced trip is summoned
   back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party rules: Travel).
 
@@ -403,6 +404,21 @@ before anyone is in the game):
   Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
+- **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
+  of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
+  ("Living String: shared with the party"; *Shared item notices* on *System -> Party members*, the launcher's My
+  Party tab, `party_item_notices`, on by default, shown while the party notices are on, at most one every few
+  seconds, never for your own pickups).
+
+  | Shared with the whole party | Stays with the player who found it |
+  |---|---|
+  | Key items (keys, badges, workshop tools, chalices, umbilical cords, the daughter's ribbons and brooch) | Ordinary items: Blood Vials, Quicksilver Bullets, materials, Pebbles, blood gems |
+  | Unique items (hunter tools such as Executioner's Gloves, Choir Bell, Beast Roar) | Armor and rings found in the world |
+  | Weapons, from corpses, NPC gifts and bosses | Messenger gifts, covenant gems and runes, repeatable NPC gifts |
+  | Caryll runes, the world bosses' reward runes | Enemy drops (each player rolls their own copy) |
+  | Boss rewards the party earned together (Gold Pendant, badges, the Living String from the Brain of Mensis) | |
+
+  A boss killed by a guest pays the host as well. The full list of lots is in [docs/party/items_audit.md](docs/party/items_audit.md).
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
   messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
   Hunter Bell go to every player, whoever got them in the host's world.
@@ -465,7 +481,7 @@ before anyone is in the game):
   ways, like invaders (*System → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
   gets no Echoes or Insight. While it is on, hunters who joined keep their full maximum health for the duel
   (*Full health in PvP*, on by default, same page; the 30 % phantom health cut returns when friendly fire goes
-  off, each hunter's health kept at the same fraction).
+  off, each hunter's health kept at the same fraction)). Only the player hunters can hurt each other: a summoned NPC hunter stays the friend of everyone.
 - **Connection warnings.** When the Windows Firewall, the router or a wrong address keeps your party from working (nobody reaches a host without an open port, a guest's game is not heard, a guest cannot reach the host), the game shows a notice with the shortest fix and logs it; at most once per cause per session (*System > Party members > Connection warnings*, on by default).
 - **Party HUD.** Party members and events in a small HUD; each companion's ping in ms after the name (green / yellow / red; *My party: Look & notices > Ping in the party list*, on by default).
 - **Every party setting in the game's own menu, in two groups.** *Party rules* holds what the host

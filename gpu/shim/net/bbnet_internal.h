@@ -119,6 +119,10 @@ std::string p2p_paths_status();
 // Host side: the relay port the host's relay gave the client seen at addr (network order) :
 // port_host (host order), from its STUN HELLO; false when that address never asked for one.
 bool p2p_relay_vport_for(std::uint32_t addr, std::uint16_t port_host, std::uint16_t* vport);
+// Host side: the port (host order) a datagram from `addr` (network order) last reached the party
+// port from (STUN request, punch probe, game traffic; within 5 min). `prefer_port_host` wins when
+// heard. For a guest with no public endpoint of its own: its observed one.
+bool p2p_heard_port_for(std::uint32_t addr, std::uint16_t prefer_port_host, std::uint16_t* port_host);
 // Host side: which source addresses (network order) the party port answers STUN for and gives
 // relay ports to (the party runtime: its PartyLink members). Unset: everyone.
 void p2p_set_relay_admit(std::function<bool(std::uint32_t addr)> admit);
@@ -294,6 +298,11 @@ void p2p_outage_keepalive(bool on);
 // 0.7.6: called (off the reader thread's locks) when the game hears a peer again after a silence of
 // at least 4 s in which it had sent reliable data: the peer's address (network order), port (network
 // order) and the silence in seconds. The party shows "connection to X unstable".
+// 0.7.7: loading screens (nr_loadgap.h): this game's own, the session host's (a guest's whole session is
+// quiet in it) and each peer's (online id), every frame.
+// Receive gaps inside a load are no outage: no notice, no relay switch, no log. Real silence after
+// the load's end counts again.
+void p2p_load_update(bool own_loading, bool host_loading, const std::vector<std::pair<std::string, bool>>& peers);
 void p2p_set_gap_hook(std::function<void(std::uint32_t, std::uint16_t, double)> fn);
 
 }  // namespace bbnet
