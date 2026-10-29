@@ -816,7 +816,7 @@ set(PARTY_FUZZ_SOURCES ../tests/party_fuzz.cpp ${PARTY_NET_SOURCES} ${PARTY_LINK
     shim/party/party_guestsvc.cpp shim/party/party_worldact.cpp shim/party/party_balance_rules.cpp
     shim/party/party_chalice.cpp shim/party/party_droproll.cpp shim/party/party_dsummon.cpp
     shim/party/party_desync.cpp shim/party/party_npctalk.cpp shim/party/party_ping.cpp
-    shim/party/party_gestures.cpp)
+    shim/party/party_gestures.cpp shim/party/party_rdv.cpp)
 foreach(fuzz_target party-fuzz party-security-test party-fuzz-ubsan)
     add_executable(${fuzz_target} EXCLUDE_FROM_ALL ${PARTY_FUZZ_SOURCES})
     target_compile_definitions(${fuzz_target} PRIVATE BB_PARTY_TRAVEL_NO_GAME BB_PARTY_STORY_NO_GAME
