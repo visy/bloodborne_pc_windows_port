@@ -274,3 +274,168 @@ def test_sync_local(tmp_path, capsys):
     assert len(items) == 1 and items[0]["author"] == "nw-sync"
     assert nw.main([str(repo), "--local", str(db)]) == 0
     assert len(cc.Changes(c).items(track="nw")) == 1
+
+
+# --- developer asks: `ask NW-x` and `cl ask CL-y` ---------------------------------------------------------
+
+def ask_world(tmp_path, reporter=77):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    a = c.new_bug("Queen crash", "thread", 5, 300, reporter)
+    c.update_bug(a, status="open")
+    return c, a, tmp_path / "nd.db"
+
+
+def ask(db, *argv):
+    return js(db, "vlad", "ask", *argv)
+
+
+def test_ask_dry_run_text_and_nothing_written(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    out = ask(db, a, "--need", "host and guest logs of a Queen attempt, from 198.51.100.7")
+    assert out["dry_run"] is True
+    m = out["asks"][0]["messages"][0]
+    assert m["reporter"] == 77 and m["where"] == "thread 300" and m["chars"] == len(m["text"]) <= 2000
+    t = m["text"]
+    assert t.startswith("<@77> ") and a in t and "Queen crash" in t and "host and guest logs of a Queen attempt" in t
+    assert "198.51.100.7" not in t and "logs" in t
+    assert c.bug(a)["status"] == "open" and c.outbox_pending() == []
+    assert not [n for n in c.notes(a) if n["kind"] == "ask"]
+
+
+def test_ask_issue_item_text_and_length(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    t = ask(db, a, "--need", "x" * 880, "--issue", "elevator stuck on the second floor")["asks"][0]["messages"][0]["text"]
+    assert "elevator stuck on the second floor" in t and "Queen crash" not in t and len(t) <= 2000
+    ch = cc.Changes(c)
+    ch.set_version("coop", "0.7.8", status="planned", who="visy")
+    cid = ch.add("coop", "0.7.8", "fixed", "Guests fall through the chalice floor", who="visy", bugs=[a])
+    t = ask(db, a, "--need", "a log", "--for", cid)["asks"][0]["messages"][0]["text"]
+    assert "Guests fall through the chalice floor" in t
+    assert cli_run(db, "vlad", "ask", a, "--need", "y" * 901)[0] == 2
+    assert cli_run(db, "vlad", "ask", a)[0] == 2  # --need is required
+
+
+def test_ask_dm_has_no_mention_and_everyone_defused(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    a = c.new_bug("DM log", "dm", 9, None, 77)
+    t = ask(tmp_path / "nd.db", a, "--need", "ping @everyone logs")["asks"][0]
+    assert "<@" not in t["messages"][0]["text"] and "@everyone" not in t["messages"][0]["text"]
+    assert t["messages"][0]["where"].startswith("DM")
+
+
+def test_ask_reporters_dedupe_skip_and_merged(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    same = c.new_bug("Same person again", "thread", 5, 301, 77)
+    other = c.new_bug("Other player same crash", "thread", 5, 302, 88)
+    dev = c.new_bug("Dev saw it", "thread", 5, 303, 99, tags={"source": "dev"})
+    local = c.new_bug("local", "local", None, None, None)
+    for d in (same, other, dev, local):
+        c.merge_bugs(a, d)
+    plan = ask(db, a, "--need", "logs")["asks"][0]
+    assert [(m["record"], m["reporter"], m["where"]) for m in plan["messages"]] == [
+        (a, 77, "thread 300"), (other, 88, "thread 302")]
+    assert {s["record"] for s in plan["skipped"]} == {same, dev, local}
+    assert cli_run(db, "vlad", "ask", same, "--need", "logs")[0] == 1  # a duplicate: ask about the kept bug
+
+
+def test_ask_send_records_history_status_and_outbox(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    other = c.new_bug("Other", "thread", 5, 302, 88)
+    c.merge_bugs(a, other)
+    out = ask(db, a, "--need", "host log", "--issue", "Queen", "--send")
+    assert out["dry_run"] is False and len(out["asks"][0]["messages"]) == 2
+    asked = [n for n in c.notes(a) if n["kind"] == "ask"]
+    assert [(n["who"], n["to"]) for n in asked] == [("vlad", "77"), ("vlad", "88")]
+    assert "host log" in asked[0]["text"] and "Queen" in asked[0]["text"]
+    assert c.bug(a)["status"] == "waiting-logs"
+    assert [(r["bug_id"], r["kind"]) for r in c.outbox_pending()] == [(a, "ask"), (other, "ask")]
+    assert any(n["kind"] == "ask" for n in js(db, "vlad", "show", a)["notes"])
+
+
+def test_ask_rate_limit_and_force(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    ask(db, a, "--need", "logs", "--send")
+    assert ask(db, a, "--need", "more")["asks"][0]["blocked"]  # the dry run shows the block
+    assert cli_run(db, "vlad", "ask", a, "--need", "more", "--send")[0] == 1 and len(c.outbox_pending()) == 1
+    assert ask(db, a, "--need", "more", "--send", "--force")["asks"][0]["sent"]
+    assert len(c.outbox_pending()) == 2
+    c.db.execute("UPDATE nw_notes SET at=at-? WHERE kind='ask'", (4 * DAY,))
+    c.db.commit()
+    assert not ask(db, a, "--need", "again")["asks"][0]["blocked"]
+
+
+def test_ask_nobody_to_ask(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    a = c.new_bug("no reporter", "thread", 5, 300, None)
+    p = ask(tmp_path / "nd.db", a, "--need", "logs")["asks"][0]
+    assert p["blocked"].startswith("nobody to ask") and p["messages"] == []
+    assert cli_run(tmp_path / "nd.db", "vlad", "ask", a, "--need", "logs", "--send")[0] == 1
+
+
+def test_cl_ask_fans_out_per_bug(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    b2 = c.new_bug("Chalice floor", "thread", 5, 400, 88)
+    ch = cc.Changes(c)
+    ch.set_version("coop", "0.7.8", status="planned", who="visy")
+    cid = ch.add("coop", "0.7.8", "fixed", "Queen fight desyncs", who="visy", bugs=[a, b2])
+    out = js(db, "vlad", "cl", "ask", cid, "--need", "both logs")
+    assert out["dry_run"] and [p["bug"] for p in out["asks"]] == [a, b2]
+    texts = [p["messages"][0]["text"] for p in out["asks"]]
+    assert a in texts[0] and b2 in texts[1] and all("Queen fight desyncs" in t for t in texts)
+    assert c.outbox_pending() == []
+    js(db, "vlad", "cl", "ask", cid, "--need", "both logs", "--send")
+    assert {r["bug_id"] for r in c.outbox_pending()} == {a, b2}
+    assert c.bug(a)["status"] == c.bug(b2)["status"] == "waiting-logs"
+    assert cli_run(db, "vlad", "cl", "ask", "CL-000000", "--need", "x")[0] == 1
+
+
+def test_ask_time_feeds_nudge_and_close(tmp_path):
+    c, a, db = ask_world(tmp_path)
+    ask(db, a, "--need", "logs", "--send")
+    now = time.time()
+    c.db.execute("UPDATE nw_bugs SET created=?, activity=? WHERE id=?", (now - 40 * DAY, now - 40 * DAY, a))
+    c.db.commit()
+    assert asks.waiting_targets(c, now)["close"] == []  # the fresh ask counts as life
+    assert asks.waiting_targets(c, now + 13 * DAY)["nudge"] == []
+    assert [b["id"] for b in asks.waiting_targets(c, now + 15 * DAY)["nudge"]] == [a]
+    assert [b["id"] for b in asks.waiting_targets(c, now + 31 * DAY)["close"]] == [a]
+
+
+def test_ask_outbox_posts_in_thread_once(tmp_path):
+    c, ctx, bug, th, _ = world(tmp_path, status="open")
+    ask(tmp_path / "nd.db", bug, "--need", "the host log", "--send")
+    assert arun(bot.send_outbox(ctx)) == 1
+    msg = th.sent[0]
+    assert msg.content.startswith("<@77> ") and bug in msg.content and "the host log" in msg.content
+    assert msg.kw["allowed_mentions"].users[0].id == 77
+    assert arun(bot.send_outbox(ctx)) == 0 and len(th.sent) == 1
+
+
+def test_ask_outbox_skips_staff_reporter(tmp_path):
+    c, ctx, bug, th, _ = world(tmp_path, status="open")
+    ask(tmp_path / "nd.db", bug, "--need", "logs", "--send")
+    member = F.User(77, "Dev")
+    member.roles = [type("R", (), {"name": "Developer"})()]
+    ctx.guild_id = 1
+    ctx.client.get_guild = lambda gid: type("G", (), {"get_member": lambda self, i: member})()
+    arun(bot.send_outbox(ctx))
+    assert th.sent == [] and any("ask not delivered" in n["text"] for n in c.notes(bug))
+
+
+def test_reply_to_ask_joins_even_short_and_past_followup_cap(tmp_path):
+    c = clinic_store.Clinic(tmp_path / "nd.db")
+    a = c.new_bug("Queen crash", "channel", 5, None, 77)
+    ask(tmp_path / "nd.db", a, "--need", "logs", "--send")
+    c.db.execute("UPDATE nw_notes SET at=? WHERE kind='ask'", (F.T0.timestamp() - 3600,))
+    c.db.commit()
+    for i in range(cd.FOLLOWUP_MAX):
+        c.add_note(a, "iosefka", "auto-link", f"followup rule: message {i} x")
+    ch = F.Channel(5, "general")
+    msg = F.Msg(2, ch, F.User(77, "P"), "ok")  # one word: the follow-up rule would not take it
+    got = cd.find_link(c, msg)
+    assert got and got[0] == a and got[1] == "ask"
+    assert cd.find_link(c, F.Msg(3, ch, F.User(78, "Q"), "ok")) is None  # somebody else
+    assert cd.find_link(c, F.Msg(4, F.Channel(6, "general"), F.User(77, "P"), "ok")) is None  # another channel
+    assert cd.find_link(c, F.Msg(5, ch, F.User(77, "P"), "ok", minutes=15 * 24 * 60)) is None  # too late
+    got = cd.find_link(c, msg, [{"sha256": "zz", "day": "2026-10-20"}])  # a log of another session
+    assert got and got[1] == "ask"
