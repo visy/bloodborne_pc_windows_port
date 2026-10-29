@@ -209,8 +209,12 @@ def reporter_ask(mention: str, bug_id: str, issue: str, need: str) -> str:
     head = (f"{mention}Forgive me for troubling you again. I still have {bug_id} on my table{what}, and to treat "
             f"it properly the developers need a little more from you:\n\n")
     tail = ("\n\nYou can answer right here and attach the files straight to your message; I will take them "
-            "inside and keep them safe. The game's logs are in its `logs` folder (last_session.log, "
-            "session-*.log, or nightwatch-*.log). Even a few words help. Thank you, truly.")
+            "inside and keep them safe. In the Nightwatch launcher, **Logs** on the top bar -> **Copy last 2 "
+            "logs**, then paste here: they come as files, IP addresses hidden. If that night was before your "
+            "last two games, the **Output** page -> **Open** shows the logs folder: zip all of it, the "
+            "`sessions` folder too, and I will find the right night myself. From every hunter who played, "
+            "if you can. If that night's log is long gone, no matter: should it happen again, send the "
+            "newest ones right after. Even a few words help. Thank you, truly.")
     return _fit(head + "> " + need.replace("\n", "\n> ") + tail)
 
 
