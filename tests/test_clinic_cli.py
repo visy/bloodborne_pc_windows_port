@@ -283,3 +283,15 @@ def test_files_tars_saves_under_saves(tmp_path):
     assert any(n.startswith(f"{a}/saves/") and n.endswith("userdata0000") for n in names)
     assert f"{a}/saves/SPRJ0005.zip/SPRJ0005/backup0000" in names
     assert not any("/logs/" in n and "userdata0000" in n for n in names)
+
+
+def test_vpn_profile_devs_only(tmp_path, monkeypatch):
+    db, *_ = seed(tmp_path)
+    prof = tmp_path / "nw.ovpn"
+    prof.write_bytes(b"client\n<key>\nsecret\n</key>\n")
+    monkeypatch.setenv("NETDOCTOR_VPN_PROFILE", str(prof))
+    assert run(db, "vlad", "vpn-profile") == (0, prof.read_bytes())
+    assert run(db, "visy", "vpn-profile") == (0, prof.read_bytes())
+    assert run(db, "someone", "vpn-profile") == (1, b"")
+    monkeypatch.setenv("NETDOCTOR_VPN_PROFILE", str(tmp_path / "missing.ovpn"))
+    assert run(db, "vlad", "vpn-profile")[0] == 1
