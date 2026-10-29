@@ -3048,6 +3048,16 @@ void LiftRiderTick(const GameSnapshot& s) {
     float put[3];
     const liftrules::RiderStep step =
         liftrules::RiderTick(track, playing, ride_bit, Now(), me[0], me[1], me[2], put, anim, car_y);
+    {
+        // Test aid (lifts077, BB_TEST_LIFT_TRACE=1): a line per 0.1 s while a car plays within reach.
+        static const bool trace = std::getenv("BB_TEST_LIFT_TRACE") != nullptr;
+        static double last_t = 0;
+        if (trace && playing && Now() - last_t >= 0.1) {
+            last_t = Now();
+            Log("lift trace: chr y %.2f car_y %.2f off %.2f bit %d anim %d step %d puts %d", double(me[1]), double(car_y),
+                double(track.off), int(ride_bit), int(anim), int(step), track.puts);
+        }
+    }
     if (step != liftrules::RiderStep::through) {
         return;
     }
