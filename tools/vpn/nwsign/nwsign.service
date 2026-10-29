@@ -1,0 +1,44 @@
+[Unit]
+Description=nwsign - Nightwatch VPN per-install certificate service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nwsign
+Group=nwsign
+Environment=NWSIGN_CONF=/etc/nwsign/nwsign.json
+ExecStart=/usr/bin/python3 -I /opt/nwsign/nwsign_service.py
+Restart=on-failure
+RestartSec=5
+UMask=0022
+# hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nwsign
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+TasksMax=64
+MemoryMax=256M
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target
