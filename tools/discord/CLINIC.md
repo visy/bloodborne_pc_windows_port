@@ -501,6 +501,19 @@ user id of visy; set it in `~/.config/netdoctor/env`). With neither, alerts are 
 queue sizes, new bugs and logs. No player names, IPs or log lines. Send one now:
 `iosefka_cull.py health-report [--dry-run]` (the dry run prints it).
 
+**Nightwatch VPN monitor.** Every 5 minutes (the health loop) she runs `ssh -o BatchMode=yes -o ConnectTimeout=10
+$NETDOCTOR_VPN_SSH` (default alias `nwvpn`; `off` disables). That alias is an ssh Host in quad.fi's
+`~/.ssh/config` and its key is restricted on the VPN server to the forced command
+`python3 ~/nwvpn/vpn_count.py` (`tools/discord/vpn/vpn_count.py`), which asks the OpenVPN management interface
+(127.0.0.1 only) for `load-stats` and prints one JSON line `{"ok":true,"clients":N,"max_clients":M,"pool":253}`.
+Only the NUMBER of clients and the limit are read: no addresses or names are collected, stored or alerted, and the
+server's address lives only in the ssh config outside the repo. Samples (`nw_vpn`: time, clients, max) are kept
+90 days. The effective limit is `min(max-clients, 253)` (pool 10.8.0.0/24). Alerts (6 h rate limit, resolved when
+fixed): `VPN near its limit` at 80% of the effective limit, `VPN full` at 100% (both say to raise `max-clients`;
+beyond 253 the subnet must widen to /23 plus a firewall update), `VPN monitor down` when samples fail for over
+30 min after at least one good one. The daily report and `health` show current players, 24 h and 7 d peak and the
+limit. Without a working alias (nothing stored) `health` says `VPN monitor: not set up` and nothing is alerted.
+
 **Alerts** (each kind at most once per 6 h, unless it was resolved and came back; none contains names, IPs
 or log lines): a new traceback in her own handling (deduplicated by first line, count per hour), an overdue
 job (hourly sweep > 2.5 h, outbox sender > 10 min, nightly backup > 30 h, Nightwatch sync via the last

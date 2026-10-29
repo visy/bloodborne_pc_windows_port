@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS nw_health (key TEXT PRIMARY KEY, at REAL, detail TEXT
 CREATE TABLE IF NOT EXISTS nw_alerts (kind TEXT PRIMARY KEY, last_sent REAL, active INTEGER, pending TEXT);
 CREATE TABLE IF NOT EXISTS nw_errors (at REAL, sig TEXT, place TEXT, first_line TEXT);
 CREATE INDEX IF NOT EXISTS nw_errors_at ON nw_errors (at);
+CREATE TABLE IF NOT EXISTS nw_vpn (at REAL, clients INTEGER, max_clients INTEGER, ok INTEGER, error TEXT);
+CREATE INDEX IF NOT EXISTS nw_vpn_at ON nw_vpn (at);
 CREATE TABLE IF NOT EXISTS nw_queue (
     message_id INTEGER PRIMARY KEY, channel_id INTEGER, author_id INTEGER, queued REAL);
 """

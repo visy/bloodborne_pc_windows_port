@@ -21,6 +21,8 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 
+import clinic_vpn
+
 ALERT_EVERY = 6 * 3600          # one alert per kind per 6 h, unless it was resolved and came back
 DISK_MIN = 2 * 2**30            # alert below this much free disk
 DB_FRACTION = 0.8               # alert above this share of the DB size cap
@@ -310,6 +312,8 @@ class Health:
         q = self.queues()
         self.set_condition("queue-triage", q["triage"] > QUEUE_MAX, f"{q['triage']} bugs wait for triage.")
         self.set_condition("queue-unsure", q["unsure"] > QUEUE_MAX, f"{q['unsure']} bugs are marked unsure.")
+        for kind, bad, text in clinic_vpn.conditions(self.vpn()):
+            self.set_condition(kind, bad, text)
         recent = {e[0]: e for e in errors_since(self.clinic, t - 3600)}
         for sig, place, _first, n, _last in recent.values():
             self.trigger(f"error:{sig}", f"an error in {place} ({n} in the last hour, id {sig}); see `iosefka health`.")
@@ -318,6 +322,9 @@ class Health:
                 self.resolve(kind)
         self.clinic.db.execute("DELETE FROM nw_errors WHERE at<?", (t - 7 * 86400,))
         self.clinic.db.commit()
+
+    def vpn(self):
+        return clinic_vpn.summary(self.clinic, self.now())
 
     def forbidden(self, place_id, what="read or post"):
         """Discord said 403 on a place she needs: one alert per place, ever. Never for a skipped place."""
@@ -442,6 +449,7 @@ class Health:
             "new_bugs_24h": len(c.bugs(since=t - 86400)),
             "logs_24h": c.db.execute("SELECT COUNT(*) FROM nw_files WHERE kind='log' AND created>=?", (t - 86400,)).fetchone()[0],
             "alerts_active": self.active_alerts(),
+            "vpn": self.vpn(),
             "upkeep": job_row(c, "db_upkeep"),
         }
         if with_versions:
@@ -487,6 +495,7 @@ def report_text(snap):
              f"- Disk free: {snap['disk_free'] / 2**30:.1f} GB; database {db['size'] / 2**20:.0f} of {db['cap'] / 2**20:.0f} MiB",
              f"- Queues: triage {q['triage']}, unsure {q['unsure']}, uploads waiting {q['uploads']}",
              f"- Last 24 h: {snap['new_bugs_24h']} new bugs, {snap['logs_24h']} logs"]
+    lines.append("- " + clinic_vpn.line(snap.get("vpn") or {"state": "off"}))
     if snap["alerts_active"]:
         lines.append(f"- Open alerts: {len(snap['alerts_active'])}")
     return "\n".join(lines)
