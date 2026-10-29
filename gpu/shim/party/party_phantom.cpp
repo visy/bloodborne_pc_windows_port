@@ -192,6 +192,20 @@ std::vector<EmevdSkipRule> BossRoomRules() {
     // by the guest fog-entry event 12104811, and Gehrman's fight starts from his talk with no fog
     // for anyone (CL-19ed70). Skipped for every role, as the Moon Presence's above.
     out.push_back(EmevdSkipRule{12104803, 3, 0, 8, false});
+    // Rom's lake jump (CL-393160, 0.7.7): the fall from the Byrgenwerth terrace into Moonside Lake
+    // is only survivable through an invincibility the landing events switch on while the player
+    // crosses region 3202800. The host's copy 13204820 ([4] on, [8] off 5 s later) skips its "on"
+    // on a client ([3] 1003[105]) but still runs its "off" ([8] 2004[15]); the client's own copy
+    // 13204821 does its own on / off ([4] / [7]). On a client entity 10000 in 13204820's region test
+    // is also met by the host's landing, so a guest who jumped a few seconds after the host had
+    // its invincibility switched off by that copy's stale [8] while still falling. A client skips
+    // the stale "off"; 13204821 ends the guest's own invincibility.
+    {
+        EmevdSkipRule lake_off;
+        lake_off.event = 13204820, lake_off.bank = 2004, lake_off.id = 15, lake_off.index = 8;
+        lake_off.client_only = true;
+        out.push_back(lake_off);
+    }
     return out;
 }
 
