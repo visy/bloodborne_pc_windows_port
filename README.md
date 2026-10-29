@@ -407,7 +407,7 @@ before anyone is in the game):
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
-  ("Living String: shared with the party"; *Shared item notices* on *System -> Party members*, the launcher's My
+  ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My
   Party tab, `party_item_notices`, on by default, shown while the party notices are on, at most one every few
   seconds, never for your own pickups).
 

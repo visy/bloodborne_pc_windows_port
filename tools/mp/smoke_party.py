@@ -363,7 +363,15 @@ def phase_sc(only):
 # shows after, the presses back, bbport.ini key=value after, =value back, the host's rules line
 # after or None)). The labels are the shown rows of a host (a guest's read-only lines have the same
 # names). Toggles: Left = Off, Right = On; sliders: Right = one step up.
+# 0.7.7 noticerow: BB_RULES_PLAYERS=4 runs the walk with four hunters (host + 3 guests, two headless): the Party members
+# page must keep all four, the last event and Connection warnings within its six rows (Shared item notices lives on
+# My party: Your items).
+RULES_PLAYERS = int(os.environ.get("BB_RULES_PLAYERS", "2"))
 RULES_PAGES = [
+    # the member rows carry the hunters' names: only the rows after them are listed (see check_rules)
+    ("Party members", ["Last event", "Connection warnings"],
+     ("Connection warnings", "down/" * RULES_PLAYERS + "down/", "left", "Off", "right", "party_conn_warnings=0",
+      "party_conn_warnings=1", None)),
     # 0.7.3: the host's rules (Party rules: ..., read-only lines on a guest), then each player's own
     # (My party: ...), in the System menu's order.
     # 0.7.5: host over a VPN (a game dropdown, Auto by default: the walk checks it is listed on host and
@@ -401,7 +409,8 @@ RULES_PAGES = [
      ("Level sync", "", "left", "Off", "right", "party_level_sync=0", "party_level_sync=1", '"level_sync":false')),
     ("My party: Your save", ["Share story progress", "Share NPC quests", "Share cutscenes, endings"],
      ("Share story progress", "", "left", "Off", "right", "party_progress=0", "party_progress=1", None)),
-    ("My party: Your items", ["Host's item rewards", "Give the bells", "Own key items as guest", "Key items at once"],
+    ("My party: Your items", ["Host's item rewards", "Give the bells", "Own key items as guest", "Key items at once",
+                                "Shared item notices"],
      ("Give the bells", "down/", "left", "Off", "right", "party_grant_bells=0", "party_grant_bells=1", None)),
     ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Bloodstain marker",
                            "Above companions"],
@@ -417,7 +426,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_boss_drops", "party_vpn", "party_member_relay", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_boss_drops", "party_vpn", "party_member_relay", "party_conn_warnings", "party_item_notices", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -450,10 +459,11 @@ def phase_rules(only):
                ["rules_h%dc" % k for k in range(1, n + 1)] + ["rules_h_ffoff"]:
         watch += ["--watch", r"step \d+/\d+: ~?mark=%s(@|\s)=%s@1.2" % (tag, tag)]
     return dict(
-        name="rules", seconds=300, count=2, headless=0,
-        env=["BB_GAME_MENU_TRACE=1", "BB_TEST_MENU_FILE={root}\\menu{i}.txt"],
+        name="rules", seconds=300, count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
+        env=["BB_GAME_MENU_TRACE=1", "BB_TEST_MENU_FILE={root}\\menu{i}.txt"] + (["BB_PARTY_MAX=4"] if RULES_PLAYERS > 2 else []),
         ienv=[],
-        files={"menu0.txt": "joined 8 %s\n-\n-\n" % host, "menu1.txt": "joined 30 %s\n-\n-\n" % guest},
+        files={"menu0.txt": "joined %d %s\n-\n-\n" % (8 + 30 * (RULES_PLAYERS > 2), host),
+               "menu1.txt": "joined %d %s\n-\n-\n" % (30 + 30 * (RULES_PLAYERS > 2), guest)},
         ini_reset=RULES_INI_RESET,
         # a 0.7.1 bbport.ini: party_rot=1 saved, no settings_rev: the game turns rot off once (0.7.2)
         ini_preset={"party_rot": "1"},
@@ -5824,7 +5834,9 @@ def check_rules(v, L):
             shown = [r.rsplit("=", 1)[0] for r in line[1].split("): ", 1)[1].split(" | ")]
             # the host has no "Join via a member" row (a guest's button)
             want = [x for x in labels if not (i == 0 and x == "Join via a member")]
-            ok = shown == want and len(shown) <= 6 and "(CUT)" not in line[1]
+            if page == "Party members":  # RULES_PLAYERS member rows (their names vary), then the fixed rows
+                want = shown[:RULES_PLAYERS] + want
+            ok = shown == want and (page != "Party members" or len(shown) == RULES_PLAYERS + 2) and len(shown) <= 6 and "(CUT)" not in line[1]
             v.step("rules %s: %s rows" % (who, page), ok, line[1][:300] if ok else
                    "expected %s, got %s" % (want, line[1][:300]))
         t = need(v, L, "rules host: %s changed (%s -> %s)" % (page, row, value), 0,
