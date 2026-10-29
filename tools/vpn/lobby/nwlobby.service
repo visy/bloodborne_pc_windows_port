@@ -1,0 +1,49 @@
+[Unit]
+Description=nwlobby - Nightwatch VPN game lobby (UDP 9310 on the tunnel address)
+# 10.8.0.1 exists only while the VPN server runs; the service also retries the bind itself
+After=network-online.target openvpn-server@server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/bin/python3 -I /opt/nwlobby/nwlobby.py
+Restart=always
+RestartSec=5
+# nothing is written anywhere; no logs of addresses (the script prints nothing)
+StandardOutput=null
+StandardError=journal
+# hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateUsers=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+IPAddressDeny=any
+IPAddressAllow=10.8.0.0/24
+TasksMax=8
+MemoryMax=64M
+LimitNOFILE=64
+
+[Install]
+WantedBy=multi-user.target
