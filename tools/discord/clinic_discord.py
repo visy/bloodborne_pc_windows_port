@@ -502,6 +502,10 @@ def find_link(clinic, message, infos=None):
         follow = [b for b in (resolve_dup(clinic, b) for b in
                   clinic.reporter_candidates(message.author.id, message.channel.id, _ts(message.created_at)))
                   if clinic.followups(b) < FOLLOWUP_MAX]
+    asked = None  # a reply to a developer's ask in the place she asked: any length, with or without files
+    if plain and not (explicit or reply or thread or session):
+        import clinic_asks
+        asked = clinic_asks.asked_here(clinic, message.author.id, [message.channel.id], _ts(message.created_at))
     if explicit:
         bug, rule, others = explicit[0], "explicit", explicit[1:] + session + ([reply] if reply else [])
     elif reply:
@@ -510,6 +514,8 @@ def find_link(clinic, message, infos=None):
         bug, rule, others = thread, "thread", []
     elif session:
         bug, rule, others = session[0], "session", session[1:]
+    elif asked:
+        bug, rule, others = asked, "ask", []
     elif follow:
         bug, rule, others = follow[0], "followup", follow[1:]
     else:
@@ -524,7 +530,7 @@ def join_bug(clinic, message, bug, rule, unsure=()):
         clinic.update_bug(bug, status="open")
         clinic.add_note(bug, "iosefka", "status", f"new report after {b['status']}: {message_link(message)}")
     clinic.touch_bug(bug)
-    if rule in ("session", "followup"):
+    if rule in ("session", "followup", "ask"):
         clinic.add_note(bug, "iosefka", "auto-link", f"{rule} rule: message {message.id} {message_link(message)}")
     if unsure:
         clinic.add_unsure(bug, list(unsure))
