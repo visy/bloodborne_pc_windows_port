@@ -3247,6 +3247,30 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         if (s.player) SafeRead(s.player + 0x1e1, &f, 5);
         Log("test: pos area 0x%08x (%.2f, %.2f, %.2f) safe (%.2f, %.2f, %.2f) f %010llx", area, p[0], p[1], p[2], safe[0],
             safe[1], safe[2], static_cast<unsigned long long>(f));
+        // hpcurse (0.7.7): the local max HP and the SpEffects of the Chalice curse family (4730..4736, 9006 cooperator cut).
+        {
+            std::uint64_t cm = 0, dm = 0;
+            int hp = -1, mx = -1;
+            if (s.player && SafeGet(s.player + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
+                SafeGet(dm + 0xf8, &hp);
+                SafeGet(dm + 0xfc, &mx);
+            }
+            std::string fx;
+            std::uint64_t node = 0, l1 = 0;
+            if (s.player && SafeGet(s.player + 0x1c8, &l1) && l1 && SafeGet(l1 + 8, &node)) {
+                for (int guard = 0; node && guard < 256; ++guard) {
+                    int id = -1;
+                    SafeGet(node + 0x40, &id);
+                    if ((id >= 4730 && id <= 4736) || id == 9006 || id == 9026 || id == 9920 || id == 6142) {
+                        fx += " " + std::to_string(id);
+                    }
+                    std::uint64_t nx = 0;
+                    if (!SafeGet(node + 0x58, &nx)) break;
+                    node = nx;
+                }
+            }
+            Log("test: hp %d/%d area 0x%08x curse speffects:%s", hp, mx, area, fx.empty() ? " none" : fx.c_str());
+        }
     }
     if (!t.watch_texts.empty() && Seconds(t.watch_at, now) >= 0.25) {
         t.watch_at = now;
