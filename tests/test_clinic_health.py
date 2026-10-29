@@ -459,3 +459,137 @@ def test_deploy_dry_run_prints_every_step():
     for step in ("1/6", "2/6", "3/6", "4/6", "5/6", "6/6", "[t]ools/discord/netdoctor_bot.py",
                  "pytest tests -q -k clinic", "health --text"):
         assert step in r.stdout
+
+
+# --- Nightwatch VPN monitor ------------------------------------------------------------------------------
+
+import clinic_vpn as vpn  # noqa: E402
+
+sys.path.insert(0, str(DISCORD / "vpn"))
+import vpn_count  # noqa: E402
+
+
+def vpn_sample(c, clock, n, mx=100, ok=True):
+    vpn.store(c, {"ok": True, "clients": n, "max_clients": mx} if ok else {"ok": False, "error": "x"}, clock.t)
+
+
+def test_vpn_count_parsing():
+    assert vpn_count.parse_stats("SUCCESS: nclients=7,bytesin=1,bytesout=2") == 7
+    assert vpn_count.parse_stats("ERROR: nope") is None
+    assert vpn_count.parse_stats("") is None
+    conf = "port 1194\n# max-clients 5\nmax-clients 100\n"
+    assert vpn_count.parse_max_clients(conf) == 100
+    assert vpn_count.parse_max_clients("max-clients 255 # more\n") == 255
+    assert vpn_count.parse_max_clients("port 1\n") is None
+    assert vpn_count.query(port=1)["error"] in ("management off", "no password file")
+
+
+def test_vpn_parse_reply_and_fetch():
+    assert vpn.parse_reply('{"ok":true,"clients":3,"max_clients":100,"pool":253}\n')["clients"] == 3
+    assert vpn.parse_reply('{"ok":false,"error":"management off"}')["error"] == "management off"
+    assert vpn.parse_reply("garbage") == {"ok": False, "error": "bad reply"}
+
+    class R:
+        def __init__(s, rc, out=b"", err=b""):
+            s.returncode, s.stdout, s.stderr = rc, out, err
+    good = lambda *a, **k: R(0, b'{"ok":true,"clients":2,"max_clients":255,"pool":253}\n')
+    assert vpn.fetch("nwvpn", good)["clients"] == 2
+    assert vpn.fetch("nwvpn", lambda *a, **k: R(255, b"", b"Could not resolve hostname nwvpn"))["unconfigured"]
+    assert vpn.fetch("nwvpn", lambda *a, **k: R(255, b"", b"Permission denied"))["error"].startswith("ssh failed")
+
+
+def test_vpn_effective_max():
+    assert vpn.effective_max(100) == 100
+    assert vpn.effective_max(255) == 253
+
+
+def test_vpn_not_set_up(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "off")
+    c, h, clock, sent = make(tmp_path, expect=())
+    h.check()
+    run(h.flush())
+    assert h.vpn() == {"state": "off"} and not [s for s in sent if "VPN" in s]
+    assert "VPN monitor: not set up" in hl.report_text(h.snapshot())
+    # default alias but never a sample stored (alias not in ssh config): still "not set up", no alert
+    monkeypatch.delenv("NETDOCTOR_VPN_SSH")
+    assert vpn.summary(c, clock.t)["state"] == "off"
+    assert vpn.sample_once(c, clock.t, run=lambda *a, **k: type("R", (), {
+        "returncode": 255, "stdout": b"", "stderr": b"ssh: Could not resolve hostname nwvpn"})()) is None
+    assert vpn.summary(c, clock.t)["state"] == "off"
+    assert "VPN monitor: not set up" in "\n".join(iosefka_cli._health_text(iosefka_cli._health(c)))
+
+
+def test_vpn_thresholds_and_rate_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn_sample(c, clock, 79)
+    h.check()
+    run(h.flush())
+    assert not [s for s in sent if "VPN" in s]
+    clock.t += 300
+    vpn_sample(c, clock, 80)
+    h.check()
+    run(h.flush())
+    near = [s for s in sent if "near its limit" in s]
+    assert len(near) == 1 and "raise" not in near[0].lower().split("raise max")[0] and "/23" in near[0]
+    clock.t += 300
+    vpn_sample(c, clock, 85)
+    h.check()
+    run(h.flush())
+    assert len([s for s in sent if "near its limit" in s]) == 1        # rate limited
+    clock.t += 300
+    vpn_sample(c, clock, 100)
+    h.check()
+    run(h.flush())
+    assert len([s for s in sent if "VPN full" in s]) == 1
+    clock.t += 300
+    vpn_sample(c, clock, 10)
+    h.check()
+    assert not [k for k in h.active_alerts() if k.startswith("vpn")]
+    # max 255 -> effective 253: 203 is over 80%
+    clock.t += 300
+    vpn_sample(c, clock, 203, mx=255)
+    assert [k for k, bad, _t in vpn.conditions(h.vpn()) if bad] == ["vpn-near"]
+
+
+def test_vpn_monitor_down(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn_sample(c, clock, None, ok=False)           # failures before any success: waiting, no alert
+    clock.t += 3600
+    h.check()
+    assert h.vpn()["state"] == "waiting" and not h.active_alerts()
+    vpn_sample(c, clock, 5)
+    clock.t += 29 * 60
+    vpn_sample(c, clock, None, ok=False)
+    h.check()
+    assert "vpn-down" not in h.active_alerts()
+    clock.t += 2 * 60
+    vpn_sample(c, clock, None, ok=False)
+    h.check()
+    run(h.flush())
+    assert "vpn-down" in h.active_alerts() and any("VPN monitor down" in s for s in sent)
+    assert "DOWN" in vpn.line(h.vpn())
+    vpn_sample(c, clock, 5)
+    h.check()
+    assert "vpn-down" not in h.active_alerts()
+
+
+def test_vpn_retention_peaks_and_report(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn_sample(c, clock, 50)                        # will be 91 days old
+    clock.t += 91 * 86400
+    vpn_sample(c, clock, 20)
+    assert c.db.execute("SELECT COUNT(*) FROM nw_vpn").fetchone()[0] == 1
+    clock.t += 3 * 86400
+    vpn_sample(c, clock, 40)
+    clock.t += 3600
+    vpn_sample(c, clock, 30)
+    s = h.vpn()
+    assert (s["clients"], s["peak_24h"], s["peak_7d"], s["effective_max"]) == (30, 40, 40, 100)
+    text = hl.report_text(h.snapshot())
+    assert "VPN players: 30 now, 24 h peak 40, 7 d peak 40, limit 100" in text
+    clock.t += 2 * 86400                            # 24 h peak drops out
+    vpn_sample(c, clock, 12)
+    assert h.vpn()["peak_24h"] == 12 and h.vpn()["peak_7d"] == 40

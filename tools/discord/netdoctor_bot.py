@@ -54,6 +54,7 @@ import clinic_asks as asks  # noqa: E402
 import clinic_outbox as ob  # noqa: E402
 import clinic_discord as cd  # noqa: E402
 import clinic_health as hl  # noqa: E402
+import clinic_vpn  # noqa: E402
 import clinic_logic  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_voice as voice  # noqa: E402
@@ -1125,6 +1126,12 @@ def main():
         while True:
             try:
                 hl.record_job(CTX.clinic, "health_tick")
+                target = clinic_vpn.ssh_target()
+                if target:   # ssh runs in a thread, the DB write stays on this one
+                    sample = await loop.run_in_executor(None, clinic_vpn.fetch, target)
+                    if not sample.get("unconfigured"):
+                        clinic_vpn.store(CTX.clinic, sample)
+                        hl.record_job(CTX.clinic, "vpn", "ok" if sample.get("ok") else sample.get("error", ""))
                 h.check()
                 if h.upkeep_due(time.localtime().tm_hour):
                     await loop.run_in_executor(None, h.run_upkeep)
