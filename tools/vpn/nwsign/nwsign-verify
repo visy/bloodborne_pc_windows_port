@@ -1,0 +1,27 @@
+#!/usr/bin/python3
+# OpenVPN --tls-crypt-v2-verify hook. Runs as the openvpn user with an almost empty environment.
+# Accepts only: user metadata "<install id> <expiry unix>", not expired, id not in pub/banned.txt.
+# Fail closed. Writes nothing, prints nothing.
+import os, re, sys, time
+
+STATE = os.environ.get("NWSIGN_STATE", "/var/lib/nwsign")
+
+
+def main():
+    if os.environ.get("metadata_type") != "0":
+        return 1
+    with open(os.environ["metadata_file"], "rb") as f:
+        meta = f.read(256).decode("ascii")
+    m = re.fullmatch(r"([0-9a-f]{32}) (\d{1,12})", meta)
+    if not m or time.time() > int(m.group(2)):
+        return 1
+    with open(os.path.join(STATE, "pub", "banned.txt")) as f:
+        if m.group(1) in {l.strip() for l in f}:
+            return 1
+    return 0
+
+
+try:
+    sys.exit(main())
+except Exception:
+    sys.exit(1)
