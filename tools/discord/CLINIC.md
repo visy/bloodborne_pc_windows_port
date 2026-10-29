@@ -17,6 +17,7 @@ ssh iosefka list --open --tag component=nw-launcher              all open launch
 ssh iosefka list --open --tag component=coop-mod --tag feature=chalice     open co-op chalice bugs
 ssh iosefka files --open --tag component=coop-mod --tag feature=chalice > b.tar    pull them all
 ssh iosefka show NW-1a2b3c4                                      one bug with every message and note
+ssh iosefka vpn-profile > nightwatch.ovpn                       the Nightwatch VPN client profile (devs only; it is a key: keep it out of git)
 ```
 
 ## One-time setup

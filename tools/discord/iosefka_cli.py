@@ -35,6 +35,8 @@ from clinic_logic import mask_ips  # noqa: E402
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
 CLOSED = ("fixed", "closed", "duplicate")
 VISY_ONLY = ("export", "confirm-export", "import")
+DEVS_ONLY = ("vpn-profile",)  # the Nightwatch VPN client profile (a key): only the two devs
+DEVS = ("visy", "vlad")
 BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 ND_RX = re.compile(r"^ND-[0-9a-f]{8}$")
 NAME_RX = re.compile(r"^[a-z0-9_-]{1,32}$")
@@ -84,6 +86,7 @@ def build_parser():
     add("new")
     add("triage-queue")
     add("health")
+    add("vpn-profile")
     s = add("title")
     s.add_argument("bug")
     s.add_argument("title_text")
@@ -543,6 +546,15 @@ def _do_import(c, who, stdin, out):
     _json_out(out, {"imported": done})
 
 
+def _vpn_profile():
+    """The Nightwatch VPN client profile as bytes (kept on the server only, mode 600, never in the repo)."""
+    p = Path(os.environ.get("NETDOCTOR_VPN_PROFILE") or Path.home() / ".config" / "netdoctor" / "nightwatch.ovpn")
+    try:
+        return p.read_bytes()
+    except OSError:
+        raise CliError("no VPN profile on the server", 1)
+
+
 def main(argv, who, out=None, *, db=None, stdin=None):
     """Run one command; returns the exit status (0 ok, 1 not found / refused, 2 bad command line)."""
     out = out or sys.stdout.buffer
@@ -560,9 +572,11 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args([_norm_ids(x) for x in argv])
     if not a.cmd:
-        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl)")
+        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
+    if a.cmd in DEVS_ONLY and who not in DEVS:
+        raise CliError(f"{a.cmd} is for the devs only", 1)
     if a.cmd == "nd" and not ND_RX.match(a.ref):
         raise CliError(f"not an analysis ref (ND-xxxxxxxx): {a.ref!r}")
     if a.cmd == "files" and not (a.bugs or _has_filter(a)):
@@ -727,6 +741,9 @@ def _run(argv, who, out, db, stdin):
             raise CliError(f"no such analysis: {a.ref}", 1)
         row["created"] = _iso(row["created"])
         return emit(row)
+    if a.cmd == "vpn-profile":
+        out.write(_vpn_profile())
+        return 0
     if a.cmd == "export":
         _do_export(c, out)
         return 0
