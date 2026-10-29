@@ -195,6 +195,29 @@ def logs_nudge(mention: str, bug_id: str) -> str:
                 f"them in. There is no hurry; I only did not want you to think I had forgotten.")
 
 
+def _plain(text: str) -> str:
+    """A developer's words for a public ask: IPs masked, mass pings defused, runs of spaces folded."""
+    text = _logic.mask_ips(text or "").replace("@everyone", "@​everyone").replace("@here", "@​here")
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
+def reporter_ask(mention: str, bug_id: str, issue: str, need: str) -> str:
+    """A developer wants more from the reporter: names the bug and the exact trouble, lists what is needed."""
+    mention = (mention + " ") if mention else ""
+    issue, need = _plain(issue)[:200], _plain(need)[:900]
+    what = f' ("{issue}")' if issue else ""
+    head = (f"{mention}Forgive me for troubling you again. I still have {bug_id} on my table{what}, and to treat "
+            f"it properly the developers need a little more from you:\n\n")
+    tail = ("\n\nYou can answer right here and attach the files straight to your message; I will take them "
+            "inside and keep them safe. In the Nightwatch launcher, **Logs** on the top bar -> **Copy last 2 "
+            "logs**, then paste here: they come as files, IP addresses hidden. If that night was before your "
+            "last two games, the **Output** page -> **Open** shows the logs folder: zip all of it, the "
+            "`sessions` folder too, and I will find the right night myself. From every hunter who played, "
+            "if you can. If that night's log is long gone, no matter: should it happen again, send the "
+            "newest ones right after. Even a few words help. Thank you, truly.")
+    return _fit(head + "> " + need.replace("\n", "\n> ") + tail)
+
+
 def announcement() -> str:
     text = (
         "**Iosefka's clinic is open.**\n\n"

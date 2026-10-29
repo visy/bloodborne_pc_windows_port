@@ -61,6 +61,7 @@ player_logs paths; private detail goes in `--dev`. Quote multi-word arguments as
 | was NW-1a2b3c4 fixed on the NW side | `ssh iosefka cl related NW-1a2b3c4`, `ssh iosefka cl list --track nw --bug NW-1a2b3c4` |
 | mark NW-1a2b3c4 fixed in NW 0.2.6 | `ssh iosefka status NW-1a2b3c4 fixed --in nw:0.2.6` |
 | release 0.7.7 | `ssh iosefka cl release coop 0.7.7 --dry-run` to preview, then `ssh iosefka cl release coop 0.7.7 [--next 0.7.8]`; post the returned `notes` in #releases, then Iosefka asks the reporters of the fixed bugs to retest (do not ask them yourself) |
+| ask the reporter of NW-x for host and guest logs of a Queen attempt | `ssh iosefka ask NW-1a2b3c4 --need "'host and guest logs of a Queen attempt'" [--issue "'what part'"]` is a DRY RUN: show the user the printed text, and only after they agree rerun with `--send`. `--for CL-x` takes the item's text as the issue; `cl ask CL-x --need ...` asks every reporter of the item's bugs. Max one ask per bug per 3 days (`--force`). Ask about a specific issue and name exactly what you need; no names, IPs or log lines in `--need` |
 | make the 0.2.6 release notes | `ssh iosefka cl notes nw 0.2.6` (public-safe; re-read before pasting) |
 | move this item to 0.7.8 | `ssh iosefka cl move CL-1a2b3c coop 0.7.8` |
 | drop this item | `ssh iosefka cl status CL-1a2b3c dropped` |
