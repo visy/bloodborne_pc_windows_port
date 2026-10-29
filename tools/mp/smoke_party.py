@@ -3788,6 +3788,11 @@ CLG_UNTIL = r"0:map .* -> m21_00"
 CLG_UNTIL_G = r"1:travel step (\d+)/\1: "  # guest 1's last step: 15 s in the Dream (r2: its earlier m21 ended the run)
 
 
+def _clg_extra_env():
+    import os
+    return ["1:BB_PARTY_STAIN_PAY_VFUNC=1"] if os.environ.get("BB_SMOKE_CLG_OLDPAY") == "1" else []
+
+
 def phase_clg(only):
     host = ",".join(["log_pos", "god",
                      "host_obj=%s:1.2:0@12%%m29" % CL_LAMP_OBJ,     # (1) light the boss room's lamp
@@ -3815,7 +3820,9 @@ def phase_clg(only):
         watch=watch,
         # chaliceechoes: the fall's party stain (15000 echoes, in the host's dungeon) is walked onto
         # (the test aid puts the guest 4 m from it, 4 s later onto it): paid in the Chalice Dungeon
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_STAIN_TEST=4"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_STAIN_TEST=4",
+              # echoes077: the Caryll rune gain rates (x1.1 x1.2 x1.3) on the guest: the stain must still pay 15000
+              "1:BB_PARTY_STAIN_TEST_SPFX=100000,100001,100002"] + _clg_extra_env(),
         crash=[],
         until=[CLG_UNTIL, CLG_UNTIL_G],
     )
@@ -6520,6 +6527,15 @@ def check_clg(v, L):
         if shown:
             need(v, L, "clg guest 1 walks onto it: the 15000 echoes are paid in the Chalice Dungeon", 1,
                  r"party stain: recovered 15000 Blood Echoes in the host's world", shown)
+            # echoes077 (NW-4b5e142): paid exactly once and exactly 15000, whatever gain rate the guest's SpEffects have
+            rec = L.find(1, r"party stain: recovered 15000 Blood Echoes in the host's world at .*: echoes \d+ -> \d+", shown)
+            m = re.search(r"echoes (\d+) -> (\d+)", rec[1]) if rec else None
+            v.step("clg the pick-up adds exactly the stain's 15000 (the guest wears gain-rate SpEffects)",
+                   bool(m) and int(m.group(2)) - int(m.group(1)) == 15000, rec[1][-60:] if rec else "no pay line")
+            sp = L.all(1, r"stain test: SpEffect 10000\d on the own chr")
+            v.step("clg the gain-rate SpEffects were on the guest", len(sp) == 3, "%d applied" % len(sp))
+            pays = L.all(1, r"party stain: recovered \d+ Blood Echoes")
+            v.step("clg the stain is paid once", len(pays) == 1, "%d pay lines" % len(pays))
     car = need(v, L, "clg guest 1's game learns the dungeon's lift car", 1, r"Chalice Dungeon lift car 2901004 seen riding")
     if car:
         none_of(v, L, "clg no death on the lift ride", r"local death: HP 0 at", car, car + 15, (0, 1))
