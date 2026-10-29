@@ -17,7 +17,7 @@ BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 KEY_RX = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 HASH_RX = re.compile(r"^[0-9a-fA-F]{4,64}$")
 CASE_RX = re.compile(r"^(?:\d{4}-\d{2}-\d{2}/)?[A-Za-z0-9._() -]{1,120}$")
-SUBCOMMANDS = ("versions, version, list, show, add, edit, status, move, link, merge, import, related, notes, release")
+SUBCOMMANDS = ("versions, version, list, show, ask, add, edit, status, move, link, merge, import, related, notes, release")
 
 
 class ClError(Exception):
@@ -132,6 +132,9 @@ def add_parser(sub, common):
     s.add_argument("--dated-since", dest="dated_since")
     s = add("show")
     s.add_argument("cl_id")
+    s = add("ask")
+    s.add_argument("cl_id")
+    add_ask_args(s)
     s = add("add")
     s.add_argument("track")
     s.add_argument("ver")
@@ -258,6 +261,39 @@ def fixed_in(clinic, who, bug_id, spec):
         raise ClError(str(e), 1 if str(e).startswith("no such") else 2)
 
 
+def add_ask_args(s):
+    s.add_argument("--need", required=True, help="exactly what details are needed")
+    s.add_argument("--issue", help="which part of the bug (default: the bug title / the item's text)")
+    s.add_argument("--send", action="store_true", help="queue the message(s); without it: a dry run")
+    s.add_argument("--force", action="store_true", help="ask again within 3 days of the last ask")
+
+
+def do_ask(clinic, who, bug_ids, a, issue_default=""):
+    """`ask` / `cl ask`: a dry run (default) or, with --send, queue Iosefka's ask to the reporters of each bug.
+    Returns {"dry_run", "asks": [plan per bug]}; a plan with `blocked` is never sent."""
+    import clinic_asks
+    need = (a.need or "").strip()
+    if not need:
+        raise ClError("ask wants --need with the details required")
+    if len(need) > 900:
+        raise ClError(f"--need is too long ({len(need)} chars, max 900)")
+    issue = (a.issue or issue_default or "").strip()
+    plans = []
+    for bid in bug_ids:
+        b = clinic.bug(bid)
+        if b is None:
+            plans.append({"bug": bid, "blocked": "no such bug", "messages": []})
+            continue
+        if b["status"] == "duplicate" and b["dup_of"]:
+            raise ClError(f"{bid} is a duplicate of {b['dup_of']}: ask about that one", 1)
+        plan = clinic_asks.plan_ask(clinic, bid, need, issue, force=a.force)
+        if a.send and not plan["blocked"]:
+            clinic_asks.commit_ask(clinic, plan, who)
+            plan["sent"] = True
+        plans.append(plan)
+    return {"dry_run": not a.send, "asks": plans}
+
+
 def run(a, clinic, who, emit, stdin):
     try:
         return _run(a, clinic, who, emit, stdin)
@@ -281,6 +317,15 @@ def _run(a, clinic, who, emit, stdin):
         return emit([_item_out(i) for i in _list(ch, a)])
     if cmd == "show":
         return emit(_show(ch, clinic, _cl_id(a.cl_id)))
+    if cmd == "ask":
+        it = ch.get(_cl_id(a.cl_id))
+        if it is None:
+            raise ClError(f"no such item {a.cl_id}", 1)
+        if not it["bugs"]:
+            raise ClError(f"{a.cl_id} has no linked bugs", 1)
+        out = do_ask(clinic, who, it["bugs"], a, it["text"])
+        out["item"] = a.cl_id
+        return emit(out)
     if cmd == "add":
         cid = ch.add(a.track, a.ver, a.section, a.item_text, who=who, status=a.status,
                      tags=_tag_pairs(a.tag), bugs=_bug_ids(a.cl_bugs), cases=_cases(a.cl_cases),
