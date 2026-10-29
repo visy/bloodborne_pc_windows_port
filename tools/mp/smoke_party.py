@@ -714,6 +714,273 @@ def phase_lfx(only):
     return ph
 
 
+# Phase lfw / lfwc / lfws (liftwalk077, groups `lift_walk` / `lift_walk_slow`): the lifts ridden the way players ride
+# them: WALKED onto the car by the left stick (the director's route walker over the game's navmesh, pad file), never
+# warped onto it. Each ride's rider(s) start 60-100 m of walking from the car (a warp to a far spot on the same
+# floor, then a stick route, then a stick step into the trigger box), the other player waits at the other end.
+# lfw: Central Yharnam's lift 2411320 (the shortcut lift below Gascoigne's area; 14 m, a platform): guest down, host
+# up, both down, both up. lfwc: Cathedral Ward's lift 2401102 (48 m; its top end is a 12 m
+# pocket of the navmesh, so the walks into the top end are short): guest up, host down, both up, both down.
+# lfws: lfw with a slow-loading simulation (BB_TEST_LIFT_BUILD_DELAY / _DROP: the car is dropped when the walker is far
+# and its full build comes only 5 s after the walker is within 30 m) and sprinting walks (BB_TEST_WALK_SPRINT).
+# BB_LFW_ENV="K=V,K=V" adds env (BB_TEST_LIFT_PROBE=2, BB_PARTY_LIFT_PREBUILD=0, ...). Pass: every rider is on the
+# arrival floor alive with its ride bit on all the way, both games show the same flags and car end after each ride.
+def _p(*a):
+    return ":".join("%.2f" % x for x in a)
+
+
+LW = {
+    "yh": dict(
+        tag="lfw", map="m24_01", car="2411320", pos="12410350", busy="12415350", start="top", top_val=1,
+        lamp="2412953", set_flags="12410330,12410350",
+        trig={"top": (-128.72, -44.3, -9.73), "bottom": (-128.72, -58.0, -9.73)},
+        side={"top": (-128.45, -44.3, -10.45), "bottom": (-128.45, -58.0, -10.45)},
+        out_h={"top": (-130.27, -44.4, -6.27), "bottom": (-125.28, -58.4, -11.69)},
+        out_g={"top": (-135.70, -44.4, -0.60), "bottom": (-117.10, -58.5, -17.30)},
+        wk={"top": (-130.27, -44.4, -6.27), "bottom": (-121.10, -58.4, -15.60)},
+        far={"top": (-184.6, -38.7, 32.6), "bottom": (-74.9, -54.8, 17.2)},
+        route={"top": "-180.7:-41.5:29.6/-177.6:-41.7:26.7/-173.4:-41.7:26.3/-169.0:-41.7:23.9/-165.4:-41.7:21.5/-161.9:-41.7:17.5/-158.2:-41.7:15.0/-154.3:-41.7:11.6/-151.3:-41.7:9.1/-147.6:-41.7:10.8/-144.8:-43.3:7.6/-140.4:-44.5:5.2/-136.7:-44.5:1.5/-134.7:-44.2:-2.5/-130.8:-44.5:-3.7/-130.0:-44.5:-8.0",
+               "bottom": "-78.8:-55.4:14.7/-79.1:-55.5:9.9/-83.5:-55.5:8.9/-88.2:-55.4:6.2/-89.5:-55.5:2.0/-92.6:-55.5:-1.5/-96.6:-55.5:-3.9/-100.3:-55.4:-6.3/-103.5:-55.4:-10.0/-107.9:-55.4:-12.6/-110.3:-55.4:-15.8/-113.0:-56.9:-19.2/-116.5:-58.7:-21.3/-117.1:-58.5:-17.3/-121.1:-58.4:-15.6/-124.4:-58.4:-12.6/-128.1:-58.1:-10.7"},
+        arr={"down": "1", "up": "3"}, start_anim={"down": (4,), "up": (6,)}, end_anim={"down": 5, "up": 7},
+        y_arr={"top": lambda y: y > -46.0, "bottom": lambda y: y < -56.0},
+        rides=["guest", "host", "both", "both"], kills={"top": 8, "bottom": 8},
+    ),
+    "ca": dict(
+        tag="lfwc", map="m24_0", car="2401102", pos="12400827", busy="12400828", start="bottom", top_val=1,
+        lamp="2412953", set_flags="",
+        trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
+        side={"top": (25.2, 3.0, 194.17), "bottom": (25.2, -45.5, 194.17)},
+        out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
+        out_g={"top": (16.9, 3.8, 187.9), "bottom": (33.3, -45.8, 201.3)},
+        wk={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
+        far={"top": (13.1, 3.6, 188.9), "bottom": (78.2, -51.2, 250.6)},
+        route={"top": "16.1:3.8:186.9/18.5:3.6:189.1/21.3:2.8:191.2/23.2:2.9:192.3/23.8:2.8:194.0",
+               "bottom": "71.6:-51.5:245.4/68.0:-51.4:243.6/66.6:-51.1:239.9/66.2:-51.0:236.6/64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
+        arr={"down": "28", "up": "32"}, start_anim={"down": (1,), "up": (31,)}, end_anim={"down": 29, "up": 7},
+        y_arr={"top": lambda y: y > 0.5, "bottom": lambda y: y < -40.0},
+        rides=["guest", "host", "both", "both"], kills={"top": 3, "bottom": 8},
+    ),
+}
+
+
+def lfw_plan(spec):
+    """[(direction, riders, car end before)] for the spec's rides: the car alternates ends from its start."""
+    out, end = [], spec["start"]
+    for riders in spec["rides"][:int(os.environ.get("BB_LFW_RIDES", "0")) or None]:  # BB_LFW_RIDES=N: a shorter run
+        out.append(("down" if end == "top" else "up", riders, end))
+        end = "bottom" if end == "top" else "top"
+    return out
+
+
+def lfw_chains(spec):
+    """(host steps, guest steps) of the walk-in plan."""
+    m, car = spec["map"], spec["car"]
+    steps = {"host": [], "guest": []}
+    # prelude: the host kills the regular enemies near both ends' walk-in routes (a brute standing in the Gascoigne
+    # plaza stopped the walker dead, live lfw4), one end after the other, and ends on the first waiter's spot: the
+    # guest's first step waits for it
+    first_end = lfw_plan(spec)[0][2]
+    for n, (e, kind) in enumerate((("top", "far"), ("top", "out_h"), ("bottom", "far"), ("bottom", "out_h"))):
+        steps["host"].append("host_move=%s:pin=4:ground@%s%%%s%s" % (_p(*spec[kind][e]), "4" if n == 0 else "1", m,
+                                                                      "^1" if n == 0 else ""))
+        steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
+    for k, (d, riders, end) in enumerate(lfw_plan(spec)):
+        other = "bottom" if end == "top" else "top"
+        gate = "" if k == 0 else "?%s=%d" % (spec["pos"], spec["top_val"] if end == "top" else 1 - spec["top_val"])
+        who = ("host", "guest") if riders == "both" else (riders,)
+        for role in ("host", "guest"):
+            s = steps[role]
+            first = k == 0
+            if role not in who:
+                # the one who waits: at the other end (the arrival), beside where the rider steps out
+                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec["out_g"][other]), "1" if first else "14", m, gate))
+                # the player who does not ride walks a few metres by the stick while the car moves (the user's report:
+                # "the other player runs in place and cannot move while the elevator moves"); it starts once the rider
+                # stands in the trigger box
+                ox, oy, oz = spec["wk"][other]
+                s.append("%s_stick=%.2f:%.2f:1.0:24@0.5%%%s?near=%s:0.9" % (role, ox, oz, m, _p(*spec["trig"][end])))
+                continue
+            second = riders == "both" and role == "guest"
+            if first:
+                # the host after its prelude; the guest once the host stands where the first waiter does
+                g0 = "" if role == "host" else "?near=%s:3" % _p(*spec["out_g"]["bottom" if first_end == "top" else "top"])
+                s.append("%s_move=%s:pin=4:ground@1%%%s%s" % (role, _p(*spec["far"][end]), m, g0))
+            else:
+                s.append("%s_move=%s:pin=4:ground@14%%%s%s" % (role, _p(*spec["far"][end]), m, gate))
+            s.append("%s_route=%s@9%%%s" % (role, spec["route"][end], m))
+            if riders == "both" and role == "host":
+                # on the car beside the trigger box; the guest steps into the box once the host stands there
+                sx, sy, sz = spec["side"][end]
+                s.append("%s_stick=%.2f:%.2f:0.2:14@0.2%%%s" % (role, sx, sz, m))
+            else:
+                tx, ty, tz = spec["trig"][end]
+                cond = "?near=%s:1.5" % _p(*spec["side"][end]) if second else ""
+                s.append("%s_stick=%.2f:%.2f:0.25:14@0.2%%%s%s" % (role, tx, tz, m, cond))
+            # out at the arrival: walk off the car once the car shows its arrival animation
+            ox, oy, oz = spec["out_g" if second else "out_h"][other]
+            s.append("%s_stick=%.2f:%.2f:1.5:16@0.3%%%s?obj=%s:%s" % (role, ox, oz, m, car, spec["arr"][d]))
+    return steps["host"], steps["guest"]
+
+
+def phase_lfw_for(key, slow=False, name=None):
+    spec = LW[key]
+    host, guest = lfw_chains(spec)
+    common = "god,log_pos=0.5,log_objanim=%s,log_obj=%s,log_flag=%s/%s" % (spec["car"], spec["car"], spec["pos"], spec["busy"])
+    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=120"]
+    if spec["set_flags"]:
+        env.append("BB_PARTY_PROGRESS_TEST_SET=" + spec["set_flags"])
+    if slow:
+        env += ["BB_TEST_LIFT_BUILD_DELAY=5", "BB_TEST_LIFT_BUILD_NEAR=30", "BB_TEST_LIFT_BUILD_DROP=60", "BB_TEST_WALK_SPRINT=1"]
+    extra = os.environ.get("BB_LFW_ENV", "")
+    env += [e for e in extra.split(",") if "=" in e]
+    starts = "(" + "|".join("|".join(str(a) for a in spec["start_anim"][d]) for d in ("down", "up")) + ")"
+    ends = "(%d|%d)" % (spec["end_anim"]["down"], spec["end_anim"]["up"])
+    return dict(
+        name=name or spec["tag"], seconds=900, count=2, headless=0, pads=(0, 1),
+        env=env,
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join([common] + host), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join([common] + guest)],
+        watch=RIDE_BURST(spec["car"], starts, ends),
+        crash=[], until=LFW_UNTIL, until_hold=15,
+    )
+
+
+LFW_UNTIL = [r"0:travel step (\d+)/\1: ", r"1:travel step (\d+)/\1: "]
+
+
+def phase_lfw(only):
+    return phase_lfw_for("yh")
+
+
+def phase_lfwc(only):
+    return phase_lfw_for("ca")
+
+
+def phase_lfws(only):
+    return phase_lfw_for("yh", True, "lfws")
+
+
+def phase_lfwcs(only):
+    return phase_lfw_for("ca", True, "lfwcs")
+
+
+def lw_rides(L, i, spec):
+    """The lift's rides on instance i from its car animations: [{start, t, up, end, t_end, t_arr}]."""
+    rides = []
+    starts = {a for d in spec["start_anim"].values() for a in d}
+    arrs = {int(a) for a in spec["arr"].values()}
+    ends = set(spec["end_anim"].values())
+    for t, line in L.all(i, r"test: object %s anim -?\d+ playing" % spec["car"]):
+        m = re.search(r"anim (-?\d+) playing (\d)", line)
+        anim, playing, w = int(m.group(1)), m.group(2) == "1", wall(line)
+        if anim in starts and playing and (not rides or rides[-1]["end"] is not None):
+            rides.append(dict(start=w, t=t, up=anim in spec["start_anim"]["up"], end=None, t_end=None, t_arr=None))
+        elif anim in arrs and not playing and rides and rides[-1]["end"] is None:
+            rides[-1]["t_arr"] = rides[-1]["t_arr"] or t
+        elif anim in ends and not playing and rides and rides[-1]["end"] is None:
+            rides[-1].update(end=w, t_end=t, t_arr=rides[-1]["t_arr"] or t)
+        elif anim in ends and playing and rides and rides[-1]["end"] is None and rides[-1]["t_arr"] is None:
+            rides[-1]["t_arr"] = t  # the end animation starts at once when nobody is on the car at the arrival
+    return rides
+
+
+def lw_flags_at(L, i, spec, w):
+    val = None
+    for _t, line in L.all(i, r"test: flags %s=" % spec["pos"]):
+        lw = wall(line)
+        if lw is not None and lw <= w:
+            val = tuple(int(x) for x in re.findall(r"=(-?\d)", line)[:2])
+    return val
+
+
+def lw_anim_at(L, i, spec, w):
+    val = None
+    for _t, line in L.all(i, r"test: object %s anim -?\d+ playing" % spec["car"]):
+        lw = wall(line)
+        if lw is not None and lw <= w:
+            val = int(re.search(r"anim (-?\d+)", line).group(1))
+    return val
+
+
+def check_lfw(v, L, key, tag):
+    spec = LW[key]
+    plan = lfw_plan(spec)
+    need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
+    rides = [lw_rides(L, i, spec) for i in (0, 1)]
+    v.step(tag + " rides: %d on each game" % len(plan), len(rides[0]) == len(plan) and len(rides[1]) == len(plan),
+           "host %d, guest %d" % (len(rides[0]), len(rides[1])))
+    for k, (d, riders, end) in enumerate(plan):
+        name = "%d %s %s" % (k + 1, riders, d)
+        rh = rides[0][k] if k < len(rides[0]) else None
+        rg = rides[1][k] if k < len(rides[1]) else None
+        if not rh or not rg or rh["end"] is None or rg["end"] is None:
+            v.step("%s %s: ran and ended on both games" % (tag, name), False, "host %s, guest %s" % (rh, rg))
+            continue
+        up = d == "up"
+        v.step("%s %s: one ride, the planned way, on both games" % (tag, name),
+               rh["up"] == up and rg["up"] == up and abs(rh["start"] - rg["start"]) < 1.5,
+               "start host %.2f / guest %.2f" % (rh["start"] % 3600, rg["start"] % 3600))
+        w = max(rh["end"], rg["end"]) + 0.5
+        want_pos = spec["top_val"] if up else 1 - spec["top_val"]
+        fh, fg = lw_flags_at(L, 0, spec, w), lw_flags_at(L, 1, spec, w)
+        ah, ag = lw_anim_at(L, 0, spec, w), lw_anim_at(L, 1, spec, w)
+        v.step("%s %s: same flags and car end on both games" % (tag, name),
+               fh == fg == (want_pos, 0) and ah == ag == spec["end_anim"][d],
+               "pos/busy host %s / guest %s (want %s), car anim host %s / guest %s (want %s)" %
+               (fh, fg, (want_pos, 0), ah, ag, spec["end_anim"][d]))
+        arrive = "top" if up else "bottom"
+        ax, _ay, az = spec["trig"][end]
+        for role in (("host", "guest") if riders == "both" else (riders,)):
+            i = 0 if role == "host" else 1
+            r = rides[i][k]
+            arr = r["t_arr"]
+            pos = L.all(i, POS_RX.pattern, arr - 1.0, arr + 0.05) if arr else []
+            y = float(POS_RX.search(pos[-1][1]).group(2)) if pos else None
+            after = L.all(i, POS_RX.pattern, (r["t_arr"] or r["t_end"]) + 0.5, (r["t_arr"] or r["t_end"]) + 3.0)
+            y2 = float(POS_RX.search(after[0][1]).group(2)) if after else None
+            n = off = 0
+            for _t, line in L.all(i, POS_RX.pattern, r["t"] + 0.6, (arr or r["t"]) - 0.3):
+                m = POS_RX.search(line)
+                f = re.search(r" f ([0-9a-f]{10})", line)
+                if f and ((float(m.group(1)) - ax) ** 2 + (float(m.group(3)) - az) ** 2) ** 0.5 < 2.0:
+                    n += 1
+                    off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+            v.step("%s %s: the %s rode along to the %s end, on the floor after" % (tag, name, role, arrive),
+                   y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and off == 0,
+                   "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it" %
+                   ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off))
+    for k, (d, riders, end) in enumerate(plan):
+        for role in ("host", "guest"):
+            if riders in ("both", role) or k >= len(rides[0]) or k >= len(rides[1]):
+                continue
+            i = 0 if role == "host" else 1
+            r = rides[i][k]
+            if r.get("t_end") is None:
+                continue
+            pts = [tuple(float(x) for x in POS_RX.search(l).groups()) for _t, l in L.all(i, POS_RX.pattern, r["t"], r["t_end"])]
+            far = max([math.hypot(q[0] - pts[0][0], q[2] - pts[0][2]) for q in pts] or [0.0])
+            v.step("%s %d %s: the %s who does not ride walks while the car moves" % (tag, k + 1, d, role), far >= 3.0,
+                   "%d samples, farthest %.1f m from where the ride began (need 3 m)" % (len(pts), far))
+    for i, who in ((0, "host"), (1, "guest")):
+        f = falls(L, i)
+        v.step("%s %s: no fall (vertical speed under 8 m/s)" % (tag, who), not f,
+               ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
+        walks = L.all(i, r"test: route: DONE at waypoint")
+        stops = L.all(i, r"test: route: STOPPED")
+        mine = sum(1 for _d, riders, _e in plan if riders == "both" or riders == who)
+        v.step("%s %s: every walk-in's route was walked to its end" % (tag, who), len(walks) >= mine and not stops,
+               "%d routes done (need %d), %d stopped, %d hop(s)" % (len(walks), mine, len(stops),
+                                                                   len(L.all(i, r"test: route: HOP"))))
+    jump_steps(v, tag, L, rides, (spec["trig"]["top"][0], spec["trig"]["top"][2]),
+               ["%d %s %s" % (k + 1, r, d) for k, (d, r, _e) in enumerate(plan)])
+    none_of(v, L, tag + " nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
+    none_of(v, L, tag + " no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
+    holds = sum(len(L.all(i, r"lift car hold:|lift car floor:|lift car prebuild:")) for i in (0, 1))
+    delays = sum(len(L.all(i, r"lift car build (delay|drop) \(test aid\)")) for i in (0, 1))
+    v.step(tag + " (info) the unbuilt-car guards and the slow-load aid", True,
+           "%d hold/floor/prebuild lines, %d test-aid lines" % (holds, delays))
+    check_common(v, L, tag)
+
+
 # Phase ga (gather, ~4 min, 3 players; ERSC_PARITY I5): the host's System > Party > Gather the party
 # three times (round 1 by the hotkey: the touchpad + L3 tapped through the game's pad path). After
 # a party travel to the Tomb of Oedon (m24_01) guest 1 stands 130 m away in the
@@ -5279,12 +5546,12 @@ def check_lo(v, L):
 
 
 PHASES = {"s1": phase_s1, "s2": phase_s2, "rules": phase_rules, "sc": phase_sc, "summonfail": phase_summonfail,
-          "s3": phase_s3, "sk": phase_sk, "lg": phase_lg, "lv": phase_lv, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "lfx": phase_lfx, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "anl": phase_anl, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cla": phase_cla, "cpr": phase_cpr, "chc": phase_chc, "chn": lambda only: phase_chc(only, "chn", True), "chw": phase_chw, "cpa": phase_cpa, "cae": phase_cae, "cao": phase_cao, "cab": phase_cab, "caq": phase_caq, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "bv": phase_bv, "ch": phase_ch, "md": phase_md, "mds": phase_mds, "svl": phase_svl, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "gr": phase_gr, "gr2": phase_gr2, "gr3": phase_gr3, "gr4": phase_gr4, "gro": lambda only: phase_gr(only, "gro", False), "gr2o": lambda only: phase_gr2(only, "gr2o", False), "gr3o": lambda only: phase_gr3(only, "gr3o", False), "gr4o": lambda only: phase_gr4(only, "gr4o", False), "jl": phase_jl, "ml": phase_ml, "mg": phase_mg, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "ff": phase_ff, "lk": phase_lk, "lkc": phase_lkc, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "rj": phase_rj, "em": phase_em, "bd": phase_bd, "bdo": phase_bdo, "sm": phase_sm, "ef": phase_ef, "mb": phase_mb, "gb": phase_gb, "mbs": phase_mbs, "gbs": phase_gbs, "da": phase_da, "cv": phase_cv, "cvs": phase_cvs, "cvo": lambda only: phase_cvs(only, False), "cvr": phase_cvr, "cva": phase_cva, "cvt": phase_cvt, "cvh": lambda only: phase_cvt(only, "host"), "ie": phase_ie, "il": phase_il, "rw": phase_rw, "rwe": phase_rwe, "rwt": phase_rwt, "rwl": phase_rwl, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "pvh": phase_pvh, "pvn": phase_pvn, "npf": phase_npf, "eh": phase_eh, "bl": phase_bl, "mw": phase_mw, "px": phase_px, "pxg": lambda only: phase_px(only, True), "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp, "lo": phase_lo, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "csh": phase_csh, "csh2": phase_csh2, "csh3": phase_csh3, "ba": phase_ba, "bh": phase_bh, "bk": phase_bk, "hg": phase_hg, "lw": phase_lw, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
+          "s3": phase_s3, "sk": phase_sk, "lg": phase_lg, "lv": phase_lv, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "lfx": phase_lfx, "lfw": phase_lfw, "lfwc": phase_lfwc, "lfws": phase_lfws, "lfwcs": phase_lfwcs, "mk": phase_mk, "kd": phase_kd, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "anl": phase_anl, "ld": phase_ld, "cl": phase_cl, "clg": phase_clg, "clw": phase_clw, "cla": phase_cla, "cpr": phase_cpr, "chc": phase_chc, "chn": lambda only: phase_chc(only, "chn", True), "chw": phase_chw, "cpa": phase_cpa, "cae": phase_cae, "cao": phase_cao, "cab": phase_cab, "caq": phase_caq, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "bv": phase_bv, "ch": phase_ch, "md": phase_md, "mds": phase_mds, "svl": phase_svl, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "gr": phase_gr, "gr2": phase_gr2, "gr3": phase_gr3, "gr4": phase_gr4, "gro": lambda only: phase_gr(only, "gro", False), "gr2o": lambda only: phase_gr2(only, "gr2o", False), "gr3o": lambda only: phase_gr3(only, "gr3o", False), "gr4o": lambda only: phase_gr4(only, "gr4o", False), "jl": phase_jl, "ml": phase_ml, "mg": phase_mg, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "ff": phase_ff, "lk": phase_lk, "lkc": phase_lkc, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "rj": phase_rj, "em": phase_em, "bd": phase_bd, "bdo": phase_bdo, "sm": phase_sm, "ef": phase_ef, "mb": phase_mb, "gb": phase_gb, "mbs": phase_mbs, "gbs": phase_gbs, "da": phase_da, "cv": phase_cv, "cvs": phase_cvs, "cvo": lambda only: phase_cvs(only, False), "cvr": phase_cvr, "cva": phase_cva, "cvt": phase_cvt, "cvh": lambda only: phase_cvt(only, "host"), "ie": phase_ie, "il": phase_il, "rw": phase_rw, "rwe": phase_rwe, "rwt": phase_rwt, "rwl": phase_rwl, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "pvh": phase_pvh, "pvn": phase_pvn, "npf": phase_npf, "eh": phase_eh, "bl": phase_bl, "mw": phase_mw, "px": phase_px, "pxg": lambda only: phase_px(only, True), "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "fp": phase_fp, "lo": phase_lo, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "csh": phase_csh, "csh2": phase_csh2, "csh3": phase_csh3, "ba": phase_ba, "bh": phase_bh, "bk": phase_bk, "hg": phase_hg, "lw": phase_lw, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
 GROUPS = {"join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "leave_gap": "lv", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "lifts2": "lfx", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_enter": "cae,cao", "chalice_boss": "cab", "chalice_wipe": "clw", "chalice_alias": "cla", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "guest_rest": "gr,gr2,gr3,gr4", "guest_rest_off": "gro,gr2o,gr3o,gr4o", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
+          "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "leave_gap": "lv", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "lifts2": "lfx", "lift_walk": "lfw,lfwc", "lift_walk_slow": "lfws,lfwcs", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_enter": "cae,cao", "chalice_boss": "cab", "chalice_wipe": "clw", "chalice_alias": "cla", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "guest_rest": "gr,gr2,gr3,gr4", "guest_rest_off": "gro,gr2o,gr3o,gr4o", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
           "rot": "rt", "boss_rooms": "br", "rom_fog": "rf", "rom_jump": "rj", "emissary": "em", "boss_drops": "bd", "boss_drops_off": "bdo", "scene_mirror": "sm", "ending_flow": "ef", "moon_music": "mb", "gehrman_music": "gb", "moon_music_stop": "mbs", "gehrman_music_stop": "gbs", "dream_apart": "da", "covenant": "cv",
           "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "covenant_seq": "cvs,cvo", "covenant_runes": "cvr", "covenant_annalise": "cva", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "npc_fog": "npf", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "death_poison": "px,pxg", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "fourp_nat": "fp", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "chalice_shop": "csh,csh2", "chalice_shop3": "csh3", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_visible": "bv", "ludwig_wipe": "lw", "lone_ai": "la,lc"}
 GROUP_ROWS = {"join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
@@ -5294,7 +5561,7 @@ GROUP_ROWS = {"join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"gue
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
               "host_revive": r"^s3 ", "streamkill": r"^sk ", "load_gap": r"^lg(:| )", "leave_gap": r"^lv(:| )", "gather": r"^ga ", "gather_ground": r"^gl ",
-              "lifts": r"^lf (join|lift|guest's lift|host)", "lifts2": r"^lfx (join|lift|guest's lift|host)", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iwn? ", "cainhurst_annalise": r"^an |^anl ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_curse": r"^ch[cw] ", "chalice_altar": r"^cpa ", "chalice_enter": r"^ca[eo] ", "chalice_boss": r"^cab ", "chalice_enter": r"^ca[eo] ", "chalice_boss": r"^cab ", "chalice_wipe": r"^clw ", "chalice_alias": r"^cla ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "cainhurst_maid": r"^md ", "cloth_stall": r"^mds ", "save_load": r"^svl ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "join_lamp": r"^jl ", "mensis_lamp": r"^ml ", "mensis_lamp_guest": r"^mg ", "headstone_split": r"^hs ", "ngplus_rejoin": r"^ngj ", "npc_lamp": r"^nl ", "frontier_fall": r"^ff ", "lunarium_key": r"^lkc? ",
+              "lifts": r"^lf (join|lift|guest's lift|host)", "lifts2": r"^lfx (join|lift|guest's lift|host)", "lift_walk": r"^lfwc? ", "lift_walk_slow": r"^lfwc?s ", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^kd ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iwn? ", "cainhurst_annalise": r"^an |^anl ", "chalamp": r"^cl ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_curse": r"^ch[cw] ", "chalice_altar": r"^cpa ", "chalice_enter": r"^ca[eo] ", "chalice_boss": r"^cab ", "chalice_enter": r"^ca[eo] ", "chalice_boss": r"^cab ", "chalice_wipe": r"^clw ", "chalice_alias": r"^cla ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "cainhurst_maid": r"^md ", "cloth_stall": r"^mds ", "save_load": r"^svl ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "join_lamp": r"^jl ", "mensis_lamp": r"^ml ", "mensis_lamp_guest": r"^mg ", "headstone_split": r"^hs ", "ngplus_rejoin": r"^ngj ", "npc_lamp": r"^nl ", "frontier_fall": r"^ff ", "lunarium_key": r"^lkc? ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "rom_fog": r"^rf ", "rom_jump": r"^rj ", "emissary": r"^em ", "boss_drops": r"^bd ", "boss_drops_off": r"^bdo ", "scene_mirror": r"^sm ", "ending_flow": r"^ef ", "moon_music": r"^mb ", "gehrman_music": r"^gb ", "moon_music_stop": r"^mbs ", "gehrman_music_stop": r"^gbs ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
               "valtr_rune": r"^cv(:| join| rule| rune)", "covenant_talk": r"^cv[th] ", "covenant_seq": r"^cv[so] ", "covenant_runes": r"^cvr ", "covenant_annalise": r"^cva ", "items_every": r"^ie ", "items_leak": r"^il ", "reward_guest_kill": r"^rw ", "reward_eye": r"^rwe ", "reward_treasure": r"^rwt ", "reward_late": r"^rwl ", "shop_sync": r"^il (join|sync)", "travel_vote": r"^tv ", "npc_fights": r"^nfa? ", "npc_alfred": r"^nfa ", "npc_attack": r"^npa ", "npc_doll": r"^npd ", "pvp_revive": r"^pvd ", "pvp_full_hp": r"^pvh ", "pvp_npc": r"^pvn ", "npc_fog": r"^npf ", "echo_hold": r"^eh ", "limbo_leave": r"^bl ", "boss_darkness": r"^mw ", "death_poison": r"^pxg? ", "seam_rejoin": r"^sj ", "outage_short": r"^ou ", "guest_mesh": r"^mesh ", "fourp_nat": r"^fp ", "lan_only": r"^lo ", "phantom_own": r"^po ", "phantom_save": r"^pos ", "shop_repair": r"^sg ", "shop_repair2": r"^sg2 ", "chalice_shop": r"^csh2? ", "chalice_shop3": r"^csh3 ", "boss_ai": r"^ba ", "boss_dead": r"^b[hk][ :]", "boss_late": r"^hg ", "boss_visible": r"^bv ", "ludwig_wipe": r"^lw ", "lone_ai": r"^la |^lc "}
@@ -5339,6 +5606,8 @@ GROUP_UNTIL = {
     "cainhurst_annalise": [AN_UNTIL],
     "elevator": EL_UNTIL,
     "lifts_together": LT_UNTIL,
+    "lift_walk": LFW_UNTIL,
+    "lift_walk_slow": LFW_UNTIL,
     "cainhurst_lift": CH_UNTIL,
     "cainhurst_maid": MD_UNTIL,
     "cloth_stall": MD_UNTIL,
@@ -5471,7 +5740,7 @@ def hold_udp_ports(n):
 # applies only when no --fps sweep is running. "fps_fixed": True marks a phase that needs its rate even in
 # a sweep (none does today). Without --fps nothing changes: BB_MP_FPS (default 30) or the phase's "fps".
 # Physics / timing groups (lifts, ladders, falls: anything frame-dependent): `--only physics`.
-PHYSICS_GROUPS = ["lifts", "ladder", "elevator", "lifts_together", "cainhurst_lift", "research_lift", "research_solo",
+PHYSICS_GROUPS = ["lifts", "lift_walk", "ladder", "elevator", "lifts_together", "cainhurst_lift", "research_lift", "research_solo",
                   "forbidden_lift", "forbidden_lift_guest", "forbidden_lift_both", "forbidden_lift_edge",
                   "hemwick_lift", "fall", "fall_deep", "host_fall_lamp", "frontier_fall", "cainhurst_maid", "cloth_stall", "rom_jump"]
 
@@ -8565,7 +8834,7 @@ def check_ngj(v, L):
 CHECKS = {"s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L), "lg": lambda v, L, d: check_lg(v, L), "lv": lambda v, L, d: check_lv(v, L),
-          "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "lfx": lambda v, L, d: check_lf(v, L), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "md": check_md, "mds": check_mds, "svl": check_svl, "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
+          "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "lfx": lambda v, L, d: check_lf(v, L), "lfw": lambda v, L, d: check_lfw(v, L, "yh", "lfw"), "lfwc": lambda v, L, d: check_lfw(v, L, "ca", "lfwc"), "lfws": lambda v, L, d: check_lfw(v, L, "yh", "lfws"), "lfwcs": lambda v, L, d: check_lfw(v, L, "ca", "lfwcs"), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "md": check_md, "mds": check_mds, "svl": check_svl, "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
           "mk": lambda v, L, d: check_mk(v, L), "kd": lambda v, L, d: check_kd(v, L), "kw": lambda v, L, d: check_kw(v, L),
           "fl": lambda v, L, d: check_fl(v, L), "fd": lambda v, L, d: check_fd(v, L), "fdj": lambda v, L, d: check_fdj(v, L), "cd": lambda v, L, d: check_cd(v, L), "iw": lambda v, L, d: check_iw(v, L), "iwn": lambda v, L, d: check_iwn(v, L), "an": lambda v, L, d: check_an(v, L), "anl": lambda v, L, d: check_anl(v, L), "ld": lambda v, L, d: check_ld(v, L),
           "cl": lambda v, L, d: check_cl(v, L), "clg": lambda v, L, d: check_clg(v, L), "cpr": lambda v, L, d: check_cpr(v, L), "chc": lambda v, L, d: check_chc(v, L), "chw": lambda v, L, d: check_chc(v, L, True), "chn": lambda v, L, d: check_chc(v, L), "cpa": lambda v, L, d: check_common(v, L, "cpa"), "cae": lambda v, L, d: check_cae(v, L), "cao": lambda v, L, d: check_cao(v, L), "cab": lambda v, L, d: check_cab(v, L), "caq": lambda v, L, d: check_common(v, L, "caq"), "clw": lambda v, L, d: check_clw(v, L), "cla": lambda v, L, d: check_cla(v, L), "bf": lambda v, L, d: check_bf(v, L), "lp": check_lp, "gd": check_gd, "gh": lambda v, L, d: check_gh(v, L), "gm": check_gm, "gr": lambda v, L, d: check_gr(v, L), "gr2": lambda v, L, d: check_gr(v, L, 2), "gr3": lambda v, L, d: check_gr(v, L, 3), "gr4": lambda v, L, d: check_gr(v, L, 4), "gro": lambda v, L, d: check_gr(v, L, 1, "gro"), "gr2o": lambda v, L, d: check_gr(v, L, 2, "gr2o"), "gr3o": lambda v, L, d: check_gr(v, L, 3, "gr3o"), "gr4o": lambda v, L, d: check_gr(v, L, 4, "gr4o"), "jl": check_jl, "ml": lambda v, L, d: check_ml(v, L), "mg": lambda v, L, d: check_mg(v, L), "hs": lambda v, L, d: check_hs(v, L), "ngj": lambda v, L, d: check_ngj(v, L), "nl": lambda v, L, d: check_nl(v, L), "ff": lambda v, L, d: check_ff(v, L), "lk": lambda v, L, d: check_lk(v, L), "lkc": lambda v, L, d: check_lkc(v, L), "br": lambda v, L, d: check_br(v, L), "rf": lambda v, L, d: check_rf(v, L), "rj": lambda v, L, d: check_rj(v, L), "em": lambda v, L, d: check_em(v, L), "bd": lambda v, L, d: check_bd(v, L), "bdo": lambda v, L, d: check_bd(v, L, True), "sm": lambda v, L, d: check_sm(v, L), "ef": lambda v, L, d: check_ef(v, L), "mb": lambda v, L, d: check_mb(v, L), "gb": lambda v, L, d: check_gb(v, L), "mbs": lambda v, L, d: check_mbs(v, L), "gbs": lambda v, L, d: check_gbs(v, L), "da": lambda v, L, d: check_da(v, L), "cv": check_cv, "cvs": check_cvs, "cvo": lambda v, L, d: check_cvs(v, L, d, False), "cvr": check_cvr, "cva": check_cva, "cvt": check_cvt, "cvh": lambda v, L, d: check_cvt(v, L, d, "host"), "ie": lambda v, L, d: check_ie(v, L), "il": check_il, "rw": lambda v, L, d: check_rw(v, L), "rwe": lambda v, L, d: check_rwe(v, L), "rwt": lambda v, L, d: check_rwt(v, L), "rwl": lambda v, L, d: check_rwl(v, L), "nf": lambda v, L, d: check_nf(v, L), "nfa": lambda v, L, d: check_nfa(v, L), "npa": lambda v, L, d: check_npa(v, L), "npd": lambda v, L, d: check_npd(v, L), "pvd": lambda v, L, d: check_pvd(v, L), "pvh": lambda v, L, d: check_pvh(v, L), "pvn": lambda v, L, d: check_pvn(v, L), "npf": lambda v, L, d: check_npf(v, L), "sj": lambda v, L, d: check_sj(v, L), "bl": lambda v, L, d: check_bl(v, L), "mw": lambda v, L, d: check_mw(v, L), "px": lambda v, L, d: check_px(v, L), "pxg": lambda v, L, d: check_px(v, L, 1), "ba": lambda v, L, d: check_ba(v, L), "bh": lambda v, L, d: check_bh(v, L), "bk": lambda v, L, d: check_bk(v, L), "hg": lambda v, L, d: check_hg(v, L), "lw": lambda v, L, d: check_lw(v, L), "la": lambda v, L, d: check_la(v, L), "lb": lambda v, L, d: check_common(v, L, "lb"), "lc": lambda v, L, d: check_lc(v, L),
@@ -8635,7 +8904,7 @@ def main():
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
+    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,lfw,lfwc,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--fps", default=None,
                     help="frame-rate sweep: comma list, each one rate or a per-instance mix: 30,60,90,120,60fg,60/30 (60/30 = host "

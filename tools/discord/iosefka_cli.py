@@ -36,7 +36,7 @@ from clinic_logic import mask_ips  # noqa: E402
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
 CLOSED = ("fixed", "closed", "duplicate")
 VISY_ONLY = ("export", "confirm-export", "import")
-DEVS_ONLY = ("vpn-profile",)  # the Nightwatch VPN client profile (a key): only the two devs
+DEVS_ONLY = ("vpn-profile",)  # how to enroll on the Nightwatch VPN (address + pin): only the two devs
 DEVS = ("visy", "vlad")
 BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 ND_RX = re.compile(r"^ND-[0-9a-f]{8}$")
@@ -549,8 +549,9 @@ def _do_import(c, who, stdin, out):
 
 
 def _vpn_profile():
-    """The Nightwatch VPN client profile as bytes (kept on the server only, mode 600, never in the repo)."""
-    p = Path(os.environ.get("NETDOCTOR_VPN_PROFILE") or Path.home() / ".config" / "netdoctor" / "nightwatch.ovpn")
+    """The Nightwatch VPN enrollment note (server address, HTTPS pin, the enroll command) as bytes. Kept on the
+    server only (mode 600), never in the repo. Since nwsign every install enrolls its own key: no shared profile."""
+    p = Path(os.environ.get("NETDOCTOR_VPN_PROFILE") or Path.home() / ".config" / "netdoctor" / "nightwatch-vpn.txt")
     try:
         return p.read_bytes()
     except OSError:
