@@ -21,7 +21,37 @@ die() { echo "install.sh: $*" >&2; exit 1; }
 for f in nwsign_core.py nwsign_service.py nwsign-admin nwsign-verify nwsign.service; do
   [ -f "$SRC/$f" ] || die "missing $SRC/$f"
 done
-for f in "$CONF" "$OVPN/ca.crt" "$OVPN/ca.key" "$OVPN/crl.pem"; do [ -f "$f" ] || die "missing $f"; done
+for f in "$CONF" "$OVPN/ca.crt"; do [ -f "$f" ] || die "missing $f"; done
+# The root CA key and CRL that belong to ca.crt (a second OpenVPN setup can leave a stray ca.key / crl.pem
+# in $OVPN; the easy-rsa PKI often holds the real pair). Override with OVPN_ROOT_KEY / OVPN_ROOT_CRL.
+pubhash() { openssl "$@" 2>/dev/null | sha256sum | cut -c1-64; }
+WANT=$(pubhash x509 -in "$OVPN/ca.crt" -noout -pubkey)
+ROOT_KEY=${OVPN_ROOT_KEY:-}
+if [ -z "$ROOT_KEY" ]; then
+  for k in "$OVPN/ca.key" /etc/openvpn/easy-rsa/pki/private/ca.key; do
+    [ -f "$k" ] && [ "$(pubhash pkey -in "$k" -pubout)" = "$WANT" ] && { ROOT_KEY=$k; break; }
+  done
+fi
+[ -n "$ROOT_KEY" ] && [ "$(pubhash pkey -in "$ROOT_KEY" -pubout)" = "$WANT" ] || die "no CA key matching $OVPN/ca.crt (set OVPN_ROOT_KEY=<path>)"
+ROOT_CRL=${OVPN_ROOT_CRL:-}
+if [ -z "$ROOT_CRL" ]; then
+  for c in "$OVPN/crl.pem" /etc/openvpn/easy-rsa/pki/crl.pem; do
+    [ -f "$c" ] && openssl crl -in "$c" -CAfile "$OVPN/ca.crt" -noout 2>/dev/null && { ROOT_CRL=$c; break; }
+  done
+fi
+crl_days_left() { n=$(openssl crl -in "$1" -noout -nextupdate | cut -d= -f2); echo $(( ($(date -d "$n" +%s) - $(date +%s)) / 86400 )); }
+if [ -z "$ROOT_CRL" ] || ! openssl crl -in "$ROOT_CRL" -CAfile "$OVPN/ca.crt" -noout 2>/dev/null \
+   || [ "$(crl_days_left "$ROOT_CRL")" -lt 60 ]; then
+  # No usable root CRL: issue an empty one (10 years) with the root key. It revokes nothing (the old shared
+  # profile stops working anyway: the server switches to tls-crypt-v2).
+  T=$(mktemp -d); touch "$T/idx"; echo 01 > "$T/num"
+  printf '[ca]\ndefault_ca=c\n[c]\ndatabase=%s/idx\ncrlnumber=%s/num\ncertificate=%s\nprivate_key=%s\ndefault_md=sha256\n' \
+    "$T" "$T" "$OVPN/ca.crt" "$ROOT_KEY" > "$T/c.cnf"
+  openssl ca -gencrl -config "$T/c.cnf" -crldays 3650 -out "$OVPN/root-crl-nwsign.pem" 2>/dev/null || die "could not issue a root CRL"
+  rm -rf "$T"; chmod 644 "$OVPN/root-crl-nwsign.pem"; ROOT_CRL=$OVPN/root-crl-nwsign.pem
+fi
+NEXT=$(openssl crl -in "$ROOT_CRL" -noout -nextupdate | cut -d= -f2)
+echo "root CA key: $ROOT_KEY; root CRL: $ROOT_CRL (next update $NEXT)"
 command -v openssl >/dev/null && command -v python3 >/dev/null || die "need openssl and python3"
 OPENVPN=/usr/sbin/openvpn
 [ -x $OPENVPN ] || die "$OPENVPN not found"
@@ -57,10 +87,10 @@ ADMIN="runuser -u nwsign -- env NWSIGN_CONF=$ETC/nwsign.json python3 -I $APP/nws
 # ---- sub-CA + HTTPS key (as nwsign); sub-CA signed once by the root key (as root) --------------
 PIN=$($ADMIN init)
 if [ ! -f "$STATE/priv/subca.crt" ]; then
-  NWSIGN_CONF=$ETC/nwsign.json python3 -I "$APP/nwsign-admin" sign-subca --root-key "$OVPN/ca.key" --root-crt "$OVPN/ca.crt"
+  NWSIGN_CONF=$ETC/nwsign.json python3 -I "$APP/nwsign-admin" sign-subca --root-key "$ROOT_KEY" --root-crt "$OVPN/ca.crt"
 fi
 cp "$OVPN/ca.crt" "$STATE/priv/root-ca.crt"
-cp "$OVPN/crl.pem" "$STATE/priv/root-crl.pem"
+cp "$ROOT_CRL" "$STATE/priv/root-crl.pem"
 if [ ! -f "$STATE/priv/tc2-server.key" ]; then
   if [ ! -f "$OVPN/tls-crypt-v2.key" ]; then
     $OPENVPN --genkey tls-crypt-v2-server "$OVPN/tls-crypt-v2.key"; chmod 600 "$OVPN/tls-crypt-v2.key"
