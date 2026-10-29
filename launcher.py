@@ -1392,6 +1392,15 @@ def party_saves_module():
     return party_saves
 
 
+def party_offline_module():
+    """scripts\\party_offline.py: a party character copied to the single-player saves, cleaned."""
+    scripts_dir = str(APP_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import party_offline
+    return party_offline
+
+
 def save_editor_module():
     """scripts\\save_editor.py: export a save for a save editor and import it back."""
     scripts_dir = str(APP_DIR / "scripts")
@@ -3583,6 +3592,16 @@ class BloodborneLauncher(tk.Tk):
         Tooltip(edit_btn, "Edit a single-player or party character: stats, Echoes, Insight, items, bosses, lamps. "
                           "A backup of the whole save folder is made before every write (Backups... restores it); "
                           "nothing is written while the game runs.")
+        offline_btn = ttk.Button(sec, text="Copy party character to offline...", style="Secondary.TButton",
+                                 command=self.copy_party_character_to_offline)
+        offline_btn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        sec.next_row += 1
+        Tooltip(offline_btn, "Copies a party character (user\\savedata_party) into a single-player slot "
+                             "(user\\savedata) so it also plays without the party: the summoned-guest body type "
+                             "and the host's Chalice Dungeon left in the network slot are removed in the copy. "
+                             "The party save is only read; the single-player folder is backed up to "
+                             "user\\save_backups\\savedata first, and a slot that holds a character is only "
+                             "replaced after you agree.")
         editor_row = ttk.Frame(sec, style="Card.TFrame")
         editor_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
         sec.next_row += 1
@@ -4412,6 +4431,72 @@ class BloodborneLauncher(tk.Tk):
         self.update_label.bind("<Button-1>", lambda _e: webbrowser.open(notice.url))
         self.update_label.pack(anchor="w", pady=(0, 6), after=self._update_anchor)
         self.log(f"[UPDATE] {notice.text}: {notice.url}")
+
+    def copy_party_character_to_offline(self):
+        """Pick a party character and a single-player slot; scripts/party_offline.py copies it cleaned."""
+        if self.proc is not None or running_instances():
+            messagebox.showwarning("Game running", "Close the game before copying saves.")
+            return
+        try:
+            se = save_editor_module()
+            po = party_offline_module()
+        except ImportError as ex:
+            messagebox.showerror("Copy party character", f"A launcher script is missing:\n{ex}")
+            return
+        user = party_user_dir()
+        rows = [r for r in se.list_saves(user) if r["kind"] == "party"]
+        if not rows:
+            messagebox.showinfo("Copy party character", f"There is no party character in:\n{user / po.PARTY}")
+            return
+        solo = {r["slot"]: r for r in se.list_saves(user) if r["kind"] == "solo"}
+        win = tk.Toplevel(self)
+        win.title("Copy party character to offline")
+        win.transient(self)
+        ttk.Label(win, text="Which party character?").pack(anchor="w", padx=10, pady=(10, 4))
+        box = tk.Listbox(win, width=90, height=min(12, len(rows)), exportselection=False)
+        for r in rows:
+            box.insert("end", se.describe(r))
+        box.selection_set(0)
+        box.pack(fill="both", expand=True, padx=10)
+        chosen = {}
+
+        def ok():
+            sel = box.curselection()
+            if sel:
+                chosen["row"] = rows[sel[0]]
+            win.destroy()
+        btns = ttk.Frame(win)
+        btns.pack(anchor="e", padx=10, pady=10)
+        ttk.Button(btns, text="Copy", command=ok).pack(side="left")
+        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=(6, 0))
+        win.grab_set()
+        self.wait_window(win)
+        row = chosen.get("row")
+        if not row:
+            return
+        slot = row["slot"]
+        if slot in solo:  # same number taken: the first free single-player slot, else ask to replace
+            slot = next((n for n in range(10) if n not in solo), slot)
+        replace = slot in solo
+        if replace and not messagebox.askyesno(
+                "Replace a single-player character?",
+                f"Every single-player slot holds a character. Slot {slot + 1} ({solo[slot]['name']}, level "
+                f"{solo[slot]['level']}) would be replaced by a copy of {row['name']}.\n\nYour single-player "
+                f"folder is backed up to {user / 'save_backups' / po.SOLO} "
+                f"first. Replace it?"):
+            return
+        try:
+            res = po.copy_party_to_offline(user, row["slot"], slot, replace=replace,
+                                           running=lambda: ([self.proc] if self.proc is not None else []) + running_instances())
+        except (OSError, ValueError, po.CopyError) as ex:
+            messagebox.showerror("Copy party character", f"The copy failed; nothing was changed:\n{ex}")
+            return
+        text = po.describe(res["report"])
+        back = f"\n\nBackup of your single-player saves: {res['backup']}" if res["backup"] else ""
+        self.log(f"[PARTY] Copied party character {row['name']} (slot {row['slot'] + 1}) to single-player slot "
+                 f"{res['solo_slot'] + 1}: " + "; ".join(res["report"]["changed"] or ["nothing party-only to clean"]))
+        messagebox.showinfo("Copy party character",
+                            f"{row['name']} was copied to single-player slot {res['solo_slot'] + 1}.\n\n{text}{back}")
 
     def export_for_save_editor(self):
         """Pick a character save, then a folder: save_editor.export_save writes an editor-readable copy."""

@@ -157,6 +157,16 @@ Statuses:
 addresses in it are masked, but write it with no names, IPs or log lines anyway. The text is also kept
 as a `triage` note.
 
+**No double pings.** Tells and asks to the same person with the same text (compared ignoring case and spacing)
+never go out twice. When several bugs of one reporter get the same text (a bug with no `reporter_id` counts
+as its first log poster), the bot posts ONE message in the newest bug's thread, mentions the person once and
+says "About NW-a, NW-b and NW-c: ...". The other rows are marked sent with `merged_into` = the row that carried
+them, and each bug gets a note ("told together with ..."). A text the person already got within the last 24 h
+(`NW_TELL_WINDOW_HOURS`, also across separate CLI calls) is not sent again: the row is marked delivered by
+merge and the bug gets a "not re-sent" note. `status --tell` answers `tell_merge_with` (bugs with a pending twin)
+and `tell_warning` (already told recently); the `ask` dry run shows `merge_with` / `warning` per message. Every
+bug still keeps its own `triage` / `ask` history note. Asks coalesce only with an equal issue and need.
+
 `--in TRACK:VERSION` goes only with `fixed`: it also records the fix in the changelist (see Changelists).
 If the bug already has a live (not dropped) item in that track, the item moves forward to done; an item
 whose version you did not set by hand also moves to VERSION (created if missing), while one with a
