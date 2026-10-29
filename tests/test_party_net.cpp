@@ -1249,6 +1249,13 @@ static void test_nr_loadgap() {
         CHECK(g.gap_counts(peer, at(9500), at(20000), 4.0));    // a real outage on the other link
         CHECK(!g.gap_counts(other, at(9500), at(20000), 4.0));
     }
+    {  // the session host's load excuses every link (guest-guest too)
+        LoadGapGate g;
+        g.set_loading(LoadGapGate::kHost, true, at(500));
+        CHECK(!g.gap_counts(peer, at(0), at(9000), 4.0) && !g.gap_counts(other, at(0), at(9000), 4.0));
+        g.set_loading(LoadGapGate::kHost, false, at(9000));
+        CHECK(g.gap_counts(peer, at(0), at(14000), 4.0));  // 5 s past the end: real
+    }
     {  // a load that ended before the gap began does not excuse it
         LoadGapGate g;
         g.set_loading(peer, true, at(0));

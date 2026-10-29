@@ -3195,7 +3195,7 @@ void p2p_outage_keepalive(bool on) {
     if (on && !g_outage_keepalive_thread.exchange(true)) std::thread(outage_keepalive_main).detach();
 }
 
-void p2p_load_update(bool own_loading, const std::vector<std::pair<std::string, bool>>& peers) {
+void p2p_load_update(bool own_loading, bool host_loading, const std::vector<std::pair<std::string, bool>>& peers) {
     std::vector<std::pair<std::uint64_t, bool>> keys;
     for (const auto& [name, loading] : peers) {
         session::Peer p;
@@ -3204,7 +3204,8 @@ void p2p_load_update(bool own_loading, const std::vector<std::pair<std::string, 
     }
     const auto now = Clock::now();
     std::lock_guard<std::mutex> lk(g_loadgap_mu);
-    g_loadgap.set_loading(0, own_loading, now);
+    g_loadgap.set_loading(nr::LoadGapGate::kOwn, own_loading, now);
+    g_loadgap.set_loading(nr::LoadGapGate::kHost, host_loading, now);
     for (const auto& [k, l] : keys) g_loadgap.set_loading(k, l, now);
 }
 
