@@ -62,15 +62,16 @@ def main():
     addr = f"127.0.0.1:{lobby_port}"
     code_file = root / "lobby_code.txt"
     code_file.unlink(missing_ok=True)
+    (root / "noreap").write_text("120")  # the reaper (tools/mp/reaper.py): a quiet minute for the screenshots is legitimate
 
-    L = load_launcher()
+    L = load_launcher()  # the guest asks from 127.0.0.5: the host announces from 127.0.0.1 and the lobby hides your own entry
     lobby_env = dict(os.environ, NWLOBBY_BIND=addr, NWLOBBY_NET="127.0.0.0/8")
     lobby = subprocess.Popen([sys.executable, "-I", str(REPO / "tools" / "vpn" / "lobby" / "nwlobby.py")], env=lobby_env)
     games = None
     try:
         time.sleep(1)
         run = [sys.executable, str(HERE / "instances.py"), "run", "--party", "--count", "2", "--root", str(root),
-               "--seconds", str(a.seconds),
+               "--seconds", str(a.seconds), "--idle", "0",
                "--env", "BB_PARTY_PASSWORD=" + PASSWORD, "--env", "BB_PARTY_VPN_LOBBY=1",
                "--env", "BB_PARTY_VPNLOBBY_ADDR=" + addr,
                "--ienv", "1:BB_PARTY_CODE_FILE=" + str(code_file),
@@ -80,7 +81,7 @@ def main():
         rows, deadline = [], time.time() + 1500
         while time.time() < deadline and not rows:
             time.sleep(3)
-            ents = L.lobby_fetch(("127.0.0.1", lobby_port), "127.0.0.1")
+            ents = L.lobby_fetch(("127.0.0.1", lobby_port), "127.0.0.5")
             rows = L.lobby_rows(ents or [], "")  # no version filter needed for the check
             if games.poll() is not None:
                 break
@@ -104,9 +105,9 @@ def main():
                 break
         check(joined, "the guest joined the host from the list entry (host log: cooperators 0 -> 1)")
         if joined:
-            time.sleep(20)
+            time.sleep(8)
             subprocess.run([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(out), "--tag", "joined"])
-            ents = L.lobby_fetch(("127.0.0.1", lobby_port), "127.0.0.1") or []
+            ents = L.lobby_fetch(("127.0.0.1", lobby_port), "127.0.0.5") or []
             check(any(e["players"] >= 2 for e in ents), "the list shows the second player after the join")
             gl = log_text(root, 1)
             check("password" not in gl.lower() or PASSWORD not in gl, "the guest log does not contain the password")
@@ -114,6 +115,7 @@ def main():
             check("announcing to the Nightwatch lobby" in log_text(root, 0), "host log: announcing line without an address")
             check(not re.search(r"VPN lobby:.*\d+\.\d+\.\d+\.\d+", log_text(root, 0)), "host log: no address on lobby lines")
     finally:
+        (root / "noreap").unlink(missing_ok=True)
         subprocess.run([sys.executable, str(HERE / "instances.py"), "kill", "--root", str(root)])
         if games and games.poll() is None:
             games.terminate()
