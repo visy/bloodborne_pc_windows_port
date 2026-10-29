@@ -1124,11 +1124,6 @@ void DefineAll() {
     AddRow(Flag(&Values::party_conn_warnings), "Connection warnings", "Предупреждения о связи",
            "A notice with the fix when the firewall, router or address keeps the party from working",
            "Уведомление с решением, когда брандмауэр, роутер или адрес мешают группе", toggle, Kind::Toggle);
-    // 0.7.7: "<item>: shared with the party" when a key / unique item, weapon or rune is given to the party.
-    AddRow(Flag(&Values::party_item_notices), "Shared item notices", "Уведомления об общих предметах",
-           "A short notice when an item is shared with the party (key and unique items, weapons, runes)",
-           "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
-           Kind::Toggle);
 
     // ---- Party network (F2, 0.7.1, party_netroute.h): the link's path, the member relay, IPv6 ----
     AddPage("Party network", "Сеть группы", "The link's path, the public DHT, relaying for members, IPv6 (bbport)",
@@ -1599,6 +1594,12 @@ void DefineAll() {
     own(&Values::party_key_items_summoned, "Key items at once", "Ключи сразу",
         "While you are a guest: a key the host's world gives you is yours at once (needs own key items). Off: at home",
         "Пока вы гость: ключ из мира хоста ваш сразу (нужны свои ключи). Выкл.: дома, в своём мире");
+    // 0.7.7: "<item>: shared with the party" notice. Not on Party members: four hunters + the last event +
+    // Connection warnings already fill its six rows.
+    AddRow(Flag(&Values::party_item_notices), "Shared item notices", "Уведомления об общих предметах",
+           "A short notice when an item is shared with the party (key and unique items, weapons, runes)",
+           "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
+           Kind::Toggle);
 
 
     // ---- My party: Display: what this player sees of the party (local) ----
