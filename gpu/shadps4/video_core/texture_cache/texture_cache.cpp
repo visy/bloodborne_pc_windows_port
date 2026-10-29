@@ -991,7 +991,6 @@ void TextureCache::RefreshImage(Image& image) {
             window_start = now;
         }
     }
-    BbStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
     for (u32 m = 0; m < num_mips; m++) {
         const u32 width = std::max(image.info.size.width >> m, 1u);
@@ -1038,6 +1037,12 @@ void TextureCache::RefreshImage(Image& image) {
         image.flags &= ~ImageFlagBits::Dirty;
         return;
     }
+
+    // Counted only when something is copied (the hash skip above used to count a whole image
+    // that went nowhere), and apart when the source is the GPU's own buffer-cache copy: that is a
+    // GPU-side copy, not an upload from guest memory.
+    (is_gpu_dirty ? BbStats::image_gpu_copy_bytes : BbStats::image_upload_bytes)
+        .fetch_add(image.info.guest_size, std::memory_order_relaxed);
 
     scheduler.EndRendering();
 
