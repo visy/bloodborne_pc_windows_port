@@ -2463,7 +2463,7 @@ def phase_caw(only):
     return dict(
         name="caw", seconds=int(os.environ.get("CAW_SECONDS", "300")), count=2, headless=0, prep=prep_chalqw, post=post_chalamp, pad=1,
         env=["BB_PARTY_TRAVEL_CHOICE=party", "BB_PARTY_ALTAR_AUTO=1", "BB_PARTY_TEST_INVINCIBLE=1"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=log_pos"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=log_pos" + os.environ.get("CAW_GUEST_TAIL", "")],
         crash=[], until=[r"1:travel step (\d+)/: "], until_hold=20,
     )
 
