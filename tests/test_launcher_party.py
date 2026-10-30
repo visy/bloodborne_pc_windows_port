@@ -609,5 +609,28 @@ class DiagnosticsAndPingToggles(unittest.TestCase):
             self.assertFalse(self.L.ini_flag(ini, "party_hud_ping"))
 
 
+class GuestGatherSetting(unittest.TestCase):
+    """0.7.7 (CL-a3a9e6): the host's Guests can gather the party checkbox: bbport.ini party_guest_gather, off by
+    default, no variable set (System > Party rules: Travel)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_switch_default_off_and_ini(self):
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        self.assertEqual(switches["party_guest_gather"], ("BB_PARTY_GUEST_GATHER", False))
+        env = self.L.party_env({"party_mode": "join", "party_name": "A", "party_code": "x"})
+        self.assertIsNone(env["BB_PARTY_GUEST_GATHER"])  # bbport.ini decides
+        self.assertEqual(self.L.party_rules_ini({}, "")["party_guest_gather"], "0")
+        self.assertEqual(self.L.party_rules_ini({"party_guest_gather": True}, "")["party_guest_gather"], "1")
+        from pathlib import Path
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn('("check", "party_guest_gather", "Guests can gather the party",', src)
+
+
 if __name__ == "__main__":
     unittest.main()

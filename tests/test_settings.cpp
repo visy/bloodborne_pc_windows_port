@@ -118,6 +118,20 @@ int main() {
     assert(s.party_kill_record && !s.party_gather);  // the variable wins over the ini
     assert(std::string(std::getenv("BB_PARTY_GATHER")) == "0");
     for (const char* e : new_envs) assert(bb_test_setenv(e, "") == 0);
+    // 0.7.7 (CL-a3a9e6): guests may gather the party: the host's rule, OFF by default, ini key + variable
+    assert(bb_test_setenv("BB_PARTY_GUEST_GATHER", "") == 0);
+    BbSettings::Load();
+    assert(!s.party_guest_gather);
+    s.party_guest_gather = true;
+    BbSettings::Save();
+    assert(Read(path).find("party_guest_gather=1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(s.party_guest_gather);
+    assert(bb_test_setenv("BB_PARTY_GUEST_GATHER", "0") == 0);
+    BbSettings::Load();
+    assert(!s.party_guest_gather);  // the variable wins over the ini
+    assert(bb_test_setenv("BB_PARTY_GUEST_GATHER", "") == 0);
+    s.party_guest_gather = false;
     s.party_kill_record = true;
     s.party_gather = true;
     s.party_key_items_summoned = true;

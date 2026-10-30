@@ -182,6 +182,8 @@ PARTY_INI_SWITCHES = [
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
     # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party rules: World)
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
+    # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party rules: Travel)
+    ("party_guest_gather", "BB_PARTY_GUEST_GATHER", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -242,6 +244,11 @@ PARTY_RULES_TAB = [
          "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
          "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
          "System > Party rules: World)."),
+        ("check", "party_guest_gather", "Guests can gather the party",
+         "Lets a guest bring the host and the other guests to it with System > Party > Gather the party "
+         "(each one is asked first and may say no; only players in the same area as the guest are moved, "
+         "never through a loading screen). The host's setting; guests only see the row while it is on. "
+         "Default: off (bbport.ini party_guest_gather; in the game: System > Party rules: Travel)."),
         ("check", "party_travel_vote", "Party votes on travel",
          "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
          "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
