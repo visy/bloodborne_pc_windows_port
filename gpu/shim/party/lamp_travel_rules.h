@@ -289,6 +289,24 @@ inline std::uint32_t NearestChaliceLamp(const std::vector<Spot>& spots, const fl
 /// a solo game; a guest's lamp stays the vanilla question and the party's lamp request).
 constexpr bool ChaliceListOffered(bool rule_on, bool guest) { return rule_on && !guest; }
 
+/// CL-48ee07: a guest whose current slot already holds the host's dungeon (no dungeon of its own: the quick join wrote
+/// it there, so its game never sends it home) runs the host's dungeon-lamp warp itself. nullptr: do it; else why not.
+/// Every id must match: the lamp is one of 2902950..58, the guest's own current dungeon id (`local_channel`, never 0)
+/// equals the host's (`host_channel`), the host's rule is on, and this guest is in the dungeon map, in the world and
+/// alive, not loading, in no boss fight or cutscene and not staying in its own world.
+inline const char* LayerFollowRefusal(bool rule_on, std::uint32_t lamp, std::uint64_t local_channel, std::uint64_t host_channel,
+                                      bool in_dungeon_map, bool stay_home, bool loading, bool dead, bool boss) {
+    if (!rule_on) return "the rule is off";
+    if (!IsChaliceLamp(lamp)) return "not a dungeon lamp";
+    if (local_channel == 0 || host_channel == 0 || local_channel != host_channel) return "this game's dungeon is not the host's";
+    if (stay_home) return "staying in its own world";
+    if (!in_dungeon_map) return "not in the dungeon";
+    if (loading) return "loading";
+    if (dead) return "dead";
+    if (boss) return "boss fight or cutscene";
+    return nullptr;
+}
+
 /// Other observers of the talk command switch 0x203FFD0, which lamp travel replaces (issue #4: the
 /// shared NPC talk's choice observer could not hook it after lamp travel and never ran). They are
 /// registered before the game runs and called first in every call, as a prologue hook would be.

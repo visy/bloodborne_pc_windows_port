@@ -47,14 +47,16 @@ loading each, nothing stuck, no gray loop, screenshots of both looked at):
   host's, so `HostInOtherChalice` lets the send-home through, the guest loads home and the summon quick-joins it into the
   HOST's dungeon beside the host. Layer 1 start and back to the boss room: both ends 0.8 to 0.9 m apart each way, about
   20 s after the host's own load.
-- **`cyn`, guest with no dungeon at all** (the default save): the first quick join wrote the host's dungeon into its
-  slot 0 and that is its current slot, so its game thinks it already has the host's dungeon (`HostInOtherChalice` false)
-  and the send-home is dropped as a split travel. The guest stays in the dungeon where it stood (the dungeon is one map,
-  all layers are loaded), the HUD shows the distance (95 m) and the usual corner notice "Hunter0 went on to another area".
-  **Known gap: it is not carried.** The fix would be for that guest to run the same lamp warp itself
-  (`0x13CDF30(2902950 + n)` as its own lamp use: the dungeon is its current one, so `ChaliceReplayAllowed` holds) when the
-  host's lamp warp in its dungeon arrives as a split travel; not done, because it could not be tried live within the
-  launch budget and a wrong warp into m29 is the gray loop. Until then the rule stays off by default.
+- **`cyn`, guest with no dungeon at all** (the default save): the quick join wrote the host's dungeon into its slot 0.
+  What its game reads as its current dungeon varies: 0 (`HostInOtherChalice`: the send-home goes through, home + summon
+  as in `cy`, leg 1 live) or the host's id (the send-home is dropped as a split travel and it would stay behind). For the
+  second case `LayerFollowRefusal` (lamp_travel_rules.h, unit tested) lets the guest run the same lamp warp itself
+  (`party_b2 LayerFollowTick`: `RunLampWarpPartyNotRest(2902950 + n)`, log `guest: layer travel: lamp warp N`) when:
+  the host's rule is on, the lamp is 2902950..58, its own current dungeon id equals the host's (both logged), it is in
+  the dungeon map, not staying home, not loading / dead / in a boss fight or cutscene. Anything else keeps the notice
+  "Hunter0 went on to another area". Live (cyn, leg 2): the guest's own warp, one load, then the session re-joined it
+  (a second load): host and guest 0.9 m apart in the boss room, about 18 s after the host's load, no gray loop.
+  Not proven: the guard's refusals live (unit tests only).
 
 A guest that is apart (at home, *Stay in my world*, no bell) stays where it is in both cases.
 
