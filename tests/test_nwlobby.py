@@ -240,7 +240,8 @@ class OverUdp(unittest.TestCase):
                     time.sleep(0.05)
                     c.sendto(nw.encode_list(), ("127.0.0.1", port))
                     reply = c.recvfrom(2048)[0]
-                    break
+                    if nw.parse_reply(reply)[2]:
+                        break  # an announce sent before the bind is lost: retry until it shows
                 except (ConnectionResetError, socket.timeout):
                     time.sleep(0.1)
             self.assertIsNotNone(reply, "no reply from the lobby")

@@ -408,6 +408,11 @@ before anyone is in the game):
   Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
+- **Splitscreen mode.** For several game windows on one screen (the Nucleus Co-op splitscreen mod): one switch,
+  *Splitscreen mode* (*System -> My party: Splitscreen*, the launcher's My Party tab, `party_splitscreen`, off by
+  default, your own setting) makes the party HUD show only the compass (a direction arrow and the distance per
+  companion), hides the name tags above the companions and cuts party messages to errors. *Party messages* (same
+  page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
   ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My
