@@ -426,6 +426,9 @@ RULES_PAGES = [
     ("My party: Look & notices", ["No companion glow", "Ping in the party list", "Join/leave notices",
                                   "Share NPC dialogue", "NPC dialogue range", "Party discovery"],
      ("Join/leave notices", "down/down/", "left", "Off", "right", "party_toasts=0", "party_toasts=1", None)),
+    # 0.7.7 CL-2eec68: splitscreen mode (off by default: the change turns it on and back off) and the messages list
+    ("My party: Splitscreen", ["Splitscreen mode", "Party messages"],
+     ("Splitscreen mode", "", "right", "On", "left", "party_splitscreen=1", "party_splitscreen=0", None)),
 ]
 # The values a fresh run starts from (the rows' defaults): these keys are dropped from each
 # instance's bbport.ini first, so an earlier run's changes never shift the walk.
@@ -434,7 +437,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_boss_drops", "party_vpn", "party_member_relay", "party_conn_warnings", "party_item_notices", "party_boss_share", "party_vpn_lobby", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_boss_drops", "party_vpn", "party_member_relay", "party_conn_warnings", "party_item_notices", "party_boss_share", "party_vpn_lobby", "party_splitscreen", "party_messages", "settings_rev"]
 
 
 def rules_walk_to_first():
