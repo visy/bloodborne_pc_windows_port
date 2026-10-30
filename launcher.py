@@ -184,6 +184,8 @@ PARTY_INI_SWITCHES = [
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
     # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party rules: Travel)
     ("party_guest_gather", "BB_PARTY_GUEST_GATHER", False),
+    # 0.7.7 (CL-48ee07): a Chalice Dungeon lamp lists the dungeon's lit lamps for the party (the host's rule, OFF by default)
+    ("party_layer_travel", "BB_PARTY_LAYER_TRAVEL", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -337,6 +339,10 @@ PARTY_RULES_TAB = [
          "member lights in it is saved for everyone. Your setting is the party's rule. "
          "Also in the game: System > Party rules: PvP & lamps. Default: off (bbport.ini "
          "party_guests_bring_lamps)."),
+        ("check", "party_layer_travel", "Chalice layer travel",
+         "Host only: at your Chalice Dungeon lamp the travel list shows the dungeon's other unlocked lamps "
+         "(layers) next to the Hunter's Dream, and your choice takes the party along: the guests "
+         "are summoned back in next to you (a guest without a dungeon of its own runs the same lamp warp itself). Default: off (bbport.ini party_layer_travel; in the game: System > Party rules: PvP & lamps)."),
     ]),
     (1, 2, "Rot", [
         ("check", "party_rot", "Rot on death",

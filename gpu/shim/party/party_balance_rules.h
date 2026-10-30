@@ -74,6 +74,9 @@ struct Rules {
     /// 0.7.7 (CL-a3a9e6): a guest may gather the party too (party_gather.h). The host's; off by default (a host from
     /// before it sends none: off).
     bool guest_gather = false;
+    /// 0.7.7 (CL-48ee07): a Chalice Dungeon lamp lists the dungeon's lit lamps and the host's choice takes the party
+    /// there (lamp_travel.h). The host's; off by default (a host from before it sends none: off).
+    bool layer_travel = false;
     /// 0.7.3 (user decision 2026-10-22): covenant outcomes per player (party_progress
     /// covenant_outcome). The host's; on by default (a host from before it sends none: on).
     bool covenant_per_player = true;

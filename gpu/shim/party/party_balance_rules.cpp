@@ -25,7 +25,7 @@ bool Rules::operator==(const Rules& o) const {
            friendly_fire == o.friendly_fire && share_lamps == o.share_lamps &&
            guests_bring_lamps == o.guests_bring_lamps && host_revive == o.host_revive &&
            host_limbo_revive == o.host_limbo_revive && kill_record == o.kill_record && npc_mirror == o.npc_mirror &&
-           gather == o.gather && guest_gather == o.guest_gather && covenant_per_player == o.covenant_per_player &&
+           gather == o.gather && guest_gather == o.guest_gather && layer_travel == o.layer_travel && covenant_per_player == o.covenant_per_player &&
            npc_fights == o.npc_fights && skip_prologue == o.skip_prologue && any_kidnap == o.any_kidnap && level_sync == o.level_sync && phantom_hp == o.phantom_hp && pvp_full_hp == o.pvp_full_hp && boss_drops == o.boss_drops &&
            rot_cleanse_boss == o.rot_cleanse_boss && rot_cleanse_killer == o.rot_cleanse_killer &&
            rot_cleanse_echoes == o.rot_cleanse_echoes && travel_vote == o.travel_vote &&
@@ -126,6 +126,7 @@ std::string ToJson(const Rules& r) {
     v.set("npc_mirror", r.npc_mirror);
     v.set("gather", r.gather);
     v.set("guest_gather", r.guest_gather);
+    v.set("layer_travel", r.layer_travel);
     v.set("covenant_per_player", r.covenant_per_player);
     v.set("travel_vote", r.travel_vote);
     v.set("npc_fights", r.npc_fights);
@@ -164,7 +165,7 @@ bool FromJson(const std::string& text, Rules* out, std::string* error) {
     if (const json::Value* m = v.find("host_limbo_revive"); m && m->type == json::Value::Type::Bool)
         r.host_limbo_revive = m->boolean;
     for (auto [key, to] : {std::pair<const char*, bool*>{"kill_record", &r.kill_record},
-                           {"npc_mirror", &r.npc_mirror}, {"gather", &r.gather}, {"guest_gather", &r.guest_gather},
+                           {"npc_mirror", &r.npc_mirror}, {"gather", &r.gather}, {"guest_gather", &r.guest_gather}, {"layer_travel", &r.layer_travel},
                            {"covenant_per_player", &r.covenant_per_player}, {"travel_vote", &r.travel_vote},
                            {"npc_fights", &r.npc_fights}, {"skip_prologue", &r.skip_prologue}, {"any_kidnap", &r.any_kidnap},
                            {"level_sync", &r.level_sync}, {"phantom_hp", &r.phantom_hp}, {"pvp_full_hp", &r.pvp_full_hp},
