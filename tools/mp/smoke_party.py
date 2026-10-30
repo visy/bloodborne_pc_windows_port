@@ -2374,7 +2374,7 @@ def phase_cao(only):
 # Phase caw (chalice_queen walk; 0.7.7 queen077): the Queen fixture (chalice_queen_ritual: a Pthumeru Ihyll Root Chalice
 # dungeon in slot 1, made by phase caq) is the GUEST's save; the host (default save) enters it by the altar's one-press
 # "Enter the party's dungeon" (as cae). CAW_TAIL = director steps after the dungeon loads (probes, warps, host_kill=ID).
-CAW_GUEST = Path("E:/games/bbport/test_saves/chalice_queen_ritual/savedata")
+CAW_GUEST = Path(os.environ.get("CAW_FIX", "E:/games/bbport/test_saves/chalice_ihyll_ritual/savedata"))
 
 
 def prep_chalqw(root: Path):
