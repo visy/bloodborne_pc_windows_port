@@ -212,6 +212,18 @@ int main() {
         const float at[3] = {-47.0f, 30.6f, -93.0f}, far_[3] = {0, 0, 0};
         CHECK(NearestChaliceLamp(spots, at, 8.0f) == 2902952u);
         CHECK(NearestChaliceLamp(spots, far_, 8.0f) == 0u);
+        // a guest follows the host's dungeon-lamp warp itself only when every guard holds
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 7, true, false, false, false, false) == nullptr);
+        CHECK(LayerFollowRefusal(false, 2902950, 7, 7, true, false, false, false, false) != nullptr);
+        CHECK(LayerFollowRefusal(true, 2412950, 7, 7, true, false, false, false, false) != nullptr);
+        CHECK(LayerFollowRefusal(true, 2902959, 7, 7, true, false, false, false, false) != nullptr);
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 8, true, false, false, false, false) != nullptr);  // another dungeon
+        CHECK(LayerFollowRefusal(true, 2902950, 0, 0, true, false, false, false, false) != nullptr);  // none known
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 7, true, true, false, false, false) != nullptr);   // stay home
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 7, false, false, false, false, false) != nullptr);
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 7, true, false, true, false, false) != nullptr);
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 7, true, false, false, true, false) != nullptr);
+        CHECK(LayerFollowRefusal(true, 2902950, 7, 7, true, false, false, false, true) != nullptr);
         // the rule: the host (or a solo game) only
         CHECK(ChaliceListOffered(true, false) && !ChaliceListOffered(false, false) && !ChaliceListOffered(true, true));
     }

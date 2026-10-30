@@ -341,9 +341,8 @@ PARTY_RULES_TAB = [
          "party_guests_bring_lamps)."),
         ("check", "party_layer_travel", "Chalice layer travel",
          "Host only: at your Chalice Dungeon lamp the travel list shows the dungeon's other unlocked lamps "
-         "(layers) next to the Hunter's Dream, and your choice takes the party along: a guest with a "
-         "dungeon of its own is summoned back in next to you, a guest without one stays and follows on "
-         "foot. Default: off (bbport.ini party_layer_travel; in the game: System > Party rules: PvP & lamps)."),
+         "(layers) next to the Hunter's Dream, and your choice takes the party along: the guests "
+         "are summoned back in next to you (a guest without a dungeon of its own runs the same lamp warp itself). Default: off (bbport.ini party_layer_travel; in the game: System > Party rules: PvP & lamps)."),
     ]),
     (1, 2, "Rot", [
         ("check", "party_rot", "Rot on death",
