@@ -71,6 +71,13 @@ class Tables(unittest.TestCase):
         self.assertEqual(L.party_rules_ini({}, "", "Off")["party_messages"], "off")
         self.assertNotIn("party_messages", L.party_rules_ini({}, ""))
 
+    def test_stay_in_my_world_is_a_flag_off_by_default(self):
+        """CL-adeb50: one ini key (party_stay), off by default, a checkbox on the My Party tab."""
+        L = self.L
+        self.assertIn(("party_stay", False), L.PARTY_INI_FLAGS)
+        self.assertIn("party_stay", self.keys(L.MY_PARTY_TAB))
+        self.assertNotIn("party_stay", self.keys(L.PARTY_RULES_TAB))
+
     def test_host_rules_tab_is_exactly_the_hosts_rules(self):
         """A new bool in party_balance Rules needs its row in PARTY_RULES_TAB (and never in My Party)."""
         L = self.L

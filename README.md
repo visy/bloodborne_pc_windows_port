@@ -408,6 +408,10 @@ before anyone is in the game):
   Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
+- **Stay in my world.** As a guest you can pause the automatic joining without leaving the party, e.g. for your own
+  Chalice ritual or shopping: *System -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
+  `party_stay`, off by default, live). You ring no bell, are not gathered and not asked to vote; the host does not wait
+  for you and sees *Staying home*. Turn it off and you join again at the next opportunity. See docs/party/stay_home.md.
 - **Splitscreen mode.** For several game windows on one screen (the Nucleus Co-op splitscreen mod): one switch,
   *Splitscreen mode* (*System -> My party: Splitscreen*, the launcher's My Party tab, `party_splitscreen`, off by
   default, your own setting) makes the party HUD show only the compass (a direction arrow and the distance per
