@@ -218,6 +218,15 @@ bool EnemyScalingActive(const Rules& r) {
     return c.enemy_hp != 0 || c.enemy_damage != 0 || c.enemy_poise != 0;
 }
 
+int BossHpCatchUp(int hp, int max_hp, int base_hp, float rate, int* new_hp) {
+    if (hp <= 0 || max_hp <= 0 || base_hp <= 0 || !(rate > 1.0f) || rate > 200.0f) return 0;
+    const int want = static_cast<int>(std::ceil(static_cast<double>(base_hp) * static_cast<double>(rate) - 1e-3));
+    if (want <= max_hp + 1) return 0;  // the chr ticked (or the rate is below what it has)
+    if (hp < max_hp) return 0;         // damaged already: the game's own update owns it
+    if (new_hp) *new_hp = want;
+    return want;
+}
+
 int RotExtraStaminaDrain(int prev, int now, int prev_max, int now_max, float factor, float* carry) {
     if (prev < 0 || now < 0 || prev_max <= 0 || prev_max != now_max || now >= prev || !(factor > 1.0f)) {
         return 0;
