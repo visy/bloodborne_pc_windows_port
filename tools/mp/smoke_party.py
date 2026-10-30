@@ -367,6 +367,11 @@ def phase_sc(only):
 # page must keep all four, the last event and Connection warnings within its six rows (Shared item notices lives on
 # My party: Your items).
 RULES_PLAYERS = int(os.environ.get("BB_RULES_PLAYERS", "2"))
+# The guest opens Party rules: PvP & lamps ~72 s into its walk and reads the host's Friendly fire there once, when the page
+# opens; the host turns it on ~106 s into its own walk. The guest starts this long after the host so it opens the page
+# after the change (a page's rows line is printed once, on open; 2026-10-30: the guest got there 7 s early).
+RULES_HOST_DELAY = 8 + 30 * (RULES_PLAYERS > 2)
+RULES_GUEST_LAG = 50
 RULES_PAGES = [
     # the member rows carry the hunters' names: only the rows after them are listed (see check_rules)
     ("Party members", ["Last event", "Connection warnings"],
@@ -377,7 +382,7 @@ RULES_PAGES = [
     # 0.7.5: host over a VPN (a game dropdown, Auto by default: the walk checks it is listed on host and
     # guest; the change is the relay toggle, a dropdown needs Cross / Down / Cross)
     ("Party network", ["Network", "Find via public DHT", "Relay for members", "IPv6", "Join via a member",
-                       "Host over a VPN"],
+                       "Nightwatch VPN lobby", "Host over a VPN"],
      ("Relay for members", "down/down/", "left", "Off", "right", "party_member_relay=0", "party_member_relay=1", None)),
     # 0.7.1 / 0.7.3: the host's world rules
     ("Party rules: World", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
@@ -404,6 +409,9 @@ RULES_PAGES = [
      ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
     ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
+    # 0.7.7 bosstarget: the host's boss rule, a page of its own between Enemies and Phantoms
+    ("My party: Bosses", ["Bosses share attention"],
+     ("Bosses share attention", "", "left", "Off", "right", "party_boss_share=0", "party_boss_share=1", None)),
     # 0.7.5: level sync and the phantom health cut (on by default: the change turns level sync off and back on)
     ("Party rules: Phantoms", ["Level sync", "Phantom health cut", "Skip the prologue"],
      ("Level sync", "", "left", "Off", "right", "party_level_sync=0", "party_level_sync=1", '"level_sync":false')),
@@ -426,7 +434,7 @@ RULES_INI_RESET = ["party_rot", "party_guest_revive_inplace", "party_friendly_fi
                    "party_kill_record", "party_gather", "party_travel_vote", "party_covenant_per_player",
                    "party_npc_mirror", "party_key_view", "party_key_items_summoned", "party_rot_cleanse_boss",
                    "party_rot_cleanse_killer", "party_rot_cleanse_echoes", "party_npc_fights", "party_open_world",
-                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_boss_drops", "party_vpn", "party_member_relay", "party_conn_warnings", "party_item_notices", "settings_rev"]
+                   "party_toasts", "party_any_kidnap", "party_level_sync", "party_phantom_hp", "party_pvp_full_hp", "party_boss_drops", "party_vpn", "party_member_relay", "party_conn_warnings", "party_item_notices", "party_boss_share", "party_vpn_lobby", "settings_rev"]
 
 
 def rules_walk_to_first():
@@ -434,6 +442,10 @@ def rules_walk_to_first():
     port's pages from the last) to the first rules page, Cross. Read from bbport_game_menu_pages.cpp."""
     src = (REPO / "gpu" / "shim" / "bbport_game_menu_pages.cpp").read_text(encoding="utf-8", errors="replace")
     pages = re.findall(r'AddPage\("([^"]+)"', src)
+    first = pages.index(RULES_PAGES[0][0])
+    # the walk steps page to page with Down: a page added to the System menu must be listed in RULES_PAGES
+    # (the 2026-10-30 misses: My party: Bosses and the VPN lobby row were not), so fail fast here
+    assert pages[first:first + len(RULES_PAGES)] == [pg[0] for pg in RULES_PAGES],         "RULES_PAGES out of step with the System menu pages: %s" % pages[first:first + len(RULES_PAGES) + 2]
     ups = 3 + (len(pages) - pages.index(RULES_PAGES[0][0]) - 1) + 1
     return "options/right/right/cross/" + "/".join(["up"] * ups) + "/cross"
 
@@ -459,11 +471,11 @@ def phase_rules(only):
                ["rules_h%dc" % k for k in range(1, n + 1)] + ["rules_h_ffoff"]:
         watch += ["--watch", r"step \d+/\d+: ~?mark=%s(@|\s)=%s@1.2" % (tag, tag)]
     return dict(
-        name="rules", seconds=300, count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
+        name="rules", seconds=300 + 90 * (RULES_PLAYERS > 2), count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
         env=["BB_GAME_MENU_TRACE=1", "BB_TEST_MENU_FILE={root}\\menu{i}.txt"] + (["BB_PARTY_MAX=4"] if RULES_PLAYERS > 2 else []),
         ienv=[],
-        files={"menu0.txt": "joined %d %s\n-\n-\n" % (8 + 30 * (RULES_PLAYERS > 2), host),
-               "menu1.txt": "joined %d %s\n-\n-\n" % (30 + 30 * (RULES_PLAYERS > 2), guest)},
+        files={"menu0.txt": "joined %d %s\n-\n-\n" % (RULES_HOST_DELAY, host),
+               "menu1.txt": "joined %d %s\n-\n-\n" % (RULES_HOST_DELAY + RULES_GUEST_LAG, guest)},
         ini_reset=RULES_INI_RESET,
         # a 0.7.1 bbport.ini: party_rot=1 saved, no settings_rev: the game turns rot off once (0.7.2)
         ini_preset={"party_rot": "1"},
@@ -6328,7 +6340,7 @@ def check_sc(v, L, d: Path):
 
 
 def check_rules(v, L):
-    need(v, L, "rules join: the guest is in (cooperators -> 1)", 0, r"cooperators 0 -> 1")
+    need(v, L, "rules join: the guest is in (cooperators -> 1)", 0, r"cooperators 0 -> [1-9]")  # 4 hunters: two guests may land in one poll
     for k, (page, labels, change) in enumerate(RULES_PAGES):
         row, _, _, value, back, ini_after, ini_back, effect = change
         for i, who in ((0, "host"), (1, "guest")):
@@ -6339,10 +6351,11 @@ def check_rules(v, L):
                 continue
             shown = [r.rsplit("=", 1)[0] for r in line[1].split("): ", 1)[1].split(" | ")]
             # the host has no "Join via a member" row (a guest's button)
-            want = [x for x in labels if not (i == 0 and x == "Join via a member")]
+            # (and a guest has no "Nightwatch VPN lobby" row: the host lists the party there)
+            want = [x for x in labels if not (i == 0 and x == "Join via a member") and not (i == 1 and x == "Nightwatch VPN lobby")]
             if page == "Party members":  # RULES_PLAYERS member rows (their names vary), then the fixed rows
                 want = shown[:RULES_PLAYERS] + want
-            ok = shown == want and (page != "Party members" or len(shown) == RULES_PLAYERS + 2) and len(shown) <= 6 and "(CUT)" not in line[1]
+            ok = shown == want and (page != "Party members" or len(shown) == RULES_PLAYERS + 2) and len(shown) <= 6 and                 "(CUT)" not in re.sub(r"Last event=[^|]*", "Last event=", line[1])  # a long last event text is cut by design
             v.step("rules %s: %s rows" % (who, page), ok, line[1][:300] if ok else
                    "expected %s, got %s" % (want, line[1][:300]))
         t = need(v, L, "rules host: %s changed (%s -> %s)" % (page, row, value), 0,
