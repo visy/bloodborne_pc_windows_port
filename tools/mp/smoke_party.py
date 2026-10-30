@@ -5810,14 +5810,15 @@ SH_UNTIL = [r"0:cooperators 0 -> 1[\s\S]*cooperators 0 -> 1"]
 def phase_sh(only):
     host = ",".join([
         "god",
-        "host_lamp=2412953@28%m24",       # the party's lamp travel to m24_01 while the guest is home and staying
-        "host_lamp=2402950@12%m24_01",    # and on to m24_00
+        "host_rule=party_travel_vote:1@8%m2",  # the host's travel vote on: a staying guest must not be asked or waited for
+        "host_lamp=2412953@25%m2&",       # the party's lamp travel to m24_01 while the guest is home and staying
+        "host_lamp=2402950@12%m24_01&",   # and on to m24_00
     ])
     guest = ",".join([
         "god",
-        "own_rule=party_stay:1@5%m24",    # the switch on (in the host's world: nothing changes yet)
-        "guest_home@3%m24",               # the guest goes home on its own: the bell would ring again within seconds
-        "own_rule=party_stay:0@85%m24&",  # off: rings, gathers, joins the host's world again
+        "own_rule=party_stay:1@5%m2",    # the switch on (in the host's world: nothing changes yet)
+        "guest_home@3%m2",               # the guest goes home on its own: the bell would ring again within seconds
+        "own_rule=party_stay:0@85%m2&",  # off: rings, gathers, joins the host's world again
     ])
     return dict(
         name="sh", seconds=300, count=2, headless=0,
@@ -5836,8 +5837,10 @@ def check_sh(v, L):
     need(v, L, "sh the guest goes home", 1, r"test: guest_home: the game's own leave run", on or 0)
     need(v, L, "sh the guest notes it stays", 1, r"Party stay: staying in my own world", on or 0)
     hs = need(v, L, "sh the host hears it", 0, r"Party stay: guest slot 1 stays in its own world", on or 0)
-    t1 = need(v, L, "sh the host travels (m24_01) while the guest stays", 0, r"travel step 1/\d+: host_lamp", hs or 0)
-    t2 = need(v, L, "sh the host travels again (m24_00)", 0, r"travel step 2/\d+: host_lamp", t1 or 0)
+    t1 = need(v, L, "sh the host travels (m24_01) while the guest stays", 0, r"travel step 2/\d+: host_lamp", hs or 0)
+    t2 = need(v, L, "sh the host travels again (m24_00)", 0, r"travel step 3/\d+: host_lamp", t1 or 0)
+    if t1:
+        none_of(v, L, "sh the staying guest is asked nothing", r"Party vote: round \d+: question open", on or 0, 1e9, (1,))
     off = need(v, L, "sh the guest turns it off", 1, r"test: own_rule: party_stay 1 -> 0", t2 or 0)
     if on and off:
         none_of(v, L, "sh paused: the guest follows no host travel", r"map .*-> m24_0[01]", t1 or on, off, (1,))
@@ -5845,7 +5848,7 @@ def check_sh(v, L):
         none_of(v, L, "sh paused: the host rings no bell for it", r"ringing the Beckoning Bell", (hs or on) + 2, off, (0,))
         none_of(v, L, "sh paused: no gather to the host's lamp", r"gather: ", on + 4, off, (1,))
     if off:
-        need(v, L, "sh resumes: the guest says so", 1, r"Party: stay: joining resumes", off)
+        need(v, L, "sh resumes: the guest says so", 1, r"stay: joining resumes", off)
         rg = need(v, L, "sh resumes: the guest rings again", 1, r"ringing the Small Resonant Bell", off)
         need(v, L, "sh resumes: the host sees the guest join again", 0, r"cooperators 0 -> 1", off)
         need(v, L, "sh resumes: the host hears it joins", 0, r"Party stay: guest slot 1 joins again", off)
