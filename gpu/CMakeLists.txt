@@ -550,6 +550,12 @@ target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
 target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
 set_target_properties(bb-gpu-capabilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# The open party's join rule (party_open_rules.h). ninja -C out/gpu party-open-test
+add_executable(party-open-test EXCLUDE_FROM_ALL ../tests/test_party_open.cpp)
+target_compile_options(party-open-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-open-test PRIVATE shim)
+set_target_properties(party-open-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+
 # Party link (shim/party: PartyLink control channel, party codes, UPnP, public address) with
 # monocypher 4.0.2 (third_party/monocypher, BSD-2-Clause OR CC0-1.0). ninja -C out/gpu party-link-test
 target_sources(bbgpu PRIVATE third_party/monocypher/monocypher.c)
