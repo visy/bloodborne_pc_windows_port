@@ -975,6 +975,7 @@ def check_lfw(v, L, key, tag):
                    y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and off == 0,
                    "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it" %
                    ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off))
+    need_far = 1.5 if tag.endswith("s") else 3.0  # sprinting walkers meet the other player's exit spot
     for k, (d, riders, end) in enumerate(plan):
         for role in ("host", "guest"):
             if riders in ("both", role) or k >= len(rides[0]) or k >= len(rides[1]):
@@ -985,8 +986,8 @@ def check_lfw(v, L, key, tag):
                 continue
             pts = [tuple(float(x) for x in POS_RX.search(l).groups()) for _t, l in L.all(i, POS_RX.pattern, r["t"], r["t_end"])]
             far = max([math.hypot(q[0] - pts[0][0], q[2] - pts[0][2]) for q in pts] or [0.0])
-            v.step("%s %d %s: the %s who does not ride walks while the car moves" % (tag, k + 1, d, role), far >= 3.0,
-                   "%d samples, farthest %.1f m from where the ride began (need 3 m)" % (len(pts), far))
+            v.step("%s %d %s: the %s who does not ride walks while the car moves" % (tag, k + 1, d, role), far >= need_far,
+                   "%d samples, farthest %.1f m from where the ride began (need %.1f m)" % (len(pts), far, need_far))
     for i, who in ((0, "host"), (1, "guest")):
         f = falls(L, i, rate=12.0)  # the 48 m lift runs 8.3 m/s; a fall is faster than any lift (the nets use 16)
         v.step("%s %s: no fall (vertical speed under 12 m/s)" % (tag, who), not f,
