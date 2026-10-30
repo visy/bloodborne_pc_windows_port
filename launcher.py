@@ -194,6 +194,8 @@ PARTY_INI_FLAGS = [
     ("party_item_notices", True),
     # 0.7.7 (CL-2eec68): splitscreen mode, off by default (System > My party: Splitscreen)
     ("party_splitscreen", False),
+    # 0.7.7 (CL-adeb50): a guest pauses the automatic joining, off by default (System > Party > Stay in my world)
+    ("party_stay", False),
 ]
 
 # ---- The party settings tabs (0.7.3, user request): the Party tab holds hosting / joining /
@@ -486,6 +488,12 @@ MY_PARTY_TAB = [
          "System > My party: Splitscreen).", 14),
     ]),
     (0, 4, "Start & saves", [
+        ("check", "party_stay", "Stay in my world",
+         "As a guest: pause the automatic joining and stay in your own world (your Chalice ritual, shopping) while "
+         "the party goes on: no bell, no gather to the host, you are not asked to vote on the host's travel and the "
+         "host does not wait for you; chat, the party panel and the connection keep working. Switch it off to join "
+         "again at the next opportunity (nothing is forced mid-action). Your own setting; takes effect live. "
+         "Default: off (bbport.ini party_stay, env BB_PARTY_STAY; in the game: System > Party > Stay in my world)."),
         ("combo", "party_start_var", "Party starts:", [c[0] for c in PARTY_START_CHOICES],
          "When a player counts as ready to be summoned. After the prologue (recommended): once the "
          "player has seen the opening, reached the Hunter's Dream for the first time and taken a "
@@ -3027,6 +3035,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_conn_warnings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_conn_warnings"))
         self.party_item_notices = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_item_notices"))
         self.party_splitscreen = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_splitscreen", False))
+        self.party_stay = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stay", False))
         self.party_guest_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_guest_lamps"))
         # The Party Rules / My Party checkboxes that are one bbport.ini key each (PARTY_INI_FLAGS)
         self.party_flag_vars = {key: getattr(self, key) for key, _ in PARTY_INI_FLAGS}
