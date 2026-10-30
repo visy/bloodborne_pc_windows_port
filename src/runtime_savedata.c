@@ -166,7 +166,7 @@ static void target_paths(int32_t user, const char *title, const DirName *dir, ch
 
 /* A whole file replaced in one rename (a crash mid-write keeps the old one).
  * Windows: fsync is _commit and rename is MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH) (win32_compat.h). */
-static int write_atomic(const char *path, const void *data, size_t size) {
+static int write_atomic_run(const char *path, const void *data, size_t size) {
     char temp[840]; snprintf(temp,sizeof(temp),"%s.bbtmp",path);
     FILE *f=fopen(temp,"wb");
     if (!f) return -1;
@@ -174,6 +174,20 @@ static int write_atomic(const char *path, const void *data, size_t size) {
     ok=!fclose(f) && ok;
     if (!ok || rename(temp,path)) { unlink(temp); return -1; }
     return 0;
+}
+/* Logged when it takes over BB_SLOW_IO_MS (default 100; 0 = never): the game thread waits for it. */
+static int write_atomic(const char *path, const void *data, size_t size) {
+    uint64_t t0=host_monotonic_ns();
+    int r=write_atomic_run(path,data,size);
+    static int64_t lim=-2;
+    if (lim==-2) { const char *e=getenv("BB_SLOW_IO_MS"); lim=e && *e ? atoll(e) : 100; }
+    uint64_t dt=host_monotonic_ns()-t0;
+    if (lim>0 && dt>=(uint64_t)lim*1000000ull) {
+        const char *b=strrchr(path,'/');
+        printf("Slow save IO: write %s took %.1f ms\n",b ? b+1 : path,(double)dt/1e6);
+        fflush(stdout);
+    }
+    return r;
 }
 /* <dir>.sce_sys -> <dir>/sce_sys/param.sfo (shadPS4's place for it); 0 when meta is not a save's. */
 static int sfo_path(const char *meta, char *out, size_t size, char *dir_name, size_t dir_size) {

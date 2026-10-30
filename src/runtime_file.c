@@ -363,6 +363,22 @@ static File *get(int fd) {
 static int audio_trace(void) { static int v=-1; if (v<0) { const char *e=getenv("BB_AUDIO_TRACE"); v=e && e[0]=='1'; } return v; }
 /* BB_SAVE_TRACE=1: every operation on save files (/savedataN). */
 static int save_trace(void) { static int v=-1; if (v<0) { const char *e=getenv("BB_SAVE_TRACE"); v=e && e[0]=='1'; } return v; }
+/* Save-file steps that block the calling (game) thread: logged when one takes over BB_SLOW_IO_MS (default
+ * 100 ms; 0 = never). Slow disks, sync clients and low memory show here as a frozen guest. */
+static uint64_t slow_io_ns(void) {
+    static int64_t v=-2;
+    if (v==-2) { const char *e=getenv("BB_SLOW_IO_MS"); v=e && *e ? atoll(e) : 100; }
+    return v>0 ? (uint64_t)v*1000000ull : 0;
+}
+static void slow_io_note(const char *what,const char *path,uint64_t t0,uint64_t t1) {
+    uint64_t lim=slow_io_ns();
+    if (lim && t1-t0>=lim) {
+        const char *b=path ? strrchr(path,'/') : NULL;
+        if (!b) b=path ? strrchr(path,'\\') : NULL;
+        printf("Slow save IO: %s %s took %.1f ms\n",what,b ? b+1 : path ? path : "",(double)(t1-t0)/1e6);
+        fflush(stdout);
+    }
+}
 /* Game mounts (including linked mod overlays) are read-only. Saves use other mounts. */
 static int game_path(const char *p) {
     if (!p || !*p) return 0;
@@ -437,11 +453,18 @@ static void sync_directory(const char *file) {
 }
 static int commit_file(const File *f) {
     if (!f->dirty) { close(f->host); unlink(f->temp); return 0; } /* opened for writing, not written */
+    uint64_t t0=host_monotonic_ns();
     int e=fsync(f->host) ? errno : 0;
     close(f->host);
+    uint64_t t1=host_monotonic_ns();
+    slow_io_note("commit: flush to disk",f->commit,t0,t1);
     /* A party guest's character save written in the host's world keeps the own world's state. */
     if (!e) runtime_savepolicy_world_fix_file(f->temp,f->commit);
+    uint64_t t2=host_monotonic_ns();
+    slow_io_note("commit: party world fix",f->commit,t1,t2);
     if (!e && rename(f->temp,f->commit)) e=errno;
+    uint64_t t3=host_monotonic_ns();
+    slow_io_note("commit: rename",f->commit,t2,t3);
     if (e) {
         fprintf(stderr,"Runtime: save file %s not replaced (%s); the old one is kept\n",f->path,strerror(e));
         unlink(f->temp);
@@ -480,7 +503,9 @@ static int64_t do_open(const char *guest,int flags,int mode) {
 #endif
     if (host < 0) {
         if (save_path(guest) && (flags&3)) {
+            uint64_t t0=host_monotonic_ns();
             host=open_for_commit(path,current,flags,mode,&commit,&temp);
+            slow_io_note("open (copy of the old file)",path,t0,host_monotonic_ns());
             save_changed();
             if (host<0) { errno=-host; host=-1; }
         } else {
@@ -791,7 +816,9 @@ static int64_t do_rename(const char *from,const char *to) {
     int e=translate(from,a,sizeof(a));
     if (!e) e=translate(to,b,sizeof(b));
     if (e) return -e;
+    uint64_t t0=host_monotonic_ns();
     int r=rename(a,b) ? -errno : 0;
+    if (save_path(from) || save_path(to)) slow_io_note("rename",a,t0,host_monotonic_ns());
     if (save_path(from) || save_path(to)) save_changed();
     if (save_trace() && (save_path(from) || save_path(to))) printf("Save trace: rename(%s, %s) -> %d\n",from,to,r);
     return r;
