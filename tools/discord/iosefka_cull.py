@@ -14,6 +14,7 @@ be stopped and rerun (all state lives in the clinic database).
   iosefka_cull.py waiting-logs [--dry-run] [--yes]   one nudge at 14 idle days, close at 30 (the bot also does this hourly)
   iosefka_cull.py health-report [--dry-run]    post the health report once now (thread NETDOCTOR_HEALTH_THREAD, else DM to NETDOCTOR_ALERT_USER)
   iosefka_cull.py announce --channels a,b [--everyone a] [--dry-run] --yes   post and pin Iosefka's announcement
+  iosefka_cull.py post --channel NAME --file PATH [--dry-run] --yes   post a text file as one message (no pings, no pin)
 
 Exit codes: 0 ok, 1 failure, 2 refused (missing flag), 3 disk low (rerun later).
 Environment as the bot (NETDOCTOR_TOKEN, NETDOCTOR_DB, NETDOCTOR_GUILD; ~/.config/netdoctor/env is read).
@@ -467,6 +468,58 @@ async def announce(guilds, names, *, dry_run, yes, everyone=(), out=print):
     return code
 
 
+POST_LIMIT = 2000  # Discord's message length
+
+
+def post_chunks(text, limit=POST_LIMIT):
+    """Split text into messages of at most `limit` characters, at paragraph (then line) breaks."""
+    text = text.strip()
+    out, cur = [], ""
+    for para in text.split("\n\n"):
+        piece = para if not cur else cur + "\n\n" + para
+        if len(piece) <= limit:
+            cur = piece
+            continue
+        if cur:
+            out.append(cur)
+        cur = ""
+        for line in para.split("\n"):
+            piece = line if not cur else cur + "\n" + line
+            if len(piece) <= limit:
+                cur = piece
+            else:
+                if cur:
+                    out.append(cur)
+                while len(line) > limit:
+                    out.append(line[:limit])
+                    line = line[limit:]
+                cur = line
+    if cur:
+        out.append(cur)
+    return out
+
+
+async def post(guilds, name, text, *, dry_run, yes, out=print):
+    chunks = post_chunks(text)
+    if dry_run:
+        for c in chunks:
+            out(c)
+            out(f"--- ({len(c)} chars)")
+        out(f"(dry run: {len(chunks)} message(s) to #{name}, nothing posted)")
+        return OK
+    if not yes:
+        out("post sends to the server: add --yes (preview with --dry-run)")
+        return REFUSED
+    ch = next((c for g in guilds for c in g.text_channels if c.name == name), None)
+    if ch is None:
+        out(f"{name}: no such channel; text channels: " + ", ".join(sorted({c.name for g in guilds for c in g.text_channels})))
+        return FAIL
+    for c in chunks:
+        msg = await ch.send(c, allowed_mentions=cd.AllowedMentions.none())
+        out(f"{name}: {msg.jump_url}")
+    return OK
+
+
 async def health_report(clinic, client=None, dry_run=False, out=print):
     """Send the daily health report once, now (not counted as today's report). Returns OK or FAIL."""
     health = clinic_health.Health(clinic)
@@ -576,11 +629,32 @@ def main(argv=None):
     a.add_argument("--everyone", default="", help="comma list of those channels whose post starts with @everyone")
     a.add_argument("--dry-run", action="store_true")
     a.add_argument("--yes", action="store_true")
+    o = sub.add_parser("post")
+    o.add_argument("--channel", required=True)
+    o.add_argument("--file", required=True)
+    o.add_argument("--dry-run", action="store_true")
+    o.add_argument("--yes", action="store_true")
     args = ap.parse_args(argv)
 
     load_env()
     if args.phase == "announce" and args.dry_run:
         return asyncio.run(announce([], [], dry_run=True, yes=False))
+    if args.phase == "post":
+        with open(args.file, encoding="utf-8") as f:
+            post_text = f.read()
+        if args.dry_run:
+            return asyncio.run(post([], args.channel, post_text, dry_run=True, yes=False))
+        if not args.yes:
+            print("post sends to the server: add --yes (preview with --dry-run)")
+            return REFUSED
+        token = os.environ.get("NETDOCTOR_TOKEN")
+        if not token:
+            print("set NETDOCTOR_TOKEN", file=sys.stderr)
+            return FAIL
+
+        async def send_post(client):
+            return await post(_guilds(client), args.channel, post_text, dry_run=False, yes=True)
+        return _run_client(token, send_post)
     if args.phase == "health-report":
         clinic = clinic_store.Clinic(_load_bot().DB_PATH)
         if args.dry_run:
