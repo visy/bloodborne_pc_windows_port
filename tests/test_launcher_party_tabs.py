@@ -55,10 +55,21 @@ class Tables(unittest.TestCase):
         self.assertEqual(set(every), expected)
         combos = [row[1] for _, row in rows(L.MY_PARTY_TAB) if row[0] == "combo"]
         self.assertEqual(sorted(combos), sorted(["party_start_var", "party_backup_minutes_var",
-                                                 "party_backup_keep_var"]))
+                                                 "party_backup_keep_var", "party_messages_var"]))
         # 0.7.5: Insight for bosses is the host's rule (join check), so on the Party Rules tab
         self.assertEqual([row[1] for _, row in rows(L.PARTY_RULES_TAB) if row[0] == "combo"],
                          ["party_insight_var"])
+
+    def test_splitscreen_settings_are_off_and_all_by_default(self):
+        """CL-2eec68: the switch is a one-key flag, off by default; the messages combo writes party_messages."""
+        L = self.L
+        self.assertIn(("party_splitscreen", False), L.PARTY_INI_FLAGS)
+        self.assertEqual(L.party_messages_label({}), "All (default)")
+        self.assertEqual(L.party_messages_label({"party_messages": "errors"}), "Errors only")
+        self.assertEqual(L.party_messages_label({"party_messages": "2"}), "Off")
+        self.assertEqual(L.party_rules_ini({}, "", "Errors only")["party_messages"], "errors")
+        self.assertEqual(L.party_rules_ini({}, "", "Off")["party_messages"], "off")
+        self.assertNotIn("party_messages", L.party_rules_ini({}, ""))
 
     def test_host_rules_tab_is_exactly_the_hosts_rules(self):
         """A new bool in party_balance Rules needs its row in PARTY_RULES_TAB (and never in My Party)."""
