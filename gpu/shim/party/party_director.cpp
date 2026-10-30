@@ -35,6 +35,7 @@
 #include "party_split.h"
 #include "party_gather.h"
 #include "party_vote.h"
+#include "party_stayhome.h"
 #include "lamp_travel.h"
 #include "party_phantom.h"
 #include "party_start.h"
@@ -419,6 +420,7 @@ struct State {
     int max_players = 3;
     party::PartyLink* link = nullptr;
     bool auto_ring = true;
+    bool stay_noted = false;            // CL-adeb50: "Stay in my world" is on (the bell was withdrawn, no ring / gather)
     int auto_continue = -1; // BB_PARTY_AUTOCONTINUE: 1 on (tests, party flow Continue/Join); unset/0 off (manual play)
     double ring_every = 30.0;
     bool a11_waiting = false;  // A11: the host's bell held (boss fight / cutscene)
@@ -2482,6 +2484,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             BbSettings::Get().party_friendly_fire.store(on);
             Log("test: host_rule: %s %d -> %d", key.c_str(), was ? 1 : 0, on ? 1 : 0);
         }
+        if (!found && key == "party_stay") {  // CL-adeb50 (own_rule=party_stay:0|1, smoke group stay_home): this player's own switch
+            found = true;
+            const bool was = BbSettings::Get().party_stay.load();
+            BbSettings::Get().party_stay.store(on);
+            Log("test: own_rule: %s %d -> %d", key.c_str(), was ? 1 : 0, on ? 1 : 0);
+        }
         if (!found) Log("test: host_rule: no party switch %s", key.c_str());
     } else if (step.kind == TravelStep::HostPoise) {
         // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the
@@ -3175,6 +3183,8 @@ void UdpReachTick(State& st, PartyRole role, party::PartyLink* link, Clock::time
 std::vector<party::RosterEntry> SummonableRoster(const State& st, const std::vector<party::RosterEntry>& roster) {
     std::vector<party::RosterEntry> out;
     for (const party::RosterEntry& e : roster) {
+        // CL-adeb50: a guest that stays in its own world is not rung for either.
+        if (e.slot != party::kHostSlot && stayhome::SlotStays(e.slot)) continue;
         if (e.slot == party::kHostSlot ||
             std::find(st.unreachable.begin(), st.unreachable.end(), e.name) == st.unreachable.end()) {
             out.push_back(e);
@@ -4291,7 +4301,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_outage=", 0) == 0 || item.rfind("guest_outage=", 0) == 0 ||
                        item.rfind("host_poise=", 0) == 0 || item.rfind("host_spfx=", 0) == 0 ||
                        item.rfind("host_gfx=", 0) == 0 ||
-                       item.rfind("host_rule=", 0) == 0 ||
+                       item.rfind("host_rule=", 0) == 0 || item.rfind("own_rule=", 0) == 0 ||
                        item.rfind("guest_home", 0) == 0 || item.rfind("host_leave", 0) == 0 || item.rfind("host_kick=", 0) == 0 ||
                        item.rfind("guest_leave", 0) == 0 || item.rfind("host_rejoin", 0) == 0 ||
                        item.rfind("guest_rejoin", 0) == 0 || item.rfind("host_gather", 0) == 0) {
@@ -4302,6 +4312,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_poise", 0) == 0    ? TravelStep::HostPoise
                             : item.rfind("host_gfx", 0) == 0      ? TravelStep::HostGfx
                             : item.rfind("host_rule=", 0) == 0    ? TravelStep::HostPoise
+                            : item.rfind("own_rule=", 0) == 0     ? TravelStep::HostPoise
                             : item.rfind("host_spfx", 0) == 0     ? TravelStep::HostSpfx
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
@@ -5006,6 +5017,7 @@ void PartyDirector::Tick() {
     if (role != PartyRole::None) {
         gather::Tick(s, link, role == PartyRole::Host);  // I5 Gather the party (party_gather.h)
         vote::Tick(s, link, role == PartyRole::Host);    // 0.7.3 lamp travel voting (party_vote.h)
+        stayhome::Tick(link, role == PartyRole::Host);   // CL-adeb50 stay in my world
     }
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
@@ -5082,6 +5094,24 @@ void PartyDirector::Tick() {
         Seconds(st.world_at, now) < st.ring_delay || !SessionMayRing(role == PartyRole::Host, s.session_role) ||
         PrologueSkipBusy() || CatchupBusy()) {
         return;
+    }
+    // CL-adeb50 "Stay in my world" (party_stayhome_rules.h): this guest pauses the automatic joining - no bell,
+    // no gather to the host's lamp - and stays in its own world, still in the party. A bell already rung is
+    // withdrawn; turned off, the ring below runs at the next opportunity (nothing is forced mid-action).
+    if (role == PartyRole::Guest && stayhome::Active()) {
+        if (!st.stay_noted) {
+            st.stay_noted = true;
+            const bool dropped = RemoveSpEffect(kGuestBellEffect);
+            RemoveSpEffect(kChaliceWaitEffect);
+            st.rung_ever = false;
+            Log("stay: staying in my own world: no bell, no gather%s", dropped ? " (the ringing bell stopped)" : "");
+        }
+        return;
+    }
+    if (st.stay_noted) {
+        st.stay_noted = false;
+        st.rung_ever = false;  // ring at once
+        Log("stay: joining resumes: ringing at the next opportunity");
     }
     // A11 (ERSC_PARITY.md, user decision): a player joining while the host fights a boss or
     // watches a cutscene waits outside - the host does not ring until it ends (the guest's sign
