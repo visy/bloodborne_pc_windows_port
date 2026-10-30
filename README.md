@@ -408,6 +408,7 @@ before anyone is in the game):
   Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
+- **Guests can gather the party.** With the host's rule *Guests can gather* (*System -> Party rules: Travel*, the launcher's Party Rules tab, `party_guest_gather`, off by default) a guest sees *System -> Party -> Gather the party*: it asks the host and the other guests to come to it (each is asked and may say no; an in-world warp beside the guest, only players in the same map, never a loading screen). Same refusals and 30 s pause as the host's gather; not while the guest stays in its own world. See docs/party/guest_gather.md.
 - **Stay in my world.** As a guest you can pause the automatic joining without leaving the party, e.g. for your own
   Chalice ritual or shopping: *System -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
   `party_stay`, off by default, live). You ring no bell, are not gathered and not asked to vote; the host does not wait

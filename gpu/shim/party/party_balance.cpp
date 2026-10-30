@@ -864,6 +864,7 @@ Rules FromSettings() {
     r.pvp_full_hp = v.party_pvp_full_hp;
     r.boss_drops = v.party_boss_drops;
     r.gather = v.party_gather;
+    r.guest_gather = v.party_guest_gather;
     r.covenant_per_player = v.party_covenant_per_player;
     r.travel_vote = v.party_travel_vote;
     r.rot_cleanse_boss = v.party_rot_cleanse_boss;
@@ -1651,6 +1652,7 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
     party::status::SetHostRule(party::status::HostRule::PvpFullHp, r.pvp_full_hp);
     party::status::SetHostRule(party::status::HostRule::BossDrops, r.boss_drops);
     party::status::SetHostRule(party::status::HostRule::Gather, r.gather);
+    party::status::SetHostRule(party::status::HostRule::GuestGather, r.guest_gather);
     party::status::SetHostRule(party::status::HostRule::CovenantPerPlayer, r.covenant_per_player);
     party::status::SetHostRule(party::status::HostRule::TravelVote, r.travel_vote);
     party::status::SetHostRule(party::status::HostRule::RotCleanseBoss, r.rot_cleanse_boss);
