@@ -751,6 +751,22 @@ void EnemyPass(const GameSnapshot& s, bool scale) {
                         if ((Field<u32>(n, 0x1c) & 0x800c0003u) == 0 && row && Field<std::uint16_t>(row, 0x156) == 155)
                             poise += Field<std::int16_t>(row, 0x13a);
                     }
+                    // A boss chr that has not ticked (the guest is far away) keeps its unscaled max HP for
+                    // a minute: write the doped max / full health now, so its bar and HP are right at the wake.
+                    if (dm && list && g_rate_orig) {
+                        int full = 0;
+                        const int old_max = Field<int>(dm, 0xfc, -1);
+                        // Live (queen3077): on the far guest the 7500 node carries flags 2 (not counted yet), so the
+                        // game's rate (14.485) lacks its row's maxHpRate (x1.75); the host counts it (flags 4).
+                        float rate = reinterpret_cast<RateFn>(g_rate_orig)(list, 0);
+                        const u64 row = Field<u64>(node, 0x48);
+                        if ((Field<u32>(node, 0x1c) & 0x800c0003u) != 0 && row) rate *= Field<float>(row, 0x10, 1.0f);
+                        const int want = BossHpCatchUp(Field<int>(dm, 0xf8, -1), old_max, Field<int>(dm, 0x100, -1),
+                                                       rate, &full);
+                        if (want > 0 && SafeWrite(dm + 0xfc, &want, 4) && SafeWrite(dm + 0xf8, &full, 4))
+                            Log("boss chr %x: stale max HP %d -> %d (SpEffect %d, the chr has not ticked)",
+                                Field<u32>(chr, 8, ~0u), old_max, want, dope);
+                    }
                     char b[240];
                     std::snprintf(b, sizeof b, "boss chr %x: SpEffect %d (flags %x): HP %d / %d base %d, rate %.3f, "
                                                "poise bonus %+d (counted)",
@@ -848,6 +864,7 @@ Rules FromSettings() {
     r.pvp_full_hp = v.party_pvp_full_hp;
     r.boss_drops = v.party_boss_drops;
     r.gather = v.party_gather;
+    r.guest_gather = v.party_guest_gather;
     r.covenant_per_player = v.party_covenant_per_player;
     r.travel_vote = v.party_travel_vote;
     r.rot_cleanse_boss = v.party_rot_cleanse_boss;
@@ -1635,6 +1652,7 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
     party::status::SetHostRule(party::status::HostRule::PvpFullHp, r.pvp_full_hp);
     party::status::SetHostRule(party::status::HostRule::BossDrops, r.boss_drops);
     party::status::SetHostRule(party::status::HostRule::Gather, r.gather);
+    party::status::SetHostRule(party::status::HostRule::GuestGather, r.guest_gather);
     party::status::SetHostRule(party::status::HostRule::CovenantPerPlayer, r.covenant_per_player);
     party::status::SetHostRule(party::status::HostRule::TravelVote, r.travel_vote);
     party::status::SetHostRule(party::status::HostRule::RotCleanseBoss, r.rot_cleanse_boss);
@@ -2010,7 +2028,7 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
     if (in_world && now >= st.next_enemies) {
         st.next_enemies = now + std::chrono::seconds(2);
         const bool scale = st.last_n > 0 && EnemyScalingActive(r);
-        if (scale || st.log) EnemyPass(s, scale);
+        if (scale || st.log || (st.last_n > 0 && r.boss_hp > 0)) EnemyPass(s, scale);
     }
 }
 

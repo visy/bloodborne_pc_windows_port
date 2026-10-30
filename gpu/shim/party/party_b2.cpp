@@ -12857,8 +12857,10 @@ bool OwnWorldPos(float p[3]) {
 
 bool GatherBesideHost(const char* why, const float* spot, float spot_yaw, float test_lift_m, float* dest, float* from,
                       int attempt, float* host_y) {
-    alignas(16) float hp[4], hr[4];
-    if (LocalHp() <= 0 || !HostChrTransform(hp, hr)) {
+    alignas(16) float hp[4] = {}, hr[4] = {};
+    // With a `spot` the host's chr is not needed (CL-a3a9e6: the host itself, or a guest, is put beside a guest's
+    // spot); without one it is the place beside which to stand.
+    if (LocalHp() <= 0 || (!spot && !HostChrTransform(hp, hr))) {
         return false;
     }
     if (from) {
@@ -12888,7 +12890,8 @@ bool GatherBesideHost(const char* why, const float* spot, float spot_yaw, float 
     const float floor_y = pos[1];
     if (host_y) *host_y = floor_y;
     if (attempt < coop::gather::kHostSpot) {
-        BesideHost(pos, rot, coop::fourp::SpotForTry(g_local_slot.load(), attempt));
+        // the host (slot 0) takes the third spot: the guests' slots 1 and 2 are the first two
+        BesideHost(pos, rot, coop::fourp::SpotForTry(Role() == RoleHost ? 3 : g_local_slot.load(), attempt));
     }
     if (!coop::gather::SpotAcceptable(floor_y, pos[1])) {
         pos[1] = floor_y;  // never happens with a flat offset; kept as the rule's guard
