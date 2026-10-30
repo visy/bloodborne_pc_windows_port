@@ -40,7 +40,7 @@ a host from before it sends none: off); a guest sees a read-only line. Pure rule
 A guest never replays the warp into a dungeon of its own: `GuestSkipsChaliceTravel` (chalice.md 4) only lets a guest replay
 a travel into a Chalice Dungeon when its current dungeon is the host's, and a warp to a dungeon lamp is not a replayed
 travel at all (above). The 0.7.5 gray loop was a guest in m29 without its dungeon loaded while the fall recovery warped
-it to a dungeon lamp; layer travel never warps a guest to a lamp. Two cases, both run live (2 games, 0.8 s ... 20 s of
+it to a dungeon lamp; layer travel never warps a guest to a lamp. Two cases, both run live (2 games, about 20 s of
 loading each, nothing stuck, no gray loop, screenshots of both looked at):
 
 - **`cy`, guest with its own other dungeon in slot 1** (`chalice_hintertomb_ritual`): its current dungeon is not the
