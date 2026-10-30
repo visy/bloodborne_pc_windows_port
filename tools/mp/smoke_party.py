@@ -780,7 +780,9 @@ LW = {
     ),
     "ca": dict(
         tag="lfwc", map="m24_0", stagger=True, trim={"top": 1, "bottom": 2}, car="2401102", pos="12400827", busy="12400828", start="bottom", top_val=1,
-        lamp="2412953", set_flags="",
+        # liftreg077: the prelude's kills drop an item (a blood gem: "Beast x1" box on the host); the box stays up and blocks the
+        # stick walks of the later rides (the lfwc / lfwcbs flake), so the host presses Cross after each kill group (dismiss)
+        lamp="2412953", set_flags="", dismiss=True,
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
         side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
@@ -849,6 +851,8 @@ def lfw_chains(spec, slow=False):
                                                                       "^1" if n == 0 else ""))
         if len(pre) == 4:
             steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
+            if spec.get("dismiss"):
+                steps["host"].append("host_press=0x4000@1.5%%%s" % m)  # OK on the drop's item box (no box: nothing)
     for k, (d, riders, end) in enumerate(lfw_plan(spec, slow)):
         other = "bottom" if end == "top" else "top"
         gate = "" if k == 0 else "?%s=%d" % (spec["pos"], spec["top_val"] if end == "top" else 1 - spec["top_val"])
@@ -898,6 +902,17 @@ def lfw_chains(spec, slow=False):
                     s.append("%s_press=0x4000@1%%%s" % (role, m))
                 s.append("%s_route=%s@%s%%%s%s" % (role, leg, "14" if li else ("1" if second else (6 if rw else str(pin + 2 if pin > 4 else 9))), m, rc if not li else ""))
             route = legs[-1]
+            if slow:
+                # liftreg077: the unbuilt-car floor guard may have put the walker back on the landing (a warp, as designed) outside
+                # the car's gate: the straight stick step below then runs into the cage rail (live lfws / lfwcs / lfwcbs: stuck 2-3 m
+                # short of the trigger for 120 s). Walk the last recorded waypoints again (through the gate) first; at the route's
+                # end they are skipped at once.
+                # (not the points inside the trigger cylinder: the ride must start by the trigger step, not mid-walk)
+                tx0, _ty0, tz0 = spec["trig"][end]
+                pts = [w for w in route.split("/") if w and math.dist((float(w.split(":")[0]), float(w.split(":")[2])), (tx0, tz0)) > 0.8]
+                tail = "/".join(pts[-3:])
+                if tail:
+                    s.append("%s_route=%s@1%%%s" % (role, tail, m))
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
@@ -905,7 +920,9 @@ def lfw_chains(spec, slow=False):
             else:
                 tx, ty, tz = spec["trig"][end]
                 cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
-                s.append("%s_stick=%.2f:%.2f:0.25:30@0.2%%%s%s" % (role, tx, tz, m, cond))
+                # liftreg077: the slow phases (sprint overshoot) end the step inside the trigger cylinder (r 0.55): at 0.25 a sprinter
+                # circles the trigger, walks off the rising car and into the open shaft (live lfwcs: HP 0 at y -70)
+                s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s%s" % (role, tx, tz, "0.45" if slow else "0.25", m, cond))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
             if os.environ.get("BB_LFW_EXIT") == "walk":
