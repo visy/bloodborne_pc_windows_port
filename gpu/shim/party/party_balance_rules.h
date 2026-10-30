@@ -71,6 +71,9 @@ struct Rules {
     bool kill_record = true;
     bool npc_mirror = true;
     bool gather = true;
+    /// 0.7.7 (CL-a3a9e6): a guest may gather the party too (party_gather.h). The host's; off by default (a host from
+    /// before it sends none: off).
+    bool guest_gather = false;
     /// 0.7.3 (user decision 2026-10-22): covenant outcomes per player (party_progress
     /// covenant_outcome). The host's; on by default (a host from before it sends none: on).
     bool covenant_per_player = true;
