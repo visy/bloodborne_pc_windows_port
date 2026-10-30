@@ -746,10 +746,11 @@ LW = {
         tag="lfw", map="m24_01", car="2411320", pos="12410350", busy="12415350", start="top", top_val=1,
         lamp="2412953", set_flags="12410330,12410350",
         trig={"top": (-128.72, -44.3, -9.73), "bottom": (-128.72, -58.0, -9.73)},
-        side={"top": (-128.45, -44.3, -10.45), "bottom": (-128.45, -58.0, -10.45)},
-        out_h={"top": (-130.27, -44.4, -6.27), "bottom": (-125.28, -58.4, -11.69)},
-        out_g={"top": (-135.70, -44.4, -0.60), "bottom": (-117.10, -58.5, -17.30)},
-        wk={"top": (-130.27, -44.4, -6.27), "bottom": (-121.10, -58.4, -15.60)},
+        side={"top": (-128.19, -44.3, -9.20), "bottom": (-129.25, -58.0, -10.26)},
+        out_h={"top": (-134.70, -44.2, -2.50), "bottom": (-125.28, -58.4, -11.69)},
+        out_g={"top": (-130.80, -44.5, -3.70), "bottom": (-117.10, -58.5, -17.30)},
+        wait={"top": (-140.40, -44.5, 5.20), "bottom": (-117.10, -58.5, -17.30)},
+        wk={"top": (-136.70, -44.5, 1.50), "bottom": (-121.10, -58.4, -15.60)},
         far={"top": (-184.6, -38.7, 32.6), "bottom": (-74.9, -54.8, 17.2)},
         route={"top": "-180.7:-41.5:29.6/-177.6:-41.7:26.7/-173.4:-41.7:26.3/-169.0:-41.7:23.9/-165.4:-41.7:21.5/-161.9:-41.7:17.5/-158.2:-41.7:15.0/-154.3:-41.7:11.6/-151.3:-41.7:9.1/-147.6:-41.7:10.8/-144.8:-43.3:7.6/-140.4:-44.5:5.2/-136.7:-44.5:1.5/-134.7:-44.2:-2.5/-130.8:-44.5:-3.7/-130.0:-44.5:-8.0",
                "bottom": "-78.8:-55.4:14.7/-79.1:-55.5:9.9/-83.5:-55.5:8.9/-88.2:-55.4:6.2/-89.5:-55.5:2.0/-92.6:-55.5:-1.5/-96.6:-55.5:-3.9/-100.3:-55.4:-6.3/-103.5:-55.4:-10.0/-107.9:-55.4:-12.6/-110.3:-55.4:-15.8/-113.0:-56.9:-19.2/-116.5:-58.7:-21.3/-117.1:-58.5:-17.3/-121.1:-58.4:-15.6/-124.4:-58.4:-12.6/-128.1:-58.1:-10.7"},
@@ -758,45 +759,53 @@ LW = {
         rides=["guest", "host", "both", "both"], kills={"top": 8, "bottom": 8},
     ),
     "ca": dict(
-        tag="lfwc", map="m24_0", car="2401102", pos="12400827", busy="12400828", start="bottom", top_val=1,
+        tag="lfwc", map="m24_0", stagger=True, trim={"top": 1, "bottom": 2}, car="2401102", pos="12400827", busy="12400828", start="bottom", top_val=1,
         lamp="2412953", set_flags="",
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
-        side={"top": (25.2, 3.0, 194.17), "bottom": (25.2, -45.5, 194.17)},
+        side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
         out_g={"top": (16.9, 3.8, 187.9), "bottom": (33.3, -45.8, 201.3)},
         wk={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
-        far={"top": (13.1, 3.6, 188.9), "bottom": (78.2, -51.2, 250.6)},
+        far={"top": (13.1, 3.6, 188.9), "bottom": (66.2, -51.0, 236.6)},
         route={"top": "16.1:3.8:186.9/18.5:3.6:189.1/21.3:2.8:191.2/23.2:2.9:192.3/23.8:2.8:194.0",
-               "bottom": "71.6:-51.5:245.4/68.0:-51.4:243.6/66.6:-51.1:239.9/66.2:-51.0:236.6/64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
+               "bottom": "64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
         arr={"down": "28", "up": "32"}, start_anim={"down": (1,), "up": (31,)}, end_anim={"down": 29, "up": 7},
         y_arr={"top": lambda y: y > 0.5, "bottom": lambda y: y < -40.0},
-        rides=["guest", "host", "both", "both"], kills={"top": 3, "bottom": 8},
+        rides=["guest", "host", "both", "both"], kills={"top": 4, "bottom": 14},
     ),
 }
 
 
-def lfw_plan(spec):
+def lfw_plan(spec, slow=False):
     """[(direction, riders, car end before)] for the spec's rides: the car alternates ends from its start."""
     out, end = [], spec["start"]
-    for riders in spec["rides"][:int(os.environ.get("BB_LFW_RIDES", "0")) or None]:  # BB_LFW_RIDES=N: a shorter run
+    # BB_LFW_KINDS=guest,host,both: a custom list. The slow-load phases (sprinting walks) ride singly: a sprinting walker
+    # overshoots the beside-the-trigger spot into the trigger and starts the ride alone (live lfws2-4)
+    kinds = os.environ.get("BB_LFW_KINDS", "").split(",") if os.environ.get("BB_LFW_KINDS") else (
+        spec["rides"][:2] if slow else spec["rides"])
+    for riders in kinds[:int(os.environ.get("BB_LFW_RIDES", "0")) or None]:  # BB_LFW_RIDES=N: a shorter run
         out.append(("down" if end == "top" else "up", riders, end))
         end = "bottom" if end == "top" else "top"
     return out
 
 
-def lfw_chains(spec):
+def lfw_chains(spec, slow=False):
     """(host steps, guest steps) of the walk-in plan."""
     m, car = spec["map"], spec["car"]
     steps = {"host": [], "guest": []}
     # prelude: the host kills the regular enemies near both ends' walk-in routes (a brute standing in the Gascoigne
     # plaza stopped the walker dead, live lfw4), one end after the other, and ends on the first waiter's spot: the
     # guest's first step waits for it
-    first_end = lfw_plan(spec)[0][2]
-    for n, (e, kind) in enumerate((("top", "far"), ("top", "out_h"), ("bottom", "far"), ("bottom", "out_h"))):
+    first_end = lfw_plan(spec, slow)[0][2]
+    pre = (("top", "far"), ("top", "out_h"), ("bottom", "far"), ("bottom", "out_h"))
+    if os.environ.get("BB_LFW_PRELUDE") == "0":  # route validation runs: no enemy clearing, just the first waiter's spot
+        pre = pre[3:]
+    for n, (e, kind) in enumerate(pre):
         steps["host"].append("host_move=%s:pin=4:ground@%s%%%s%s" % (_p(*spec[kind][e]), "4" if n == 0 else "1", m,
                                                                       "^1" if n == 0 else ""))
-        steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
-    for k, (d, riders, end) in enumerate(lfw_plan(spec)):
+        if len(pre) == 4:
+            steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
+    for k, (d, riders, end) in enumerate(lfw_plan(spec, slow)):
         other = "bottom" if end == "top" else "top"
         gate = "" if k == 0 else "?%s=%d" % (spec["pos"], spec["top_val"] if end == "top" else 1 - spec["top_val"])
         who = ("host", "guest") if riders == "both" else (riders,)
@@ -805,7 +814,7 @@ def lfw_chains(spec):
             first = k == 0
             if role not in who:
                 # the one who waits: at the other end (the arrival), beside where the rider steps out
-                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec["out_g"][other]), "1" if first else "14", m, gate))
+                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec.get("wait", spec["out_g"])[other]), "1" if first else "14", m, gate))
                 # the player who does not ride walks a few metres by the stick while the car moves (the user's report:
                 # "the other player runs in place and cannot move while the elevator moves"); it starts once the rider
                 # stands in the trigger box
@@ -813,36 +822,54 @@ def lfw_chains(spec):
                 s.append("%s_stick=%.2f:%.2f:1.0:24@0.5%%%s?near=%s:0.9" % (role, ox, oz, m, _p(*spec["trig"][end])))
                 continue
             second = riders == "both" and role == "guest"
+            far, route = spec["far"][end], spec["route"][end]
+            if second and spec.get("stagger"):
+                # the second rider starts 2 waypoints further on: two walkers warped to one spot push each other off
+                # a ledge (live lfwc4: the top pocket's floor edge)
+                pts = route.split("/")
+                far, route = tuple(float(x) for x in pts[1].split(":")), "/".join(pts[2:])
+            if riders == "both" and role == "host" and spec.get("trim"):
+                # the first of two riders stops short of the trigger and steps to the spot beside it: the route's last
+                # points run through the trigger cylinder (r 0.55 m), which starts the ride with the second still outside
+                route = "/".join(route.split("/")[:-spec["trim"][end]])
             if first:
                 # the host after its prelude; the guest once the host stands where the first waiter does
-                g0 = "" if role == "host" else "?near=%s:3" % _p(*spec["out_g"]["bottom" if first_end == "top" else "top"])
-                s.append("%s_move=%s:pin=4:ground@1%%%s%s" % (role, _p(*spec["far"][end]), m, g0))
+                g0 = "" if role == "host" else "?near=%s:12" % _p(*spec["out_h"]["bottom"])  # the prelude's last spot (and the first waiter's)
+                s.append("%s_move=%s:pin=4:ground@1%%%s%s" % (role, _p(*far), m, g0))
             else:
-                s.append("%s_move=%s:pin=4:ground@14%%%s%s" % (role, _p(*spec["far"][end]), m, gate))
-            s.append("%s_route=%s@9%%%s" % (role, spec["route"][end], m))
+                s.append("%s_move=%s:pin=4:ground@14%%%s%s" % (role, _p(*far), m, gate))
+            # the second rider walks in once the first one stands on the car: two walkers on the same route block
+            # each other in its narrow places and in the doorway (live lfw4 / lfw5)
+            rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
+            s.append("%s_route=%s@%s%%%s%s" % (role, route, "1" if second else "9", m, rc))
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
-                s.append("%s_stick=%.2f:%.2f:0.2:14@0.2%%%s" % (role, sx, sz, m))
+                s.append("%s_stick=%.2f:%.2f:0.2:30@0.2%%%s" % (role, sx, sz, m))
             else:
                 tx, ty, tz = spec["trig"][end]
-                cond = "?near=%s:1.5" % _p(*spec["side"][end]) if second else ""
-                s.append("%s_stick=%.2f:%.2f:0.25:14@0.2%%%s%s" % (role, tx, tz, m, cond))
+                cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
+                s.append("%s_stick=%.2f:%.2f:0.25:30@0.2%%%s%s" % (role, tx, tz, m, cond))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
-            s.append("%s_stick=%.2f:%.2f:1.5:16@0.3%%%s?obj=%s:%s" % (role, ox, oz, m, car, spec["arr"][d]))
+            if os.environ.get("BB_LFW_EXIT") == "walk":
+                s.append("%s_stick=%.2f:%.2f:1.5:16@0.3%%%s?obj=%s:%s" % (role, ox, oz, m, car, spec["arr"][d]))
+            else:
+                # off the car by the game's own in-world warp at the arrival (as phase lt): a stick walk needs 2-3 s to
+                # find its direction, and a rider still in the arrival end's trigger when the ride ends rides back (live lfw8)
+                s.append("%s_move=%s:0:native@0.3%%%s?obj=%s:%s" % (role, _p(ox, oy, oz), m, car, spec["arr"][d]))
     return steps["host"], steps["guest"]
 
 
 def phase_lfw_for(key, slow=False, name=None):
     spec = LW[key]
-    host, guest = lfw_chains(spec)
+    host, guest = lfw_chains(spec, slow)
     common = "god,log_pos=0.5,log_objanim=%s,log_obj=%s,log_flag=%s/%s" % (spec["car"], spec["car"], spec["pos"], spec["busy"])
     env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=120"]
     if spec["set_flags"]:
         env.append("BB_PARTY_PROGRESS_TEST_SET=" + spec["set_flags"])
     if slow:
-        env += ["BB_TEST_LIFT_BUILD_DELAY=5", "BB_TEST_LIFT_BUILD_NEAR=30", "BB_TEST_LIFT_BUILD_DROP=60", "BB_TEST_WALK_SPRINT=1"]
+        env += ["BB_TEST_LIFT_BUILD_DELAY=16", "BB_TEST_LIFT_BUILD_NEAR=22", "BB_TEST_LIFT_BUILD_DROP=40", "BB_TEST_WALK_SPRINT=1"]
     extra = os.environ.get("BB_LFW_ENV", "")
     env += [e for e in extra.split(",") if "=" in e]
     starts = "(" + "|".join("|".join(str(a) for a in spec["start_anim"][d]) for d in ("down", "up")) + ")"
@@ -915,7 +942,7 @@ def lw_anim_at(L, i, spec, w):
 
 def check_lfw(v, L, key, tag):
     spec = LW[key]
-    plan = lfw_plan(spec)
+    plan = lfw_plan(spec, tag.endswith("s"))
     need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
     rides = [lw_rides(L, i, spec) for i in (0, 1)]
     v.step(tag + " rides: %d on each game" % len(plan), len(rides[0]) == len(plan) and len(rides[1]) == len(plan),
@@ -960,6 +987,7 @@ def check_lfw(v, L, key, tag):
                    y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and off == 0,
                    "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it" %
                    ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off))
+    need_far = 1.5 if tag.endswith("s") else 3.0  # sprinting walkers meet the other player's exit spot
     for k, (d, riders, end) in enumerate(plan):
         for role in ("host", "guest"):
             if riders in ("both", role) or k >= len(rides[0]) or k >= len(rides[1]):
@@ -970,11 +998,11 @@ def check_lfw(v, L, key, tag):
                 continue
             pts = [tuple(float(x) for x in POS_RX.search(l).groups()) for _t, l in L.all(i, POS_RX.pattern, r["t"], r["t_end"])]
             far = max([math.hypot(q[0] - pts[0][0], q[2] - pts[0][2]) for q in pts] or [0.0])
-            v.step("%s %d %s: the %s who does not ride walks while the car moves" % (tag, k + 1, d, role), far >= 3.0,
-                   "%d samples, farthest %.1f m from where the ride began (need 3 m)" % (len(pts), far))
+            v.step("%s %d %s: the %s who does not ride walks while the car moves" % (tag, k + 1, d, role), far >= need_far,
+                   "%d samples, farthest %.1f m from where the ride began (need %.1f m)" % (len(pts), far, need_far))
     for i, who in ((0, "host"), (1, "guest")):
-        f = falls(L, i)
-        v.step("%s %s: no fall (vertical speed under 8 m/s)" % (tag, who), not f,
+        f = falls(L, i, rate=12.0)  # the 48 m lift runs 8.3 m/s; a fall is faster than any lift (the nets use 16)
+        v.step("%s %s: no fall (vertical speed under 12 m/s)" % (tag, who), not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
         walks = L.all(i, r"test: route: DONE at waypoint")
         stops = L.all(i, r"test: route: STOPPED")
@@ -9164,7 +9192,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only:
-        a.phase = ",".join(p for p in ("s1", "s2", "rules", "bv", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
+        a.phase = ",".join(p for p in ("s1", "s2", "rules", "bv", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfw", "lfwc", "lfws", "lfwcs", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
                                      "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cva", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "mesh", "fp", "lo", "po", "pos", "sg", "sg2", "csh", "csh2", "csh3", "ba", "bh", "bk", "hg", "lw", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
