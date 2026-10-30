@@ -150,6 +150,29 @@ Both loopback, 2 players, groups `npc_eileen` / `npc_alfred_ward` (`smoke_party.
   and HP 0 on the guest. Alfred heals from low HP (1 % came back to full within 3 s), so the end is the host's
   HP 0 (the game's own death), not a guest blow.
 
+### An NPC hunter that arrives as an invader (smoke phase `npi`, 0.7.7 npcinv077)
+
+Group `npc_invader` (`smoke_party.py --only npc_invader`), loopback, 2 players, ~2.5 min.
+
+- **No retail trigger exists.** The only `2003[51]` type-1 (invader) event, 12904634, is called with
+  its NPC entities (2900160-2900163) only by the Chalice prototype layout m29_05_00_05; the retail dungeons
+  (m29_00 and the generated layouts) never call it (a scan of every EMEVD's InitializeEvent calls; docs/party/chalice.md calls m29_05 a prototype layout). The Bell
+  events are type 0 / 5 / 6 / 7 (cooperator session types). So the case is built with the Beckoning Bell
+  fixture (`BB_PARTY_TEST_NPC=2410740:28`: the Tomb of Oedon sign NPC, session type 28 = the EMEVD type 1
+  mapping, `desc[28]`: capability 0x100, team 2, net chr type 8 = an invader, "NOT counted as cooperator"),
+  summoned by the host 12 s after it stands in Central Yharnam (lamp 2412951).
+- **Arrival.** The request passes the SOS filter; the NPC walks in from its map spot (team 20, chr type 5,
+  disabled until the game's summon presentation, ~15 s), then it is **team 21, chr type 2** on both games.
+  The guest has it too (the map chr both games hold; its team, type and HP follow the host's), at the same place: chr dump
+  positions of the two games 0.0 m apart (run 1).
+- **Fight.** The guest locks on to it (team 21 is a foe for a phantom, nothing to convert: no `kTeamEvents`
+  entry is needed) and its real R1s take its HP down identically on both games (1342 -> 1298 -> 1254 -> ...
+  -> 930, the same series; damage numbers and its HP bar on the guest's screen). Like Alfred it heals from
+  a low HP (host HP 26 came back to 1099 in 11 s), so the end is the host's HP 0 (`host_kill :hp`, the game's
+  own death): the host rolls the drop (`enemy drop roll on this game ... handle 0x10014001`), the guest's chr
+  dump shows HP 0 at the same second. The NPC then returns home (disabled, HP restored: the task's Return step).
+- No party-side bug was found: the case works with the code as it is. The fixture is the only way to trigger it.
+
 Not verified live:
 - a guest's real killing blow (run 3 used `guest_kill :hp`, the HP 0 a lethal hit leaves; 8 real R1
   did 11 each against 3100 HP);
@@ -157,4 +180,6 @@ Not verified live:
   firing while the guest stands next to the NPC; the rewrite is the same;
 - the team 23 switch on the other hunters (only Alfred in Cainhurst was fought);
 - the assassins (Brador, the Fishing Hamlet), Valtr, Djura, the DLC hunters;
-- AI-player summons (Bell signs, the Chalice invader) with a full party.
+- the Chalice NPC invader event 12904634 itself (prototype layout only: not reachable in the retail game; `npi` runs the same session-type-28 summon through the Bell fixture);
+- AI-player summons (Bell signs) with a full 4-player party;
+- the DLC hunters (Hunter's Nightmare 13400920, Research Hall 13500920) and Brador / the Fishing Hamlet assassins: follow-up.
