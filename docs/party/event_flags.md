@@ -250,6 +250,7 @@ Key findings behind the rows:
   these). Host and guest memorized different oath runes at the Memory Altar in the host's Dream (test aid
   `log_oath`): each game carried only its own covenant's rows, steadily, summoned and after the guest's Leave
   (Radiance + Impurity, Corruption + Hunter, Beast's Embrace + Milkweed).
+  **Chalice Dungeon (coven077, smoke `covenant_chalice` cvc)**: host (Beast's Embrace) and guest (Milkweed) memorize their own oath rune at the Dream's Memory Altar, the host takes the dungeon lamp's party travel back to its Pthumeru dungeon: `log_oath` shows each member's own marker on its own chr in the Dream (161 / 257 samples) and in the dungeon m29 (243 / 169), never the other's; screenshots of both games clean.
   **Numbers (covleft077, `cvr` default pair Beast's Embrace + Milkweed)**: `log_oath` also dumps, once per effect, the
   SpEffectParam row the player's own active effect node points at (`oath row NAME(ID): node row IS the param row`, node +0x48
   = the param table's row of that id, every non-zero field): the host's chr holds row 180050 with the Therianthrope resist
