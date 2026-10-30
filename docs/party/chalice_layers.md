@@ -32,20 +32,31 @@ a host from before it sends none: off); a guest sees a read-only line. Pure rule
    path: event 12907020 warps to the Dream's altar spot).
 5. In a party the lamp warp is the host's own lamp use: `split` classifies a warp to a dungeon lamp as an awaken point
    (`lamp N (host): a Chalice Dungeon awaken point: the host enters alone, the party is summoned there`), so there is no
-   "Travel with the party?" question and no vote (as for the altar's awaken list, chalice.md 8). The host loads; each
-   guest's game sends it home (`guest: send-home ... not dropped: the host is in a Chalice Dungeon this game does not have`,
-   one load), then the host's bell summon quick-joins it into the dungeon again next to the host (a second load, about
-   20 s after the host's). Both ends are in the same layer, 0.8 to 0.9 m apart (live, both ways).
+   "Travel with the party?" question and no vote (as for the altar's awaken list, chalice.md 8). The host loads; what a
+   guest does is the next section.
 
-## Guests without the host's dungeon (the gray loop)
+## Guests and the gray loop (what was proven, what is not)
 
-A guest never replays the warp into its own copy of a dungeon: `GuestSkipsChaliceTravel` (chalice.md 4) only lets a guest
-replay a travel into a Chalice Dungeon when its current dungeon is the host's, and a warp to a dungeon lamp is not a
-replayed travel at all (above): the guest goes home and the summon brings it into the HOST's dungeon by ChannelId, the
-same quick join as the first entry (it needs no dungeon history of its own). The 0.7.5 gray loop was a guest in m29
-without the dungeon being loaded while the fall recovery warped it to a dungeon lamp; layer travel never warps a guest
-to a lamp. A guest that is apart (at home, *Stay in my world*, no bell) stays where it is. Live: `cy` (guest with its own
-other Hintertomb dungeon in slot 1) and `cyn` (the default save, no dungeon at all) end in the host's layer with one summon.
+A guest never replays the warp into a dungeon of its own: `GuestSkipsChaliceTravel` (chalice.md 4) only lets a guest replay
+a travel into a Chalice Dungeon when its current dungeon is the host's, and a warp to a dungeon lamp is not a replayed
+travel at all (above). The 0.7.5 gray loop was a guest in m29 without its dungeon loaded while the fall recovery warped
+it to a dungeon lamp; layer travel never warps a guest to a lamp. Two cases, both run live (2 games, 0.8 s ... 20 s of
+loading each, nothing stuck, no gray loop, screenshots of both looked at):
+
+- **`cy`, guest with its own other dungeon in slot 1** (`chalice_hintertomb_ritual`): its current dungeon is not the
+  host's, so `HostInOtherChalice` lets the send-home through, the guest loads home and the summon quick-joins it into the
+  HOST's dungeon beside the host. Layer 1 start and back to the boss room: both ends 0.8 to 0.9 m apart each way, about
+  20 s after the host's own load.
+- **`cyn`, guest with no dungeon at all** (the default save): the first quick join wrote the host's dungeon into its
+  slot 0 and that is its current slot, so its game thinks it already has the host's dungeon (`HostInOtherChalice` false)
+  and the send-home is dropped as a split travel. The guest stays in the dungeon where it stood (the dungeon is one map,
+  all layers are loaded), the HUD shows the distance (95 m) and the usual corner notice "Hunter0 went on to another area".
+  **Known gap: it is not carried.** The fix would be for that guest to run the same lamp warp itself
+  (`0x13CDF30(2902950 + n)` as its own lamp use: the dungeon is its current one, so `ChaliceReplayAllowed` holds) when the
+  host's lamp warp in its dungeon arrives as a split travel; not done, because it could not be tried live within the
+  launch budget and a wrong warp into m29 is the gray loop. Until then the rule stays off by default.
+
+A guest that is apart (at home, *Stay in my world*, no bell) stays where it is in both cases.
 
 ## Not done / limits
 

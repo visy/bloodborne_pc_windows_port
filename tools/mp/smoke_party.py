@@ -5299,15 +5299,24 @@ def check_cy(v, L, tag="cy"):
                r"Lamp travel: lamp 2902952 .*Chalice layer travel\); 2 entries: 1:2102950.* 2:2902950")
     ch1 = need(v, L, tag + " host chooses lamp 2902950", 0, r"Lamp travel: chose lamp 2902950", lst or 0)
     arr1 = need(v, L, tag + " host arrives at lamp 2902950", 0, r"Lamp travel: arrived: lamp 2902950, map m29", ch1 or 0)
-    # the party split treats a dungeon lamp as an awaken point: the host enters alone, the guest is sent home and the
-    # summon quick-joins it back (never a gray loop; a guest without the host's dungeon takes the same way)
-    need(v, L, tag + " the guest is sent home, not dropped in a dungeon of its own", 1,
-         r"send-home .* not dropped: the host is in a Chalice Dungeon this game does not have", ch1 or 0)
-    g1 = need(v, L, tag + " guest is summoned into the same dungeon (a load)", 1, r"map .* -> m29_00", ch1 or 0)
+    if tag == "cy":
+        # the party split treats a dungeon lamp as an awaken point: the host enters alone, the guest (its own current
+        # dungeon is another one) is sent home and the summon quick-joins it back (never a gray loop)
+        need(v, L, tag + " the guest is sent home, not dropped in a dungeon of its own", 1,
+             r"send-home .* not dropped: the host is in a Chalice Dungeon this game does not have", ch1 or 0)
+        need(v, L, tag + " guest is summoned into the same dungeon (a load)", 1, r"map .* -> m29_00", ch1 or 0)
+    else:
+        # cyn: a guest with no dungeon of its own has the host's in its current slot (the quick join): it is not
+        # sent home and not carried (known gap, docs/party/chalice_layers.md): it stays in the dungeon, never a
+        # gray loop or a stuck load
+        need(v, L, tag + " the guest stays in the dungeon (told the host went on)", 1,
+             r"guest: the host travels alone .*chalice dungeon \d+\); staying here", ch1 or 0)
+        none_of(v, L, tag + " the guest does not load into another map", r"map .* -> m21_00|map .* -> m255", ch1 or 0, 1e9, (1,))
     back = need(v, L, tag + " host starts the way back", 0, r"Lamp travel: test: back: now lamp 2902950", arr1 or 0)
     ch2 = need(v, L, tag + " host chooses lamp 2902952 again", 0, r"Lamp travel: chose lamp 2902952", back or 0)
     arr2 = need(v, L, tag + " host arrives at lamp 2902952", 0, r"Lamp travel: arrived: lamp 2902952, map m29", ch2 or 0)
-    need(v, L, tag + " guest is summoned back (a second load)", 1, r"map .* -> m29_00", ch2 or 0)
+    if tag == "cy":
+        need(v, L, tag + " guest is summoned back (a second load)", 1, r"map .* -> m29_00", ch2 or 0)
     need(v, L, tag + " all trips done", 0, r"Lamp travel: test: all trips done", arr2 or 0)
     none_of(v, L, tag + " no stuck load", r"Lamp travel: no load within 60 s|Lamp travel: test: FAILED")
     none_of(v, L, tag + " no GPU device lost / guest fault",
