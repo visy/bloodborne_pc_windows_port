@@ -82,6 +82,16 @@ int main() {
         Rules old;
         assert(FromJson("{\"rot\":true}", &old) && !old.guest_gather);
     }
+    // 0.7.7 (CL-48ee07): Chalice layer travel goes with the rules, OFF by default (an old host sends none: off).
+    {
+        Rules g;
+        assert(!g.layer_travel);
+        g.layer_travel = true;
+        Rules back2;
+        assert(FromJson(ToJson(g), &back2) && back2.layer_travel && back2 == g && back2 != Rules{});
+        Rules old;
+        assert(FromJson("{\"rot\":true}", &old) && !old.layer_travel);
+    }
     // 0.7.3: covenant outcomes per player go with the rules, on by default.
     {
         Rules c;
