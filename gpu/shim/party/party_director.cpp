@@ -177,6 +177,7 @@ struct TravelStep {
         HostLamp, GuestLamp, HostAlone, GuestKill,
         HostOutage, GuestOutage, // a simulated total network outage of `buttons` ms (BB_NET_SIM on)
         HostSpfx, // host_spfx=ENTITY:ID: SpEffect ID on that entity's chr by its ApplySpEffect (D7 doping dedupe)
+        OwnRule,   // own_rule=party_stay:0|1 (CL-adeb50): this player's own setting set live, either role, not saved
         HostPoise, // host_poise=N: the Enemy poise setting (party_enemy_poise, % of the step) set live, not saved (D7 A/B)
         HostGfx,   // host_gfx=lod:N|cap|stallcap|log: graphics test aid (model LOD bias, frame record, camera values; GfxTestStep)
         HostObj, GuestObj, HostChr, GuestChr, // stand at a map object / character: ENTITY[:DIST[:ANGLE]]
@@ -1330,6 +1331,7 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestPress: return "guest_press";
     case TravelStep::HostOutage: return "host_outage";
     case TravelStep::HostPoise: return "host_poise";
+    case TravelStep::OwnRule: return "own_rule";
     case TravelStep::HostGfx: return "host_gfx";
     case TravelStep::HostSpfx: return "host_spfx";
     case TravelStep::GuestOutage: return "guest_outage";
@@ -2034,7 +2036,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
                 step.kind == TravelStep::GuestLastLamp || step.kind == TravelStep::GuestLeave ||
-                step.kind == TravelStep::GuestRejoin) == (role == PartyRole::Guest);
+                step.kind == TravelStep::GuestRejoin) == (role == PartyRole::Guest) || step.kind == TravelStep::OwnRule;
     };
     if (t.script_on) {
         RunTravelScript(st, s, now);
@@ -2271,7 +2273,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         // step's delay then counts from the end of the wait.
         const TravelStep::Kind k = t.steps[t.next_step].kind;
         const bool own_chr = !(k == TravelStep::HostPress || k == TravelStep::GuestPress || k == TravelStep::HostOutage ||
-                               k == TravelStep::HostPoise || k == TravelStep::HostSpfx || k == TravelStep::HostGfx ||
+                               k == TravelStep::HostPoise || k == TravelStep::OwnRule || k == TravelStep::HostSpfx || k == TravelStep::HostGfx ||
                                k == TravelStep::GuestOutage || k == TravelStep::HostFlag || k == TravelStep::GuestFlag ||
                                k == TravelStep::HostSkipRemo || k == TravelStep::GuestSkipRemo ||
                                k == TravelStep::HostLastLamp || k == TravelStep::GuestLastLamp || k == TravelStep::HostKill || k == TravelStep::GuestKill) ||
@@ -2484,13 +2486,18 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             BbSettings::Get().party_friendly_fire.store(on);
             Log("test: host_rule: %s %d -> %d", key.c_str(), was ? 1 : 0, on ? 1 : 0);
         }
-        if (!found && key == "party_stay") {  // CL-adeb50 (own_rule=party_stay:0|1, smoke group stay_home): this player's own switch
-            found = true;
+        if (!found) Log("test: host_rule: no party switch %s", key.c_str());
+    } else if (step.kind == TravelStep::OwnRule) {
+        // own_rule=party_stay:0|1 (CL-adeb50, smoke group stay_home): this player's own setting, live, not saved.
+        const std::string key = step.args.substr(0, step.args.find(':'));
+        const bool on = step.args.find(':') != std::string::npos && step.args.substr(step.args.find(':') + 1) != "0";
+        if (key == "party_stay") {
             const bool was = BbSettings::Get().party_stay.load();
             BbSettings::Get().party_stay.store(on);
             Log("test: own_rule: %s %d -> %d", key.c_str(), was ? 1 : 0, on ? 1 : 0);
+        } else {
+            Log("test: own_rule: no setting %s", key.c_str());
         }
-        if (!found) Log("test: host_rule: no party switch %s", key.c_str());
     } else if (step.kind == TravelStep::HostPoise) {
         // D7 stagger A/B in one session: the host's Enemy poise setting, live (not saved); the
         // balance pass rewrites row 7503 and sends the rules on.
@@ -4312,7 +4319,7 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_poise", 0) == 0    ? TravelStep::HostPoise
                             : item.rfind("host_gfx", 0) == 0      ? TravelStep::HostGfx
                             : item.rfind("host_rule=", 0) == 0    ? TravelStep::HostPoise
-                            : item.rfind("own_rule=", 0) == 0     ? TravelStep::HostPoise
+                            : item.rfind("own_rule=", 0) == 0     ? TravelStep::OwnRule
                             : item.rfind("host_spfx", 0) == 0     ? TravelStep::HostSpfx
                             : item.rfind("guest_move", 0) == 0    ? TravelStep::GuestMove
                             : item.rfind("guest_press", 0) == 0  ? TravelStep::GuestPress
@@ -4379,7 +4386,8 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostOutage || step.kind == TravelStep::GuestOutage) {
                     step.buttons = static_cast<std::uint32_t>(std::strtoul(item.c_str() + item.find('=') + 1, nullptr, 10));
                 }
-                if (step.kind == TravelStep::HostPoise || step.kind == TravelStep::HostSpfx || step.kind == TravelStep::HostGfx) {
+                if (step.kind == TravelStep::HostPoise || step.kind == TravelStep::OwnRule || step.kind == TravelStep::HostSpfx ||
+                    step.kind == TravelStep::HostGfx) {
                     step.args = item.substr(item.find('=') + 1, item.find_first_of("@%") - item.find('=') - 1);
                 }
                 if (step.kind == TravelStep::HostPress || step.kind == TravelStep::GuestPress) {
