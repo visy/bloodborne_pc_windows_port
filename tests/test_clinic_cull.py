@@ -468,3 +468,28 @@ def test_cullable_ignores_save_image_video_only(tmp_path):
     rec(3, [{"id": 3, "filename": "big.zip", "kind": "archive", "sha256": None, "skip": "big"}])
     rec(4, [{"id": 4, "filename": "a.log", "kind": "log", "sha256": "c"}])
     assert [m["message_id"] for m in cull.cullable(c)] == [4]
+
+
+def test_post_needs_yes_no_pings_and_splits(tmp_path):
+    _, guild, th, ch, calls = world(tmp_path)
+    orig = ch.send
+
+    async def send(text, **kw):
+        m = await orig(text, **kw)
+        m.jump_url = "https://discord.invalid/m/2"
+        return m
+    ch.send = send
+    out = []
+    text = "Hello hunters.\n\n" + "\n\n".join("- line %d " % i + "x" * 300 for i in range(10))
+    assert run(cull.post([guild], "help", text, dry_run=False, yes=False, out=out.append)) == 2 and not ch.sent
+    assert run(cull.post([guild], "help", text, dry_run=True, yes=False, out=out.append)) == 0 and not ch.sent
+    assert run(cull.post([guild], "nope", text, dry_run=False, yes=True, out=out.append)) == 1
+    assert run(cull.post([guild], "help", text, dry_run=False, yes=True, out=out.append)) == 0
+    assert len(ch.sent) == 2 and all(len(m.content) <= 2000 for m in ch.sent)
+    assert all(m.kw["allowed_mentions"].users is False for m in ch.sent)
+    assert out[-1] == "help: https://discord.invalid/m/2"
+
+
+def test_post_chunks_keep_short_text_whole():
+    assert cull.post_chunks("a\n\nb") == ["a\n\nb"]
+    assert all(len(c) <= 50 for c in cull.post_chunks("y" * 120, limit=50))
