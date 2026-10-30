@@ -244,11 +244,6 @@ PARTY_RULES_TAB = [
          "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
          "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
          "System > Party rules: World)."),
-        ("check", "party_guest_gather", "Guests can gather the party",
-         "Lets a guest bring the host and the other guests to it with System > Party > Gather the party "
-         "(each one is asked first and may say no; only players in the same area as the guest are moved, "
-         "never through a loading screen). The host's setting; guests only see the row while it is on. "
-         "Default: off (bbport.ini party_guest_gather; in the game: System > Party rules: Travel)."),
         ("check", "party_travel_vote", "Party votes on travel",
          "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
          "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
@@ -377,6 +372,11 @@ PARTY_RULES_TAB = [
          "Removes the walls the game puts on area borders while a helper is in your world, "
          "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
          "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > Party rules: Travel)."),
+        ("check", "party_guest_gather", "Guests can gather the party",
+         "Lets a guest bring the host and the other guests to it with System > Party > Gather the party "
+         "(each one is asked first and may say no; only players in the same area as the guest are moved, "
+         "never through a loading screen). The host's setting; guests only see the row while it is on. "
+         "Default: off (bbport.ini party_guest_gather; in the game: System > Party rules: Travel)."),
         ("check", "party_chalice_rejoin", "Stay in the host's Chalice Dungeon",
          "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
          "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
