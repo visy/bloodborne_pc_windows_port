@@ -215,6 +215,8 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   / adapter name). Or let a player with an open port host.
   The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
   *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
+  On the opt-in Nightwatch VPN a host with a password can also turn on *Nightwatch VPN lobby* (off by default):
+  the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password.
 - **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*). If the game says the firewall *blocks* it (you cancelled the prompt once), press **Fix firewall issues** in the launcher's party help (one admin prompt: removes the game's inbound Block rules, adds Allow rules for UDP + TCP on the party port), or delete the Block entries by hand (`wf.msc` → Inbound Rules, red block icon).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 
@@ -341,7 +343,7 @@ before anyone is in the game):
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared
-  between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's
+  between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's Bath Messengers (the shop) show for every guest, also one with a Chalice Dungeon of their own. The dungeon's
   lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A Cursed dungeon halves every member's maximum health, guests too, whatever the Phantom health cut rule says. A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest who dies
   in the dungeon gets up beside the party; a guest pulled out by a death or a forced trip is summoned
   back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party rules: Travel).

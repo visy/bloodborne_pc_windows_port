@@ -293,6 +293,13 @@ is installed) as "maybe hosting". Hosting without a password over Radmin VPN or 
 warning in the launcher, because strangers can be in those networks. Switch it off with *Party
 discovery* (launcher, or *System > My party: Look & notices*).
 
+### Nightwatch VPN games
+
+On the Nightwatch VPN (opt-in, see docs/party/nightwatch_vpn.md) a host with a password can list the game
+for other VPN players: turn on *Nightwatch VPN lobby* (launcher Party tab, or *System > Party network*).
+The launcher's **Nightwatch VPN games** list shows the host's character name, slots, password flag and
+version, never an address; **Join** asks for the password and starts the game as a guest. Off by default.
+
 ### Connection doctor (`net_doctor.bat`)
 
 When players cannot join or keep dropping, collect the logs of **one session** from the host and
