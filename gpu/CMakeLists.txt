@@ -709,6 +709,11 @@ add_executable(party-splitscreen-test EXCLUDE_FROM_ALL ../tests/test_party_split
 target_compile_options(party-splitscreen-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-splitscreen-test PRIVATE shim)
 set_target_properties(party-splitscreen-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# "Stay in my world" (party_stayhome_rules.h). ninja -C out/gpu party-stayhome-test
+add_executable(party-stayhome-test EXCLUDE_FROM_ALL ../tests/test_party_stayhome.cpp)
+target_compile_options(party-stayhome-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-stayhome-test PRIVATE shim)
+set_target_properties(party-stayhome-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Level sync and phantom health (party_levelsync_rules.h). ninja -C out/gpu party-levelsync-test
 add_executable(party-levelsync-test EXCLUDE_FROM_ALL ../tests/test_party_levelsync.cpp)
 target_compile_options(party-levelsync-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
