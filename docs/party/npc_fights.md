@@ -131,6 +131,25 @@ Seen in run 3 (not D11): on the host's screen Alfred stands ~5 s after the guest
 shows as "[Hunter1 talking to Alfred]" on the host (the shared NPC talk takes the death line for a
 conversation).
 
+### The blood-drunk Eileen and Alfred in the Cathedral Ward (smoke phases `nfe`, `nfw`, 0.7.7 npchunt077)
+
+Both loopback, 2 players, groups `npc_eileen` / `npc_alfred_ward` (`smoke_party.py --only npc_eileen`).
+
+- **Event 12400656 never runs.** The 1.09 map script has no InitializeEvent for it (EMEVD trace, both games: no
+  dispatch); the night's common event 9723 sets 1372 itself. The `kGuestRuns` row stays harmless. The live path of
+  the blood-drunk Eileen is the init 12400650 at a load (team 27, 1374 + night 9802).
+- `nfe` (Eileen 2400902, fixture 1374 + 9802): both games have her (team 27 host, team 23 guest through
+  `kTeamEvents`), the guest locks on and hits her (HP falls identically on both games, 62 -> 36 -> 10 -> 0 after the
+  host set her to 2 %, because her AI dodges), **the guest's real killing blow** (no HP aid): 1368 on the host, her
+  HP 0 on the guest's game, the shared drop roll, Echoes on the host. A guest-side HP 0 aid does NOT kill her (the
+  host's HP overwrites it within 2 s), so the phase uses real hits. Quirk: "[Hunter talking to Eileen]" shows during
+  the fight (her shared talk lines).
+- `nfw` (Alfred 2400763, Cathedral Ward, state 1344 friendly): the host's 3 hits trip 12400592 -> 12400593 slot 1
+  (the `4[3]` gate in `kGuestRuns`) with the guest standing beside him: host team 26 -> 27 and 1345, guest team 26 ->
+  23 in the same second, lock-on, the guest's R1s take his HP down on both games (about 36 each), his HP 0 and drop roll on the host
+  and HP 0 on the guest. Alfred heals from low HP (1 % came back to full within 3 s), so the end is the host's
+  HP 0 (the game's own death), not a guest blow.
+
 Not verified live:
 - a guest's real killing blow (run 3 used `guest_kill :hp`, the HP 0 a lethal hit leaves; 8 real R1
   did 11 each against 3100 HP);
