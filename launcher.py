@@ -184,6 +184,8 @@ PARTY_INI_SWITCHES = [
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
     # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party rules: Travel)
     ("party_guest_gather", "BB_PARTY_GUEST_GATHER", False),
+    # 0.7.7 (CL-48ee07): a Chalice Dungeon lamp lists the dungeon's lit lamps for the party (the host's rule, OFF by default)
+    ("party_layer_travel", "BB_PARTY_LAYER_TRAVEL", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -377,6 +379,12 @@ PARTY_RULES_TAB = [
          "(each one is asked first and may say no; only players in the same area as the guest are moved, "
          "never through a loading screen). The host's setting; guests only see the row while it is on. "
          "Default: off (bbport.ini party_guest_gather; in the game: System > Party rules: Travel)."),
+        ("check", "party_layer_travel", "Chalice layer travel",
+         "At the host's Chalice Dungeon lamp the travel list shows the dungeon's other lit lamps (layers) "
+         "next to the Hunter's Dream, and the host's choice takes the whole party there (the usual 'Travel "
+         "with the party?' question); a guest that does not have the host's dungeon stays and is summoned "
+         "in. The host's setting. Default: off (bbport.ini party_layer_travel; in the game: System > Party "
+         "rules: PvP & lamps)."),
         ("check", "party_chalice_rejoin", "Stay in the host's Chalice Dungeon",
          "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
          "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "

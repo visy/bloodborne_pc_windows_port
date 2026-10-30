@@ -132,6 +132,20 @@ int main() {
     assert(!s.party_guest_gather);  // the variable wins over the ini
     assert(bb_test_setenv("BB_PARTY_GUEST_GATHER", "") == 0);
     s.party_guest_gather = false;
+    // 0.7.7 (CL-48ee07): Chalice layer travel: the host's rule, OFF by default, ini key + variable
+    assert(bb_test_setenv("BB_PARTY_LAYER_TRAVEL", "") == 0);
+    BbSettings::Load();
+    assert(!s.party_layer_travel);
+    s.party_layer_travel = true;
+    BbSettings::Save();
+    assert(Read(path).find("party_layer_travel=1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(s.party_layer_travel);
+    assert(bb_test_setenv("BB_PARTY_LAYER_TRAVEL", "0") == 0);
+    BbSettings::Load();
+    assert(!s.party_layer_travel);
+    assert(bb_test_setenv("BB_PARTY_LAYER_TRAVEL", "") == 0);
+    s.party_layer_travel = false;
     s.party_kill_record = true;
     s.party_gather = true;
     s.party_key_items_summoned = true;

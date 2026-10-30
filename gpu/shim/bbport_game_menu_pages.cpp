@@ -1344,6 +1344,16 @@ void DefineAll() {
               {"The host's world keeps its own lamps; any lamp you light there is saved for all",
                "Мир хоста хранит свои фонари; зажжённый вами там фонарь сохраняется у всех"});
 
+    // CL-48ee07: a Chalice Dungeon lamp lists the dungeon's lit lamps (layers); the host's choice takes the party there.
+    host_rule(&Values::party_layer_travel, "Chalice layer travel", "Путь по слоям чаши",
+              AddText("The host's Chalice Dungeon lamp lists the dungeon's other lit lamps; the party travels with the host. Party rule",
+                      "Фонарь подземелья хоста показывает другие зажжённые фонари; группа идёт с хостом. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::LayerTravel); },
+              {"The host allows it: its dungeon lamp offers the other lit lamps and the party follows its choice",
+               "Хост разрешил: его фонарь подземелья предлагает другие фонари, группа идёт за выбором хоста"},
+              {"The host decides; off: a dungeon lamp only returns to the Hunter's Dream",
+               "Решает хост; выкл.: фонарь подземелья только возвращает в Сон охотника"});
+
     // ---- Party rules: Deaths (party_b2): the host's deaths ----
     AddPage("Party rules: Deaths", "Правила: смерти",
             "Host's rules: the party's deaths: getting up without a load, guests' respawn and refill (bbport)",

@@ -224,6 +224,71 @@ bool MapTravelTarget(std::uint32_t rp, FlagFn flag, KnownFn known) {
     return rp != kDreamReturnPoint && LampOf(rp, &l) && known(rp) && flag(LitFlag(l)) && !flag(NameFlag(l));
 }
 
+// ---- Chalice layer travel (CL-48ee07, BB_PARTY_LAYER_TRAVEL) ----
+// A Chalice Dungeon (area 29) has up to 9 lamps, return points 2902950 + n (the lamp object is entity 2901950 + n).
+// Vanilla offers only "Return to the Hunter's Dream" at them; the altar's "Select location to awaken in" lists the
+// lit ones. With the rule on, the dungeon lamp's own Dream question is replaced by the same warp menu as a world
+// lamp's: the Dream first, then the dungeon's other lit lamps (the layers). Ids as for the world lamps with block 290:
+//   name / blocked flag  70002900 + n,  lit flag 12907810 + 20 n,  Dream flag 72900100 + n.
+inline constexpr std::uint32_t kChaliceFirstReturn = 2902950;
+inline constexpr int kChaliceLamps = 9;
+
+constexpr bool IsChaliceLamp(std::uint32_t rp) { return rp >= kChaliceFirstReturn && rp < kChaliceFirstReturn + kChaliceLamps; }
+constexpr std::uint32_t ChaliceLampIndex(std::uint32_t rp) { return rp - kChaliceFirstReturn; }
+constexpr std::uint32_t ChaliceLitFlag(std::uint32_t n) { return 12907810u + 20u * n; }
+constexpr std::uint32_t ChaliceNameFlag(std::uint32_t n) { return 70002900u + n; }
+constexpr std::uint32_t ChaliceDreamFlag(std::uint32_t n) { return 72900100u + n; }
+
+/// Lamp n of the dungeon may be travelled to: the first lamp (return point 2902950, "Chamber of the Seal", the
+/// dungeon's start and the altar's first awaken point) always; the others once lit (the lamp object's lit flag or
+/// its registration flag 12907800 + 20 n, as party_chalice_merge's ExpandLamps counts them).
+template <class FlagFn>
+bool ChaliceLampUnlocked(std::uint32_t n, FlagFn flag) {
+    return n == 0 || flag(ChaliceLitFlag(n)) || flag(12907800u + 20u * n);
+}
+
+/// The warp list at dungeon lamp `here` (a return point of the 9): the Hunter's Dream first, then every other lit
+/// lamp of the dungeon (never the one the player stands at), ascending. `flag(id)`: an event flag read in the
+/// dungeon; `known(rp)`: a ReturnPointParam row the game has. Empty (the vanilla question stays): `here` is not a
+/// dungeon lamp or no other lamp is lit.
+template <class FlagFn, class KnownFn>
+std::vector<Entry> BuildChaliceList(std::uint32_t here, FlagFn flag, KnownFn known) {
+    std::vector<Entry> out;
+    if (!IsChaliceLamp(here)) return out;
+    std::uint32_t next = 1;
+    out.push_back({next++, kDreamNameFlag, ChaliceLitFlag(ChaliceLampIndex(here)), kDreamReturnPoint, Dream});
+    for (std::uint32_t n = 0; n < static_cast<std::uint32_t>(kChaliceLamps); ++n) {
+        const std::uint32_t rp = kChaliceFirstReturn + n;
+        if (rp == here || !known(rp) || !ChaliceLampUnlocked(n, flag) || flag(ChaliceNameFlag(n))) continue;
+        // The game's AddWarpEntry takes an entry only when its 3rd argument flag is set (live: the unlit start lamp
+        // 2902950 was dropped, "took 1 of 2"): a lamp unlocked without its own lit flag shows the standing lamp's.
+        const std::uint32_t lit = flag(ChaliceLitFlag(n)) ? ChaliceLitFlag(n) : ChaliceLitFlag(ChaliceLampIndex(here));
+        out.push_back({next++, ChaliceNameFlag(n), lit, rp, Yharnam});
+    }
+    if (out.size() == 1) out.clear();
+    return out;
+}
+
+/// The dungeon lamp nearest to the player among `spots` (return point, x, y, z) within `max_m` metres (0 none).
+inline std::uint32_t NearestChaliceLamp(const std::vector<Spot>& spots, const float pos[3], float max_m) {
+    std::uint32_t best = 0;
+    float best_d = max_m * max_m;
+    for (const Spot& s : spots) {
+        if (!IsChaliceLamp(s.id)) continue;
+        const float dx = s.x - pos[0], dy = s.y - pos[1], dz = s.z - pos[2];
+        const float d = dx * dx + dy * dy + dz * dz;
+        if (d <= best_d) {
+            best_d = d;
+            best = s.id;
+        }
+    }
+    return best;
+}
+
+/// Whether the host's rule lets a Chalice Dungeon lamp offer the list: the rule is on, the player leads (the host or
+/// a solo game; a guest's lamp stays the vanilla question and the party's lamp request).
+constexpr bool ChaliceListOffered(bool rule_on, bool guest) { return rule_on && !guest; }
+
 /// Other observers of the talk command switch 0x203FFD0, which lamp travel replaces (issue #4: the
 /// shared NPC talk's choice observer could not hook it after lamp travel and never ran). They are
 /// registered before the game runs and called first in every call, as a prologue hook would be.
