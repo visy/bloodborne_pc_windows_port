@@ -197,7 +197,14 @@ coop::splitscreen::Messages EffectiveMessages() {
 }
 /// A notice / alert text as shown: empty when the messages setting hides it.
 std::string FilterMessage(coop::splitscreen::Kind kind, const std::string& text) {
-    return coop::splitscreen::MessageShown(EffectiveMessages(), kind, text) ? text : std::string();
+    if (coop::splitscreen::MessageShown(EffectiveMessages(), kind, text)) return text;
+    if (!text.empty()) {  // once per message (the caller runs when a new one arrives)
+        std::printf("[coop] Party messages: hidden (%s, mode %s%s): %.80s\n",
+                    kind == coop::splitscreen::Kind::Alert ? "alert" : "notice",
+                    coop::splitscreen::MessagesName(EffectiveMessages()), SplitscreenOn() ? ", splitscreen" : "",
+                    text.c_str());
+    }
+    return std::string();
 }
 
 bool PartyHudWanted() {
@@ -2690,6 +2697,11 @@ void PartyHud() {
         // and the distance. No names, bars, pings, states or rot line (the tags are off too, PartyTagsWanted).
         int rows = 0;
         for (int i = 0; i < b.count; ++i) rows += b.c[i].same_map && b.c[i].same_world && b.c[i].connected ? 1 : 0;
+        static int last_rows = -1;
+        if (rows != last_rows) {
+            last_rows = rows;
+            std::printf("[coop] Party HUD: splitscreen compass, %d companion row(s)\n", rows);
+        }
         if (rows > 0) {
             const float pad = 12.0f * s;
             float bottom = perf_hud_bottom_left ? perf_hud_top - 6.0f * s

@@ -37,3 +37,11 @@ everything):
 
 A new notice that reports a failure must contain one of those words, or the list in the rules header grows (the unit
 test lists the current examples).
+
+## Tests
+
+- `party-splitscreen-test` (unit: the messages parse, the effective mode, the error mapping, the HUD and tag rules),
+  `game-menu-pages-test` (the My party: Splitscreen page: two rows, the list last), `tests/test_launcher_party_tabs.py`.
+- Smoke group `splitscreen` (`python tools/mp/smoke_party.py --only splitscreen`): two games, the guest with
+  `BB_PARTY_SPLITSCREEN=1`; the guest draws the compass only, no name tags and hides "Joined the party", the host
+  keeps its panel and tag; screenshots of both are in the run's `shots/`. Group `rules` walks the new page.
