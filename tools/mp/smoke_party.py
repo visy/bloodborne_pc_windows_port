@@ -747,19 +747,19 @@ LW = {
         rides=["guest", "host", "both", "both"], kills={"top": 8, "bottom": 8},
     ),
     "ca": dict(
-        tag="lfwc", map="m24_0", car="2401102", pos="12400827", busy="12400828", start="bottom", top_val=1,
+        tag="lfwc", map="m24_0", stagger=True, trim={"top": 1, "bottom": 2}, car="2401102", pos="12400827", busy="12400828", start="bottom", top_val=1,
         lamp="2412953", set_flags="",
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
-        side={"top": (25.2, 3.0, 194.17), "bottom": (25.2, -45.5, 194.17)},
+        side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
         out_g={"top": (16.9, 3.8, 187.9), "bottom": (33.3, -45.8, 201.3)},
         wk={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
-        far={"top": (13.1, 3.6, 188.9), "bottom": (78.2, -51.2, 250.6)},
+        far={"top": (13.1, 3.6, 188.9), "bottom": (66.2, -51.0, 236.6)},
         route={"top": "16.1:3.8:186.9/18.5:3.6:189.1/21.3:2.8:191.2/23.2:2.9:192.3/23.8:2.8:194.0",
-               "bottom": "71.6:-51.5:245.4/68.0:-51.4:243.6/66.6:-51.1:239.9/66.2:-51.0:236.6/64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
+               "bottom": "64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
         arr={"down": "28", "up": "32"}, start_anim={"down": (1,), "up": (31,)}, end_anim={"down": 29, "up": 7},
         y_arr={"top": lambda y: y > 0.5, "bottom": lambda y: y < -40.0},
-        rides=["guest", "host", "both", "both"], kills={"top": 3, "bottom": 8},
+        rides=["guest", "host", "both", "both"], kills={"top": 4, "bottom": 14},
     ),
 }
 
@@ -782,10 +782,14 @@ def lfw_chains(spec):
     # plaza stopped the walker dead, live lfw4), one end after the other, and ends on the first waiter's spot: the
     # guest's first step waits for it
     first_end = lfw_plan(spec)[0][2]
-    for n, (e, kind) in enumerate((("top", "far"), ("top", "out_h"), ("bottom", "far"), ("bottom", "out_h"))):
+    pre = (("top", "far"), ("top", "out_h"), ("bottom", "far"), ("bottom", "out_h"))
+    if os.environ.get("BB_LFW_PRELUDE") == "0":  # route validation runs: no enemy clearing, just the first waiter's spot
+        pre = pre[3:]
+    for n, (e, kind) in enumerate(pre):
         steps["host"].append("host_move=%s:pin=4:ground@%s%%%s%s" % (_p(*spec[kind][e]), "4" if n == 0 else "1", m,
                                                                       "^1" if n == 0 else ""))
-        steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
+        if len(pre) == 4:
+            steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
     for k, (d, riders, end) in enumerate(lfw_plan(spec)):
         other = "bottom" if end == "top" else "top"
         gate = "" if k == 0 else "?%s=%d" % (spec["pos"], spec["top_val"] if end == "top" else 1 - spec["top_val"])
@@ -803,16 +807,26 @@ def lfw_chains(spec):
                 s.append("%s_stick=%.2f:%.2f:1.0:24@0.5%%%s?near=%s:0.9" % (role, ox, oz, m, _p(*spec["trig"][end])))
                 continue
             second = riders == "both" and role == "guest"
+            far, route = spec["far"][end], spec["route"][end]
+            if second and spec.get("stagger"):
+                # the second rider starts 2 waypoints further on: two walkers warped to one spot push each other off
+                # a ledge (live lfwc4: the top pocket's floor edge)
+                pts = route.split("/")
+                far, route = tuple(float(x) for x in pts[1].split(":")), "/".join(pts[2:])
+            if riders == "both" and role == "host" and spec.get("trim"):
+                # the first of two riders stops short of the trigger and steps to the spot beside it: the route's last
+                # points run through the trigger cylinder (r 0.55 m), which starts the ride with the second still outside
+                route = "/".join(route.split("/")[:-spec["trim"][end]])
             if first:
                 # the host after its prelude; the guest once the host stands where the first waiter does
                 g0 = "" if role == "host" else "?near=%s:12" % _p(*spec["out_h"]["bottom"])  # the prelude's last spot (and the first waiter's)
-                s.append("%s_move=%s:pin=4:ground@1%%%s%s" % (role, _p(*spec["far"][end]), m, g0))
+                s.append("%s_move=%s:pin=4:ground@1%%%s%s" % (role, _p(*far), m, g0))
             else:
-                s.append("%s_move=%s:pin=4:ground@14%%%s%s" % (role, _p(*spec["far"][end]), m, gate))
+                s.append("%s_move=%s:pin=4:ground@14%%%s%s" % (role, _p(*far), m, gate))
             # the second rider walks in once the first one stands on the car: two walkers on the same route block
             # each other in its narrow places and in the doorway (live lfw4 / lfw5)
             rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
-            s.append("%s_route=%s@%s%%%s%s" % (role, spec["route"][end], "1" if second else "9", m, rc))
+            s.append("%s_route=%s@%s%%%s%s" % (role, route, "1" if second else "9", m, rc))
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
@@ -971,8 +985,8 @@ def check_lfw(v, L, key, tag):
             v.step("%s %d %s: the %s who does not ride walks while the car moves" % (tag, k + 1, d, role), far >= 3.0,
                    "%d samples, farthest %.1f m from where the ride began (need 3 m)" % (len(pts), far))
     for i, who in ((0, "host"), (1, "guest")):
-        f = falls(L, i)
-        v.step("%s %s: no fall (vertical speed under 8 m/s)" % (tag, who), not f,
+        f = falls(L, i, rate=12.0)  # the 48 m lift runs 8.3 m/s; a fall is faster than any lift (the nets use 16)
+        v.step("%s %s: no fall (vertical speed under 12 m/s)" % (tag, who), not f,
                ("; ".join("+%.1f s %.1f m/s" % x for x in f[:4])) if f else "fastest drop within a lift's speed")
         walks = L.all(i, r"test: route: DONE at waypoint")
         stops = L.all(i, r"test: route: STOPPED")
