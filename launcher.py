@@ -84,6 +84,8 @@ PARTY_GUIDE = APP_DIR / "docs" / "PARTY.md"
 PARTY_START_CHOICES = [("After the prologue (recommended)", "prologue_solo"), ("Right away", "immediate")]
 PARTY_INSIGHT_CHOICES = [("Same as the host (default)", "parity"), ("Full bonus", "full"),
                          ("Game's own (+1 only)", "0")]
+# 0.7.7 (CL-2eec68): which party messages show; splitscreen mode turns All into Errors only (party_splitscreen_rules.h)
+PARTY_MESSAGES_CHOICES = [("All (default)", "all"), ("Errors only", "errors"), ("Off", "off")]
 PARTY_BACKUP_MINUTES_CHOICES = ["5", "10", "15", "30", "60", "0"]  # 0 = only at the start
 PARTY_BACKUP_KEEP_CHOICES = ["5", "10", "20", "50", "100"]
 # Party logging (docs/party/logging.md): BB_PARTY_LOG level and BB_PARTY_LOG_AREAS.
@@ -190,6 +192,8 @@ PARTY_INI_FLAGS = [
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
     ("party_item_notices", True),
+    # 0.7.7 (CL-2eec68): splitscreen mode, off by default (System > My party: Splitscreen)
+    ("party_splitscreen", False),
 ]
 
 # ---- The party settings tabs (0.7.3, user request): the Party tab holds hosting / joining /
@@ -467,6 +471,19 @@ MY_PARTY_TAB = [
          "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
          "no menu opens). Range: in the game, System > My party: Look & notices > NPC dialogue "
          "range (default 25 m). Default: on (bbport.ini party_npc_talk)."),
+    ]),
+    (1, 2, "Splitscreen", [
+        ("check", "party_splitscreen", "Splitscreen mode",
+         "For several game windows on one screen (the Nucleus Co-op splitscreen mod): the party HUD shows "
+         "only the compass (a direction arrow and the distance per companion), there are no name tags above "
+         "the companions, and party messages are cut to errors only (connection lost, failed join). Your own "
+         "setting, not a host rule. Default: off (bbport.ini party_splitscreen; in the game: "
+         "System > My party: Splitscreen)."),
+        ("combo", "party_messages_var", "Party messages:", [c[0] for c in PARTY_MESSAGES_CHOICES],
+         "Which party notices and message boxes show: all of them, only errors (the connection to the host "
+         "lost or unstable, a refused or failed join, a desync), or none. Splitscreen mode turns All into "
+         "Errors only (Off stays off). Your own setting. Default: All (bbport.ini party_messages; in the game: "
+         "System > My party: Splitscreen).", 14),
     ]),
     (0, 4, "Start & saves", [
         ("combo", "party_start_var", "Party starts:", [c[0] for c in PARTY_START_CHOICES],
@@ -2019,10 +2036,20 @@ def party_insight_label(ini: dict) -> str:
     return next((label for label, v in PARTY_INSIGHT_CHOICES if v == value), PARTY_INSIGHT_CHOICES[0][0])
 
 
-def party_rules_ini(switches: dict, insight_label: str) -> dict:
-    """bbport.ini values for the party gameplay switches ({key: bool}) and the Insight combo."""
+def party_messages_label(ini: dict) -> str:
+    """bbport.ini party_messages (all / errors / off, or 0 / 1 / 2) as the My Party tab's combo label."""
+    value = str(ini.get("party_messages", "")).strip().lower()
+    value = {"0": "all", "1": "errors", "2": "off", "error": "errors", "errors only": "errors"}.get(value, value)
+    return next((label for label, v in PARTY_MESSAGES_CHOICES if v == value), PARTY_MESSAGES_CHOICES[0][0])
+
+
+def party_rules_ini(switches: dict, insight_label: str, messages_label: str = "") -> dict:
+    """bbport.ini values for the party gameplay switches ({key: bool}), the Insight combo and (when given)
+    the Party messages combo."""
     values = {key: "1" if switches.get(key, default) else "0" for key, _, default in PARTY_INI_SWITCHES}
     values["party_guest_insight"] = dict(PARTY_INSIGHT_CHOICES).get(insight_label, PARTY_INSIGHT_CHOICES[0][1])
+    if messages_label:
+        values["party_messages"] = dict(PARTY_MESSAGES_CHOICES).get(messages_label, PARTY_MESSAGES_CHOICES[0][1])
     return values
 
 
@@ -2999,6 +3026,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_toasts = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_toasts"))
         self.party_conn_warnings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_conn_warnings"))
         self.party_item_notices = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_item_notices"))
+        self.party_splitscreen = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_splitscreen", False))
         self.party_guest_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_guest_lamps"))
         # The Party Rules / My Party checkboxes that are one bbport.ini key each (PARTY_INI_FLAGS)
         self.party_flag_vars = {key: getattr(self, key) for key, _ in PARTY_INI_FLAGS}
@@ -3049,6 +3077,7 @@ class BloodborneLauncher(tk.Tk):
             return next((label for label, v in choices if v == value), choices[0][0])
         self.party_start_var = tk.StringVar(value=combo_label(PARTY_START_CHOICES, "party_start"))
         self.party_insight_var = tk.StringVar(value=party_insight_label(_ini))
+        self.party_messages_var = tk.StringVar(value=party_messages_label(_ini))
         minutes = str(self.settings.get("party_backup_minutes", "10"))
         self.party_backup_minutes_var = tk.StringVar(
             value=minutes if minutes in PARTY_BACKUP_MINUTES_CHOICES else "10")
@@ -4036,6 +4065,7 @@ class BloodborneLauncher(tk.Tk):
         for key, _, default in PARTY_INI_SWITCHES:
             self.party_switch_vars[key].set(ini_flag_value(ini, key, default))
         self.party_insight_var.set(party_insight_label(ini))
+        self.party_messages_var.set(party_messages_label(ini))
         self.update_party_dependents()
         if hasattr(self, "discovery_tree"):
             self.party_discovery.set(ini_flag_value(ini, "party_discovery", True))
@@ -4084,7 +4114,8 @@ class BloodborneLauncher(tk.Tk):
         Party rules / My party pages show the same keys; a running game reads them at its next start)."""
         try:
             update_ini(bbport_ini_path(), party_rules_ini({k: v.get() for k, v in self.party_switch_vars.items()},
-                                                          self.party_insight_var.get()))
+                                                          self.party_insight_var.get(),
+                                                          self.party_messages_var.get()))
         except OSError as ex:
             self.log(f"[PARTY] Could not save the party rules to bbport.ini: {ex}")
         self._ini_stamp = self.ini_stamp()
