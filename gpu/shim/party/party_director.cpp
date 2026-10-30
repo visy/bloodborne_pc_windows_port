@@ -2228,6 +2228,13 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         const bool out = !steady && t.steps[t.next_step].out_ok && t.ran && t.world;
         if ((!steady && !out) || (!t.ran && !t.armed) || t.joins < t.steps[t.next_step].min_join) {
+            static Clock::time_point why_at{};
+            if (why_at == Clock::time_point{} || Seconds(why_at, now) >= 30.0) {
+                why_at = now;
+                Log("test: travel step %zu (%s) waits: steady %d, out_ok %d, ran %d, armed %d, world %d, joins %d/%d, map %s",
+                    t.next_step + 1, TravelStepName(next_kind), int(steady), int(t.steps[t.next_step].out_ok), int(t.ran),
+                    int(t.armed), int(t.world), t.joins, t.steps[t.next_step].min_join, MapName(s.map_id).c_str());
+            }
             return; // as the first step of a chain it still waits for the join
         }
         // S s after the later of: the last load (steady again), the previous step (or the join).
@@ -4485,7 +4492,9 @@ void PartyDirector::ConfigureFromEnv() {
                         step.coop_rise = std::atoi(item.c_str() + star + 1);  // "^N*K": the K-th time
                 }
                 // "%MAP#N" / "%MAP!": the map name ends at the next option (a '#2' in it never matched).
-                if (const std::size_t cut = step.map.find_first_of("#!@^"); cut != std::string::npos) {
+                // "%MAP&": also out of the party (the first parser does the same; guest_flag in the own world after an ending).
+                if (step.map.find('&') != std::string::npos) step.out_ok = true;
+                if (const std::size_t cut = step.map.find_first_of("#!@^&"); cut != std::string::npos) {
                     step.map.erase(cut);
                 }
                 step.wait_flag = wait_flag;
