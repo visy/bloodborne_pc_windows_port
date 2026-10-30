@@ -764,24 +764,27 @@ LW = {
 }
 
 
-def lfw_plan(spec):
+def lfw_plan(spec, slow=False):
     """[(direction, riders, car end before)] for the spec's rides: the car alternates ends from its start."""
     out, end = [], spec["start"]
-    kinds = os.environ.get("BB_LFW_KINDS", "").split(",") if os.environ.get("BB_LFW_KINDS") else spec["rides"]
+    # BB_LFW_KINDS=guest,host,both: a custom list. The slow-load phases (sprinting walks) ride singly: a sprinting walker
+    # overshoots the beside-the-trigger spot into the trigger and starts the ride alone (live lfws2-4)
+    kinds = os.environ.get("BB_LFW_KINDS", "").split(",") if os.environ.get("BB_LFW_KINDS") else (
+        spec["rides"][:2] if slow else spec["rides"])
     for riders in kinds[:int(os.environ.get("BB_LFW_RIDES", "0")) or None]:  # BB_LFW_RIDES=N: a shorter run
         out.append(("down" if end == "top" else "up", riders, end))
         end = "bottom" if end == "top" else "top"
     return out
 
 
-def lfw_chains(spec):
+def lfw_chains(spec, slow=False):
     """(host steps, guest steps) of the walk-in plan."""
     m, car = spec["map"], spec["car"]
     steps = {"host": [], "guest": []}
     # prelude: the host kills the regular enemies near both ends' walk-in routes (a brute standing in the Gascoigne
     # plaza stopped the walker dead, live lfw4), one end after the other, and ends on the first waiter's spot: the
     # guest's first step waits for it
-    first_end = lfw_plan(spec)[0][2]
+    first_end = lfw_plan(spec, slow)[0][2]
     pre = (("top", "far"), ("top", "out_h"), ("bottom", "far"), ("bottom", "out_h"))
     if os.environ.get("BB_LFW_PRELUDE") == "0":  # route validation runs: no enemy clearing, just the first waiter's spot
         pre = pre[3:]
@@ -790,7 +793,7 @@ def lfw_chains(spec):
                                                                       "^1" if n == 0 else ""))
         if len(pre) == 4:
             steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
-    for k, (d, riders, end) in enumerate(lfw_plan(spec)):
+    for k, (d, riders, end) in enumerate(lfw_plan(spec, slow)):
         other = "bottom" if end == "top" else "top"
         gate = "" if k == 0 else "?%s=%d" % (spec["pos"], spec["top_val"] if end == "top" else 1 - spec["top_val"])
         who = ("host", "guest") if riders == "both" else (riders,)
@@ -830,11 +833,11 @@ def lfw_chains(spec):
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
-                s.append("%s_stick=%.2f:%.2f:0.2:14@0.2%%%s" % (role, sx, sz, m))
+                s.append("%s_stick=%.2f:%.2f:0.2:30@0.2%%%s" % (role, sx, sz, m))
             else:
                 tx, ty, tz = spec["trig"][end]
                 cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
-                s.append("%s_stick=%.2f:%.2f:0.25:14@0.2%%%s%s" % (role, tx, tz, m, cond))
+                s.append("%s_stick=%.2f:%.2f:0.25:30@0.2%%%s%s" % (role, tx, tz, m, cond))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
             if os.environ.get("BB_LFW_EXIT") == "walk":
@@ -848,13 +851,13 @@ def lfw_chains(spec):
 
 def phase_lfw_for(key, slow=False, name=None):
     spec = LW[key]
-    host, guest = lfw_chains(spec)
+    host, guest = lfw_chains(spec, slow)
     common = "god,log_pos=0.5,log_objanim=%s,log_obj=%s,log_flag=%s/%s" % (spec["car"], spec["car"], spec["pos"], spec["busy"])
     env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=120"]
     if spec["set_flags"]:
         env.append("BB_PARTY_PROGRESS_TEST_SET=" + spec["set_flags"])
     if slow:
-        env += ["BB_TEST_LIFT_BUILD_DELAY=5", "BB_TEST_LIFT_BUILD_NEAR=30", "BB_TEST_LIFT_BUILD_DROP=60", "BB_TEST_WALK_SPRINT=1"]
+        env += ["BB_TEST_LIFT_BUILD_DELAY=16", "BB_TEST_LIFT_BUILD_NEAR=22", "BB_TEST_LIFT_BUILD_DROP=40", "BB_TEST_WALK_SPRINT=1"]
     extra = os.environ.get("BB_LFW_ENV", "")
     env += [e for e in extra.split(",") if "=" in e]
     starts = "(" + "|".join("|".join(str(a) for a in spec["start_anim"][d]) for d in ("down", "up")) + ")"
@@ -927,7 +930,7 @@ def lw_anim_at(L, i, spec, w):
 
 def check_lfw(v, L, key, tag):
     spec = LW[key]
-    plan = lfw_plan(spec)
+    plan = lfw_plan(spec, tag.endswith("s"))
     need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
     rides = [lw_rides(L, i, spec) for i in (0, 1)]
     v.step(tag + " rides: %d on each game" % len(plan), len(rides[0]) == len(plan) and len(rides[1]) == len(plan),
