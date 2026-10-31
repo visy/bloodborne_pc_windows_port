@@ -762,7 +762,7 @@ def _p(*a):
 LW = {
     "yh": dict(
         tag="lfw", map="m24_01", car="2411320", pos="12410350", busy="12415350", start="top", top_val=1,
-        lamp="2412953", set_flags="12410330,12410350",
+        lamp="2412953", set_flags="12410330,12410350", dismiss=True,  # flaky078: a "Beast x1" item box showed up mid-walk in lfw too (c3 run c)
         trig={"top": (-128.72, -44.3, -9.73), "bottom": (-128.72, -58.0, -9.73)},
         side={"top": (-128.19, -44.3, -9.20), "bottom": (-129.25, -58.0, -10.26)},
         out_h={"top": (-134.70, -44.2, -2.50), "bottom": (-125.28, -58.4, -11.69)},
@@ -969,6 +969,8 @@ def lfw_chains(spec, slow=False):
             if spec.get("door"):
                 dx, dz = spec["door"][end]
                 s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
+                if spec.get("dismiss"):
+                    s.append("%s_press=0x4000@0.5%%%s" % (role, m))  # OK on an item box before the last 2 m (flaky078)
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
