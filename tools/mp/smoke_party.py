@@ -1117,9 +1117,9 @@ def lw_anim_at(L, i, spec, w):
 REMOTE_RX = re.compile(r"Party B2: remote chrs: \[mode \d+ 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)")
 
 
-def copy_drift(real, copies, window=1.5):
+def copy_drift(real, copies, window=6.0):
     """Worst distance (m) of a remote copy from the player's real positions: each copy sample against the real samples within
-    +-window s (the copy lags by the link and the log interval; a lift runs 8 m/s). [(t, x, y, z)] lists. -> (worst, t, n)."""
+    +-window s (a lag-tolerant FREEZE detector: the games run at different game-time rates under load, 90 FPS lfwc: the guest's lift ride took twice the wall time of the host's copy of it; a copy that stops updating while its player moves stays 10+ m from every real spot within the window). [(t, x, y, z)] lists. -> (worst, t, n)."""
     worst, wt, n = 0.0, 0.0, 0
     for t, x, y, z in copies:
         near = [r for r in real if abs(r[0] - t) <= window]
