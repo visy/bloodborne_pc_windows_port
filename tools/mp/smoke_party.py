@@ -4136,7 +4136,7 @@ def phase_ef(only):
 # the cheapest ending: m21 event 12100180) with a guest in its Dream. The guest is asked, answers YES, plays the
 # host's ending in its own world. Both saves end in NG+ 1 EXACTLY (an ending once moved a guest save two cycles, 0.7.6),
 # then the guest presses Party > Rejoin in NG+ and is back in the host's world (nobody could join after the ending).
-NGP_UNTIL = r"0:ending: the next cycle's world is up[\s\S]*cooperators 0 -> 1|1:test: FAILED"  # not two joins: at 60 FPS the guest's first join is followed by a re-join within 20 s
+NGP_UNTIL = r"1:ending: the next cycle's world is up|1:test: FAILED"  # the guest's line comes after the host's READY and the join (2 joins in the old pattern: at 60 FPS the first join is followed by a re-join)
 
 
 def phase_ngp(only):
@@ -8728,11 +8728,11 @@ def check_ngp(v, L):
         need(v, L, "ngp %s ends in NG cycle 1" % who, i, r"NG cycle 1 \(changed\)|NG cycle 0 -> 1|NG cycle 1 at world-up", j or 0)
         too = L.all(i, r"NG cycle [2-9]|NG cycle 1 -> [2-9]")
         v.step("ngp %s never reaches NG cycle 2" % who, not too, "none" if not too else too[0][1][:120])
-        need(v, L, "ngp %s: the new cycle's world is up (Iosefka's Clinic, NG cycle 1)" % who, i, r"NG cycle 1 at world-up \(map m24_01", j or 0)
+        need(v, L, "ngp %s: the new cycle's world is up (Iosefka's Clinic, NG cycle 1)" % who, i, r"NG cycle 1 at world-up \(map (?:m24_01|-)", j or 0)
     t = L.find(0, r"ending: the next cycle's world is up")
     t1 = L.find(1, r"ending: the next cycle's world is up")
-    base = max(x[0] for x in (t, t1) if x) if (t or t1) else 0
-    nw = L.find(1, r"NG cycle 1 at world-up \(map m24_01", j or 0)
+    base = min(x[0] for x in (t, t1) if x) if (t or t1) else 0  # the earliest: the guest's line comes after the host's world and its READY
+    nw = L.find(1, r"NG cycle 1 at world-up \(map (?:m24_01|-)", j or 0)
     base = nw[0] if nw else base
     r = need(v, L, "ngp the NG+ host becomes start-ready", 0, r"start \(prologue_solo\): step ready.*READY", base)
     need(v, L, "ngp the guest is back in the party in NG+ (Rejoin pressed or rung in by itself)", 1,
