@@ -82,3 +82,71 @@ def test_copy_freeze_detector_separates_a_stopped_copy_from_a_lagging_one():
     assert S.copy_freeze(real, frozen)[0] > 40.0
     gappy = [c for c in frozen if not 3 <= c[0] <= 16]  # a gap in the log is not a freeze
     assert S.copy_freeze(real, gappy)[0] == 0.0
+
+
+def _simulate(spec, slow):
+    """A coarse run of both chains: a step runs when its ?near / ?obj condition holds; a stick step onto a trigger starts a ride (the car's
+    start / arrival / end animations are then seen). Returns the steps left over (a deadlock: two steps waiting on each other)."""
+    host, guest = S.lfw_chains(spec, slow)
+    chains = {"host": list(host), "guest": list(guest)}
+    pos = {"host": None, "guest": None}
+    seen = {"host": set(), "guest": set()}  # per player: an animation event is consumed by the step that waited for it
+    trig_xz = {(round(t[0], 2), round(t[2], 2)) for t in spec["trig"].values()}  # both ends share the xz: the car's end tells which
+    car = [spec["start"]]
+    last_trig = {"host": False, "guest": False}
+    idx = {"host": 0, "guest": 0}
+    progress = True
+    while progress:
+        progress = False
+        for role, other in (("host", "guest"), ("guest", "host")):
+            for _once in range(1):  # one step per player per round: both chains advance together, as in the game (a step's delay is ~1 s)
+                if idx[role] >= len(chains[role]):
+                    break
+                step = chains[role][idx[role]]
+                head, _, cond = step.partition("?")
+                if cond.startswith("near="):
+                    x, _y, z, r = (float(c) for c in cond[5:].split(":"))
+                    p = pos[other]
+                    if p is None or math.dist(p, (x, z)) > r:
+                        break
+                elif cond.startswith("obj="):
+                    if int(cond.split(":")[1]) not in seen[role]:
+                        break
+                    seen[role].discard(int(cond.split(":")[1]))
+                body = head.split("=", 1)[1].split("@")[0]
+                if "_move=" in head or "_stick=" in head:
+                    f = body.split(":")
+                    pos[role] = (float(f[0]), float(f[2 if "_move=" in head else 1]))
+                    key = (round(pos[role][0], 2), round(pos[role][1], 2))
+                    retry = last_trig[role]
+                    last_trig[role] = "_stick=" in head and key in trig_xz
+                    if "_stick=" in head and key in trig_xz and not retry:  # the repeated stick step is a retry, not a second ride
+                        d = "down" if car[0] == "top" else "up"
+                        car[0] = "bottom" if car[0] == "top" else "top"
+                        for r_ in seen:
+                            seen[r_] = {*spec["start_anim"][d], int(spec["arr"][d]), spec["end_anim"][d]}  # a ride's events replace the last ride's
+                elif "_route=" in head:
+                    w = body.split("/")[-1].split(":")
+                    pos[role] = (float(w[0]), float(w[2]))
+                idx[role] += 1
+                progress = True
+    return {r: chains[r][idx[r]:] for r in chains}
+
+
+def test_the_two_chains_never_wait_on_each_other():
+    for key, slow in _cases():
+        left = _simulate(S.LW[key], slow)
+        assert not left["host"] and not left["guest"], (key, {r: [s[:70] for s in v][:2] for r, v in left.items()})
+
+
+def test_the_wait_simulation_sees_a_real_deadlock(monkeypatch):
+    """The old choreography (the first rider never placed beside the trigger) must be reported as a deadlock."""
+    real = S.lfw_chains
+
+    def broken(spec, slow=False):
+        host, guest = real(spec, slow)
+        return [s for s in host if ":0:native@0.5" not in s], guest
+
+    monkeypatch.setattr(S, "lfw_chains", broken)
+    left = _simulate(S.LW["yh"], False)
+    assert left["guest"], "a guest waiting for a host that never stands beside the trigger must be left over"

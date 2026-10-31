@@ -1004,6 +1004,11 @@ def lfw_chains(spec, slow=False):
                 # liftreg077: the slow phases (sprint overshoot) end the step inside the trigger cylinder (r 0.55): at 0.25 a sprinter
                 # circles the trigger, walks off the rising car and into the open shaft (live lfwcs: HP 0 at y -70)
                 s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s%s" % (role, tx, tz, "0.45" if slow else "0.25", m, cond))
+                # flaky078: the walker's heading flips between +100 and -12 deg for all 30 steps of one stick step and hovers 0.8 m from the
+                # trigger without entering it (lfw 90 FPS: the ride never started, the host waited 240 s). The same step again (no
+                # condition): a second and third try from where it stands; once the ride has started it is "arrived" at once (xz only)
+                for _ in range(2):
+                    s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s" % (role, tx, tz, "0.45" if slow else "0.25", m))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
             if os.environ.get("BB_LFW_EXIT") == "walk":
