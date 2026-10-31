@@ -902,7 +902,10 @@ def lfw_chains(spec, slow=False):
                 # the walker only got up by the route's "hop", when it hopped at all: lfwc c3 "STOPPED at waypoint 4/4 (15.9, 0.1, 185.1)").
                 # Start on the second waypoint, as the staggered second rider does (it never got stuck).
                 pts = route.split("/")
-                far, route = tuple(float(x) for x in pts[1].split(":")), "/".join(pts[2:])
+                # a pair: the first rider starts one waypoint AHEAD of where the staggered second rider (pts[1]) stands, so the second
+                # one never has to pass it in the narrow pocket (lfwc 90 FPS: both warped to pts[1], the host stuck behind the idle guest)
+                n0 = 2 if riders == "both" else 1
+                far, route = tuple(float(x) for x in pts[n0].split(":")), "/".join(pts[n0 + 1:])
             if second and spec.get("stagger"):
                 # the second rider starts 2 waypoints further on: two walkers warped to one spot push each other off
                 # a ledge (live lfwc4: the top pocket's floor edge)
