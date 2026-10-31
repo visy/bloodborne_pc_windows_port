@@ -116,13 +116,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"error": "body must be a JSON object"})
         try:
             if self.path == "/v1/enroll":
-                wait = lim.hit(lim.key("e", ip), cfg["enroll_per_ip_day"], DAY)
-                if wait:
-                    return self.limited(wait)
-                wait = lim.hit("global-enroll", cfg["enroll_global_day"], DAY)
+                # only a successful enrollment uses up a slot: a failed one (bad CSR, server error) left a player
+                # locked out for a day after three tries (2026-10-31, "Minutes left: 1436")
+                ekey = lim.key("e", ip)
+                wait = lim.peek(ekey, cfg["enroll_per_ip_day"], DAY) or lim.peek("global-enroll", cfg["enroll_global_day"], DAY)
                 if wait:
                     return self.limited(wait)
                 resp = s.enroll(req.get("csr"))
+                lim.hit(ekey, cfg["enroll_per_ip_day"], DAY)
+                lim.hit("global-enroll", cfg["enroll_global_day"], DAY)
             else:
                 iid = req.get("install_id")
                 if isinstance(iid, str):
