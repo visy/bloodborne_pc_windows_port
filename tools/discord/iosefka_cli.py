@@ -753,7 +753,7 @@ def _run(argv, who, out, db, stdin):
         sample = clinic_vpn.fetch(target) if target else {"ok": False, "error": "not set up"}
         if target and not sample.get("unconfigured"):
             clinic_vpn.store(c, sample)
-        out.write(clinic_vpn.status_text(sample, clinic_vpn.summary(c, time.time(), target)) + "\n")
+        out.write((clinic_vpn.status_text(sample, clinic_vpn.summary(c, time.time(), target)) + "\n").encode())
         return 0
     if a.cmd == "export":
         _do_export(c, out)
