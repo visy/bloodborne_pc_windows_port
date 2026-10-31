@@ -430,3 +430,24 @@ class TestWithOpenvpn(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFailedEnrollFree(Base):
+    def tune(self):
+        return {"enroll_per_ip_day": 2, "enroll_global_day": 200}
+
+    def test_failed_enrollments_do_not_count(self):
+        self.start()
+        for _ in range(5):   # bad CSRs: refused, but no day-long lockout
+            self.assertNotEqual(self.post("/v1/enroll", {"csr": "not a csr"})[0], 429)
+        self.enroll()
+        self.enroll()
+        _, csr = make_csr(self.td, "f")
+        self.assertEqual(self.post("/v1/enroll", {"csr": csr})[0], 429)   # two successes use the two slots
+
+    def test_peek_counts_nothing(self):
+        lim = core.RateLimiter()
+        for _ in range(5):
+            self.assertEqual(lim.peek("k", 1, 10, now=100), 0)
+        self.assertEqual(lim.hit("k", 1, 10, now=100), 0)
+        self.assertGreater(lim.peek("k", 1, 10, now=101), 0)
