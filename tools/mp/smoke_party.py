@@ -2437,7 +2437,7 @@ def prep_chalenter(root: Path):
 
 def phase_cae(only):
     host = ("log_pos,place=0x15000000:-15.5:-5.43:-16.9:0,approach=-17.1:-16.9:0.2,face=-18.27:-16.88,prompt=First Ritual Altar,"
-            "seq=" + "/".join(["wait"] * 8) + "/cross/?cross@Use the Ritual Altar/wait/down/down/cross"
+            "seq=" + "cross/?cross@Use the Ritual Altar/wait/down/down/cross"
             + ",host_press=0@40%m29!")
     return dict(
         name="cae", seconds=240, count=2, headless=0, prep=prep_chalenter, post=post_chalamp, pad=1,
@@ -2465,7 +2465,7 @@ def prep_chalown(root: Path):
 def phase_cao(only):
     walk = "approach=-17.1:-16.9:0.2,face=-18.27:-16.88,prompt=First Ritual Altar"
     host = ("log_pos," + os.environ.get("CAO_AIDS", "log_pos") + ",place=0x15000000:-15.5:-5.43:-16.9:0," + walk
-            + ",seq=" + "/".join(["wait"] * 6) + "/" + CAO_SEQ + os.environ.get("CAO_TAIL", ""))
+            + ",seq=" + CAO_SEQ + os.environ.get("CAO_TAIL", ""))
     return dict(
         name="cao", seconds=int(os.environ.get("CAO_SECONDS", "260")), count=2, headless=0, prep=prep_chalown, post=post_chalamp, pad=1,
         env=["BB_PARTY_TRAVEL_CHOICE=party"],
@@ -2490,7 +2490,7 @@ def prep_chalqw(root: Path):
 
 def phase_caw(only):
     host = ("log_pos,goods=6109:1,place=0x15000000:-15.5:-5.43:-16.9:0,approach=-17.1:-16.9:0.2,face=-18.27:-16.88,prompt=First Ritual Altar,"
-            "seq=" + "/".join(["wait"] * 8) + "/cross/?cross@Use the Ritual Altar/wait/down/down/cross"
+            "seq=" + "cross/?cross@Use the Ritual Altar/wait/down/down/cross"
             + ",host_press=0@40%m29!" + os.environ.get("CAW_TAIL", ""))
     return dict(
         name="caw", seconds=int(os.environ.get("CAW_SECONDS", "300")), count=2, headless=0, prep=prep_chalqw, post=post_chalamp, pad=1,
@@ -5700,7 +5700,7 @@ def prep_cis(root: Path):
 
 def phase_cis(only):
     host = ("log_pos,log_flag=5090/5091/12901801,place=0x15000000:-15.5:-5.43:-16.9:0,approach=-17.1:-16.9:0.2,face=-18.27:-16.88,prompt=First Ritual Altar,"
-            "seq=" + "/".join(["wait"] * 8) + "/cross/?cross@Use the Ritual Altar/wait/down/down/cross"
+            "seq=" + "cross/?cross@Use the Ritual Altar/wait/down/down/cross"
             + ",host_press=0@40%m29!" + os.environ.get("CIS_HOST_TAIL", ",host_kill=2900101:hp@20%m29,host_lamp=2102950@10%m29"))
     g1 = "log_pos,log_flag=5090/5091/12901801,insight=" + os.environ.get("CIS_INSIGHT", "20") + os.environ.get("CIS_GUEST_TAIL", "")
     keys = os.environ.get("CIS_KEYS", "right,wait,right,wait,right,wait,right,wait,right,wait,wait,down,down,down,down,wait,wait,buy,wait")
@@ -9678,7 +9678,7 @@ FLAKY_TRIES = 3
 def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
     """run_phase + check; returns the Verdict rows of the best run (check(verdict, Logs, dir))."""
     best = None
-    tries = (5 if name in ("cae", "cao", "cab", "cis", "caq", "caw") else FLAKY_TRIES) if name in FLAKY_PHASES and not os.environ.get("BB_SMOKE_NO_RETRY") else 1
+    tries = (4 if name in ("cao",) else FLAKY_TRIES) if name in FLAKY_PHASES and not os.environ.get("BB_SMOKE_NO_RETRY") else 1
     for k in range(tries):
         if k:
             import shutil
