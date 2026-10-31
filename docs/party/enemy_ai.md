@@ -134,3 +134,15 @@ event ChangeTarget path 0x1299CD0 hands the boss the one who was the target long
 Log: `boss attention: boss ... turns to player chr ...`. Switch `party_boss_share` / `BB_PARTY_BOSS_SHARE=0`. With the rule on
 the same run: boss at the guest (39/51 samples < 4 m), guest HP to 0 while the host stood by. Not tested: 3+ players,
 bosses other than Gascoigne, the 8 s / 30 m values against real play.
+
+## Laurence and the guest (0.7.8, bossg078, report "bosses never attack the guest")
+
+Not a bug in the logs: a player's host and guest logs (Nightwatch 0.2.6 beta 3, 2 players, Laurence) show the host-side
+attention share firing every fight (alternating host / guest chr), the guest's game showing the boss bar in every fight
+(also when the guest went through the fog first: the bar and "went through boss fog" lines come in either order) and
+the guest taking ~40 boss hits, dying in fights 1-3; the host's copy of the guest loses HP to 0 / 1 in most fights.
+The boss hits once per 8 s turn, so a guest next to the host feels ignored half of the time (by design, PickAttention).
+Smoke phase `bg` (group `boss_guest`, Laurence, BR fixture, host god beside the boss, mortal guest 8 m away): the bar is up on
+both games, the boss turns to the guest and its hit lands on the guest's game 4.5 s after the turn (both screens looked at).
+Tune knobs: BB_BG_HOSTDIST, BB_BG_GUESTDIST, BB_BG_LAP. Not reproduced / unproven: the intermittent "stuck on the statue"
+(CL-7b1d4e), the guest not starting the fight (every guest log with a fight shows the bar).
