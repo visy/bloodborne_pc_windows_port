@@ -80,3 +80,19 @@ mesh (at least half of them and 2, else the local frame stays). Found: m22 (-185
 the old one there): m27 (two parts are rotated -70 deg, 0 of 2 spots), m29 (Chalice layouts, 1 of 7), m32 (yaw -20 deg, 1 of 6).
 Rotated parts would need a per-part transform. Goals off the mesh by up to 10 m (the br walk through an opened fog
 wall) are walked straight to, as a tail of the route. `tests/test_nav_cache.py` checks the offsets against the game data.
+
+Placements with yaw: a candidate is origin + yaw (Y rotation in degrees at +0x30 of the part, applied as
+x' = ox + x cos + z sin, z' = oz - x sin + z cos; both signs are tried and the lamp spots pick). m27: (-190.31, -187.18, 312.4)
+yaw -70, 2 of 2 spots. m32 is two regions placed apart (origins (-429.37, -191.25, 511.9) and (1470.63, -191.25, 711.9), yaw -20): pieces with a
+spot on them take their own placement, the rest are glued on by coinciding vertices, 15 pieces with neither are left
+out (not guessed); 6 of 6 spots on the mesh and the rj start (-458, -176.3, 393) now plans. m29 (Chalice) stays in the
+local frame: the layout is assembled from blocks at run time, so the placement of each block would have to come from the
+running game (the dungeon's block table), not from the MSB; not guessed.
+
+Goals far off the mesh (a ledge to fall from, rj's lake) use the old straight walk; an island (no route) still fails.
+
+Camera model in m34 / m35: the render-matrix yaw disagreed with the motion in the first 3-4 s after a walk starts
+(50-170 deg, no pattern) and did not come back (log "camera model dropped ... block rows"); the observed offset then
+steers, all walks arrive. The block is the same one (the rows are unit vectors, up = +y); the likely cause is the
+camera still swinging after the warp that put the player there. Unproven; a longer walk with the raw yaw logged each
+second would settle it.
