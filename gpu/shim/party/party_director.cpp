@@ -295,7 +295,7 @@ struct Test {
     Clock::time_point route_started{};
     bool route_god = false;         // the route made the chr invincible (cleared at its end)
     // Navmesh walker (nav_walk.h, docs/party/walker.md): set up at the first tick of a walk; nav_on = this walk is
-    // steered by it (BB_TEST_WALKER=old keeps the pulse walker).
+    // steered by it (BB_TEST_WALKER=nav; default: the pulse walker).
     bool nav_init = false, nav_on = false;
     std::string st_last_line;       // the menu walk's last step line (for the 'left by a load' note)
     bool st_parked_logged = false;
@@ -2900,12 +2900,12 @@ void WritePadFile(const char* tokens) {
 }
 
 // ---- Navmesh test walker (nav_walk.h) ----
-// BB_TEST_WALKER=old keeps the pulse walker (A/B); default nav. BB_NAV_CACHE = the directory of nav_mAA.bin files
+// BB_TEST_WALKER=nav turns the nav walker on (A/B); the default is the old pulse walker until the lift phases are proven. BB_NAV_CACHE = the directory of nav_mAA.bin files
 // (tools/party/nav_cache.py; the harness builds it).
 bool NavWalkerWanted() {
     static const bool on = [] {
         const char* e = std::getenv("BB_TEST_WALKER");
-        return !(e && (std::strcmp(e, "old") == 0 || std::strcmp(e, "0") == 0));
+        return e && (std::strcmp(e, "nav") == 0 || std::strcmp(e, "1") == 0);  // opt-in for now (default old)
     }();
     return on;
 }

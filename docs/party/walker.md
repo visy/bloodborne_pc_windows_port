@@ -5,7 +5,7 @@ The smoke harness walks the players with the real left stick (`BB_PAD_FILE`). Th
 walls. The nav walker (`gpu/shim/party/nav_walk.h`, hooked into `party_director.cpp`) plans on the game's own navmesh
 and steers like a player.
 
-Switches: `BB_TEST_WALKER=nav|old` (default nav), `BB_NAV_CACHE` (set by `tools/mp/instances.py`),
+Switches: `BB_TEST_WALKER=nav|old` (default old for now; nav is opt-in until lfw/lfwc and lift boarding are proven), `BB_NAV_CACHE` (set by `tools/mp/instances.py`),
 `BB_TEST_MOVE_WALK=1` (see below). `BB_TEST_WALK_SPRINT=1` still holds Circle.
 
 ## 1. Where the AI's path data is (RE, with confidence)
