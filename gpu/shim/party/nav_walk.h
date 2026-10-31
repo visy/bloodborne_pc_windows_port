@@ -488,16 +488,19 @@ inline Stick MakeStick(double angle, double tilt) {
 /// World direction yaw (atan2(dx, dz)) the chr moves in for a stick angle: the camera yaw plus the stick angle.
 /// The camera yaw is the direction the camera looks (player - camera position).
 struct CamModel {
-    double off = 0;       // current offset (world yaw of stick-forward)
+    double off = 0;       // current offset (world yaw of stick-forward) = raw camera yaw + resid
     bool have = false;    // an offset is known
     bool from_cam = false;
     bool mismatch = false;  // the camera model disagreed with the observed motion: the observation rules
+    double raw = 0;       // atan2(player - camera): the camera orbit centre is not exactly the player, so
+    double resid = 0;     // the observed motion trims it (low-pass, at most 0.5 rad)
     double obs_off = 0;   // low-pass of the observed offset (log / fallback)
     int obs_n = 0, bad = 0;
 
     void FromCamera(const V3& cam, const V3& player) {
         if (mismatch || Dist2(cam, player) < 0.3) return;
-        off = std::atan2(double(player.x) - cam.x, double(player.z) - cam.z);
+        raw = std::atan2(double(player.x) - cam.x, double(player.z) - cam.z);
+        off = Wrap(raw + resid);
         have = from_cam = true;
     }
     /// A step of observed motion under a known stick angle: speed above ~1.5 m/s, stick tilt above 0.7.
@@ -506,10 +509,15 @@ struct CamModel {
         obs_off = obs_n == 0 ? o : Wrap(obs_off + 0.25 * Wrap(o - obs_off));
         ++obs_n;
         if (from_cam && !mismatch) {
-            bad = std::fabs(Wrap(o - off)) > 0.45 ? bad + 1 : 0;
+            const double err = Wrap(o - raw);
+            bad = std::fabs(err) > 0.45 ? bad + 1 : 0;
             if (bad >= 8) {  // the camera position is not in the player's frame (or not the view camera)
                 mismatch = true;
                 from_cam = false;
+                resid = 0;
+            } else if (std::fabs(err) <= 0.45) {
+                resid = std::clamp(resid + 0.15 * Wrap(err - resid), -0.5, 0.5);
+                off = Wrap(raw + resid);
             }
         }
         if (!from_cam && obs_n >= 2) {
