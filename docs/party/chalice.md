@@ -215,6 +215,13 @@ Before this work the party answered `word_search` / `random_join` with `{"ResKin
   dungeon unless its `title_req` names the host's ChannelId (its own slot's). Last net:
   `ChaliceEmptyWorldTick` - a guest in the session whose map stays unknown for 3 s while the
   host's roster map is in area 29 leaves the session (home load) with a notice.
+* **The guest's game must be able to make the channel request** (0.7.8, NW-5e27806): 0x1e65290 returns nothing unless
+  FrpgNetMan +8 is set and +0x9f6 / +0x9f8 / +0xa50 are clear (the FROM client is online). DeliverSummon asks 0x1e65290 for the
+  id first (`ChannelRequestById`): not possible -> the room is not handed over (3 tries, a notice), so the game never joins a
+  dungeon it cannot fetch; after the handler a missing +0xc0 is made for the entry. Two empty dungeon loads in a row
+  (`dsummon::kMaxEmptyLoads`) stop the guest's ringing (notice; Party > Rejoin resets). Cause of the live loops: the
+  "Unlock Game Region" patch (sell region 5, no ss.info URL: the game offline; from_api_schema.md 2.1), fixed by pointing
+  region 5's URL at the others'. Smoke `caa`.
 * **No gather into a dungeon**: GatherGuest skips the gather while the host's map or lamp is in
   area 29 (it warped the guest to the host's dungeon lamp = its own slot's dungeon).
 * **The automatic flow**: host and guests are in the Hunter's Dream (B1 travel follows the host
