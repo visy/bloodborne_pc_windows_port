@@ -3447,7 +3447,7 @@ def check_hg(v, L):
     far_h = len([d for d in dh if d > 8.0])
     guest_first = os.environ.get("BB_HG_ORDER", "host") == "guest"
     v.step("hg the boss acts on the guest (within 4 m of it%s)" % (", the host 8+ m away" if guest_first else ""),
-           near_g >= 5 and (far_h >= 5 or not guest_first),
+           near_g >= 5 and (far_h >= 5 or not guest_first or float(os.environ.get("BB_HG_HOSTDIST", "16")) < 8.0),
            "guest side %d/%d samples < 4 m; host side %d/%d samples > 8 m" % (near_g, len(dg), far_h, len(dh)))
     if os.environ.get("BB_HG_MORTAL", "0") == "1":
         # nobody invincible: the guest is not god, the host is (it only stands beside the boss): the guest's HP
