@@ -1004,7 +1004,7 @@ def phase_lfw_for(key, slow=False, name=None, far=False, sprint=True):
         spec = dict(spec, _noenemies=True)
     host, guest = lfw_chains(lfw_far_spec(spec) if far else spec, slow)
     common = "god,log_pos=0.5,log_objanim=%s,log_obj=%s,log_flag=%s/%s" % (spec["car"], spec["car"], spec["pos"], spec["busy"])
-    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=%d" % (180 if far else 120)]
+    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=%d" % (180 if far else 240)]  # flaky078: 240: the guest's script runs 30-50 s behind the host's; a wait that long is a failed row (none_of in check_lfw), never a skip
     if spec["set_flags"]:
         env.append("BB_PARTY_PROGRESS_TEST_SET=" + spec["set_flags"])
     if slow:
