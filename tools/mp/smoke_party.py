@@ -870,9 +870,12 @@ def lfw_chains(spec, slow=False):
         for role in ("host", "guest"):
             s = steps[role]
             first = k == 0
+            # smokefix077: a rider of the previous ride has the exit move at the arrival (the ride is over) as its previous step: no gate
+            # (the guest's end-animation gate of ride 2 never fired: lfwbs rider 700 s, lfws / lfwcs waiter: its walk was never sent)
+            rode_before = k > 0 and (lfw_plan(spec, slow)[k - 1][1] in ("both", role))
             if role not in who:
                 # the one who waits: at the other end (the arrival), beside where the rider steps out
-                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec.get("wait", spec["out_g"])[other]), "1" if first else "14", m, gate))
+                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec.get("wait", spec["out_g"])[other]), "1" if first else "14", m, "" if k and rode_before else gate))  # a rider of the previous ride: its exit move at the arrival came just before
                 # the player who does not ride walks a few metres by the stick while the car moves (the user's report:
                 # "the other player runs in place and cannot move while the elevator moves"); it starts once the rider
                 # stands in the trigger box
@@ -885,7 +888,6 @@ def lfw_chains(spec, slow=False):
             second = riders == "both" and role == "guest"
             # smokefix077: a rider of the previous ride has the exit move at the arrival (the ride is over) as its previous step: no gate
             # (the guest of lfwbs never saw the end-animation gate of ride 2 and waited 700 s); a waiter before needs it
-            rode_before = k > 0 and (lfw_plan(spec, slow)[k - 1][1] in ("both", role))
             far, route = spec["far"][end], spec["route"][end]
             pin = 10 if far in spec.get("farlong", {}).values() and spec.get("_farwalk") else 4  # a far warp: the floor streams in slowly
             if second and spec.get("stagger"):
