@@ -702,8 +702,8 @@ public:
         const V3& goal = goals_.back();
         const double to_goal = Dist2(pos, goal);
         // arrival: inside the radius of the real goal, or at the end of a path that ends where the goal snaps
-        const bool end_reached = path_.Remaining() < 0.7;
-        if (to_goal <= radius_ || (end_reached && to_goal <= radius_ + stats.snap_goal + 0.7)) {
+        const bool end_reached = path_.Remaining() < 0.25;
+        if (to_goal <= radius_ || (end_reached && to_goal <= radius_ + stats.snap_goal + 0.25)) {
             state_ = WalkState::Done;
             stats.ended = now;
             o.state = state_;
