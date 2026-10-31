@@ -792,6 +792,7 @@ LW = {
         # liftreg077: the prelude's kills drop an item (a blood gem: "Beast x1" box on the host); the box stays up and blocks the
         # stick walks of the later rides (the lfwc / lfwcbs flake), so the host presses Cross after each kill group (dismiss)
         lamp="2412953", set_flags="", dismiss=True,
+        skip1={"top": 1},
         door={"top": (24.1, 192.3), "bottom": (26.0, 194.5)},
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
         side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
@@ -896,6 +897,12 @@ def lfw_chains(spec, slow=False):
             # (the guest of lfwbs never saw the end-animation gate of ride 2 and waited 700 s); a waiter before needs it
             far, route = spec["far"][end], spec["route"][end]
             pin = 10 if far in spec.get("farlong", {}).values() and spec.get("_farwalk") else 4  # a far warp: the floor streams in slowly
+            if not (second and spec.get("stagger")) and spec.get("skip1", {}).get(end) and not spec.get("_farwalk"):
+                # flaky078: lfwc's top pocket: the first waypoint lies on the ledge 3 m BELOW the platform (a warp there lands on y 0.1 and
+                # the walker only got up by the route's "hop", when it hopped at all: lfwc c3 "STOPPED at waypoint 4/4 (15.9, 0.1, 185.1)").
+                # Start on the second waypoint, as the staggered second rider does (it never got stuck).
+                pts = route.split("/")
+                far, route = tuple(float(x) for x in pts[1].split(":")), "/".join(pts[2:])
             if second and spec.get("stagger"):
                 # the second rider starts 2 waypoints further on: two walkers warped to one spot push each other off
                 # a ledge (live lfwc4: the top pocket's floor edge)
