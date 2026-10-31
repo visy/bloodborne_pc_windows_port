@@ -56,10 +56,22 @@ its firewall are prepared for /22 only).
 
 ---
 
-## 2. Planned: the launcher drops an idle VPN connection and reconnects on demand
+## 2. The launcher drops an idle VPN connection and reconnects on demand
 
-**Status:** specified, not implemented yet. NW's launcher owns the OpenVPN connection (`Core/NightwatchVpn.cs`,
-`Views/SeamlessPage.cs` `ToggleVpn`/`WatchVpn`), so this is launcher-only work.
+**Status:** written as a patch, **not built or run on our side** (we do not build NW): build it and run `SeamlessTests`
+before release. Apply after item 1:
+
+```
+git am /path/to/bloodborne_pc_windows_port/docs/nightwatch/vpn-idle-launcher.patch
+```
+
+Files: new `Core/VpnIdle.cs` (the pure rule), `Views/SeamlessPage.cs` (`VpnIdleCheck`, the setting row, a
+`byPlayer` flag on `ToggleVpn` so a manual Disconnect is remembered), `MainWindow.xaml.cs` (window activation, a
+30 s timer, the Play wait), `Core/LauncherSettings.cs` (defaults), `SeamlessTests/VpnTests.cs` (`IdleRules`). The new
+texts are English only: add them to the translations.
+
+NW's launcher owns the OpenVPN connection (`Core/NightwatchVpn.cs`, `Views/SeamlessPage.cs` `ToggleVpn`/`WatchVpn`),
+so this is launcher-only work.
 
 **Why.** A launcher left open keeps its tunnel up forever: on 2026-10-31, 18 of 30 connected players were in no game.
 Each one holds a pool address and server capacity.
@@ -77,9 +89,10 @@ Each one holds a pool address and server capacity.
 - Setting: Co-op tab "Disconnect the VPN when idle" (on by default) and the minutes; stored with the other launcher
   settings.
 
-**Shape:** a pure policy class (inputs: owned, wanted, connected, game running, window focused, last focus time, page,
-now; output: none / disconnect / connect) with SeamlessTests cases, wired to `MainWindow` `Activated`/`Deactivated`,
-the page navigation and the Play path, reusing `ToggleVpn`'s connect/disconnect code (ownership, `WatchVpn`, notes).
+**Check:** `SeamlessTests` passes (`IdleRules`); by hand: Connect on Co-op, put the launcher in the background with no
+game for 10 min (or set `vpn_idle_minutes` to 1): the VPN bar shows "Disconnected while idle"; bring the window back:
+it reconnects; press Disconnect, background it, bring it back: it stays off; Play as host after an idle drop: the game
+starts once the tunnel is up (15 s at most).
 
 ---
 
