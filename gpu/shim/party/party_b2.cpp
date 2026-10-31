@@ -6640,6 +6640,35 @@ void LimboBossTargetTick(double now) {
     }
 }
 
+/// BB_PARTY_AI_LOG=1 diagnostics for the boss attention: the boss AI's target entries (the list
+/// 0x12B2760 adds to: AI chr vfunc+0x160 -> +0xB0 -> +0x560, entries from +0x18, next at +8; entry flags
+/// byte +2, kind +0x28, ref at +0x48 / +0x60 whose vfunc+0xA8 is the chr handle), logged after a turn.
+void BossTargetDump(u64 boss, u32 bh, const char* tag) {
+    u64 vt = 0, fn = 0;
+    if (!SafeGet(boss, &vt) || !vt || !SafeGet(vt + 0x160, &fn) || !fn) return;
+    const u64 ai = reinterpret_cast<u64(BB_COOP_SYSV*)(u64)>(fn)(boss);
+    const u64 holder = ai ? Field<u64>(Field<u64>(ai, 0xb0), 0x560) : 0;
+    if (!holder) {
+        Log("boss target dump %s: boss %08x: no target holder", tag, bh);
+        return;
+    }
+    std::string out;
+    u64 n = Field<u64>(holder, 0x18);
+    for (int k = 0; n && k < 12; ++k, n = Field<u64>(n, 8)) {
+        const u32 kind = Field<u32>(n, 0x28);
+        u32 handle = ~0u;
+        const u64 ref = kind == 1 ? n + 0x48 : kind == 2 ? n + 0x60 : 0;
+        u64 rvt = 0, rfn = 0;
+        if (ref && SafeGet(ref, &rvt) && rvt && SafeGet(rvt + 0xa8, &rfn) && rfn)
+            handle = reinterpret_cast<u32(BB_COOP_SYSV*)(u64)>(rfn)(ref);
+        char b[96];
+        std::snprintf(b, sizeof b, " [fl %02x kind %u 2c %u b40 %u h %08x]", unsigned(Field<u8>(n, 2)), kind,
+                      Field<u32>(n, 0x2c), unsigned(Field<u8>(n, 0x40)), handle);
+        out += b;
+    }
+    Log("boss target dump %s: boss %08x:%s", tag, bh, out.empty() ? " (empty)" : out.c_str());
+}
+
 /// Host (the boss AI's owner), main thread, twice a second: while a boss bar is up and two or more
 /// living players (the host's own chr and the members' copies) are within reach of the boss, the boss
 /// is handed each of them in turn as a forced target (the event ChangeTarget path 0x1299CD0, as the
@@ -6659,6 +6688,7 @@ void BossAttentionTick(const GameSnapshot& s, double now) {
     };
     static std::map<u32, State> st;  // by boss handle
     static bool fighting = false;
+    static const bool ai_log = std::getenv("BB_PARTY_AI_LOG") && std::getenv("BB_PARTY_AI_LOG")[0] == '1';
     const bool on = BbSettings::Get().party_boss_share.load() && Role() == RoleHost && s.world_up && !s.loading;
     const u64 hud = on ? Slot(0x5562878) : 0;
     if (!hud) {
@@ -6681,6 +6711,7 @@ void BossAttentionTick(const GameSnapshot& s, double now) {
         float bp[3] = {};
         if (!ChrPos(boss, bp)) continue;
         State& e = st[h];
+        if (ai_log && e.handle) BossTargetDump(boss, h, "tick");
         std::vector<float> d2(players.size(), -1.0f);
         std::vector<double> last(players.size(), 0.0);
         int cur = -1;
@@ -6702,6 +6733,7 @@ void BossAttentionTick(const GameSnapshot& s, double now) {
         e.last[ph] = now;
         Log("boss attention: boss %08x turns to player chr %08x (%.1f m, ChangeTarget %s)", h, ph,
             double(std::sqrt(d2[size_t(pick)])), ok ? "ok" : "refused: no AI");
+        if (ai_log) BossTargetDump(boss, h, "after the turn");
     }
     if (!any) st.clear();
     fighting = any;
