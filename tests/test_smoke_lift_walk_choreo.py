@@ -72,3 +72,13 @@ def test_every_ride_waits_for_the_previous_one_to_end():
         # the waiting player's walk starts on the car's start animation; the riders after ride 1 are gated on the end animation
         gates = [s for s in host + guest if re.search(r"\?obj=%s:\d+" % spec["car"], s)]
         assert len(gates) >= len(plan) - 1, (key, len(gates))
+
+
+def test_copy_freeze_detector_separates_a_stopped_copy_from_a_lagging_one():
+    real = [(float(t), 0.0, -40.0 + 8.0 * t, 0.0) for t in range(0, 20)]
+    lagging = [(float(t), 0.0, -40.0 + 3.0 * t, 0.0) for t in range(0, 20)]
+    frozen = [(float(t), 0.0, -40.0, 0.0) for t in range(0, 20)]
+    assert S.copy_freeze(real, lagging)[0] == 0.0
+    assert S.copy_freeze(real, frozen)[0] > 40.0
+    gappy = [c for c in frozen if not 5 <= c[0] <= 12]  # a gap in the log is not a freeze
+    assert S.copy_freeze(real, gappy)[0] == 0.0
