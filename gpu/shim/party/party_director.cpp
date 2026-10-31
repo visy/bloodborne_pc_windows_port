@@ -2968,7 +2968,7 @@ void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float
         goals.push_back({t.ap_x, pos[1], t.ap_z});
         known.push_back(false);
     }
-    const double radius = t.route.empty() ? std::max(0.6f, t.ap_r) : 1.2;
+    const double radius = t.route.empty() ? std::max(0.25f, t.ap_r) : 1.2;
     (void)s;
     t.nav = navwalk::Walker{};
     const navwalk::PlanResult r = t.nav.Start(mesh, {pos[0], pos[1], pos[2]}, goals, known, radius, 0.0);
