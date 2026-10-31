@@ -987,6 +987,12 @@ def lfw_chains(spec, slow=False):
             else:
                 tx, ty, tz = spec["trig"][end]
                 cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
+                if not second:
+                    # flaky078: a lone rider too: the stick walker's first burst from the door (-127, -10.9) went east into the cage post
+                    # (-126.5, -10.4) twice (lfw c3 run c, c4 run 2: "stuck", ride 2 never started, the host waited 240 s). The 0.75 m
+                    # from the side spot into the trigger is the walked part that is left; the door -> side spot part is the in-world warp.
+                    sx, sy, sz = spec["side"][end]
+                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s" % (role, sx, sy, sz, m))
                 # liftreg077: the slow phases (sprint overshoot) end the step inside the trigger cylinder (r 0.55): at 0.25 a sprinter
                 # circles the trigger, walks off the rising car and into the open shaft (live lfwcs: HP 0 at y -70)
                 s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s%s" % (role, tx, tz, "0.45" if slow else "0.25", m, cond))
