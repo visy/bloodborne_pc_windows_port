@@ -762,7 +762,7 @@ def _p(*a):
 LW = {
     "yh": dict(
         tag="lfw", map="m24_01", car="2411320", pos="12410350", busy="12415350", start="top", top_val=1,
-        lamp="2412953", set_flags="12410330,12410350", dismiss=True,  # flaky078: a "Beast x1" item box showed up mid-walk in lfw too (c3 run c)
+        mirror=True, lamp="2412953", set_flags="12410330,12410350", dismiss=True,  # flaky078: a "Beast x1" item box showed up mid-walk in lfw too (c3 run c)
         trig={"top": (-128.72, -44.3, -9.73), "bottom": (-128.72, -58.0, -9.73)},
         side={"top": (-128.19, -44.3, -9.20), "bottom": (-129.25, -58.0, -10.26)},
         out_h={"top": (-134.70, -44.2, -2.50), "bottom": (-125.28, -58.4, -11.69)},
@@ -987,6 +987,14 @@ def lfw_chains(spec, slow=False):
             else:
                 tx, ty, tz = spec["trig"][end]
                 cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
+                if second and spec.get("mirror"):
+                    # flaky078: the second rider the same (lfw f_lfw_1: its stick from the door GAVE UP at the cage post, the host waited 240 s
+                    # for a ride that never started): the in-world warp, once the first rider stands beside the trigger, to the point
+                    # mirrored through the trigger (the other end's side spot: the car's footprint is the same at both ends, this end's
+                    # height), 0.75 m from the trigger on its far side; the stick step then walks the 0.75 m into the trigger.
+                    ox_, oy_, oz_ = spec["side"]["bottom" if end == "top" else "top"]
+                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s%s" % (role, ox_, spec["side"][end][1], oz_, m, cond))
+                    cond = ""
                 if not second:
                     # flaky078: a lone rider too: the stick walker's first burst from the door (-127, -10.9) went east into the cage post
                     # (-126.5, -10.4) twice (lfw c3 run c, c4 run 2: "stuck", ride 2 never started, the host waited 240 s). The 0.75 m
