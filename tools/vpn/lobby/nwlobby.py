@@ -23,7 +23,7 @@ Wire format (version 1, big endian, at most 512 bytes in, 1024 out):
   type 5 stats     (no body) only on the operator socket (127.0.0.1:9311, never the tunnel)
   type 6 stats reply  UTF-8 JSON (<= 1024 bytes): games, players (sum of the hosts' player counts), open (no
                    password), full (players >= max), joinable (open and not full), free_slots (in open games),
-                   sizes {"<max>": games}, builds {"<version>": games} (top 5, first word of the build):
+                   sizes {"<max>": games}, builds {"<version>": games} (top 5, first word of the build, <= 32 chars):
                    counts only, no names or addresses
 An announce is not answered; a list request is answered with one reply page. Anything malformed is
 dropped without an answer. The client UI shows names, flags and counts, never the address.
@@ -252,7 +252,7 @@ class Lobby:
         sizes, builds = {}, {}
         for e in rows:
             sizes[str(e[4])] = sizes.get(str(e[4]), 0) + 1
-            ver = (e[5].split() or ["?"])[0][:16]
+            ver = (e[5].split() or ["?"])[0][:BUILD_MAX]
             builds[ver] = builds.get(ver, 0) + 1
         top = dict(sorted(builds.items(), key=lambda kv: (-kv[1], kv[0]))[:5])
         d = {"games": len(rows), "players": sum(e[3] for e in rows), "open": len(open_rows),

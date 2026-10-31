@@ -659,3 +659,14 @@ def test_vpnstatus_roles():
     assert nb.is_dev_or_staff(type("M", (), {"roles": [role("staff team")]})())
     assert not nb.is_dev_or_staff(type("M", (), {"roles": [role("Moderator"), role("hunter")]})())
     assert not nb.is_dev_or_staff(type("U", (), {})())
+
+
+def test_vpn_status_versions_and_no_public():
+    lb = dict(LOBBY, open=0, joinable=0, free_slots=0,
+              builds={"nightwatch-coop-0.2.6-beta.2-vis": 5, "nightwatch-coop-0.2.5-visy-0.7.6": 1, "0.7.7": 1})
+    t = vpn.status_text({"ok": True, "clients": 9, "max_clients": 255, "pool": 253, "lobby": lb}, {"state": "ok"})
+    assert "Versions: NW 0.2.6-beta.2 (5), NW 0.2.5 (1), 0.7.7 (1)" in t
+    assert "No public game right now" in t
+    full = dict(LOBBY, joinable=0)
+    assert "Every public game is full" in vpn.status_text(
+        {"ok": True, "clients": 9, "max_clients": 255, "pool": 253, "lobby": full}, {"state": "ok"})
