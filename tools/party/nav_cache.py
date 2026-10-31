@@ -46,6 +46,8 @@ def build(game, maps, offsets=None):
             if not r:
                 continue
             fs, es, vs = r
+            if isinstance(spec, dict) and name in spec.get("drop", ()):
+                continue
             off = spec["files"].get(name, spec["default"]) if isinstance(spec, dict) else spec
             ox, oy, oz = off[:3]
             yaw = math.radians(off[3]) if len(off) > 3 else 0.0
@@ -190,18 +192,57 @@ def choose_offset(game, m):
         pass
     spec["default"] = best
     files = ft.bnd4(ft.read_maybe_dcx(Path(game) / "map" / m / f"{m}.nvmhktbnd.dcx"))
-    total = 0
-    for name, b in files.items():
-        hits = {o: piece_hits(game, m, name, b, o, pts) for o in cands}
+    meshes = {name: nr.navmesh(b) for name, b in files.items()}
+    meshes = {k: v for k, v in meshes.items() if v}
+
+    def place(vs, off):
+        ox, oy, oz, yaw = off
+        cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+        return [(ox + v[0] * cy + v[2] * sy, v[1] + oy, oz - v[0] * sy + v[2] * cy) for v in vs]
+
+    def near(v, seen):
+        c = cell(v)
+        return any((c[0] + dx, c[1], c[2] + dz) in seen for dx in (-1, 0, 1) for dz in (-1, 0, 1))
+
+    def cell(v):
+        return (round(v[0] * 2), round(v[1]), round(v[2] * 2))
+
+    # 1. anchors: pieces with a lamp spot on them under some placement take the placement with the most spots
+    placed, hits_total = {}, 0
+    for name, (fs, es, vs) in meshes.items():
+        hits = {o: piece_hits(game, m, name, files[name], o, pts) for o in cands}
         top = max(hits.values())
-        if top > hits[best]:
-            spec["files"][name] = max(hits, key=hits.get)
-        total += max(hits[spec["files"].get(name, best)], 0)
-    n = min(total, len(pts))
-    if n < max(2, (len(pts) + 1) // 2) and best != zero or (n < max(2, (len(pts) + 1) // 2) and spec["files"]):
+        if top > 0:
+            placed[name] = max(hits, key=lambda o: (hits[o], o == best))
+            hits_total += hits[placed[name]]
+    if len(set(placed.values())) == 1:  # one placement for the whole map
+        only = next(iter(placed.values()))
+        spec["default"] = only
+        return (spec if hits_total >= max(2, (len(pts) + 1) // 2) else {"default": zero, "files": {}}), min(hits_total, len(pts)), len(pts), len(cands)
+    # 2. the other pieces are glued on: the placement whose vertices coincide most with the placed pieces' vertices
+    seen = set()
+    for name in placed:
+        seen.update(cell(v) for v in place(meshes[name][2], placed[name]))
+    for _ in range(30):
+        moved = False
+        for name, (fs, es, vs) in meshes.items():
+            if name in placed:
+                continue
+            score = {o: sum(near(v, seen) for v in place(vs, o)) for o in cands}
+            o = max(score, key=score.get)
+            if score[o] >= 3 and sorted(score.values())[-1] > sorted(score.values())[-2] if len(score) > 1 else score[o] >= 3:
+                placed[name] = o
+                seen.update(cell(v) for v in place(vs, o))
+                moved = True
+        if not moved:
+            break
+    n = min(hits_total, len(pts))
+    if n < max(2, (len(pts) + 1) // 2):
         return {"default": zero, "files": {}}, n, len(pts), len(cands)  # too little evidence: keep the local frame
-    if best != zero and bn < max(2, (len(pts) + 1) // 2) and not spec["files"]:
-        spec["default"] = zero
+    count = collections.Counter(placed.values())
+    spec["default"] = count.most_common(1)[0][0]
+    spec["files"] = {k: v for k, v in placed.items() if v != spec["default"]}
+    spec["drop"] = sorted(set(meshes) - set(placed))  # no anchor and no neighbour: not guessed, left out
     return spec, n, len(pts), len(cands)
 
 
@@ -250,7 +291,7 @@ def main():
             o, n, tot, nc = choose_offset(game, m)
             offsets[m] = o
             if o["default"] != (0.0, 0.0, 0.0, 0.0) or o["files"]:
-                print("  %s: placement %s + %d piece(s) placed apart (%d of %d spots on the mesh, %d candidate(s))" % (m, o["default"], len(o["files"]), n, tot, nc))
+                print("  %s: placement %s + %d piece(s) placed apart, %d left out (%d of %d spots on the mesh, %d candidate(s))" % (m, o["default"], len(o["files"]), len(o.get("drop", ())), n, tot, nc))
         verts, faces, links = build(game, maps, offsets)
         write(outdir / f"nav_m{a}.bin", maps, verts, faces, links)
         print("area m%s: %d maps, %d faces, %d verts" % (a, len(maps), len(faces), len(verts)))
