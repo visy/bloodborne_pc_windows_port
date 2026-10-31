@@ -118,6 +118,13 @@ static void TestStick() {
     o.Observe(0.2, 1.0);
     o.Observe(0.2, 1.0);
     CHECK(o.have && std::fabs(o.off - 0.8) < 1e-6);
+    // a camera model that disagrees with the motion is dropped for the observation
+    CamModel w;
+    w.FromCamera({0, 0, -5}, {0, 0, 0});
+    for (int i = 0; i < 12; ++i) w.Observe(0.0, 1.5);
+    CHECK(w.mismatch && !w.from_cam && std::fabs(w.off - 1.5) < 0.05);
+    w.FromCamera({0, 0, -5}, {0, 0, 0});
+    CHECK(std::fabs(w.off - 1.5) < 0.05);
 }
 
 static void TestFollower() {

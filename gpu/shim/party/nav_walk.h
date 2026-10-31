@@ -491,11 +491,12 @@ struct CamModel {
     double off = 0;       // current offset (world yaw of stick-forward)
     bool have = false;    // an offset is known
     bool from_cam = false;
+    bool mismatch = false;  // the camera model disagreed with the observed motion: the observation rules
     double obs_off = 0;   // low-pass of the observed offset (log / fallback)
-    int obs_n = 0;
+    int obs_n = 0, bad = 0;
 
     void FromCamera(const V3& cam, const V3& player) {
-        if (Dist2(cam, player) < 0.3) return;
+        if (mismatch || Dist2(cam, player) < 0.3) return;
         off = std::atan2(double(player.x) - cam.x, double(player.z) - cam.z);
         have = from_cam = true;
     }
@@ -504,6 +505,13 @@ struct CamModel {
         const double o = Wrap(vel_yaw - stick_angle);
         obs_off = obs_n == 0 ? o : Wrap(obs_off + 0.25 * Wrap(o - obs_off));
         ++obs_n;
+        if (from_cam && !mismatch) {
+            bad = std::fabs(Wrap(o - off)) > 0.45 ? bad + 1 : 0;
+            if (bad >= 8) {  // the camera position is not in the player's frame (or not the view camera)
+                mismatch = true;
+                from_cam = false;
+            }
+        }
         if (!from_cam && obs_n >= 2) {
             off = obs_off;
             have = true;
