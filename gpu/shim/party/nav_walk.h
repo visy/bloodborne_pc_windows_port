@@ -569,11 +569,17 @@ struct CamModel {
     double obs_off = 0;   // low-pass of the observed offset (log / fallback)
     int obs_n = 0, bad = 0;
 
-    void FromCamera(const V3& cam, const V3& player) {
-        if (mismatch || Dist2(cam, player) < 0.3) return;
-        raw = std::atan2(double(player.x) - cam.x, double(player.z) - cam.z);
+    /// The camera's view direction (render camera block: the matrix row at +0x30 of the block at config +0x50).
+    void FromForward(double fx, double fz) {
+        if (mismatch || std::hypot(fx, fz) < 0.2) return;
+        raw = std::atan2(fx, fz);
         off = Wrap(raw + resid);
         have = from_cam = true;
+    }
+    /// Fallback model: the camera orbits the player, so the view direction is player - camera.
+    void FromCamera(const V3& cam, const V3& player) {
+        if (Dist2(cam, player) < 0.3) return;
+        FromForward(double(player.x) - cam.x, double(player.z) - cam.z);
     }
     /// A step of observed motion under a known stick angle: speed above ~1.5 m/s, stick tilt above 0.7.
     void Observe(double stick_angle, double vel_yaw) {
@@ -723,9 +729,10 @@ public:
 
     /// goals: waypoints to pass in order (the last one is the goal); radius: arrival distance to the last goal.
     PlanResult Start(const NavMesh* mesh, const V3& from, std::vector<V3> goals, std::vector<bool> goal_y_known,
-                     double radius, double now, bool allow_tail = false) {
+                     double radius, double now, bool allow_tail = false, bool tail_far = false) {
         mesh_ = mesh;
         allow_tail_ = allow_tail;
+        tail_far_ = tail_far;
         goals_ = std::move(goals);
         goal_y_known_ = std::move(goal_y_known);
         goal_y_known_.resize(goals_.size(), true);
@@ -839,7 +846,8 @@ private:
     std::vector<V3> goals_;
     std::vector<bool> goal_y_known_;
     double radius_ = 1.0;
-    bool allow_tail_ = false;  // routes: goals off the mesh (a lift car, a ladder top) are walked straight to
+    bool allow_tail_ = false;  // a goal a little off the mesh (a lift car's trigger) is walked straight to (<= 2.5 m)
+    bool tail_far_ = false;    // routes: a goal up to 10 m off the mesh (a lift car, a ladder top) too
     PathFollower path_;
     CamModel cam_;
     StallDetector stall_;
@@ -884,7 +892,7 @@ private:
             if (!goal_y_known_[i]) g.y = cur.y;
             if (r != PlanResult::Ok) {
                 // a route's off-mesh goal within 10 m of where the path is: a straight tail
-                if (allow_tail_ && r == PlanResult::GoalOff && Dist3(cur, g) <= 10.0) {
+                if (allow_tail_ && tail_far_ && r == PlanResult::GoalOff && Dist3(cur, g) <= 10.0) {
                     if (path.empty()) path.push_back(cur);
                     path.push_back(g);
                     cur = g;
@@ -901,7 +909,7 @@ private:
             if (!path.empty() && !leg.empty()) leg.erase(leg.begin());
             path.insert(path.end(), leg.begin(), leg.end());
             cur = leg.empty() ? cur : leg.back();
-            if (allow_tail_ && pi.snap_goal > 0.4 && Dist3(cur, g) <= 10.0) {  // the goal is a little off the mesh: walk on to it
+            if (allow_tail_ && pi.snap_goal > 0.4 && pi.snap_goal <= (tail_far_ ? 10.0 : 2.5) && Dist3(cur, g) <= 10.0) {  // the goal is a little off the mesh: walk on to it
                 path.push_back(g);
                 cur = g;
                 if (i + 1 == goals_.size()) stats.snap_goal = 0;

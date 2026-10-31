@@ -130,6 +130,10 @@ static void TestStick() {
     CHECK(std::fabs(c.off - kPi / 2) < 1e-9);
     CHECK(std::fabs(c.StickAngle(kPi / 2)) < 1e-9);
     CHECK(std::fabs(c.StickAngle(-3 * kPi / 4) - Wrap(-3 * kPi / 4 - kPi / 2)) < 1e-9);
+    c.FromForward(-0.732, -0.681);  // a real block: yaw -133 degrees
+    CHECK(std::fabs(c.off * 180 / kPi + 132.9) < 0.1);
+    c.FromForward(0.0, 0.05);  // looking straight down: ignored
+    CHECK(std::fabs(c.off * 180 / kPi + 132.9) < 0.1);
     CamModel o;
     o.Observe(0.2, 1.0);
     o.Observe(0.2, 1.0);
@@ -246,7 +250,7 @@ static void TestOffMeshTail() {
         Walker w;
         Sim sim{{2, 0, 2}, 0.3};
         // a route whose last waypoint is a lift car 6 m off the mesh
-        CHECK(w.Start(&m, sim.pos, {{38, 0, 20}, {46, 0, 20}}, {true, true}, 1.0, 0, true) == PlanResult::Ok);
+        CHECK(w.Start(&m, sim.pos, {{38, 0, 20}, {46, 0, 20}}, {true, true}, 1.0, 0, true, true) == PlanResult::Ok);
         const RunResult r = Run(w, sim, true);
         CHECK(r.done && r.warps == 0);
         CHECK(Dist2(sim.pos, {46, 0, 20}) <= 1.05);
@@ -254,7 +258,15 @@ static void TestOffMeshTail() {
     {
         Walker w;
         Sim sim{{2, 0, 2}, 0.3};
-        CHECK(w.Start(&m, sim.pos, {{46, 0, 20}}, {true}, 1.0, 0, false) == PlanResult::GoalOff);  // a single goal: early failure
+        CHECK(w.Start(&m, sim.pos, {{46, 0, 20}}, {true}, 1.0, 0, true, false) == PlanResult::GoalOff);  // a single goal 6 m off: early failure
+    }
+    {
+        // a stick goal 1.5 m off the mesh (a lift trigger): walked to, to within the radius
+        Walker w;
+        Sim sim{{2, 0, 2}, 0.3};
+        CHECK(w.Start(&m, sim.pos, {{41.5f, 0, 20}}, {true}, 0.3, 0, true, false) == PlanResult::Ok);
+        const RunResult r = Run(w, sim, true);
+        CHECK(r.done && Dist2(sim.pos, {41.5f, 0, 20}) <= 0.35);
     }
 }
 
