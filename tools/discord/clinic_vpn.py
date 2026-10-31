@@ -17,6 +17,9 @@ POOL = 253
 KEEP = 90 * 86400
 NEAR = 0.8
 DOWN_AFTER = 30 * 60
+DROP_WINDOW = 15 * 60   # vpn-drop: the latest sample against the peak of this window
+DROP_MIN_PEAK = 10      # ... when that peak had at least this many players
+DROP_SHARE = 0.25       # ... and the latest is at most this share of it (45 -> 0 on 2026-10-31, a ~5 min provider outage)
 
 
 def ssh_target(env=None):
@@ -183,7 +186,18 @@ def summary(clinic, now, target=None):
     return {"state": "ok" if now - at <= DOWN_AFTER else "down", "clients": clients, "max_clients": mx,
             "pool": pool, "effective_max": effective_max(mx, pool), "age": now - at,
             "peak_24h": peak(clinic, now - 86400), "peak_7d": peak(clinic, now - 7 * 86400),
-            "day": window(clinic, now - 86400)}
+            "peak_15m": peak(clinic, at - DROP_WINDOW), "day": window(clinic, now - 86400),
+            "maint": _maint_window(clinic, now)}
+
+
+def _maint_window(clinic, now):
+    """A scheduled VPN maintenance runs now (1 min before to 30 min after): the drop is expected, no alert."""
+    try:
+        import clinic_vpnmaint
+        m = clinic_vpnmaint.pending(clinic)
+    except Exception:  # noqa: BLE001 - the monitor must not fail on the announcement table
+        return False
+    return bool(m) and not m["cancelled"] and m["at"] - 60 <= now <= m["at"] + clinic_vpnmaint.BACK_MAX
 
 
 def conditions(s):
@@ -200,6 +214,10 @@ def conditions(s):
         out.append(("vpn-full", n >= em, f"VPN full: {n} of {em} clients connected, new players are refused. " + tail))
         out.append(("vpn-near", NEAR * em <= n < em,
                     f"VPN near its limit: {n} of {em} clients (80% or more). " + tail))
+        pk = s.get("peak_15m") or 0
+        out.append(("vpn-drop", pk >= DROP_MIN_PEAK and n <= DROP_SHARE * pk and not s.get("maint"),
+                    f"VPN players dropped from {pk} to {n} within 15 min: a provider outage or a VPN problem. "
+                    "Check /vpnstatus; players reconnect by themselves once the server is reachable."))
     return out
 
 
