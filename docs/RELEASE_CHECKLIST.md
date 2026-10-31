@@ -11,8 +11,24 @@ The steps for a coop/port release (`X.Y.Z`), revised after 0.7.7. Push only with
 
 ## 2. Full smoke on master
 
-- [ ] Run **all** phases, not the default list (the default list is only 41 of 149 phases). At 60 FPS: `BB_MP_FPS=60`.
-      Plan about 5 hours on one lane until the faster smoke lands (CL-564e30).
+- [ ] Run the release gate: `BB_MP_FPS=60 python tools/mp/smoke_party.py --release --lanes auto --out <dir>`. `--release` is
+      the **full** list (all 155 phases, nothing hidden; the old default was a 40-phase quick list, now `--tier quick`).
+      The run prints `tier full: N of 155 phases`, then `progress done/total` with an ETA after every phase, and writes
+      the usual `verdict.txt`, per-phase `rows.json` and `retries.txt`.
+      - Time (measured 2026-10-31, 60 FPS, one lane): a phase is a real-time game session, about 107 s on average
+        (boot to world is only 13 s of it), so game speed cannot be raised and the 1 h goal is not reachable on this PC.
+        `--tier quick` (40 phases) took 2 h 50 min with 16 failed rows (retries of failing flaky phases are the biggest
+        single cost: lfw and lfwc 24 min each, s3 17 min). `--tier release` (136 phases, variants of `RELEASE_SKIP`
+        left out) is about 5 h, full (155) about 5.5 h when the phases pass. A second lane needs ~20 GB of commit per
+        3-game phase on top of the first; this 32 GB PC has no room for it while anything else runs, so `--lanes auto`
+        picks 1 lane (2 only with 40 GB free). The game queue's memory guard (`game_queue.py`, only for guarded jobs) is
+        what allows 2; it never goes over 6 clients, keeps 3 GB free and waits for other agents' runs first.
+        Never start more lanes by hand: 2 lanes x 3 games ran out of memory in 0.7.4.
+      - A smaller run: `--tier release` (every feature, no variants), `--changed-since <tag>` (only the phases that
+        exercise the files changed since the tag; docs/tests run nothing, a game file with no mapping runs the quick tier),
+        `--tier quick` (the 40-phase core, the default), `--phase a,b,c` or `--only <group>`.
+      - Phase times of the last run are kept in `<agent>\smoke\phase_times.json` (seed: `tools/mp/phase_times_seed.json`)
+        and feed the ETA and the lane order (longest first).
 - [ ] Compare with the previous release's full smoke (steps and failed rows).
 - [ ] Sort every failed row, and aim for 0:
   - **Test fault**: fix the test (`tools/mp`), rerun that phase with `--only`.

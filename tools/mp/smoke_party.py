@@ -9725,13 +9725,182 @@ def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
     return
 
 
+# ---------------------------------------------------------------------------------------------
+# Tiers, the phase list for a run, progress / ETA (CL-564e30)
+#
+#   quick    the old default list (41 phases): the core party flow, about 1.5 h on one lane
+#   release  every phase except RELEASE_SKIP (variants whose feature a sibling phase already runs)
+#   full     every phase in PHASES (also what --release asks for: no hidden subset)
+# A tier only chooses WHICH phases run; every phase keeps all of its checks and runs to the same verdict.
+QUICK_PHASES = ("s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,lfw,lfwc,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
+
+# Phases the release tier leaves out: a variant of a phase that stays in (same map and mechanism, other lift / rule
+# value / actor), kept in `full`. Each value names what covers it.
+RELEASE_SKIP = {
+    "lfwf": "lfw (yh lift walk-in, far from the car)", "lfwcf": "lfwc (ca lift walk-in, far)",
+    "lfws": "lfwbs (slow car build; the yh lift itself is lfw)", "lfwcs": "lfwcbs (slow car build; the ca lift itself is lfwc)",
+    "lfx": "lf (the two-player lift ride)", "cvh": "cvt (host talks instead of the guest)", "cvo": "cvs (per-player off)",
+    "pxg": "px (guest poisoned instead of the host)", "chn": "chc (rule off)", "cyn": "cy (rule off)",
+    "gro": "gr (lamps rule off)", "gr2o": "gr2 (rule off)", "gr3o": "gr3 (rule off)", "gr4o": "gr4 (rule off)",
+    "bdo": "bd (boss drops off)", "sg2": "sg", "csh2": "csh", "mds": "md", "nfe": "nf (same NPC fight rows)",
+}
+
+# --changed-since: changed file -> the phases that exercise it. A game-code file with no entry here runs the quick tier
+# (the safe side); files that cannot change game behaviour (docs, tests, launcher, packaging) run nothing.
+CHANGED_MAP = [
+    (r"party_lift|party_worldact|world_warper", "lf,lfw,lfwc,lfwbs,lfwcbs,ld,el,lt,fl,fdj"),
+    (r"party_kidnap|kidnap", "kd,kw"),
+    (r"party_chalice|chalice", "cl,clg,clw,cla,cpr,chc,chn,chw,cpa,cae,cao,cab,caq,caw,cis,ch,cy,cyn"),
+    (r"party_npc|npcfight|npcfog|npctalk|npcghost", "nf,nfa,nfe,nfw,npi,npa,npd,npf,cv,cvs,cvr,cvc,cva,cvt,tv,an,anl"),
+    (r"party_pvp|pvp_rules", "px,pxg,pvd,pvh,pvn"),
+    (r"party_gather|gather", "ga,gl,gg,sh"),
+    (r"party_split|splitscreen|stayhome|party_stay", "ss,sh,s1"),
+    (r"lamp_travel|party_travel|party_rot", "lp,lt,rt,s1,gr,gr2,gr3,gr4,gro,gr2o,gr3o,gr4o,cy"),
+    (r"death_rules|party_death|party_phantom|party_balance", "s1,s3,gd,gh,gm,chc,chn"),
+    (r"party_vote", "br,s1"),
+    (r"party_items|droproll|item_notice|kill_award|kill_record", "ie,il,s2,rw,rwe,rwt,rwl,bd,bdo"),
+    (r"party_progress|party_flags|party_story|bossfog|test_newgame", "kw,ngp,br,rf,rj,em,ef,s1"),
+    (r"party_hud|party_status|party_gestures|remote_show|party_glow", "rules,bf,bl,sg,sg2,csh,csh2,csh3"),
+    (r"party_guestsvc|guestvals|levelsync|enemyai|enemy_census|party_collision|party_catchup", "s1,s2,ga,gl,ml,mg"),
+]
+NO_GAME_CODE = re.compile(r"^(docs/|tests/|launcher|packaging/|scripts/|tools/(?!mp/(smoke_party|instances|game_queue))|README|CHANGES|QA_TESTING|licenses/|VERSION|.*\.md$)")
+
+
+def phases_changed_since(tag):
+    """(phase list, notes) for the files changed between `tag` and HEAD (plus the working tree)."""
+    out = subprocess.run(["git", "diff", "--name-only", tag], cwd=REPO, capture_output=True, text=True)
+    if out.returncode:
+        sys.exit("--changed-since %s: git diff failed: %s" % (tag, out.stderr.strip()))
+    files = [f for f in out.stdout.splitlines() if f.strip()]
+    chosen, notes = set(), []
+    for f in files:
+        if f.startswith("tools/mp/"):
+            chosen |= set(QUICK_PHASES.split(","))
+            notes.append("%s: harness changed -> quick tier" % f)
+            continue
+        if NO_GAME_CODE.match(f):
+            continue
+        hit = [ph for rx, ph in CHANGED_MAP if re.search(rx, f)]
+        if hit:
+            chosen |= {p for h in hit for p in h.split(",")}
+            notes.append("%s -> %s" % (f, ",".join(sorted({p for h in hit for p in h.split(",")}))[:80]))
+        else:
+            chosen |= set(QUICK_PHASES.split(","))
+            notes.append("%s: no mapping -> quick tier" % f)
+    return [p for p in PHASES if p in chosen], notes
+
+
+def phase_list_for(a):
+    """The ordered phase names of this run: --phase when given, else --release / --tier / --changed-since."""
+    notes = []
+    if a.phase:
+        names = [p.strip() for p in a.phase.split(",") if p.strip()]
+        label = "--phase"
+    elif a.changed_since:
+        names, notes = phases_changed_since(a.changed_since)
+        label = "changed since %s" % a.changed_since
+    else:
+        tier = "full" if a.release else (a.tier or "quick")
+        if tier == "quick":
+            names = [p for p in QUICK_PHASES.split(",")]
+        elif tier == "release":
+            names = [p for p in PHASES if p not in RELEASE_SKIP]
+        else:
+            names = list(PHASES)
+        label = "tier %s" % tier
+    bad = [n for n in names if n not in PHASES]
+    if bad:
+        sys.exit("unknown phase(s): " + ",".join(bad))
+    print("[smoke] %s: %d of %d phases%s" % (label, len(names), len(PHASES),
+                                           " (left out: %s)" % ",".join(p for p in PHASES if p not in names)[:200] if len(names) < len(PHASES) and len(names) > 100 else ""),
+          flush=True)
+    for n in notes:
+        print("[smoke]   " + n, flush=True)
+    return names
+
+
+SEED_TIMES = HERE / "phase_times_seed.json"  # per-phase wall seconds of a full run (the ETA before this machine has its own)
+
+
+def load_times(times_file):
+    known = {}
+    for f in (SEED_TIMES, times_file):
+        try:
+            known.update(json.loads(Path(f).read_text()))
+        except (OSError, ValueError):
+            pass
+    return known
+
+
+class Progress:
+    """phases done/total and an ETA from the last measured phase times (300 s when unknown), over `lanes` lanes."""
+
+    def __init__(self, names, known, lanes=1):
+        self.names, self.known, self.lanes = list(names), known, max(1, lanes)
+        self.done, self.t0 = [], time.time()
+
+    def eta(self):
+        left = sum(self.known.get(n, 300) for n in self.names if n not in self.done)
+        return left / self.lanes
+
+    def finish(self, name, secs=None, tag="", wait=0):
+        self.done.append(name)
+        self.waited = getattr(self, "waited", 0) + wait
+        if wait >= 1:
+            tag = (tag + ", " if tag else "") + "%.0f s waiting for game slots" % wait
+        print("[smoke] progress %d/%d phases done (%s%s%s); elapsed %s, ETA about %s" % (
+            len(self.done), len(self.names), name, ", " + tag if tag else "", ", %.0f s" % secs if secs else "", fmt_hms(time.time() - self.t0),
+            fmt_hms(self.eta())), flush=True)
+
+
+def queue_wait(phase_dir):
+    """Seconds the phase's runs (retries included) waited for game slots (game_queue's `after waiting N s` line)."""
+    tot = 0
+    d = Path(phase_dir)
+    for h in [d / "harness.log"] + sorted(d.parent.glob(d.name + "_try*/harness.log")):
+        try:
+            tot += sum(int(x) for x in re.findall(r"after waiting (\d+) s", h.read_text(errors="replace")))
+        except OSError:
+            pass
+    return tot
+
+
+def fmt_hms(s):
+    s = int(s)
+    return "%d:%02d:%02d" % (s // 3600, s % 3600 // 60, s % 60)
+
+
+def auto_lanes(want):
+    """--lanes auto: 2 lanes when the machine has the free RAM and commit for two 3-game phases at once (see
+    game_queue memory guard), else 1."""
+    if want != "auto":
+        return int(want)
+    sys.path.insert(0, str(HERE))
+    from game_queue import free_ram_mb
+    free = free_ram_mb()
+    n = 2 if free is not None and free >= 40000 else 1  # two 3-game phases take ~40 GB of commit
+    print("[smoke] --lanes auto: %s MB free RAM -> %d lane(s)" % (free, n), flush=True)
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=str(DEFAULT_ROOT))
     ap.add_argument("--build", default=str(REPO))
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
-    ap.add_argument("--phase", default="s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,lfw,lfwc,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
+    ap.add_argument("--phase", default=None, help="comma list of phases (wins over --tier / --release / --changed-since)")
+    ap.add_argument("--tier", choices=("quick", "release", "full"), default=None,
+                    help="which phases: quick = the old 41-phase default (default); release = every phase except the variants in "
+                         "RELEASE_SKIP; full = every phase")
+    ap.add_argument("--release", action="store_true",
+                    help="the release gate: the FULL phase list (no hidden subset), as --tier full; pair with --lanes auto")
+    ap.add_argument("--changed-since", default=None, metavar="TAG",
+                    help="only the phases that exercise the files changed since TAG (git diff TAG; CHANGED_MAP; an unmapped game "
+                         "file runs the quick tier)")
+    ap.add_argument("--no-mem-guard", action="store_true",
+                    help="with --lanes > 1: do not let the lanes' game runs exceed the machine-wide client limit (memory guard off; "
+                         "the lanes then take turns)")
     ap.add_argument("--every", type=float, default=10)
     ap.add_argument("--fps", default=None,
                     help="frame-rate sweep: comma list, each one rate or a per-instance mix: 30,60,90,120,60fg,60/30 (60/30 = host "
@@ -9743,12 +9912,15 @@ def main():
                     help="the phases on the real network (instances.py --real-net: public STUN, UPnP, the Internet code)")
     ap.add_argument("--only", default="", help="comma list of step groups (a smaller run); `physics` = the lift / ladder / elevator / fall "
                     "groups (" + ",".join(PHYSICS_GROUPS) + "): " + ",".join(GROUPS))
-    ap.add_argument("--lanes", type=int, default=1,
-                    help="run the phases in N parallel lanes (own instance root each, <root>_lN; split by the "
-                         "last measured phase times); the verdict is made once over all phases")
+    ap.add_argument("--lanes", default="1",
+                    help="run the phases in N parallel lanes (own instance root each, <root>_lN; a phase goes to the next free "
+                         "lane, longest first); `auto` = 2 when the free RAM allows. The lanes' game runs may exceed the "
+                         "client limit only while the memory guard (game_queue.py) finds the RAM for them. The verdict is made "
+                         "once over all phases")
     ap.add_argument("--lane-id", type=int, default=-1, help=argparse.SUPPRESS)  # a lane child (--lanes)
     a = ap.parse_args()
     RUN_ROOT[0] = a.root
+    a.lanes = auto_lanes(a.lanes) if a.lane_id < 0 else 1
     only = {g.strip() for g in a.only.split(",") if g.strip()}
     if "physics" in only:
         only = (only - {"physics"}) | set(PHYSICS_GROUPS)
@@ -9761,14 +9933,14 @@ def main():
     bad = only - set(GROUPS)
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
-    if only:
+    if only and a.lane_id < 0:  # (a lane child keeps the one phase it was given)
         a.phase = ",".join(p for p in ("s1", "s2", "rules", "ss", "sh", "gg", "bv", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
                                      "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "jl", "ml", "mg", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvc", "cva", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "mesh", "fp", "lo", "po", "pos", "sg", "sg2", "csh", "csh2", "csh3", "cis", "ba", "bh", "bk", "hg", "lw", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
-    names = [p.strip() for p in a.phase.split(",") if p.strip()]
+    names = phase_list_for(a)
     times_file = AGENT_ROOT / "smoke" / "phase_times.json"
     if a.lane_id >= 0:
         # a lane child: run its phases only; the parent makes the verdict
@@ -9785,38 +9957,41 @@ def main():
             (out / name / "rows.json").write_text(json.dumps(lv.rows), encoding="utf-8")
         return
     t_all = time.time()
+    known = load_times(times_file)
+    prog = Progress(names, known, a.lanes)
     if a.lanes > 1 and not a.check_only:
-        # Longest phase first into the least loaded lane (times from the last runs, 300 s if unknown).
-        try:
-            known = json.loads(times_file.read_text())
-        except (OSError, ValueError):
-            known = {}
-        lanes = [[0.0, []] for _ in range(a.lanes)]
-        for name in sorted(names, key=lambda n: -known.get(n, 300)):
-            lane = min(lanes, key=lambda l: l[0])
-            lane[0] += known.get(name, 300)
-            lane[1].append(name)
-        procs = []
-        for k, (est, ph_names) in enumerate(lanes):
-            if not ph_names:
-                continue
-            ph_names.sort(key=names.index)
-            argv = [sys.executable, str(Path(__file__).resolve()), "--root", "%s_l%d" % (a.root, k),
-                    "--build", str(a.build), "--game", str(a.game), "--out", str(out), "--every", str(a.every),
-                    "--phase", ",".join(ph_names), "--lane-id", str(k)] + (["--only", a.only] if a.only else []) + (["--sweep-fps", a.sweep_fps] if a.sweep_fps else []) + (
-                    ["--real-net"] if a.real_net else [])
-            print("[smoke] lane %d (~%.0f s): %s" % (k, est, ",".join(ph_names)), flush=True)
-            out.mkdir(parents=True, exist_ok=True)
-            procs.append(subprocess.Popen(argv, stdout=open(out / ("lane%d.log" % k), "w"), stderr=subprocess.STDOUT))
-        for p in procs:
-            p.wait()
-        for name in names:
-            try:
-                known[name] = float((out / name / "wall.txt").read_text())
-            except (OSError, ValueError):
-                pass
-        times_file.parent.mkdir(parents=True, exist_ok=True)
-        times_file.write_text(json.dumps(known, indent=1))
+        # Each lane is a thread that starts the next phase of a shared list, longest first, as a child process
+        # `--lane-id K --phase X` (own instance root <root>_lK). How many games run at once is decided by the game
+        # queue; the lanes ask it with the memory guard on (BB_GAME_QUEUE_MEMGUARD, see game_queue.py).
+        import threading
+        todo = sorted(names, key=lambda n: -known.get(n, 300))
+        lock = threading.Lock()
+        out.mkdir(parents=True, exist_ok=True)
+        base_env = dict(os.environ)
+        if not a.no_mem_guard:
+            base_env["BB_GAME_QUEUE_MEMGUARD"] = "1"
+
+        def lane(k):
+            while True:
+                with lock:
+                    if not todo:
+                        return
+                    name = todo.pop(0)
+                argv = [sys.executable, str(Path(__file__).resolve()), "--root", "%s_l%d" % (a.root, k),
+                        "--build", str(a.build), "--game", str(a.game), "--out", str(out), "--every", str(a.every),
+                        "--phase", name, "--lane-id", str(k)] + (["--only", a.only] if a.only else []) + (
+                        ["--sweep-fps", a.sweep_fps] if a.sweep_fps else []) + (["--real-net"] if a.real_net else [])
+                t0 = time.time()
+                with open(out / ("lane%d.log" % k), "a") as lf:
+                    subprocess.call(argv, stdout=lf, stderr=subprocess.STDOUT, env=base_env)
+                with lock:
+                    prog.finish(name, time.time() - t0, "lane %d" % k, wait=queue_wait(out / name))
+        print("[smoke] %d lanes, %d phases, estimate %s" % (a.lanes, len(names), fmt_hms(prog.eta())), flush=True)
+        threads = [threading.Thread(target=lane, args=(k,)) for k in range(a.lanes)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
         a.check_only = True  # the verdict below reads the lanes' logs
         lanes_used = True
     else:
@@ -9827,7 +10002,10 @@ def main():
         if only:
             ph = narrow_phase(ph, only)
         if not a.check_only:
+            t_ph = time.time()
             run_phase_retrying(a, name, ph, out / name, CHECKS[name], only)
+            (out / name / "wall.txt").write_text("%.0f" % (time.time() - t_ph))
+            prog.finish(name, time.time() - t_ph, wait=queue_wait(out / name))
         print("[smoke] verdict %s" % name, flush=True)
         if lanes_used:
             try:
@@ -9839,6 +10017,23 @@ def main():
         CHECKS[name](v, Logs(out / name), out / name)
         (out / name).mkdir(parents=True, exist_ok=True)
         (out / name / "rows.json").write_text(json.dumps(v.rows[n0:]), encoding="utf-8")
+    if not a.check_only or lanes_used:
+        # this machine's measured phase wall times: the next run's ETA
+        try:
+            cur = {}
+            try:
+                cur = json.loads(times_file.read_text())
+            except (OSError, ValueError):
+                pass
+            for name in names:
+                try:
+                    cur[name] = float((out / name / "wall.txt").read_text())
+                except (OSError, ValueError):
+                    pass
+            times_file.parent.mkdir(parents=True, exist_ok=True)
+            times_file.write_text(json.dumps(cur, indent=1))
+        except OSError:
+            pass
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
