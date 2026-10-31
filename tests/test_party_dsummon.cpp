@@ -360,6 +360,9 @@ int main() {
         Guest rg; OnAsked(rg, 0); OnRoom(rg, 1, true, Busy::Chalice);
         CHECK(rg.phase == Phase::Asked && rg.reask_at > 1);
         CHECK(Step(rg, 1 + kReaskWait + 0.1, false, false) == Action::Reask);
+        // Empty loads: two in a row stop the summons; a known dungeon map or a host out of its dungeon resets.
+        CHECK(!StopAfterEmptyLoads(0) && !StopAfterEmptyLoads(1) && StopAfterEmptyLoads(2) && StopAfterEmptyLoads(10));
+        CHECK(EmptyLoadsAfter(2, false, true) == 2 && EmptyLoadsAfter(2, true, true) == 0 && EmptyLoadsAfter(2, false, false) == 0);
         // Title join: only a joiner whose own slot holds the host's dungeon comes in from its title.
         CHECK(!TitleJoinChaliceElsewhere(0x15000000, kNoChannel, 0));
         CHECK(TitleJoinChaliceElsewhere(0x1d000000, 1110692594440089ull, 0));
