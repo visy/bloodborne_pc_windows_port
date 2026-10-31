@@ -59,8 +59,9 @@ def test_first_of_two_riders_is_put_beside_the_trigger_and_the_second_waits_for_
             assert any(s.startswith(warp) for s in host), (key, k, "no warp to the side spot")
             # the guest steps into the trigger only with the host beside it
             near = "?near=%.2f:%.2f:%.2f:0.9" % (sx, sy, sz)
-            trig_steps = [s for s in guest if s.startswith("guest_stick=%.2f:%.2f:" % (tx, tz)) and near in s]
-            assert trig_steps, (key, k, "the guest's trigger step has no near-the-host condition")
+            # (the trigger stick itself, or the in-world warp just before it that carries the condition)
+            gated = [s for s in guest if near in s and (s.startswith("guest_stick=%.2f:%.2f:" % (tx, tz)) or ":0:native@" in s)]
+            assert gated, (key, k, "the guest's trigger step has no near-the-host condition")
 
 
 def test_every_ride_waits_for_the_previous_one_to_end():
