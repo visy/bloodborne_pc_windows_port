@@ -11,8 +11,21 @@ The steps for a coop/port release (`X.Y.Z`), revised after 0.7.7. Push only with
 
 ## 2. Full smoke on master
 
-- [ ] Run **all** phases, not the default list (the default list is only 41 of 149 phases). At 60 FPS: `BB_MP_FPS=60`.
-      Plan about 5 hours on one lane until the faster smoke lands (CL-564e30).
+- [ ] Run the release gate: `BB_MP_FPS=60 python tools/mp/smoke_party.py --release --lanes auto --out <dir>`. `--release` is
+      the **full** list (all 155 phases, nothing hidden; the old default was a 40-phase quick list, now `--tier quick`).
+      The run prints `tier full: N of 155 phases`, then `progress done/total` with an ETA after every phase, and writes
+      the usual `verdict.txt`, per-phase `rows.json` and `retries.txt`.
+      - Time: a phase is a real-time game session (about 107 s on average, game speed cannot be raised), so one lane
+        needs about 5 h for the full list and about 4.5 h for `--tier release` (every phase except 19 variants listed in
+        `RELEASE_SKIP`, each named after the sibling that stays). `--lanes auto` takes 2 lanes when 20 GB of RAM and
+        commit are free; the game queue's memory guard (`game_queue.py`, only for guarded jobs) then lets 2 phases run
+        beside each other. It never goes over 6 clients, keeps 4 GB free and waits for other agents' runs first.
+        Never run more lanes by hand: 2 lanes x 3 games ran out of memory in 0.7.4.
+      - A smaller run: `--tier release` (every feature, no variants), `--changed-since <tag>` (only the phases that
+        exercise the files changed since the tag; docs/tests run nothing, a game file with no mapping runs the quick tier),
+        `--tier quick` (the 40-phase core), `--phase a,b,c` or `--only <group>`.
+      - Phase times of the last run are kept in `<agent>\smoke\phase_times.json` (seed: `tools/mp/phase_times_seed.json`)
+        and feed the ETA and the lane order (longest first).
 - [ ] Compare with the previous release's full smoke (steps and failed rows).
 - [ ] Sort every failed row, and aim for 0:
   - **Test fault**: fix the test (`tools/mp`), rerun that phase with `--only`.
