@@ -36,7 +36,7 @@ def build(game, maps, offsets=None):
         return vkey[k]
 
     for mi, m in enumerate(maps):
-        ox, oy, oz = (offsets or {}).get(m, (0.0, 0.0, 0.0))
+        spec = (offsets or {}).get(m, (0.0, 0.0, 0.0, 0.0))
         p = Path(game) / "map" / m / f"{m}.nvmhktbnd.dcx"
         if not p.exists():
             continue
@@ -46,7 +46,12 @@ def build(game, maps, offsets=None):
             if not r:
                 continue
             fs, es, vs = r
-            vs = [(v[0] + ox, v[1] + oy, v[2] + oz, v[3]) for v in vs]
+            off = spec["files"].get(name, spec["default"]) if isinstance(spec, dict) else spec
+            ox, oy, oz = off[:3]
+            yaw = math.radians(off[3]) if len(off) > 3 else 0.0
+            cy, sy = math.cos(yaw), math.sin(yaw)
+            # world = origin + Ry(yaw) * local  (x' = x cos + z sin, z' = -x sin + z cos)
+            vs = [(ox + v[0] * cy + v[2] * sy, v[1] + oy, oz - v[0] * sy + v[2] * cy, v[3]) for v in vs]
             base = len(faces)
             for fi, f in enumerate(fs):
                 faces.append((mi, [vid(vs[es[f[0] + k][0]][:3]) for k in range(f[2])]))
@@ -96,7 +101,10 @@ def part_offsets(game, m):
             for o in dict(it.msb_lists(data)).get("PARTS_PARAM_ST", []):
                 if struct.unpack_from("<i", data, o + 0x14)[0] in (5, 8, 11):
                     v = struct.unpack_from("<6f", data, o + 0x28)
-                    out[(round(v[0], 2), round(v[1], 2), round(v[2], 2))] += 1
+                    yaw = round(v[4], 2)
+                    out[(round(v[0], 2), round(v[1], 2), round(v[2], 2), yaw)] += 1
+                    if yaw:
+                        out[(round(v[0], 2), round(v[1], 2), round(v[2], 2), -yaw)] += 1  # the sign convention is checked by the spots
             break
     return out
 
@@ -145,21 +153,56 @@ def on_mesh_count(verts, faces, pts, tol=1.5):
     return n
 
 
+def piece_hits(game, m, name, b, off, pts):
+    """Spots on one navmesh piece placed at off."""
+    r = nr.navmesh(b)
+    if not r:
+        return 0
+    fs, es, vs = r
+    ox, oy, oz, yaw = off
+    cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+    verts = [(ox + v[0] * cy + v[2] * sy, v[1] + oy, oz - v[0] * sy + v[2] * cy) for v in vs]
+    faces = [(0, [es[f[0] + k][0] for k in range(f[2])]) for f in fs]
+    return on_mesh_count(verts, faces, pts)
+
+
 def choose_offset(game, m):
-    """The translation of map m that puts the most of its lamp spots on its navmesh (0,0,0 when none helps)."""
+    """The placement of map m: {"default": origin+yaw, "files": {piece: origin+yaw}} that puts the most of its lamp spots
+    on its navmesh (the local frame when none helps). A piece may have its own placement (m32 is two regions); a
+    piece with no spot on it takes the best single placement. Returns (spec, spots on the mesh, spots, candidates)."""
     pts = spots_of(m)
-    cands = [(0.0, 0.0, 0.0)] + [o for o in part_offsets(game, m) if o != (0.0, 0.0, 0.0)]
+    zero = (0.0, 0.0, 0.0, 0.0)
+    if m.startswith("m29"):
+        # Chalice dungeons: the layout is assembled from blocks at run time (the MSB holds the template), so no static
+        # placement exists; the walker keeps the local frame there and falls back when the start is off the mesh.
+        return {"default": zero, "files": {}}, 0, len(pts), 1
+    cands = [zero] + [o for o in part_offsets(game, m) if o != zero]
+    spec = {"default": zero, "files": {}}
     if not pts or len(cands) == 1:
-        return (0.0, 0.0, 0.0), 0, len(pts), len(cands)
+        return spec, 0, len(pts), len(cands)
     best, bn = cands[0], -1
     for o in cands:
         verts, faces, _links = build(game, [m], {m: o})
         n = on_mesh_count(verts, faces, pts)
         if n > bn:
             best, bn = o, n
-    if best != (0.0, 0.0, 0.0) and bn < max(2, (len(pts) + 1) // 2):
-        best = (0.0, 0.0, 0.0)  # too little evidence for a shift: keep the local frame
-    return best, bn, len(pts), len(cands)
+    if best == zero and bn < max(2, (len(pts) + 1) // 2) and bn >= 0:
+        pass
+    spec["default"] = best
+    files = ft.bnd4(ft.read_maybe_dcx(Path(game) / "map" / m / f"{m}.nvmhktbnd.dcx"))
+    total = 0
+    for name, b in files.items():
+        hits = {o: piece_hits(game, m, name, b, o, pts) for o in cands}
+        top = max(hits.values())
+        if top > hits[best]:
+            spec["files"][name] = max(hits, key=hits.get)
+        total += max(hits[spec["files"].get(name, best)], 0)
+    n = min(total, len(pts))
+    if n < max(2, (len(pts) + 1) // 2) and best != zero or (n < max(2, (len(pts) + 1) // 2) and spec["files"]):
+        return {"default": zero, "files": {}}, n, len(pts), len(cands)  # too little evidence: keep the local frame
+    if best != zero and bn < max(2, (len(pts) + 1) // 2) and not spec["files"]:
+        spec["default"] = zero
+    return spec, n, len(pts), len(cands)
 
 
 def write(path, maps, verts, faces, links):
@@ -206,8 +249,8 @@ def main():
         for m in maps:
             o, n, tot, nc = choose_offset(game, m)
             offsets[m] = o
-            if o != (0.0, 0.0, 0.0) or nc > 1:
-                print("  %s: offset %s (%d of %d spots on the mesh, %d candidate(s))" % (m, o, n, tot, nc))
+            if o["default"] != (0.0, 0.0, 0.0, 0.0) or o["files"]:
+                print("  %s: placement %s + %d piece(s) placed apart (%d of %d spots on the mesh, %d candidate(s))" % (m, o["default"], len(o["files"]), n, tot, nc))
         verts, faces, links = build(game, maps, offsets)
         write(outdir / f"nav_m{a}.bin", maps, verts, faces, links)
         print("area m%s: %d maps, %d faces, %d verts" % (a, len(maps), len(faces), len(verts)))

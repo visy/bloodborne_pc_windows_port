@@ -299,6 +299,7 @@ struct Test {
     bool nav_init = false, nav_on = false;
     std::string st_last_line;       // the menu walk's last step line (for the 'left by a load' note)
     bool st_parked_logged = false;
+    bool nav_mismatch_logged = false;
     bool ap_hold = false;           // a move step became a walk (BB_TEST_MOVE_WALK): the chain waits for it like a stick step
     navwalk::Walker nav;
     Clock::time_point nav_last{}, nav_log{};
@@ -2983,6 +2984,7 @@ void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float
         t.nav_log = now;
         t.nav_pad.clear();
         t.nav_cam_logged = false;
+        t.nav_mismatch_logged = false;
         t.nav_t0 = t.nav_start = now;
         t.nav_goal = goals.back();
         t.ap_phase = 0;
@@ -3066,6 +3068,17 @@ void NavWalkTick(Test& t, const GameSnapshot& s, std::uint32_t area, const float
     }
     const double clock = Seconds(t.nav_t0, now);
     navwalk::WalkOut o = t.nav.Tick(here, clock, dt);
+    if (t.nav.cam().mismatch && !t.nav_mismatch_logged) {
+        t.nav_mismatch_logged = true;
+        std::uint64_t rm = 0, cfg = 0;
+        float f[16] = {};
+        if (SafeGet(Guest(0x5540298), &rm) && rm && SafeGet(rm + 0x10, &cfg) && cfg && SafeRead(cfg + 0x50, f, sizeof f)) {
+            Log("test: nav: camera model dropped: raw yaw %.0f deg, observed %.0f deg; block rows +0x10 (%.2f %.2f %.2f) +0x20 (%.2f %.2f %.2f) +0x30 (%.2f %.2f %.2f) +0x40 (%.1f %.1f %.1f), stick %d,%d, map 0x%08x",
+                t.nav.cam().raw * 180 / M_PI, t.nav.cam().obs_off * 180 / M_PI, double(f[4]), double(f[5]), double(f[6]), double(f[8]),
+                double(f[9]), double(f[10]), double(f[12]), double(f[13]), double(f[14]), double(f[0]), double(f[1]), double(f[2]),
+                o.stick.lx, o.stick.ly, area);
+        }
+    }
     if (o.event) {
         Log("test: nav: %s at (%.1f, %.1f, %.1f), %.1f m of path left (%d replan, %d back-up, %d roll, %d warp)", o.event,
             double(pos[0]), double(pos[1]), double(pos[2]), t.nav.path().Remaining(), t.nav.stats.replans,
