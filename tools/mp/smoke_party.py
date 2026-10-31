@@ -883,6 +883,9 @@ def lfw_chains(spec, slow=False):
                 s.append("%s_stick=%.2f:%.2f:1.0:24@0.5%%%s?obj=%s:%d" % (role, ox, oz, m, car, spec["start_anim"][d][0]))
                 continue
             second = riders == "both" and role == "guest"
+            # smokefix077: a rider of the previous ride has the exit move at the arrival (the ride is over) as its previous step: no gate
+            # (the guest of lfwbs never saw the end-animation gate of ride 2 and waited 700 s); a waiter before needs it
+            rode_before = k > 0 and (lfw_plan(spec, slow)[k - 1][1] in ("both", role))
             far, route = spec["far"][end], spec["route"][end]
             pin = 10 if far in spec.get("farlong", {}).values() and spec.get("_farwalk") else 4  # a far warp: the floor streams in slowly
             if second and spec.get("stagger"):
@@ -899,7 +902,7 @@ def lfw_chains(spec, slow=False):
                 g0 = "" if role == "host" else "?near=%s:12" % _p(*spec["out_h"]["bottom"])  # the prelude's last spot (and the first waiter's)
                 s.append("%s_move=%s:pin=%d:ground@1%%%s%s" % (role, _p(*far), pin, m, g0))
             else:
-                s.append("%s_move=%s:pin=%d:ground@14%%%s%s" % (role, _p(*far), pin, m, gate))
+                s.append("%s_move=%s:pin=%d:ground@14%%%s%s" % (role, _p(*far), pin, m, "" if k and rode_before else gate))
             # the second rider walks in once the first one stands on the car: two walkers on the same route block
             # each other in its narrow places and in the doorway (live lfw4 / lfw5)
             rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
