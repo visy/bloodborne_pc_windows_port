@@ -295,3 +295,17 @@ def test_vpn_profile_devs_only(tmp_path, monkeypatch):
     assert run(db, "someone", "vpn-profile") == (1, b"")
     monkeypatch.setenv("NETDOCTOR_VPN_PROFILE", str(tmp_path / "missing.ovpn"))
     assert run(db, "vlad", "vpn-profile")[0] == 1
+
+
+def test_vpn_status(tmp_path, monkeypatch):
+    db, *_ = seed(tmp_path)
+    import clinic_vpn
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    monkeypatch.setattr(clinic_vpn, "fetch", lambda target: {
+        "ok": True, "clients": 4, "max_clients": 255, "pool": 253,
+        "lobby": {"games": 1, "players": 2, "open": 1, "full": 0, "joinable": 1, "free_slots": 2, "sizes": {"4": 1},
+                  "builds": {"0.7.7": 1}}})
+    rc, out = run(db, "visy", "vpn-status")
+    assert rc == 0 and b"**4** of 253 players connected" in out and b"1 public game" in out
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "off")
+    assert b"not set up" in run(db, "visy", "vpn-status")[1]

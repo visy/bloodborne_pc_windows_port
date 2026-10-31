@@ -17,5 +17,8 @@ done
 for h in $(nft -a list chain inet filter input 2>/dev/null | sed -n "s/.*iifname \"tun0\" udp dport $PORT accept.*# handle \([0-9]*\).*/\1/p"); do
   nft delete rule inet filter input handle "$h"
 done
+for h in $(nft -a list chain inet filter input 2>/dev/null | sed -n 's/.*iifname "lo" udp dport 9311 accept.*# handle \([0-9]*\).*/\1/p'); do
+  nft delete rule inet filter input handle "$h"
+done
 [ -f /etc/nftables.conf ] && sed -i '/# nwlobby$/d' /etc/nftables.conf && nft -c -f /etc/nftables.conf
 echo "nwlobby removed."

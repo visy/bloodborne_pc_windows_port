@@ -2,7 +2,10 @@
 """Print the number of connected OpenVPN clients as one JSON line. Runs ON the VPN server as an ssh forced command.
 
 Reads only the count (management `load-stats`) and max-clients from server.conf: no addresses, no names.
-  {"ok":true,"clients":N,"max_clients":M,"pool":253}   or   {"ok":false,"error":"management off"|"<short>"}
+  {"ok":true,"clients":N,"max_clients":M,"pool":253,"lobby":L}   or   {"ok":false,"error":"management off"|"<short>"}
+L = nwlobby's counts from its loopback socket (127.0.0.1:9311): {"games","players","open","full","joinable",
+"free_slots","sizes","builds"}, or null when
+the lobby does not answer (an older nwlobby, or it is down). Counts only.
 Standard library only. Paths/ports can be overridden with NWVPN_PW, NWVPN_CONF, NWVPN_MGMT_PORT.
 """
 import json
@@ -15,6 +18,8 @@ POOL = 253   # 10.8.0.0/24, topology subnet
 PW_FILE = os.environ.get("NWVPN_PW") or os.path.expanduser("~/nwvpn/mgmt.pw")
 CONF = os.environ.get("NWVPN_CONF") or "/etc/openvpn/server/server.conf"
 PORT = int(os.environ.get("NWVPN_MGMT_PORT") or 7505)
+LOBBY_STATS = ("127.0.0.1", int(os.environ.get("NWVPN_LOBBY_STATS_PORT") or 9311))
+LOBBY_MAGIC, LOBBY_VERSION, T_STATS, T_STATS_REPLY = bytes([0xFA, 0x4C]), 1, 5, 6   # tools/vpn/lobby/nwlobby.py
 
 
 def parse_stats(line):
@@ -31,6 +36,33 @@ def parse_max_clients(text):
         if m:
             val = int(m.group(1))
     return val
+
+
+LOBBY_KEYS = ("games", "players", "open", "full", "joinable", "free_slots")
+
+
+def parse_lobby_stats(data):
+    """nwlobby's stats reply (JSON after the 4-byte header) -> counts dict, else None. Only known keys pass."""
+    if len(data) < 5 or data[:2] != LOBBY_MAGIC or data[2] != LOBBY_VERSION or data[3] != T_STATS_REPLY:
+        return None
+    try:
+        d = json.loads(data[4:].decode("utf-8"))
+        out = {k: int(d[k]) for k in LOBBY_KEYS}
+        out["sizes"] = {str(k)[:4]: int(v) for k, v in dict(d.get("sizes") or {}).items()}
+        out["builds"] = {str(k)[:32]: int(v) for k, v in list(dict(d.get("builds") or {}).items())[:5]}
+        return out
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def lobby(addr=LOBBY_STATS, timeout=2.0):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(timeout)
+            s.sendto(LOBBY_MAGIC + bytes([LOBBY_VERSION, T_STATS]), addr)
+            return parse_lobby_stats(s.recvfrom(2048)[0])
+    except OSError:
+        return None
 
 
 def _wait(sock, want, timeout=5.0):
@@ -85,7 +117,10 @@ def query(host="127.0.0.1", port=PORT, pw_file=PW_FILE, conf=CONF):
 
 
 def main():
-    print(json.dumps(query(), separators=(",", ":")))
+    d = query()
+    if d.get("ok"):
+        d["lobby"] = lobby()
+    print(json.dumps(d, separators=(",", ":")))
     return 0
 
 

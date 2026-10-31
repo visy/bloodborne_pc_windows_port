@@ -317,6 +317,12 @@ def is_staff(author):
                for w in STAFF_WORDS)
 
 
+def is_dev_or_staff(author):
+    """A member holding a role whose name has dev or staff in it (/vpnstatus)."""
+    return any(w in (getattr(r, "name", "") or "").lower() for r in (getattr(author, "roles", None) or [])
+               for w in ("dev", "staff"))
+
+
 def _full_reply_recent(clinic, bug, author_id):
     since = time.time() - REPLY_WINDOW
     return any(n["to"] == str(author_id) and n["bug_id"] == bug for n in clinic.notes_of_kind(FULL_REPLY, since))
@@ -881,6 +887,24 @@ def main():
         text = await run_on(atts, redact=False)
         await send_text(interaction.followup.send, text, True,
                         remember(message.channel, file_recs(found, last_hashes.pop(id(atts), ())), text))
+
+    @tree.command(name="vpnstatus", description="Nightwatch VPN right now: players, games, public games with room "
+                                                "(devs and staff)")
+    @app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
+    async def vpnstatus(interaction: discord.Interaction):
+        if not is_dev_or_staff(interaction.user):
+            await interaction.response.send_message("Only devs and staff can run /vpnstatus.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)   # public: the answer is for the channel
+        target = clinic_vpn.ssh_target()
+        if not target:
+            await interaction.followup.send("**Nightwatch VPN**: monitor not set up.")
+            return
+        sample = await asyncio.get_running_loop().run_in_executor(None, clinic_vpn.fetch, target)
+        if not sample.get("unconfigured"):
+            clinic_vpn.store(CTX.clinic, sample)
+        text = clinic_vpn.status_text(sample, clinic_vpn.summary(CTX.clinic, time.time(), target))
+        await interaction.followup.send(text, allowed_mentions=discord.AllowedMentions.none())
 
     async def auto_reply(channel, dm=False):
         await asyncio.sleep(DM_DEBOUNCE_S if dm else AUTO_DEBOUNCE_S)  # wait for the other logs
