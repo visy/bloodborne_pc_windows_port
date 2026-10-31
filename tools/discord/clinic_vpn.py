@@ -9,6 +9,7 @@ in_games: NULL when the lobby did not answer), kept 90 days.
 """
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -48,7 +49,7 @@ def parse_reply(text):
                 for k in ("joinable", "free_slots"):
                     v[k] = int(lb.get(k) or 0)
                 v["sizes"] = {str(k)[:4]: int(n) for k, n in dict(lb.get("sizes") or {}).items()}
-                v["builds"] = {str(k)[:16]: int(n) for k, n in list(dict(lb.get("builds") or {}).items())[:5]}
+                v["builds"] = {str(k)[:32]: int(n) for k, n in list(dict(lb.get("builds") or {}).items())[:5]}
                 out["lobby"] = v
             except (KeyError, TypeError, ValueError, AttributeError):
                 pass
@@ -61,8 +62,13 @@ def _plural(n, one, many=None):
 
 
 def _md(text):
-    """A lobby-supplied string (a build name) made inert in Discord markdown."""
-    return "".join(c for c in text if c.isalnum() or c in ".-_+()")[:16] or "?"
+    """A lobby-supplied build name made inert in Discord markdown and readable: Nightwatch's
+    "nightwatch-coop-<nw version>-visy-<coop>-<sha>" (cut at 32 chars by the game) -> "NW <nw version>"."""
+    t = "".join(c for c in text if c.isalnum() or c in ".-_+()")[:32]
+    if t.startswith("nightwatch-coop-"):
+        rest = re.sub(r"-v(?:i(?:sy?)?)?$", "", t[len("nightwatch-coop-"):].split("-visy")[0])  # a cut "-visy"
+        t = "NW " + (rest.strip("-") or "?")
+    return t or "?"
 
 
 def status_text(sample, s):
@@ -85,8 +91,10 @@ def status_text(sample, s):
         if lb["joinable"]:
             lines.append(f"- **{_plural(lb['joinable'], 'public game')}** with room right now "
                          f"({_plural(lb['free_slots'], 'free slot')})")
+        elif lb["open"]:
+            lines.append("- Every public game is full right now: host one!")
         elif g:
-            lines.append("- No public game has room right now: host one!")
+            lines.append("- No public game right now: host one without a password!")
         lines.append(f"- {_plural(lb['players'], 'player')} in listed games, "
                      f"{max(0, n - lb['players'])} connected but not in one")
         if lb.get("sizes"):

@@ -49,7 +49,7 @@ def parse_lobby_stats(data):
         d = json.loads(data[4:].decode("utf-8"))
         out = {k: int(d[k]) for k in LOBBY_KEYS}
         out["sizes"] = {str(k)[:4]: int(v) for k, v in dict(d.get("sizes") or {}).items()}
-        out["builds"] = {str(k)[:16]: int(v) for k, v in list(dict(d.get("builds") or {}).items())[:5]}
+        out["builds"] = {str(k)[:32]: int(v) for k, v in list(dict(d.get("builds") or {}).items())[:5]}
         return out
     except (ValueError, KeyError, TypeError, AttributeError):
         return None
