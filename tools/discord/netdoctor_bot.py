@@ -55,6 +55,7 @@ import clinic_outbox as ob  # noqa: E402
 import clinic_discord as cd  # noqa: E402
 import clinic_health as hl  # noqa: E402
 import clinic_vpn  # noqa: E402
+import clinic_vpnmaint  # noqa: E402
 import clinic_logic  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_voice as voice  # noqa: E402
@@ -1156,6 +1157,7 @@ def main():
                     if not sample.get("unconfigured"):
                         clinic_vpn.store(CTX.clinic, sample)
                         hl.record_job(CTX.clinic, "vpn", "ok" if sample.get("ok") else sample.get("error", ""))
+                await post_vpn_maint()
                 h.check()
                 if h.upkeep_due(time.localtime().tm_hour):
                     await loop.run_in_executor(None, h.run_upkeep)
@@ -1163,7 +1165,24 @@ def main():
                 await hl.send_daily_report(h)
             except Exception as e:
                 print(f"health loop: {type(e).__name__}: {e}", flush=True)
-            await asyncio.sleep(300)
+            # a VPN maintenance pending (or just run): sample and post every minute instead of every 5
+            await asyncio.sleep(60 if clinic_vpnmaint.soon(CTX.clinic) else 300)
+
+    async def post_vpn_maint():
+        """Announce / remind / back / cancel for a scheduled VPN maintenance (clinic_vpnmaint), in its channel."""
+        for kind, m, text in clinic_vpnmaint.due(CTX.clinic):
+            place = next((c for g in client.guilds if not guild or g.id == guild.id
+                          for c in g.text_channels if c.name == m["channel"]), None)
+            if place is None:
+                print(f"vpn maint {m['id']}: no channel #{m['channel']}", flush=True)
+                return
+            try:
+                await place.send(text, allowed_mentions=cd.AllowedMentions.none())
+            except Exception as e:  # Forbidden / NotFound: say so once per tick, retry next tick
+                print(f"vpn maint {m['id']} {kind}: not posted ({type(e).__name__})", flush=True)
+                return
+            clinic_vpnmaint.mark(CTX.clinic, kind, m["id"])
+            print(f"vpn maint {m['id']}: {kind} posted in #{m['channel']}", flush=True)
 
     @client.event
     async def on_error(event, *args, **kwargs):
