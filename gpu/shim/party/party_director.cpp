@@ -2991,9 +2991,10 @@ void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float
         Log("test: nav: planned %zu goal(s): path %.1f m, %zu points, goal snap %.2f m, from (%.1f, %.1f, %.1f), map 0x%08x",
             goals.size(), t.nav.stats.path_len, t.nav.path().Points().size(), t.nav.stats.snap_goal, double(pos[0]),
             double(pos[1]), double(pos[2]), area);
-    } else if (r == navwalk::PlanResult::StartOff || r == navwalk::PlanResult::NoMesh) {
-        Log("test: nav: %s at (%.1f, %.1f, %.1f): the old walker", navwalk::PlanName(r), double(pos[0]), double(pos[1]),
-            double(pos[2]));
+    } else if (r == navwalk::PlanResult::StartOff || r == navwalk::PlanResult::NoMesh || r == navwalk::PlanResult::GoalOff) {
+        // A goal far off the mesh is a deliberate one (a ledge to fall from, a lake): the straight walk of the old walker.
+        Log("test: nav: %s at (%.1f, %.1f, %.1f), goal (%.1f, %.1f): the old walker", navwalk::PlanName(r), double(pos[0]), double(pos[1]),
+            double(pos[2]), double(goals.back().x), double(goals.back().z));
     } else {
         Log("test: approach: NAV UNREACHABLE: %s (goal (%.1f, %.1f) from (%.1f, %.1f, %.1f))", navwalk::PlanName(r),
             double(goals.back().x), double(goals.back().z), double(pos[0]), double(pos[1]), double(pos[2]));
