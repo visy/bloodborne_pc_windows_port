@@ -67,7 +67,7 @@ def _md(text):
     t = "".join(c for c in text if c.isalnum() or c in ".-_+()")[:32]
     if t.startswith("nightwatch-coop-"):
         rest = re.sub(r"-v(?:i(?:sy?)?)?$", "", t[len("nightwatch-coop-"):].split("-visy")[0])  # a cut "-visy"
-        t = "NW " + (rest.strip("-") or "?")
+        t = ("NW " + rest.strip("-")) if rest.strip("-") else "Nightwatch"
     return t or "?"
 
 
