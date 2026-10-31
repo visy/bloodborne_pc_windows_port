@@ -1117,30 +1117,48 @@ def lw_anim_at(L, i, spec, w):
 REMOTE_RX = re.compile(r"Party B2: remote chrs: \[mode \d+ 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)")
 
 
-def copy_drift(real, copies, window=6.0):
-    """Worst distance (m) of a remote copy from the player's real positions: each copy sample against the real samples within
-    +-window s (a lag-tolerant FREEZE detector: the games run at different game-time rates under load, 90 FPS lfwc: the guest's lift ride took twice the wall time of the host's copy of it; a copy that stops updating while its player moves stays 10+ m from every real spot within the window). [(t, x, y, z)] lists. -> (worst, t, n)."""
+def copy_freeze(real, copies, span=6.0, moved=5.0, still=0.3):
+    """A remote copy that stops while its player moves: over a stretch of `span` s the copy stays within `still` m although the
+    player's real position travels more than `moved` m (the copy of a chr riding a car not updating: the liftwalk077 note). Lag is not
+    a freeze: under load the games run at different game-time rates (a lift ride took twice the wall time on one of them).
+    [(t, x, y, z)] lists on one clock. -> (worst real travel while frozen, t, windows tested)."""
     worst, wt, n = 0.0, 0.0, 0
-    for t, x, y, z in copies:
-        near = [r for r in real if abs(r[0] - t) <= window]
-        if not near:
+    for k, (t, x, y, z) in enumerate(copies):
+        end = [c for c in copies[k + 1:] if c[0] - t >= span]
+        if not end:
+            break
+        c1 = end[0]
+        window = [c for c in copies[k:] if c[0] <= c1[0]]
+        if any(b[0] - a[0] > 2.5 for a, b in zip(window, window[1:])):
+            continue  # the copy lines are 1 s apart; a gap is a gap in the log, not a stopped copy
+        if max(math.dist((x, y, z), c[1:]) for c in window) > still:
+            n += 1
             continue
         n += 1
-        d = min(math.dist((x, y, z), r[1:]) for r in near)
-        if d > worst:
-            worst, wt = d, t
+        pts = [r for r in real if t <= r[0] <= c1[0]]
+        if len(pts) < 2:
+            continue
+        travel = max(math.dist(pts[0][1:], q[1:]) for q in pts)
+        if travel > moved and travel > worst:
+            worst, wt = travel, t
     return worst, wt, n
 
 
 def lw_copy_rows(v, L, tag, t0):
     """flaky078: the other player's body on each screen follows the real player through the rides (the user saw a host without a
     body on the guest's screen): every copy sample of 'remote chrs' within 5 m of the real position (the log_pos lines of the other game)."""
+    # the log offsets ([+ s]) start at each process's own start: put both instances on the wall clock of their pos lines
+    off = {}
+    for k in (0, 1):
+        d = sorted(wall(l) - t for t, l in L.all(k, POS_RX.pattern) if wall(l) is not None)
+        off[k] = d[len(d) // 2] if d else 0.0
     for i, j, who in ((1, 0, "host"), (0, 1, "guest")):
-        real = [(t,) + tuple(float(x) for x in POS_RX.search(l).groups()) for t, l in L.all(j, POS_RX.pattern)]
-        copies = [(t,) + tuple(float(x) for x in REMOTE_RX.search(l).groups()) for t, l in L.all(i, REMOTE_RX.pattern, t0)]  # from 5 s before the first ride: the join and the first warps (two maps, 100+ m) are not rides
-        worst, wt, n = copy_drift(real, copies)
-        v.step("%s the %s's copy on the other screen follows it (within 5 m of its real spot)" % (tag, who), n >= 20 and worst <= 5.0,
-               "%d samples, worst %.1f m at +%.0f s" % (n, worst, wt))
+        real = [(t + off[j],) + tuple(float(x) for x in POS_RX.search(l).groups()) for t, l in L.all(j, POS_RX.pattern)]
+        copies = [(t + off[i],) + tuple(float(x) for x in REMOTE_RX.search(l).groups())
+                  for t, l in L.all(i, REMOTE_RX.pattern, t0)]  # from 5 s before the first ride: the join and the first warps (two maps, 100+ m) are not rides
+        worst, wt, n = copy_freeze(real, copies)
+        v.step("%s the %s's copy on the other screen does not freeze while it moves" % (tag, who), n >= 20 and worst == 0.0,
+               "%d windows of 6 s, worst: copy still while the player travelled %.1f m (at wall +%.0f s)" % (n, worst, wt % 3600))
 
 
 def check_lfw(v, L, key, tag):
