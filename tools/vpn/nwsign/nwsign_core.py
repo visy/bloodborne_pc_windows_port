@@ -23,7 +23,7 @@ DEFAULTS = {
     "grace_days": 3,                # renewal still accepted this long after expiry
     "crl_days": 90,
     "crl_refresh_hours": 6,
-    "enroll_per_ip_day": 3,
+    "enroll_per_ip_day": 10,        # successful enrollments; households and carrier NAT share one address (was 3)
     "enroll_global_day": 200,
     "renew_per_install_day": 10,
     "general_per_ip_hour": 120,
@@ -418,6 +418,13 @@ class RateLimiter:
         if ":" in who:  # IPv6: bucket by /64 so a client cannot rotate through its prefix
             who = ":".join(who.split(":")[:4])
         return kind + hashlib.sha256(self.salt + who.encode()).hexdigest()[:24]
+
+    def peek(self, key, limit, window, now=None):
+        """Like hit() but counts nothing: 0 if a slot is free, else seconds until one frees."""
+        now = now or time.time()
+        with self.lock:
+            q = [t for t in self.hits.get(key, ()) if t > now - window]
+            return max(1, int(q[0] + window - now) + 1) if len(q) >= limit else 0
 
     def hit(self, key, limit, window, now=None):
         """Count a hit. Returns 0 if allowed, else seconds until a slot frees."""
