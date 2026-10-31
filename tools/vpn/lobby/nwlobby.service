@@ -41,6 +41,8 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 IPAddressDeny=any
 IPAddressAllow=10.8.0.0/24
+# the operator counts socket (nwstats, 127.0.0.1:9311)
+IPAddressAllow=localhost
 TasksMax=8
 MemoryMax=64M
 LimitNOFILE=64

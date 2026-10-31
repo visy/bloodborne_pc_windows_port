@@ -87,7 +87,9 @@ class Clinic:
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
         for table, col in (("nw_messages", "dm INTEGER"), ("nw_bugs", "reporter_id INTEGER"),
-                           ("nw_bugs", "activity REAL"), ("nw_outbox", "kind TEXT"), ("nw_outbox", "merged_into INTEGER")):
+                           ("nw_bugs", "activity REAL"), ("nw_outbox", "kind TEXT"), ("nw_outbox", "merged_into INTEGER"),
+                           ("nw_vpn", "games INTEGER"), ("nw_vpn", "open_games INTEGER"),
+                           ("nw_vpn", "joinable INTEGER"), ("nw_vpn", "in_games INTEGER")):
             have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col.split()[0] not in have:  # database from before the column: add it
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
