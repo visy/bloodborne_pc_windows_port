@@ -218,10 +218,11 @@ host game (10.8.0.x)                 lobby 10.8.0.1:9310                guest la
                                                                   the game joins <address>:<port> + password
 ```
 
-Joining a plain `host:port` needs the host's password (without one only a party code works, and the code
-holds the party secret). So the lobby is for hosts **with a password**: the game does not announce a
-party without one, and the list says *Pass: yes* for every game. The guest types the password the host
-told them; the launcher starts the game as a guest with `BB_PARTY_CODE=<tunnel address>:<port>` and
+Joining a plain `host:port` needs the host's password, or an open party. A listed host without a password
+is an open party for the tunnel's subnet (`party_open_rules.h`; `party_open` extends it to the host's LAN
+and other VPN subnets), and the list says *Open*. Anyone on that network can join and holds the same link
+key, so the link's encryption does not protect an open party from them. With a password the guest types
+the password the host told them; the launcher starts the game as a guest with `BB_PARTY_CODE=<tunnel address>:<port>` and
 `BB_PARTY_PASSWORD`. The VPN firewall already lets clients reach each other's party port 9307 (UDP and
 TCP) only.
 
@@ -291,6 +292,18 @@ accept` in `/etc/nftables.conf`, checked with `nft -c -f`, backup `*.pre-nwlobby
 all of it. The unit is hardened (`DynamicUser`, `NoNewPrivileges`, `ProtectSystem=strict`,
 `RestrictAddressFamilies=AF_INET`, empty capability set, syscall filter, `IPAddressDeny=any` except the
 tunnel network, 64 MB). Check: `systemctl status nwlobby`; there are no logs to read by design.
+
+**Counts socket** (2026-10-31): nwlobby also answers a stats request (type 5) on `127.0.0.1:9311`, loopback
+only (never the tunnel; `NWLOBBY_STATS=off` disables): JSON counts of listed games, players in them, public
+(no password), full, public with room, free slots, party sizes and the top 5 versions. No names or addresses.
+`~/nwvpn/vpn_count.py` (the Iosefka forced command) adds them to its reply as `lobby`; Iosefka stores them with
+each 5-minute sample and shows them in `/vpnstatus`, `iosefka vpn-status` and the daily report (24 h averages
+and peaks). `install.sh` adds `iifname "lo" udp dport 9311 accept` to nftables (input policy drop).
+
+**No status file**: Debian's `openvpn-server@.service` passes `--status /run/openvpn-server/status-%i.log`
+itself, so removing the status line from server.conf was not enough: a RAM status file with every client's real
+address existed (found 2026-10-31). `tools/vpn/server/no-status-file.sh` (root) adds a systemd drop-in with the
+same ExecStart minus `--status`; `--undo` removes it.
 
 Test override (never set in production): `NWLOBBY_BIND=127.0.0.1:19310 NWLOBBY_NET=127.0.0.0/8 python3
 nwlobby.py` serves on loopback and accepts loopback senders. The game and launcher use the matching

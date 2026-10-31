@@ -88,6 +88,7 @@ def build_parser():
     add("triage-queue")
     add("health")
     add("vpn-profile")
+    add("vpn-status")
     s = add("title")
     s.add_argument("bug")
     s.add_argument("title_text")
@@ -575,7 +576,7 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args([_norm_ids(x) for x in argv])
     if not a.cmd:
-        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile)")
+        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile, vpn-status)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
     if a.cmd in DEVS_ONLY and who not in DEVS:
@@ -746,6 +747,13 @@ def _run(argv, who, out, db, stdin):
         return emit(row)
     if a.cmd == "vpn-profile":
         out.write(_vpn_profile())
+        return 0
+    if a.cmd == "vpn-status":   # the same text /vpnstatus posts (a live sample, stored like the health loop's)
+        target = clinic_vpn.ssh_target()
+        sample = clinic_vpn.fetch(target) if target else {"ok": False, "error": "not set up"}
+        if target and not sample.get("unconfigured"):
+            clinic_vpn.store(c, sample)
+        out.write((clinic_vpn.status_text(sample, clinic_vpn.summary(c, time.time(), target)) + "\n").encode())
         return 0
     if a.cmd == "export":
         _do_export(c, out)

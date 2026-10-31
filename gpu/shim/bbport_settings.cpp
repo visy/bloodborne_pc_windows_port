@@ -239,6 +239,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_discovery = i != 0;
     } else if (key == "party_vpn_lobby") {
         v.party_vpn_lobby = i != 0;
+    } else if (key == "party_open") {
+        v.party_open = i != 0;
     } else if (key == "party_splitscreen") {
         v.party_splitscreen = i != 0 || value == "on" || value == "true";
     } else if (key == "party_stay") {
@@ -439,7 +441,7 @@ void Load() {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
         {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
         {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
-        {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"},
+        {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"},
         {"BB_PARTY_SPLITSCREEN", "party_splitscreen"}, {"BB_PARTY_STAY", "party_stay"}, {"BB_PARTY_MESSAGES", "party_messages"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
@@ -774,6 +776,7 @@ void Save() {
     put("party_hud", flag(v.party_hud));
     put("party_discovery", flag(v.party_discovery));
     put("party_vpn_lobby", flag(v.party_vpn_lobby));
+    put("party_open", flag(v.party_open));
     put("party_splitscreen", flag(v.party_splitscreen));
     put("party_stay", flag(v.party_stay));
     put("party_messages", coop::splitscreen::MessagesName(coop::splitscreen::ClampMessages(v.party_messages.load())));
