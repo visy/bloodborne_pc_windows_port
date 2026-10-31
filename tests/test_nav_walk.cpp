@@ -242,6 +242,19 @@ static void TestOffMeshTail() {
     }
 }
 
+static void TestPause() {
+    NavMesh m = Grid(20, 20, nullptr);
+    Walker w;
+    Sim sim{{2, 0, 2}, 0.0};
+    CHECK(w.Start(&m, sim.pos, {{36, 0, 30}}, {true}, 1.0, 0) == PlanResult::Ok);
+    w.Tick(sim.pos, 0.0, 0.05);
+    w.Tick(sim.pos, 0.05, 0.05);
+    WalkOut o = w.Tick(sim.pos, 20.0, 0.25);  // 20 s with no tick (a load): not a stall, not a timeout
+    CHECK(w.stats.stalls == 0 && w.state() == WalkState::Walking);
+    o = w.Tick(sim.pos, 20.05, 0.05);
+    CHECK(w.stats.stalls == 0);
+}
+
 static void TestStallRecovery() {
     NavMesh m = Grid(20, 20, nullptr);
     {
@@ -312,6 +325,7 @@ int main() {
     TestWaypointHints();
     TestUnreachable();
     TestOffMeshTail();
+    TestPause();
     TestStallRecovery();
     TestOffCorridorReplan();
     TestTurnRateAndEase();

@@ -27,6 +27,10 @@ def one(path):
     for line in Path(path).read_text(errors="replace").splitlines():
         if "test: nav: planned" in line:
             r["nav"] += 1
+            if start is None:
+                start = stamp(line)
+        if start is None and re.search(r"test: approach: \(-?[\d.]+, -?[\d.]+\) ->", line):
+            start = stamp(line)
         if re.search(r"test: (guest|host)_(stick|route|move): (walk to|\d+ waypoint|walked to)", line):
             start = stamp(line)
         m = END.search(line)

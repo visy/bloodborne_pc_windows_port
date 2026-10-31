@@ -666,6 +666,8 @@ public:
         recover_stage_ = 0;
         warps_ = 0;
         next_goal_ = 0;
+        last_now_ = -1;
+        paused_ = 0;
         const PlanResult r = PlanAll(from, 0);
         if (r != PlanResult::Ok) {
             state_ = WalkState::Failed;
@@ -687,7 +689,17 @@ public:
         WalkOut o;
         o.state = state_;
         if (state_ == WalkState::Done || state_ == WalkState::Failed || state_ == WalkState::Idle) return o;
-        if (now - stats.started > cfg.timeout_s) return Fail(o, now, "timeout");
+        if (now - stats.started > cfg.timeout_s + paused_) return Fail(o, now, "timeout");
+        // not ticked for a while (a load, a cutscene): no stall or speed from the gap
+        if (last_now_ >= 0 && now - last_now_ > 0.5) {
+            paused_ += now - last_now_;
+            have_last_ = false;
+            speed_ = 0;
+            stall_.Reset(now, path_.Progress());
+            dir_valid_ = false;
+            o.event = "resumed after a pause";
+        }
+        last_now_ = now;
         // velocity (m/s) from the last two samples
         if (have_last_ && dt > 1e-3) {
             const double vx = (pos.x - last_pos_.x) / dt, vz = (pos.z - last_pos_.z) / dt;
@@ -767,6 +779,7 @@ private:
     int recover_stage_ = 0, warps_ = 0, side_ = 1;
     double stage_until_ = 0, recover_end_ = 0, roll_until_ = 0;
     std::size_t next_goal_ = 0;
+    double last_now_ = -1, paused_ = 0;
 
     WalkOut& Emit(WalkOut& o, double stick_angle, double tilt) {
         o.stick = MakeStick(stick_angle, tilt);

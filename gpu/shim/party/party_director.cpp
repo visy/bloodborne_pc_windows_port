@@ -3955,6 +3955,12 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             }
         }
     }
+    // Nav walker dead-man: the stick is released when the walk is not being ticked (a load, a cutscene, the place wait).
+    if (t.nav_on && !t.nav_pad.empty() && Seconds(t.nav_last, now) > 0.3) {
+        WritePadFile("");
+        t.nav_pad.clear();
+        Log("test: nav: the walk was not ticked for %.1f s: stick released", Seconds(t.nav_last, now));
+    }
     if (t.approach && !t.approach_done && s.world_up && !s.loading && Seconds(st.world_at, now) >= 12.0 &&
         (!t.place || t.place_done) && Seconds(t.ap_at, now) >= 0.0) {
         std::uint32_t area = 0;
