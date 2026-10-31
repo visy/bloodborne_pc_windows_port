@@ -9,7 +9,7 @@ rm -f /etc/systemd/system/nwlobby.service
 systemctl daemon-reload
 rm -rf /opt/nwlobby
 # iptables: the live rule we inserted and our lines in the persisted scripts
-iptables -D INPUT -i tun+ -s 10.8.0.0/24 -p udp --dport "$PORT" -j ACCEPT 2>/dev/null
+iptables -D INPUT -i tun+ -s 10.8.0.0/22 -p udp --dport "$PORT" -j ACCEPT 2>/dev/null
 for f in /etc/iptables/add-openvpn-rules.sh /etc/iptables/rm-openvpn-rules.sh; do
   [ -f "$f" ] && sed -i '/# nwlobby$/d' "$f"
 done
