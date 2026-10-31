@@ -3060,6 +3060,18 @@ void NavWalkTick(Test& t, const GameSnapshot& s, std::uint32_t area, const float
     if (ReadCameraPos(&cam)) {
         t.nav.cam().FromCamera(cam, here);
     }
+    if (!t.nav_cam_logged) {
+        // one dump of the render camera block (find the view matrix: orthonormal rows next to the position at +0x80)
+        t.nav_cam_logged = true;
+        std::uint64_t rm = 0, cfg = 0;
+        float f[72] = {};
+        if (SafeGet(Guest(0x5540298), &rm) && rm && SafeGet(rm + 0x10, &cfg) && cfg && SafeRead(cfg + 0x50, f, sizeof f)) {
+            for (int r = 0; r < 72; r += 8) {
+                Log("test: nav: camblock +%03x: %.3f %.3f %.3f %.3f  %.3f %.3f %.3f %.3f", r * 4, double(f[r]), double(f[r + 1]),
+                    double(f[r + 2]), double(f[r + 3]), double(f[r + 4]), double(f[r + 5]), double(f[r + 6]), double(f[r + 7]));
+            }
+        }
+    }
     const double clock = Seconds(t.nav_t0, now);
     navwalk::WalkOut o = t.nav.Tick(here, clock, dt);
     if (o.event) {
