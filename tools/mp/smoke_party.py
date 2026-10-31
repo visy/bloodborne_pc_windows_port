@@ -798,7 +798,10 @@ LW = {
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
         out_g={"top": (16.9, 3.8, 187.9), "bottom": (33.3, -45.8, 201.3)},
         wk={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
-        far={"top": (13.1, 3.6, 188.9), "bottom": (66.2, -51.0, 236.6)},
+        # flaky078: the top far spot is the route's own first waypoint (a recorded walked spot on the pocket's floor): a warp to
+        # (13.1, 3.6, 188.9) landed on the ledge 3 m below (y 0.3) every run; the route's "hop" teleported it back up, and when the hop
+        # failed the walk gave up on the lower ledge (lfwc c2: "STOPPED at waypoint 3/4 ... y 0.1")
+        far={"top": (16.1, 3.8, 186.9), "bottom": (66.2, -51.0, 236.6)},
         route={"top": "16.1:3.8:186.9/18.5:3.6:189.1/21.3:2.8:191.2/23.2:2.9:192.3/23.8:2.8:194.0",
                "bottom": "64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
         # liftfar077: the top end is reached on foot from the Oedon Chapel side (the Great Bridge gate, 238 m of navmesh route);
