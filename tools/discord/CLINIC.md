@@ -520,6 +520,16 @@ public game had room). **`/vpnstatus`** (devs and staff only: a role with `dev` 
 live sample and posts it in the channel it was run in: players connected and the limit, games listed (public /
 with a password / full), public games with room and free slots, players in games vs. connected but not in one,
 party sizes, versions, 24 h / 7 d peaks. Counts only. Same text in the shell: `iosefka_cli.py --as visy vpn-status`.
+`vpn-drop` alert: the latest sample is at most 25% of the last 15 minutes' peak while that peak was 10 or more (45 -> 0
+on 2026-10-31 was a ~5 min provider outage); quiet during a scheduled maintenance; resolved when players are back.
+
+**VPN maintenance announcements** (visy only): `iosefka_cli.py --as visy vpn-maint schedule --at "2026-11-02 20:00"
+--channel announcements [--note "Update Nightwatch Co-op to 0.2.7 first."] [--announce-at ...] [--tz Europe/Helsinki]`.
+The bot posts in that channel: the announcement (at once, or at --announce-at), a reminder 15 min before, and
+"VPN is back" once a sample after the time shows players (or 30 min after it). Times are Discord timestamps, so each
+reader sees local time. While one is pending within the hour the health loop runs every minute. `vpn-maint preview`
+prints all four texts; `vpn-maint list`; `vpn-maint cancel ID` (posts a cancellation if it was announced). One at a
+time (table `nw_vpn_maint`). For the /22 cutover: schedule it, then run `sudo sh cutover.sh` on the server at the time.
 
 **Alerts** (each kind at most once per 6 h, unless it was resolved and came back; none contains names, IPs
 or log lines): a new traceback in her own handling (deduplicated by first line, count per hour), an overdue

@@ -309,3 +309,18 @@ def test_vpn_status(tmp_path, monkeypatch):
     assert rc == 0 and b"**4** of 253 players connected" in out and b"1 public game" in out
     monkeypatch.setenv("NETDOCTOR_VPN_SSH", "off")
     assert b"not set up" in run(db, "visy", "vpn-status")[1]
+
+
+def test_vpn_maint_cli(tmp_path):
+    import time as _t
+    db, *_ = seed(tmp_path)
+    at = str(int(_t.time()) + 7200)
+    assert run(db, "vlad", "vpn-maint", "schedule", "--at", at, "--channel", "announcements")[0] == 1   # visy only
+    rc, out = run(db, "visy", "vpn-maint", "schedule", "--at", at, "--channel", "announcements", "--note", "Update first.")
+    assert rc == 0 and b'"scheduled": 1' in out and b"Update first." in out
+    assert run(db, "visy", "vpn-maint", "schedule", "--at", at, "--channel", "announcements")[0] != 0    # one pending
+    rc, out = run(db, "visy", "vpn-maint", "preview")
+    assert rc == 0 and b"Reminder" in out and b"room for 500" in out
+    assert run(db, "visy", "vpn-maint", "cancel", "1")[0] == 0
+    rc, out = run(db, "visy", "vpn-maint", "list")
+    assert rc == 0 and b'"cancelled"' in out

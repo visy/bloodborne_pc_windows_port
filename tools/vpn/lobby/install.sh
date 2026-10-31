@@ -2,7 +2,7 @@
 # nwlobby installer for the Nightwatch VPN server (Debian 13). Run as root from a copy of this directory:
 #     sudo sh install.sh
 # Idempotent: safe to run again (refreshes code and unit, adds each firewall rule only once).
-# Roll back with uninstall.sh. Needs nothing from the OpenVPN setup except the tunnel (tun0, 10.8.0.0/24).
+# Roll back with uninstall.sh. Needs nothing from the OpenVPN setup except the tunnel (tun0, 10.8.0.0/22).
 set -eu
 
 APP=/opt/nwlobby
@@ -28,12 +28,12 @@ install -m 644 -o root -g root "$SRC/nwlobby.py" "$APP/nwlobby.py"
 # the script has none. The live rule is checked the same way, so a second run changes nothing.
 if [ -f "$FW" ] && ! grep -q -F -e "LOBBY=$PORT" -e "--dport $PORT " "$FW"; then
   cp -an "$FW" "$FW.pre-nwlobby"; [ -f "$FWRM" ] && cp -an "$FWRM" "$FWRM.pre-nwlobby"
-  sed -i "/--dport 1194 -j ACCEPT/a iptables -I INPUT 1 -i tun+ -s 10.8.0.0/24 -p udp --dport $PORT -j ACCEPT   # nwlobby" "$FW"
-  [ -f "$FWRM" ] && sed -i "/--dport 1194 -j ACCEPT/a iptables -D INPUT -i tun+ -s 10.8.0.0/24 -p udp --dport $PORT -j ACCEPT 2>/dev/null   # nwlobby" "$FWRM"
+  sed -i "/--dport 1194 -j ACCEPT/a iptables -I INPUT 1 -i tun+ -s 10.8.0.0/22 -p udp --dport $PORT -j ACCEPT   # nwlobby" "$FW"
+  [ -f "$FWRM" ] && sed -i "/--dport 1194 -j ACCEPT/a iptables -D INPUT -i tun+ -s 10.8.0.0/22 -p udp --dport $PORT -j ACCEPT 2>/dev/null   # nwlobby" "$FWRM"
 fi
 if command -v iptables >/dev/null; then
   if ! iptables -S 2>/dev/null | grep -q -- "-p udp .*--dport $PORT .*-j ACCEPT"; then
-    iptables -I INPUT 1 -i tun+ -s 10.8.0.0/24 -p udp --dport "$PORT" -j ACCEPT
+    iptables -I INPUT 1 -i tun+ -s 10.8.0.0/22 -p udp --dport "$PORT" -j ACCEPT
   fi
 fi
 
