@@ -481,7 +481,8 @@ before. `iosefka_cull.py` phases: `harvest` (resumable; reruns skip verified mes
 less than 1.5 GB free), `verify`, `report --out PATH`, `starter-test --thread ID`, `cull [--limit N]`
 (deletes only messages whose every removable file is in a confirmed export; posts without pings), and
 `announce --channels general,help [--dry-run] --yes` (posts and pins the announcement and prints the
-links). Places the bot cannot read are logged as `no access: <place>` and counted, never fatal.
+links), and `post --channel NAME --file PATH [--dry-run] --yes` (posts a text file as plain messages, split
+at paragraphs to 2000 characters, no pings, no pin; an unknown channel lists the text channels). Places the bot cannot read are logged as `no access: <place>` and counted, never fatal.
 A message holding a video is not deleted until the video has stills in the archive (stills are off while
 the archive is above 2.4 GiB or the disk has under 1 GB free; a warning goes to the first `staff*` channel).
 

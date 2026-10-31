@@ -768,6 +768,10 @@ LW = {
         wk={"top": (-136.70, -44.5, 1.50), "bottom": (-121.10, -58.4, -15.60)},
         far={"top": (-184.6, -38.7, 32.6), "bottom": (-74.9, -54.8, 17.2)},
         gate={"top": "-129.8:-44.4:-8.5"},
+        # smokefix077: the spot where the walk-ins that entered the trigger cleanly (60 FPS lfw runs) turned into the cage; a stick
+        # step to it (0.5 m) before the trigger / side step makes the last 2 m the same every time (the route ends within 2 m of
+        # anywhere: from its east side the straight step ran into the cage post, 2 m short of the trigger)
+        door={"top": (-131.4, -7.1), "bottom": (-127.0, -10.9)},
         route={"top": "-180.7:-41.5:29.6/-177.6:-41.7:26.7/-173.4:-41.7:26.3/-169.0:-41.7:23.9/-165.4:-41.7:21.5/-161.9:-41.7:17.5/-158.2:-41.7:15.0/-154.3:-41.7:11.6/-151.3:-41.7:9.1/-147.6:-41.7:10.8/-144.8:-43.3:7.6/-140.4:-44.5:5.2/-136.7:-44.5:1.5/-134.7:-44.2:-2.5/-130.8:-44.5:-3.7/-130.0:-44.5:-8.0",
                "bottom": "-78.8:-55.4:14.7/-79.1:-55.5:9.9/-83.5:-55.5:8.9/-88.2:-55.4:6.2/-89.5:-55.5:2.0/-92.6:-55.5:-1.5/-96.6:-55.5:-3.9/-100.3:-55.4:-6.3/-103.5:-55.4:-10.0/-107.9:-55.4:-12.6/-110.3:-55.4:-15.8/-113.0:-56.9:-19.2/-116.5:-58.7:-21.3/-117.1:-58.5:-17.3/-121.1:-58.4:-15.6/-124.4:-58.4:-12.6/-128.1:-58.1:-10.7"},
         # liftfar077: starts more than 150 m from the car (outside the prebuild ring), walked in over the navmesh route
@@ -785,6 +789,7 @@ LW = {
         # liftreg077: the prelude's kills drop an item (a blood gem: "Beast x1" box on the host); the box stays up and blocks the
         # stick walks of the later rides (the lfwc / lfwcbs flake), so the host presses Cross after each kill group (dismiss)
         lamp="2412953", set_flags="", dismiss=True,
+        door={"top": (24.1, 192.3), "bottom": (26.0, 194.5)},
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
         side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
@@ -857,21 +862,32 @@ def lfw_chains(spec, slow=False):
                 steps["host"].append("host_press=0x4000@1.5%%%s" % m)  # OK on the drop's item box (no box: nothing)
     for k, (d, riders, end) in enumerate(lfw_plan(spec, slow)):
         other = "bottom" if end == "top" else "top"
-        gate = "" if k == 0 else "?%s=%d" % (spec["pos"], spec["top_val"] if end == "top" else 1 - spec["top_val"])
+        # smokefix077: the gate on "the previous ride is over" is the car's end animation stopped (the car's own state on this
+        # game), not the position flag: the flag read of a guest in the host's world can stay at the host's old value (lfwcbs: the
+        # guest's ride-2 step waited 700 s on a flag its own log showed as 1)
+        gate = "" if k == 0 else "?obj=%s:%d" % (spec["car"], spec["end_anim"]["up" if end == "top" else "down"])
         who = ("host", "guest") if riders == "both" else (riders,)
         for role in ("host", "guest"):
             s = steps[role]
             first = k == 0
+            # smokefix077: a rider of the previous ride has the exit move at the arrival (the ride is over) as its previous step: no gate
+            # (the guest's end-animation gate of ride 2 never fired: lfwbs rider 700 s, lfws / lfwcs waiter: its walk was never sent)
+            rode_before = k > 0 and (lfw_plan(spec, slow)[k - 1][1] in ("both", role))
             if role not in who:
                 # the one who waits: at the other end (the arrival), beside where the rider steps out
-                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec.get("wait", spec["out_g"])[other]), "1" if first else "14", m, gate))
+                s.append("%s_move=%s:pin=4:ground@%s%%%s%s" % (role, _p(*spec.get("wait", spec["out_g"])[other]), "1" if first else "14", m, "" if k and rode_before else gate))  # a rider of the previous ride: its exit move at the arrival came just before
                 # the player who does not ride walks a few metres by the stick while the car moves (the user's report:
                 # "the other player runs in place and cannot move while the elevator moves"); it starts once the rider
                 # stands in the trigger box
                 ox, oy, oz = spec["wk"][other]
-                s.append("%s_stick=%.2f:%.2f:1.0:24@0.5%%%s?near=%s:0.9" % (role, ox, oz, m, _p(*spec["trig"][end])))
+                # smokefix077: starts on the car's start animation (it plays, then the car moves on), not on the rider's position
+                # (vitals): the car carries the rider away within a frame or two, so "within 0.9 m of the trigger" was missed
+                # half the time and the walk never ran (lfws ride 2: 0.0 m, the step still waiting 700 s later)
+                s.append("%s_stick=%.2f:%.2f:1.0:24@0.5%%%s?obj=%s:%d" % (role, ox, oz, m, car, spec["start_anim"][d][0]))
                 continue
             second = riders == "both" and role == "guest"
+            # smokefix077: a rider of the previous ride has the exit move at the arrival (the ride is over) as its previous step: no gate
+            # (the guest of lfwbs never saw the end-animation gate of ride 2 and waited 700 s); a waiter before needs it
             far, route = spec["far"][end], spec["route"][end]
             pin = 10 if far in spec.get("farlong", {}).values() and spec.get("_farwalk") else 4  # a far warp: the floor streams in slowly
             if second and spec.get("stagger"):
@@ -888,7 +904,7 @@ def lfw_chains(spec, slow=False):
                 g0 = "" if role == "host" else "?near=%s:12" % _p(*spec["out_h"]["bottom"])  # the prelude's last spot (and the first waiter's)
                 s.append("%s_move=%s:pin=%d:ground@1%%%s%s" % (role, _p(*far), pin, m, g0))
             else:
-                s.append("%s_move=%s:pin=%d:ground@14%%%s%s" % (role, _p(*far), pin, m, gate))
+                s.append("%s_move=%s:pin=%d:ground@14%%%s%s" % (role, _p(*far), pin, m, "" if k and rode_before else gate))
             # the second rider walks in once the first one stands on the car: two walkers on the same route block
             # each other in its narrow places and in the doorway (live lfw4 / lfw5)
             rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
@@ -925,9 +941,12 @@ def lfw_chains(spec, slow=False):
                 # liftbis077: ... and the last standing spot recorded in the car's doorway (real runs: the guest stood at (-129.8, -8.5)
                 # on its way into the trigger; the straight step from the cage's front corner (-129.3, -7.6) runs into the rail)
                 gate = spec.get("gate", {}).get(end)
-                tail = "/".join(pts[-3:] + ([gate] if gate else []))
+                tail = "/".join(pts[-1:] + ([gate] if gate else []))  # smokefix077: only the last waypoint (the last 3 walked a rider already at the door 5 m back, off the Cathedral pocket's edge: lfwcs fall to y 0.1)
                 if tail:
                     s.append("%s_route=%s@1%%%s" % (role, tail, m))
+            if spec.get("door"):
+                dx, dz = spec["door"][end]
+                s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
@@ -953,7 +972,7 @@ def phase_lfw_for(key, slow=False, name=None, far=False, sprint=True):
     spec = LW[key]
     host, guest = lfw_chains(lfw_far_spec(spec) if far else spec, slow)
     common = "god,log_pos=0.5,log_objanim=%s,log_obj=%s,log_flag=%s/%s" % (spec["car"], spec["car"], spec["pos"], spec["busy"])
-    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=%d" % (300 if far else 120)]
+    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=%d" % (180 if far else 120)]
     if spec["set_flags"]:
         env.append("BB_PARTY_PROGRESS_TEST_SET=" + spec["set_flags"])
     if slow:
@@ -999,11 +1018,13 @@ def phase_lfwcbs(only):
 
 
 def phase_lfws(only):
-    return phase_lfw_for("yh", True, "lfws")
+    # smokefix077: no sprint (BB_TEST_WALK_SPRINT): the sprinting stick steps overshot into the cage and the trigger (60 FPS full
+    # smoke: 0 rides, wedged 2 m short); the slow car build (the point of the phase) is unchanged, lfwbs / lfwcbs walk the same way
+    return phase_lfw_for("yh", True, "lfws", sprint=False)
 
 
 def phase_lfwcs(only):
-    return phase_lfw_for("ca", True, "lfwcs")
+    return phase_lfw_for("ca", True, "lfwcs", sprint=False)  # smokefix077: no sprint, see phase_lfws
 
 
 def lw_rides(L, i, spec):
@@ -9249,11 +9270,17 @@ def check_cv(v, L, d: Path):
     snap = need(v, L, "cv covenant: the host's covenant flags not copied into the guest's save", 1,
                 r"covenant outcomes per player: \d+ covenant flag\(s\) set in the host's world not copied.*\b1042\b")
     # In the host's world (0.7.7): the guest sees its OWN covenant state (so its talks run on its own outcomes).
+    # The test read (load mode 1) is taken at the world's first stable frame BEFORE the covenant overlay of that same
+    # frame, so it still shows the host's values (1042=0/1: own/visible); the proof is the overlay's own log line: it
+    # replaced the host's state by the guest's own in block 1 and lists the bits that changed (Annalise's 1040 / 1042).
+    ov = L.find(1, r"guest covenant overlay: the host's covenant state replaced by the guest's own in block 1 \(bits changed:[^)]*\)", j or 0)
+    bits = set(re.findall(r"\d+", ov[1].split("bits changed:")[1])) if ov else set()
     rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", j or 0)
     vals = dict(re.findall(r"\b(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
+    own_ok = vals.get("1042", "").startswith("0/") and vals.get("1040", "").startswith("1/")  # the own save holds Annalise alive
     v.step("cv covenant: in the host's world the guest sees its own state (Annalise alive 1040, not the host's 1042)",
-           vals.get("1042", "").endswith("/0") and vals.get("1040", "").endswith("/1"),
-           rd[1][:220] if rd else "no load mode 1 test read on the guest")
+           {"1040", "1042"} <= bits and own_ok,
+           (ov[1][-120:] if ov else "no covenant overlay line on the guest") + " | " + (rd[1][-160:] if rd else "no load mode 1 test read"))
     none_of(v, L, "cv covenant: no covenant flag sent up as a world action",
             r"world action sent to the host.*\b(10[45]\d|13[45]\d|179\d|180\d|725003\d\d|727003\d\d)\b", j or 0)
     lv = need(v, L, "cv covenant: the guest leaves (Party > Leave)", 1, r"guest_leave: Party > Leave pressed", j or 0)
@@ -9671,7 +9698,7 @@ def sweep_main(a, only):
 # one-off stall no longer fails a release smoke while a real fault (it fails every time) still does.
 # BB_SMOKE_NO_RETRY=1 turns it off. Retried runs are listed in the output dir's retries.txt.
 FLAKY_PHASES = {"cae", "cao", "cab", "cis", "caq", "caw", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
-                "lt", "lf", "s2", "cv", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
+                "lt", "lf", "s2", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
 FLAKY_TRIES = 3
 
 
