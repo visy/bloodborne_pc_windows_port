@@ -221,6 +221,43 @@ class Reply(unittest.TestCase):
         self.assertIsNone(nw.parse_reply(b"\xfaL\x02\x03" + data[4:]))
 
 
+class Stats(unittest.TestCase):
+    def test_counts(self):
+        lob = nw.Lobby()
+        lob.handle(ann(name="A", players=2, maxp=4, pw=True), A, 0)
+        lob.handle(ann(name="B", players=3, maxp=3, pw=False), B, 0)
+        lob.handle(ann(name="C", players=1, maxp=4, pw=False, build="0.7.6 (x)"), C, 0)
+        self.assertEqual(nw.parse_stats(lob.stats(nw.encode_stats(), 1)),
+                         {"games": 3, "players": 6, "open": 2, "full": 1, "joinable": 1, "free_slots": 3,
+                          "sizes": {"3": 1, "4": 2}, "builds": {"0.7.7": 2, "0.7.6": 1}})
+
+    def test_expired_not_counted(self):
+        lob = nw.Lobby()
+        lob.handle(ann(), A, 0)
+        self.assertEqual(nw.parse_stats(lob.stats(nw.encode_stats(), nw.TTL + 1))["games"], 0)
+
+    def test_stats_only_on_operator_socket(self):
+        lob = nw.Lobby()
+        lob.handle(ann(), A, 0)
+        self.assertIsNone(lob.handle(nw.encode_stats(), B, 1))  # never answered over the tunnel
+        self.assertIsNone(lob.stats(nw.encode_stats() + b"x", 1))
+        self.assertIsNone(lob.stats(nw.encode_list(), 1))
+
+    def test_reply_has_no_names(self):
+        lob = nw.Lobby()
+        lob.handle(ann(name="Secretname"), A, 0)
+        self.assertNotIn(b"Secretname", lob.stats(nw.encode_stats(), 1))
+        self.assertIsNone(nw.parse_stats(nw.MAGIC + bytes([1, 6]) + b"[1]"))
+        self.assertIsNone(nw.parse_stats(nw.MAGIC + bytes([1, 6]) + b"{bad"))
+
+    def test_reply_fits_one_datagram(self):
+        lob = nw.Lobby(max_entries=300)
+        for i in range(250):
+            lob.handle(ann(name="P%d" % i, build="v%d-%s" % (i, "x" * 30)), "10.8.0.%d" % (i + 2), 0)
+        self.assertLessEqual(len(lob.stats(nw.encode_stats(), 1)), nw.MAX_REPLY)
+        self.assertEqual(len(nw.parse_stats(lob.stats(nw.encode_stats(), 1))["builds"]), 5)
+
+
 class OverUdp(unittest.TestCase):
     def test_serve_on_loopback(self):
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -247,6 +284,38 @@ class OverUdp(unittest.TestCase):
             self.assertIsNotNone(reply, "no reply from the lobby")
             total, off, ents = nw.parse_reply(reply)
             self.assertEqual((total, ents[0]["name"], ents[0]["own"]), (1, "Lo", True))
+            c.close()
+        finally:
+            stop.set()
+            th.join(3)
+
+    def test_stats_socket(self):
+        ports = []
+        for _ in range(2):
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.bind(("127.0.0.1", 0))
+            ports.append(probe.getsockname()[1])
+            probe.close()
+        port, sport = ports
+        stop = threading.Event()
+        th = threading.Thread(target=nw.serve, args=("127.0.0.1", port, "127.0.0.0/8", stop.is_set, False),
+                              kwargs={"stats": ("127.0.0.1", sport)}, daemon=True)
+        th.start()
+        try:
+            c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            c.settimeout(0.3)
+            got = None
+            for _ in range(20):
+                try:
+                    c.sendto(ann(name="Lo", players=2), ("127.0.0.1", port))
+                    time.sleep(0.05)
+                    c.sendto(nw.encode_stats(), ("127.0.0.1", sport))
+                    got = nw.parse_stats(c.recvfrom(2048)[0])
+                    if got and got["games"]:
+                        break
+                except (ConnectionResetError, socket.timeout):
+                    time.sleep(0.1)
+            self.assertEqual((got["games"], got["players"], got["open"], got["full"]), (1, 2, 0, 0))
             c.close()
         finally:
             stop.set()

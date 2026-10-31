@@ -593,3 +593,69 @@ def test_vpn_retention_peaks_and_report(tmp_path, monkeypatch):
     clock.t += 2 * 86400                            # 24 h peak drops out
     vpn_sample(c, clock, 12)
     assert h.vpn()["peak_24h"] == 12 and h.vpn()["peak_7d"] == 40
+
+
+# --- VPN game counts (nwlobby stats socket), /vpnstatus, the 24 h window -------------------------------------
+
+sys.path.insert(0, str(ROOT / "tools" / "vpn" / "lobby"))
+import nwlobby  # noqa: E402
+
+LOBBY = {"games": 3, "players": 6, "open": 2, "full": 1, "joinable": 1, "free_slots": 3,
+         "sizes": {"3": 1, "4": 2}, "builds": {"0.7.7": 2, "0.7.6": 1}}
+
+
+def test_vpn_count_reads_nwlobby_stats():
+    lob = nwlobby.Lobby()
+    lob.handle(nwlobby.encode_announce("A", 9307, 2, 4, "0.7.7 (x)", False), "10.8.0.10", 0)
+    lob.handle(nwlobby.encode_announce("B", 9307, 4, 4, "0.7.7 (x)", True), "10.8.0.11", 0)
+    assert nwlobby.encode_stats() == vpn_count.LOBBY_MAGIC + bytes([vpn_count.LOBBY_VERSION, vpn_count.T_STATS])
+    d = vpn_count.parse_lobby_stats(lob.stats(nwlobby.encode_stats(), 1))
+    assert (d["games"], d["open"], d["full"], d["joinable"], d["free_slots"], d["builds"]) == (2, 1, 1, 1, 2, {"0.7.7": 2})
+    assert vpn_count.parse_lobby_stats(b"junk") is None
+    assert vpn_count.lobby(("127.0.0.1", 1), timeout=0.2) is None
+
+
+def test_vpn_parse_reply_lobby():
+    r = vpn.parse_reply(json.dumps({"ok": True, "clients": 9, "max_clients": 255, "pool": 253, "lobby": LOBBY}))
+    assert r["lobby"]["joinable"] == 1 and r["lobby"]["sizes"] == {"3": 1, "4": 2}
+    assert vpn.parse_reply('{"ok":true,"clients":9,"max_clients":255,"pool":253}')["lobby"] is None
+    assert vpn.parse_reply('{"ok":true,"clients":9,"lobby":{"games":"x"}}')["lobby"] is None
+
+
+def test_vpn_status_text():
+    sample = {"ok": True, "clients": 9, "max_clients": 255, "pool": 253, "lobby": LOBBY}
+    t = vpn.status_text(sample, {"state": "ok", "peak_24h": 15, "peak_7d": 20,
+                                 "day": {"lobby_samples": 3, "games_peak": 5, "open_peak": 3, "room_share": 0.5}})
+    for want in ("**9** of 253 players connected", "**3 games** listed: 2 public", "1 with a password", "1 full",
+                 "**1 public game** with room right now (3 free slots)", "6 players in listed games, 3 connected",
+                 "1 game up to 3, 2 games up to 4", "0.7.7 (2), 0.7.6 (1)", "Busiest: 15 players in 24 h, 20 in 7 days",
+                 "up to 5 games at once (3 public), a public game with room 50% of the time"):
+        assert want in t, want
+    assert "Game list: unavailable" in vpn.status_text(dict(sample, lobby=None), {"state": "ok"})
+    assert "no answer" in vpn.status_text({"ok": False, "error": "ssh failed (255)"}, {"state": "ok"})
+    evil = dict(sample, lobby=dict(LOBBY, builds={"@everyone**<x>": 1}))
+    assert "@" not in vpn.status_text(evil, {"state": "ok"}).split("Versions:")[1]
+
+
+def test_vpn_daily_window(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn.store(c, {"ok": True, "clients": 4, "max_clients": 255, "lobby": dict(LOBBY, games=1, open=1, joinable=0, players=2)}, clock.t)
+    clock.t += 300
+    vpn.store(c, {"ok": True, "clients": 10, "max_clients": 255, "lobby": LOBBY}, clock.t)
+    clock.t += 300
+    vpn.store(c, {"ok": True, "clients": 6, "max_clients": 255}, clock.t)   # lobby did not answer
+    d = h.vpn()["day"]
+    assert (d["samples"], d["players_peak"], d["lobby_samples"], d["games_peak"], d["open_peak"]) == (3, 10, 2, 3, 2)
+    assert abs(d["games_avg"] - 2.0) < 1e-9 and d["room_share"] == 0.5
+    text = hl.report_text(h.snapshot())
+    assert "games 24 h: average 2.0, peak 3 (2 public at most)" in text and "room 50% of the time" in text
+
+
+def test_vpnstatus_roles():
+    import netdoctor_bot as nb
+    role = lambda n: type("R", (), {"name": n})()
+    assert nb.is_dev_or_staff(type("M", (), {"roles": [role("Dev")]})())
+    assert nb.is_dev_or_staff(type("M", (), {"roles": [role("staff team")]})())
+    assert not nb.is_dev_or_staff(type("M", (), {"roles": [role("Moderator"), role("hunter")]})())
+    assert not nb.is_dev_or_staff(type("U", (), {})())

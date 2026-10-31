@@ -48,6 +48,16 @@ if command -v nft >/dev/null && nft list chain inet filter input >/dev/null 2>&1
   fi
 fi
 
+# ---- firewall 3: the operator counts socket (127.0.0.1:9311, read by ~/nwvpn/vpn_count.py) -----------
+if command -v nft >/dev/null && nft list chain inet filter input >/dev/null 2>&1; then
+  nft list chain inet filter input | grep -q 'iifname "lo" udp dport 9311 accept' ||     nft add rule inet filter input iifname "lo" udp dport 9311 accept
+  if [ -f "$NFT" ] && ! grep -q 'iifname "lo" udp dport 9311 accept' "$NFT"; then
+    cp -an "$NFT" "$NFT.pre-nwlobby-stats"
+    sed -i "/^[[:space:]]*udp dport 1194 accept/a\        iifname \"lo\" udp dport 9311 accept        # nwlobby" "$NFT"
+    nft -c -f "$NFT" || { cp -a "$NFT.pre-nwlobby-stats" "$NFT"; die "nftables.conf edit did not check; restored"; }
+  fi
+fi
+
 # ---- service ---------------------------------------------------------------------------------------
 install -m 644 "$SRC/nwlobby.service" /etc/systemd/system/nwlobby.service
 systemctl daemon-reload
@@ -66,7 +76,7 @@ done
 
 cat <<MSG
 
-nwlobby installed: UDP 10.8.0.1:$PORT, reachable from the tunnel only.
+nwlobby installed: UDP 10.8.0.1:$PORT, reachable from the tunnel only; counts on 127.0.0.1:9311 (loopback).
   status:    systemctl status nwlobby
   roll back: sudo sh uninstall.sh
 MSG

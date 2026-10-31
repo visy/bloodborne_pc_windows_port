@@ -514,6 +514,12 @@ fixed): `VPN near its limit` at 80% of the effective limit, `VPN full` at 100% (
 beyond 253 the subnet must widen to /23 plus a firewall update), `VPN monitor down` when samples fail for over
 30 min after at least one good one. The daily report and `health` show current players, 24 h and 7 d peak and the
 limit. Without a working alias (nothing stored) `health` says `VPN monitor: not set up` and nothing is alerted.
+Each sample also stores the lobby's game counts (`games`, `open_games`, `joinable`, `in_games`; NULL when the
+lobby does not answer); the daily report adds 24 h averages and peaks (players, games, public games, how often a
+public game had room). **`/vpnstatus`** (devs and staff only: a role with `dev` or `staff` in its name) takes a
+live sample and posts it in the channel it was run in: players connected and the limit, games listed (public /
+with a password / full), public games with room and free slots, players in games vs. connected but not in one,
+party sizes, versions, 24 h / 7 d peaks. Counts only. Same text in the shell: `iosefka_cli.py --as visy vpn-status`.
 
 **Alerts** (each kind at most once per 6 h, unless it was resolved and came back; none contains names, IPs
 or log lines): a new traceback in her own handling (deduplicated by first line, count per hour), an overdue

@@ -20,11 +20,18 @@ Wire format (version 1, big endian, at most 512 bytes in, 1024 out):
                    ipv4 4, port u16, flags u8 (bit0 password, bit1 this is your own entry), players u8, max u8,
                    name: u8 len + UTF-8, build: u8 len + ASCII
   type 4 bye       (no body) removes the sender's entry
+  type 5 stats     (no body) only on the operator socket (127.0.0.1:9311, never the tunnel)
+  type 6 stats reply  UTF-8 JSON (<= 1024 bytes): games, players (sum of the hosts' player counts), open (no
+                   password), full (players >= max), joinable (open and not full), free_slots (in open games),
+                   sizes {"<max>": games}, builds {"<version>": games} (top 5, first word of the build):
+                   counts only, no names or addresses
 An announce is not answered; a list request is answered with one reply page. Anything malformed is
 dropped without an answer. The client UI shows names, flags and counts, never the address.
 """
 import ipaddress
+import json
 import os
+import select
 import socket
 import sys
 import time
@@ -32,7 +39,7 @@ import unicodedata
 
 MAGIC = b"\xfaL"
 VERSION = 1
-T_ANNOUNCE, T_LIST, T_REPLY, T_BYE = 1, 2, 3, 4
+T_ANNOUNCE, T_LIST, T_REPLY, T_BYE, T_STATS, T_STATS_REPLY = 1, 2, 3, 4, 5, 6
 F_PASSWORD, F_SELF = 1, 2
 
 MAX_PACKET = 512            # a longer datagram is dropped unread
@@ -48,6 +55,7 @@ RATE_BURST = 8.0
 DEFAULT_NET = "10.8.0.0/24"
 DEFAULT_BIND = "10.8.0.1"
 DEFAULT_PORT = 9310
+DEFAULT_STATS = "127.0.0.1:9311"   # operator counts (nwstats); "off" disables
 
 
 def clean_name(raw: bytes):
@@ -114,6 +122,21 @@ def encode_list(offset: int = 0) -> bytes:
 
 def encode_bye() -> bytes:
     return MAGIC + bytes([VERSION, T_BYE])
+
+
+def encode_stats() -> bytes:
+    return MAGIC + bytes([VERSION, T_STATS])
+
+
+def parse_stats(data: bytes):
+    """The stats dict or None."""
+    if len(data) < 5 or data[:2] != MAGIC or data[2] != VERSION or data[3] != T_STATS_REPLY:
+        return None
+    try:
+        d = json.loads(data[4:].decode("utf-8"))
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) else None
 
 
 def parse_reply(data: bytes):
@@ -219,6 +242,25 @@ class Lobby:
             return self.page((body[0] << 8) | body[1], ip, now)
         return None
 
+    def stats(self, data: bytes, now: float):
+        """The stats reply for an operator-socket datagram, or None. Counts only."""
+        if data != encode_stats():
+            return None
+        self.expire(now)
+        rows = list(self.entries.values())   # (expiry, flags, port, players, max, build, name)
+        open_rows = [e for e in rows if not e[1] & F_PASSWORD]
+        sizes, builds = {}, {}
+        for e in rows:
+            sizes[str(e[4])] = sizes.get(str(e[4]), 0) + 1
+            ver = (e[5].split() or ["?"])[0][:16]
+            builds[ver] = builds.get(ver, 0) + 1
+        top = dict(sorted(builds.items(), key=lambda kv: (-kv[1], kv[0]))[:5])
+        d = {"games": len(rows), "players": sum(e[3] for e in rows), "open": len(open_rows),
+             "full": sum(1 for e in rows if e[3] >= e[4]),
+             "joinable": sum(1 for e in open_rows if e[3] < e[4]),
+             "free_slots": sum(max(0, e[4] - e[3]) for e in open_rows), "sizes": sizes, "builds": top}
+        return MAGIC + bytes([VERSION, T_STATS_REPLY]) + json.dumps(d, separators=(",", ":"), sort_keys=True).encode()
+
     def page(self, offset: int, requester: str, now: float) -> bytes:
         self.expire(now)
         rows = sorted(self.entries.items(), key=lambda kv: (kv[1][6].casefold(), kv[0]))
@@ -237,44 +279,72 @@ class Lobby:
                                count]) + bytes(chunk))
 
 
-def serve(bind_ip: str, port: int, net: str, stop=lambda: False, reserve_server=True):
+def _bind(ip: str, port: int):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.bind((ip, port))
+    except OSError:
+        s.close()
+        raise
+    return s
+
+
+def serve(bind_ip: str, port: int, net: str, stop=lambda: False, reserve_server=True, stats=None):
+    """stats: (ip, port) of the operator socket (loopback only), or None."""
     lobby = Lobby(net, reserve_server=reserve_server)
     sock = None
     while sock is None and not stop():
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.bind((bind_ip, port))
-            sock = s
+            sock = _bind(bind_ip, port)
         except OSError:           # 10.8.0.1 exists only once openvpn is up: retry
-            s.close()
             time.sleep(3)
     if sock is None:
         return
-    sock.settimeout(1.0)
-    with sock:
+    socks = [sock]
+    if stats and ipaddress.ip_address(stats[0]).is_loopback:
+        try:
+            socks.append(_bind(*stats))
+        except OSError:
+            pass                  # the lobby itself matters more than its counts
+    try:
         while not stop():
             try:
-                data, addr = sock.recvfrom(MAX_PACKET + 1)
-            except socket.timeout:
-                continue
+                ready = select.select(socks, [], [], 1.0)[0]
             except OSError:
                 time.sleep(0.2)
                 continue
-            reply = lobby.handle(data, addr[0], time.monotonic())
-            if reply:
+            for s in ready:
                 try:
-                    sock.sendto(reply, addr)
+                    data, addr = s.recvfrom(MAX_PACKET + 1)
                 except OSError:
-                    pass
+                    continue
+                if s is sock:
+                    reply = lobby.handle(data, addr[0], time.monotonic())
+                elif ipaddress.ip_address(addr[0]).is_loopback:
+                    reply = lobby.stats(data, time.monotonic())
+                else:
+                    reply = None
+                if reply:
+                    try:
+                        s.sendto(reply, addr)
+                    except OSError:
+                        pass
+    finally:
+        for s in socks:
+            s.close()
 
 
 def main():
+    # NWLOBBY_STATS=<ip>:<port>|off: the operator counts socket (loopback only).
     # NWLOBBY_BIND=<ip>[:port] and NWLOBBY_NET=<cidr> exist for tests (127.0.0.1 / 127.0.0.0/8);
     # the defaults are the production values.
     bind = os.environ.get("NWLOBBY_BIND", DEFAULT_BIND)
     host, _, p = bind.partition(":")
     net = os.environ.get("NWLOBBY_NET")
-    serve(host, int(p) if p else DEFAULT_PORT, net or DEFAULT_NET, reserve_server=not net)
+    st = os.environ.get("NWLOBBY_STATS", DEFAULT_STATS)
+    sh, _, sp = st.partition(":")
+    serve(host, int(p) if p else DEFAULT_PORT, net or DEFAULT_NET, reserve_server=not net,
+          stats=None if st == "off" else (sh, int(sp or 9311)))
 
 
 if __name__ == "__main__":
