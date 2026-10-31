@@ -9,12 +9,17 @@
 #   sudo sh dco.sh enable      restart OpenVPN once so it opens tun0 as a DCO device (everyone reconnects, ~30-40 s;
 #                              announce first: iosefka vpn-maint). Asks to confirm; refuses if the module is not loaded.
 #   sudo sh dco.sh disable     restart OpenVPN with 'disable-dco' (back to the userspace data path, module kept)
+#   sudo sh dco.sh reboot      when the module could only be built for a NEWER installed kernel (the running kernel's
+#                              headers left the archive): drop the hold and reboot into it with DCO on. One downtime
+#                              (~1-2 min) that also applies the pending kernel security update. Announce first.
 #
 # After enable: `ip -d link show tun0` names ovpn-dco; per-core load spreads (top shows ksoftirqd/N, OpenVPN itself idle).
 set -eu
 CONF=/etc/openvpn/server/server.conf
 UNIT=openvpn-server@server.service
 K=$(uname -r)
+# the newest installed kernel image (unattended upgrades install new kernels; the running one may be older)
+NEWEST=$(ls /boot/vmlinuz-* 2>/dev/null | sed 's|/boot/vmlinuz-||' | sort -V | tail -1)
 MODE=${1:---check}
 die() { echo "dco: $*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "run as root (sudo)"
@@ -36,7 +41,8 @@ lint() {
 status() {
   echo "== DCO status (kernel $K)"
   echo "   OpenVPN: $(/usr/sbin/openvpn --version 2>/dev/null | head -1 | grep -o '\[DCO\]' || echo 'built WITHOUT DCO')"
-  echo "   headers: $([ -d /lib/modules/$K/build ] && echo installed || echo missing)"
+  echo "   headers for the running $K: $([ -d /lib/modules/$K/build ] && echo installed || echo missing)"
+  [ "$NEWEST" != "$K" ] && echo "   newest installed kernel: $NEWEST (reboot pending), headers $([ -d /lib/modules/$NEWEST/build ] && echo installed || echo missing)"
   echo "   dkms module: $(dkms status 2>/dev/null | grep -i ovpn || echo 'not installed')"
   echo "   module loaded: $(module_loaded && echo yes || echo no)"
   echo "   tun0 is a DCO device: $(tun_is_dco && echo YES || echo 'no (userspace data path)')"
@@ -51,18 +57,26 @@ case "$MODE" in
     status
     echo "== prep: packages and module (no VPN restart)"
     apt-get update -qq
-    # the headers of the RUNNING kernel (dkms builds against them); the metapackage keeps future kernels covered
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "linux-headers-$K" linux-headers-cloud-amd64 dkms openvpn-dco-dkms \
-      || die "package install failed (is linux-headers-$K in the archive? apt-cache policy linux-headers-$K)"
-    modprobe ovpn-dco-v2 2>/dev/null || modprobe ovpn 2>/dev/null || die "the module did not load: dkms status; journalctl -k | tail"
-    module_loaded || die "module not loaded after modprobe"
-    echo "ovpn-dco-v2" > /etc/modules-load.d/ovpn-dco.conf   # loaded at boot too
+    # headers for the running kernel when the archive still has them, always the metapackage (the newest kernel and
+    # future ones); dkms builds the module for every kernel that has headers
+    HDR="linux-headers-cloud-amd64"
+    apt-cache show "linux-headers-$K" >/dev/null 2>&1 && HDR="$HDR linux-headers-$K"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q $HDR dkms openvpn-dco-dkms || die "package install failed"
+    echo "ovpn-dco-v2" > /etc/modules-load.d/ovpn-dco.conf   # loaded at boot
+    if [ -d "/lib/modules/$K/build" ]; then
+      modprobe ovpn-dco-v2 2>/dev/null || modprobe ovpn 2>/dev/null || die "the module did not load: dkms status; journalctl -k | tail"
+      module_loaded || die "module not loaded after modprobe"
+    else
+      dkms status 2>/dev/null | grep -i ovpn | grep -q "$NEWEST" || die "the module was not built for $NEWEST: dkms status"
+      echo "The running kernel $K has no headers in the archive any more: the module is built for $NEWEST"
+      echo "(already installed, waiting for a reboot) and loads after the reboot into it: sudo sh $0 reboot (announce first)."
+    fi
     # with the module loaded, ANY later OpenVPN start (a reboot, a rollback) would turn DCO on unasked: keep it off in the
     # config until `enable` removes this line (read only at start, so the running VPN is unaffected)
     grep -qE '^\s*disable-dco' "$CONF" || { cp -a "$CONF" "$CONF.pre-dco-prep"; echo "disable-dco   # nightwatch: dco.sh enable removes this" >> "$CONF"; }
     echo
     status
-    echo "Prep done. The VPN was not restarted and still runs without DCO until: sudo sh $0 enable"
+    echo "Prep done. The VPN was not restarted and runs without DCO until: sudo sh $0 enable (or reboot, see above)"
     ;;
   enable)
     module_loaded || die "the DCO module is not loaded: run 'sudo sh $0 prep' first"
@@ -76,6 +90,15 @@ case "$MODE" in
     else echo "OpenVPN is up but tun0 is NOT a DCO device (it fell back to userspace; players are fine). journalctl -u $UNIT | grep -i dco" >&2; fi
     sleep 20; echo "players reconnecting: $(clients)"
     ;;
+  reboot)
+    [ "$NEWEST" != "$K" ] || die "no newer kernel is installed: use 'enable' (a restart only)"
+    dkms status 2>/dev/null | grep -i ovpn | grep -q "$NEWEST" || die "no DCO module built for $NEWEST: run 'prep' first"
+    echo "Players connected: $(clients). This REBOOTS the VPN server into $NEWEST with DCO on (~1-2 min for everyone)."
+    printf "Type yes to reboot now: "; read -r ans; [ "$ans" = yes ] || die "not confirmed"
+    grep -qE '^\s*disable-dco' "$CONF" && { cp -a "$CONF" "$CONF.pre-dco-reboot"; sed -i '/^\s*disable-dco/d' "$CONF"; }
+    echo "Rebooting. Afterwards: sudo sh $0 --check (tun0 should be a DCO device)."
+    systemctl reboot
+    ;;
   disable)
     grep -qE '^\s*disable-dco' "$CONF" || { cp -a "$CONF" "$CONF.pre-nodco"; echo "disable-dco" >> "$CONF"; }
     echo "Players connected: $(clients). This restarts OpenVPN once."
@@ -83,5 +106,5 @@ case "$MODE" in
     systemctl restart "$UNIT"; sleep 5
     echo "OpenVPN: $(systemctl is-active $UNIT), DCO: $(tun_is_dco && echo still on || echo off)"
     ;;
-  *) die "usage: sudo sh dco.sh --check | prep | enable | disable" ;;
+  *) die "usage: sudo sh dco.sh --check | prep | enable | reboot | disable" ;;
 esac
