@@ -4207,6 +4207,7 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             Log("test: approach: NO PROMPT '%s' at (%.2f, %.2f, %.2f), target (%.2f, %.2f) after %d face tap(s): the menu walk (seq) is NOT started",
                 t.ap_prompt.c_str(), double(here[0]), double(here[1]), double(here[2]), double(t.ap_x), double(t.ap_z), t.ap_taps);
             t.st_seq = MenuScript{};
+            t.stand_done = true;
         } else if (t.ap_prompt_seen) {
             // parfin3 g1a / g1b: the turn warp below moved the facing off the prompt the taps had
             // found (the prompt went 1-2 s later and the menu never opened). Keep it.
