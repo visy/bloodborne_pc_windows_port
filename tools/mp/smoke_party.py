@@ -2526,7 +2526,8 @@ def phase_cao(only):
         name="cao", seconds=int(os.environ.get("CAO_SECONDS", "260")), count=2, headless=0, prep=prep_chalown, post=post_chalamp, pad=1,
         env=["BB_PARTY_TRAVEL_CHOICE=party"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=log_pos"],
-        crash=[], until=[], until_hold=20,
+        # flaky078: ends 25 s after BOTH games are in the dungeon (the phase idled ~150 s there, "nothing happening" after the summon)
+        crash=[], until=[r"0:map - -> m29_00", r"1:map - -> m29_00"], until_hold=25,
     )
 
 
@@ -6754,6 +6755,15 @@ def check_cao(v, L):
     need(v, L, "cao host entered its dungeon (lamp 2902950, m29)", 0, r"map - -> m29_00", t or 0)
     need(v, L, "cao guest followed into the host's dungeon (m29)", 1, r"map - -> m29_00", t or 0)
     none_of(v, L, "cao the menu walk was not stuck", r"seq STUCK", 0, 1e9, (0,))
+    # flaky078: the summoned guest stands WITH the host in the dungeon (the status line's two slots in m29, close together)
+    rx = r"status: where \[slot 0  m29_00_00_00 \((-?\d+), (-?\d+), (-?\d+)\) .*\[slot 1  m29_00_00_00 \((-?\d+), (-?\d+), (-?\d+)\)"
+    hits = L.all(0, rx, t or 0)
+    if hits:
+        g = [int(x) for x in re.search(rx, hits[-1][1]).groups()]
+        d = math.dist(g[:3], g[3:])
+        v.step("cao the guest stands beside the host in the dungeon", d < 10.0, "%.1f m apart (host %s, guest %s)" % (d, g[:3], g[3:]))
+    else:
+        v.step("cao the guest stands beside the host in the dungeon", False, "no status line with both slots in m29")
 
 
 def check_cab(v, L):
