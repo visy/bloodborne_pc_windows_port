@@ -1,6 +1,7 @@
 #!/bin/sh
 # Nightwatch VPN cutover for the 0.7.8 / NW update: widen the client pool from 10.8.0.0/24 (253) to /22 (1021),
-# raise max-clients, drop the OpenVPN status file, refresh nwlobby. ONE OpenVPN restart: every player drops and
+# raise max-clients, keep each install's tunnel address across drops (ifconfig-pool-persist), drop the OpenVPN status
+# file, refresh nwlobby. ONE OpenVPN restart: every player drops and
 # reconnects by itself within ~30 s. Run it only once the NW build that accepts 10.8.0.0/22 is out (players on an
 # older build who get a 10.8.1.x-10.8.3.x address can connect but cannot use the game list).
 #
@@ -52,6 +53,7 @@ echo "== Nightwatch VPN cutover: pool $OLD_NET -> $NEW_NET, max-clients -> $MAX_
 echo "   now: $(grep -E '^\s*server\s' "$CONF") | $(grep -E '^\s*max-clients' "$CONF" || echo 'max-clients (unset)')"
 echo "   firewall scripts: $(grep -c "$OLD_NET" "$FW" "$FWRM" | tr '\n' ' ')(lines with $OLD_NET)"
 echo "   status file drop-in: $([ -f "$DROPIN" ] && echo present || echo 'missing (will be added)')"
+echo "   address persistence: $(grep -E '^\s*ifconfig-pool-persist' "$CONF" || echo 'off (will be /var/lib/openvpn-ipp/ipp.txt)')"
 echo "   players connected: $(clients)"
 if [ "$MODE" = check ]; then
   echo "-- check only: nothing changed"
@@ -97,6 +99,16 @@ else
   echo "max-clients $MAX_CLIENTS" >> "$CONF"
 fi
 grep -qE "^\s*server\s+10\.8\.0\.0\s+$NEW_MASK" "$CONF" || restore_and_die "server.conf edit failed"
+# the same tunnel address after a drop (a host keeps its address, so its guests' saved address still works):
+# the file maps each install's certificate name to its 10.8.x.y address, nothing else (no real addresses).
+# OpenVPN writes it as user nobody after dropping root, so it lives in a directory nobody owns; every 60 s.
+install -d -m 750 -o nobody -g nogroup /var/lib/openvpn-ipp
+if grep -qE '^\s*ifconfig-pool-persist' "$CONF"; then
+  sed -i -E "s|^\s*ifconfig-pool-persist.*|ifconfig-pool-persist /var/lib/openvpn-ipp/ipp.txt 60|" "$CONF"
+else
+  echo "ifconfig-pool-persist /var/lib/openvpn-ipp/ipp.txt 60" >> "$CONF"
+fi
+grep -qE '^\s*duplicate-cn' "$CONF" && echo "note: duplicate-cn is set: OpenVPN ignores ifconfig-pool-persist with it" >&2
 # a client-config-dir file with a pushed /24 netmask (not active unless client-config-dir is set) follows
 [ -d "$CCD" ] && sed -i "s|255\.255\.255\.0|$NEW_MASK|g" "$CCD"/* 2>/dev/null || true
 
@@ -129,6 +141,7 @@ echo
 echo "== checks"
 echo "   OpenVPN: $(systemctl is-active $UNIT), tun0 $(ip -4 -br addr show tun0 | awk '{print $3}')"
 echo "   status file: $(ls /run/openvpn-server/status-*.log 2>/dev/null || echo none)"
+echo "   address persistence: $(grep -E '^\s*ifconfig-pool-persist' "$CONF") (the file appears within 60 s of the first client)"
 echo "   nwlobby: $(systemctl is-active nwlobby) $(ss -H -lnu | grep -c '10.8.0.1:9310') socket(s); counts $(ss -H -lnu | grep -c '127.0.0.1:9311')"
 echo "   firewall: $(iptables -S 2>/dev/null | grep -c "$NEW_NET") rule(s) with $NEW_NET, $(iptables -S 2>/dev/null | grep -c "$OLD_NET") with $OLD_NET"
 echo "   management: $(ss -H -lnt | grep -c '127.0.0.1:7505') listener(s); players reconnecting: $(clients) (give it ~30 s)"
