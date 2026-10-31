@@ -1114,6 +1114,35 @@ def lw_anim_at(L, i, spec, w):
     return val
 
 
+REMOTE_RX = re.compile(r"Party B2: remote chrs: \[mode \d+ 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)")
+
+
+def copy_drift(real, copies, window=1.5):
+    """Worst distance (m) of a remote copy from the player's real positions: each copy sample against the real samples within
+    +-window s (the copy lags by the link and the log interval; a lift runs 8 m/s). [(t, x, y, z)] lists. -> (worst, t, n)."""
+    worst, wt, n = 0.0, 0.0, 0
+    for t, x, y, z in copies:
+        near = [r for r in real if abs(r[0] - t) <= window]
+        if not near:
+            continue
+        n += 1
+        d = min(math.dist((x, y, z), r[1:]) for r in near)
+        if d > worst:
+            worst, wt = d, t
+    return worst, wt, n
+
+
+def lw_copy_rows(v, L, tag, t0):
+    """flaky078: the other player's body on each screen follows the real player through the rides (the user saw a host without a
+    body on the guest's screen): every copy sample of 'remote chrs' within 5 m of the real position (the log_pos lines of the other game)."""
+    for i, j, who in ((1, 0, "host"), (0, 1, "guest")):
+        real = [(t,) + tuple(float(x) for x in POS_RX.search(l).groups()) for t, l in L.all(j, POS_RX.pattern)]
+        copies = [(t,) + tuple(float(x) for x in REMOTE_RX.search(l).groups()) for t, l in L.all(i, REMOTE_RX.pattern, t0)]  # from 5 s before the first ride: the join and the first warps (two maps, 100+ m) are not rides
+        worst, wt, n = copy_drift(real, copies)
+        v.step("%s the %s's copy on the other screen follows it (within 5 m of its real spot)" % (tag, who), n >= 20 and worst <= 5.0,
+               "%d samples, worst %.1f m at +%.0f s" % (n, worst, wt))
+
+
 def check_lfw(v, L, key, tag):
     spec = LW[key]
     plan = lfw_plan(spec, tag.endswith("s"))
@@ -1186,6 +1215,8 @@ def check_lfw(v, L, key, tag):
                                                                    len(L.all(i, r"test: route: HOP"))))
     jump_steps(v, tag, L, rides, (spec["trig"]["top"][0], spec["trig"]["top"][2]),
                ["%d %s %s" % (k + 1, r, d) for k, (d, r, _e) in enumerate(plan)])
+    first = [r[0]["t"] for r in rides if r]
+    lw_copy_rows(v, L, tag, (min(first) - 5.0) if first else 1e9)
     # flaky078: one side waiting out a step's 120 s condition (the other player never came / the car was elsewhere) and skipping to the
     # last step is a failure, never a pass: every ride is synchronised on the other player's state (near the first rider, the car's anim)
     none_of(v, L, tag + " no step waited out its condition (nobody skipped ahead)", r"travel step \d+ \(\w+\): condition timed out", 0, 1e9, (0, 1))
