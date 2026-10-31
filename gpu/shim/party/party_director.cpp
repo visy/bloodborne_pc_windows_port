@@ -53,6 +53,7 @@
 #include "party_worldact.h"
 #include "party_npctalk.h"
 #include "party_ping.h"
+#include "nav_walk.h"
 #include "party_pvp.h"
 #include "../bbport_game_menu.h"
 
@@ -293,6 +294,19 @@ struct Test {
     std::uint32_t route_block = 0;  // the own chr's stage record (+0x3F8) last logged
     Clock::time_point route_started{};
     bool route_god = false;         // the route made the chr invincible (cleared at its end)
+    // Navmesh walker (nav_walk.h, docs/party/walker.md): set up at the first tick of a walk; nav_on = this walk is
+    // steered by it (BB_TEST_WALKER=nav; default: the pulse walker).
+    bool nav_init = false, nav_on = false;
+    std::string st_last_line;       // the menu walk's last step line (for the 'left by a load' note)
+    bool st_parked_logged = false;
+    bool nav_mismatch_logged = false;
+    bool ap_hold = false;           // a move step became a walk (BB_TEST_MOVE_WALK): the chain waits for it like a stick step
+    navwalk::Walker nav;
+    Clock::time_point nav_last{}, nav_log{};
+    std::string nav_pad;            // the pad tokens last written (rewritten only on change)
+    Clock::time_point nav_t0{}, nav_start{};  // the walker's clock origin / the walk's start
+    navwalk::V3 nav_goal;           // the real goal (arrival distance in the log)
+    bool nav_cam_logged = false;
     int ap_still = 0;               // steps in a row without moving (blocked: gives up after 8)
     double ap_angle = 0;
     float ap_from[2] = {0, 0};
@@ -1924,6 +1938,8 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
     }
 }
 
+bool MoveAsWalk(Test& tt, const GameSnapshot& s, const TravelStep& step, Clock::time_point now);
+
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
     TargetAnimTick(t, now);
@@ -2072,7 +2088,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
     if (t.ran &&
         (t.last_kind == TravelStep::GuestStick || t.last_kind == TravelStep::HostStick ||
-         t.last_kind == TravelStep::HostRoute || t.last_kind == TravelStep::GuestRoute) &&
+         t.last_kind == TravelStep::HostRoute || t.last_kind == TravelStep::GuestRoute || t.ap_hold) &&
         t.approach && !t.approach_done) {
         t.step_at = now;
         return;
@@ -2416,7 +2432,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const std::uint64_t player = LocalPlayer();
         std::uint64_t pm = 0, a = 0, b = 0, vt = 0, fn = 0;
         alignas(16) float pos[4] = {step.pos[0], step.pos[1], step.pos[2], 1.0f}, rot[4] = {0, 0, 0, 0};
-        if (player && SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
+        if (MoveAsWalk(t, s, step, now)) {
+            // walked there instead (BB_TEST_MOVE_WALK): the nav walker runs, the chain waits for it
+        } else if (player && SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
             SafeGet(pm + 0x68, &pm) && pm && SafeRead(pm + 0x1d0, rot, sizeof rot) && SafeGet(player, &vt) && vt &&
             SafeGet(vt + 0x5f8, &fn) && fn) {
             if (step.has_yaw) {
@@ -2717,6 +2735,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             tt.ap_at = now;
             tt.ap_ref[0] = tt.ap_ref[1] = 1e9f; // a new walk: the stuck check starts afresh (not from the last walk's spot)
             tt.ap_ref_at = now;
+            tt.nav_init = tt.nav_on = false;
             // Invincible while it walks (EnableInvincible, chr +0x1E1 bit 14, as a11_move): enemies on the
             // way must not end the walk; fights and deaths are the steps after it.
             std::uint32_t f = 0;
@@ -2778,6 +2797,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             tt.ap_at = now;
             tt.ap_ref[0] = tt.ap_ref[1] = 1e9f; // a new walk: the stuck check starts afresh (not from the last walk's spot)
             tt.ap_ref_at = now;
+            tt.nav_init = tt.nav_on = false;
             Log("test: %s: walk to (%.2f, %.2f) within %.1f m, at most %d steps (%s)", TravelStepName(step.kind),
                 double(x), double(z), double(r), steps, DescribeHere(s).c_str());
         } else {
@@ -2880,6 +2900,248 @@ void WritePadFile(const char* tokens) {
     if (FILE* f = std::fopen(path, "w")) {
         std::fputs(tokens, f);
         std::fclose(f);
+    }
+}
+
+// ---- Navmesh test walker (nav_walk.h) ----
+// BB_TEST_WALKER=nav turns the nav walker on (A/B); the default is the old pulse walker until the lift phases are proven. BB_NAV_CACHE = the directory of nav_mAA.bin files
+// (tools/party/nav_cache.py; the harness builds it).
+bool NavWalkerWanted() {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_TEST_WALKER");
+        return e && (std::strcmp(e, "nav") == 0 || std::strcmp(e, "1") == 0);  // opt-in for now (default old)
+    }();
+    return on;
+}
+
+const navwalk::NavMesh* NavMeshForArea(std::uint32_t area) {
+    static std::map<int, std::unique_ptr<navwalk::NavMesh>> cache;
+    const int a = static_cast<int>(area >> 24);
+    auto it = cache.find(a);
+    if (it != cache.end()) return it->second.get();
+    std::unique_ptr<navwalk::NavMesh> m;
+    const char* dir = std::getenv("BB_NAV_CACHE");
+    if (dir && dir[0]) {
+        char path[600];
+        std::snprintf(path, sizeof path, "%s/nav_m%02d.bin", dir, a);
+        auto mesh = std::make_unique<navwalk::NavMesh>();
+        std::string err;
+        const auto t0 = Clock::now();
+        if (mesh->Load(path, &err)) {
+            Log("test: nav: loaded %s: %zu faces in %.2f s", path, mesh->FaceCount(), Seconds(t0, Clock::now()));
+            m = std::move(mesh);
+        } else {
+            Log("test: nav: no navmesh for area %d (%s)", a, err.c_str());
+        }
+    } else {
+        Log("test: nav: BB_NAV_CACHE is not set");
+    }
+    return (cache[a] = std::move(m)).get();
+}
+
+/// The view camera's forward vector: the render camera block (RendMan config +0x50) holds the camera's matrix, the
+/// row at +0x30 is the view direction (checked live: its yaw equals the yaw the stick is relative to).
+bool ReadCameraForward(float* fx, float* fz) {
+    std::uint64_t rm = 0, cfg = 0;
+    float row[3] = {};
+    if (!SafeGet(Guest(0x5540298), &rm) || !rm || !SafeGet(rm + 0x10, &cfg) || !cfg || !SafeRead(cfg + 0x50 + 0x30, row, sizeof row)) {
+        return false;
+    }
+    if (!std::isfinite(row[0]) || !std::isfinite(row[2]) || std::fabs(row[1]) > 0.95f) return false;
+    *fx = row[0];
+    *fz = row[2];
+    return true;
+}
+
+/// Starts the nav walker for the walk in `t` (a route or one goal). false: the old walker takes over (no navmesh
+/// data for the area, or the start is off the mesh); a goal that cannot be reached ends the walk at once
+/// (t.ap_phase = 3, "GAVE UP").
+void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float pos[3], Clock::time_point now) {
+    t.nav_init = true;
+    t.nav_on = false;
+    if (!NavWalkerWanted()) return;
+    const navwalk::NavMesh* mesh = NavMeshForArea(area);
+    if (!mesh || mesh->Empty()) {
+        Log("test: nav: no navmesh for map 0x%08x: the old walker", area);
+        return;
+    }
+    std::vector<navwalk::V3> goals;
+    std::vector<bool> known;
+    if (!t.route.empty()) {
+        for (const auto& w : t.route) {
+            const bool y = !std::isnan(w[1]);
+            goals.push_back({w[0], y ? w[1] : pos[1], w[2]});
+            known.push_back(y);
+        }
+    } else {
+        goals.push_back({t.ap_x, pos[1], t.ap_z});
+        known.push_back(false);
+    }
+    const double radius = t.route.empty() ? std::max(0.25f, t.ap_r) : 1.2;
+    (void)s;
+    t.nav = navwalk::Walker{};
+    const navwalk::PlanResult r = t.nav.Start(mesh, {pos[0], pos[1], pos[2]}, goals, known, radius, 0.0, true, true);  // goals off the mesh up to 10 m (through an opened fog wall, onto a lift car) are walked straight to
+    if (r == navwalk::PlanResult::Ok) {
+        t.nav.cfg.timeout_s = 45 + t.nav.stats.path_len / 2.0;
+        t.nav_on = true;
+        t.nav_last = now;
+        t.nav_log = now;
+        t.nav_pad.clear();
+        t.nav_cam_logged = false;
+        t.nav_mismatch_logged = false;
+        t.nav_t0 = t.nav_start = now;
+        t.nav_goal = goals.back();
+        t.ap_phase = 0;
+        Log("test: nav: planned %zu goal(s): path %.1f m, %zu points, goal snap %.2f m, from (%.1f, %.1f, %.1f), map 0x%08x",
+            goals.size(), t.nav.stats.path_len, t.nav.path().Points().size(), t.nav.stats.snap_goal, double(pos[0]),
+            double(pos[1]), double(pos[2]), area);
+    } else if (r == navwalk::PlanResult::StartOff || r == navwalk::PlanResult::NoMesh || r == navwalk::PlanResult::GoalOff) {
+        // A goal far off the mesh is a deliberate one (a ledge to fall from, a lake): the straight walk of the old walker.
+        Log("test: nav: %s at (%.1f, %.1f, %.1f), goal (%.1f, %.1f): the old walker", navwalk::PlanName(r), double(pos[0]), double(pos[1]),
+            double(pos[2]), double(goals.back().x), double(goals.back().z));
+    } else {
+        Log("test: approach: NAV UNREACHABLE: %s (goal (%.1f, %.1f) from (%.1f, %.1f, %.1f))", navwalk::PlanName(r),
+            double(goals.back().x), double(goals.back().z), double(pos[0]), double(pos[1]), double(pos[2]));
+        t.nav_on = true;  // the failure is reported by the tick
+        t.nav_t0 = t.nav_start = now;
+        t.nav_goal = goals.back();
+        t.nav.fail_reason = navwalk::PlanName(r);
+    }
+}
+
+/// BB_TEST_MOVE_WALK=1: a host_move / guest_move that only gets the player to a walkable spot is walked there by the
+/// nav walker when the planner reaches it (same map, 3 to 80 m, no pin / native warp / yaw: those are the test).
+/// Anything else stays the warp.
+bool MoveAsWalk(Test& tt, const GameSnapshot& s, const TravelStep& step, Clock::time_point now) {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_TEST_MOVE_WALK");
+        return e && e[0] == '1' && NavWalkerWanted();
+    }();
+    if (!on || step.pin > 0 || step.warp == 1 || step.has_yaw || !s.player) return false;
+    std::uint32_t area = 0;
+    float here[3] = {};
+    if (!ReadPlayerPos(&area, here)) return false;
+    const double d = std::hypot(double(step.pos[0]) - here[0], double(step.pos[2]) - here[2]);
+    if (d < 3.0 || d > 80.0 || std::fabs(step.pos[1] - here[1]) > 6.0) return false;
+    const navwalk::NavMesh* mesh = NavMeshForArea(area);
+    if (!mesh || mesh->Empty()) return false;
+    std::vector<navwalk::V3> path;
+    navwalk::PlanInfo pi;
+    const navwalk::PlanResult r =
+        mesh->Plan({here[0], here[1], here[2]}, {step.pos[0], step.pos[1], step.pos[2]}, &path, &pi);
+    if (r != navwalk::PlanResult::Ok || pi.snap_goal > 1.5 || pi.length > 120.0) {
+        Log("test: %s: not walkable (%s, snap %.1f m, %.0f m): the warp", TravelStepName(step.kind), navwalk::PlanName(r),
+            pi.snap_goal, pi.length);
+        return false;
+    }
+    tt.route.clear();
+    tt.approach = true;
+    tt.approach_done = false;
+    tt.ap_x = step.pos[0];
+    tt.ap_z = step.pos[2];
+    tt.ap_r = 1.0f;
+    tt.ap_max = 80;
+    tt.ap_button = 0;
+    tt.ap_steps = tt.ap_still = tt.ap_slide = tt.ap_slides_here = tt.ap_phase = 0;
+    tt.ap_at = now;
+    tt.nav_init = tt.nav_on = false;
+    tt.ap_hold = true;
+    Log("test: %s: walked to (%.1f, %.1f, %.1f), %.0f m of path, instead of the warp", TravelStepName(step.kind),
+        double(step.pos[0]), double(step.pos[1]), double(step.pos[2]), pi.length);
+    return true;
+}
+
+/// One tick of a nav walk (about 25 Hz): steer, and handle the end. Sets t.ap_phase = 3 when the walk is over.
+void NavWalkTick(Test& t, const GameSnapshot& s, std::uint32_t area, const float pos[3], Clock::time_point now) {
+    using navwalk::WalkState;
+    const bool on_route = !t.route.empty();
+    const double dt = std::clamp(Seconds(t.nav_last, now), 0.001, 0.25);
+    t.nav_last = now;
+    t.ap_at = now + std::chrono::milliseconds(35);
+    if (on_route && s.player) {
+        std::uint32_t blk = 0;
+        if (SafeRead(s.player + 0x3f8, &blk, sizeof blk) && blk != t.route_block) {
+            Log("test: route: stage record %#x -> %#x at (%.1f, %.1f, %.1f), map 0x%08x", t.route_block, blk, double(pos[0]),
+                double(pos[1]), double(pos[2]), area);
+            t.route_block = blk;
+        }
+    }
+    const navwalk::V3 here{pos[0], pos[1], pos[2]};
+    float cfx = 0, cfz = 0;
+    if (ReadCameraForward(&cfx, &cfz)) {
+        t.nav.cam().FromForward(cfx, cfz);
+    }
+    const double clock = Seconds(t.nav_t0, now);
+    navwalk::WalkOut o = t.nav.Tick(here, clock, dt);
+    if (t.nav.cam().mismatch && !t.nav_mismatch_logged) {
+        t.nav_mismatch_logged = true;
+        std::uint64_t rm = 0, cfg = 0;
+        float f[16] = {};
+        if (SafeGet(Guest(0x5540298), &rm) && rm && SafeGet(rm + 0x10, &cfg) && cfg && SafeRead(cfg + 0x50, f, sizeof f)) {
+            Log("test: nav: camera model dropped: raw yaw %.0f deg, observed %.0f deg; block rows +0x10 (%.2f %.2f %.2f) +0x20 (%.2f %.2f %.2f) +0x30 (%.2f %.2f %.2f) +0x40 (%.1f %.1f %.1f), stick %d,%d, map 0x%08x",
+                t.nav.cam().raw * 180 / M_PI, t.nav.cam().obs_off * 180 / M_PI, double(f[4]), double(f[5]), double(f[6]), double(f[8]),
+                double(f[9]), double(f[10]), double(f[12]), double(f[13]), double(f[14]), double(f[0]), double(f[1]), double(f[2]),
+                o.stick.lx, o.stick.ly, area);
+        }
+    }
+    if (o.event) {
+        Log("test: nav: %s at (%.1f, %.1f, %.1f), %.1f m of path left (%d replan, %d back-up, %d roll, %d warp)", o.event,
+            double(pos[0]), double(pos[1]), double(pos[2]), t.nav.path().Remaining(), t.nav.stats.replans,
+            t.nav.stats.backups, t.nav.stats.rolls, t.nav.stats.warps);
+    }
+    if (o.warp) {
+        const float to[3] = {o.warp_to.x, o.warp_to.y, o.warp_to.z};
+        const bool ok = PutChr(s, to, static_cast<float>(std::atan2(double(to[0]) - pos[0], double(to[2]) - pos[2])));
+        ++t.route_hops;
+        Log("test: route: HOP %d (nav last resort, %.1f m) onto the path at (%.1f, %.1f, %.1f)%s", t.route_hops,
+            std::hypot(to[0] - pos[0], to[2] - pos[2]), double(to[0]), double(to[1]), double(to[2]), ok ? "" : " FAILED");
+    }
+    const WalkState st = t.nav.state();
+    if (st == WalkState::Done || st == WalkState::Failed) {
+        WritePadFile("");
+        t.nav_pad.clear();
+        const double dist = std::hypot(double(pos[0]) - t.nav_goal.x, double(pos[2]) - t.nav_goal.z);
+        const bool ok = st == WalkState::Done;
+        const double secs = Seconds(t.nav_start, now);
+        t.ap_phase = 3;
+        t.ap_at = now + std::chrono::milliseconds(1200);
+        t.ap_slide = 0;
+        Log("test: approach: %s at %.2f m (nav%s%s: %.1f s, %d replan, %d back-up, %d strafe, %d roll, %d warp, %d stall, cam %s)",
+            ok ? "arrived" : "GAVE UP", dist, ok ? "" : " FAILED: ", ok ? "" : t.nav.fail_reason.c_str(), secs,
+            t.nav.stats.replans, t.nav.stats.backups, t.nav.stats.strafes, t.nav.stats.rolls, t.nav.stats.warps,
+            t.nav.stats.stalls, t.nav.cam().mismatch ? "MISMATCH->observed" : t.nav.cam().recovered ? "model (retaken after a mismatch)" : t.nav.cam().from_cam ? "model" : "observed");
+        if (on_route) {
+            std::uint32_t f = 0;
+            if (t.route_god && s.player && SafeRead(s.player + 0x1e1, &f, 4)) {
+                f &= ~(1u << 14);
+                SafeWrite(s.player + 0x1e1, &f, 4);
+            }
+            t.route_god = false;
+            Log("test: route: %s at waypoint %zu/%zu (%.1f, %.1f, %.1f) after %.0f s, %d side step(s), %d hop(s)",
+                ok ? "DONE" : "STOPPED", t.route.size(), t.route.size(), double(pos[0]), double(pos[1]), double(pos[2]), secs,
+                t.nav.stats.backups + t.nav.stats.strafes, t.route_hops);
+        }
+        return;
+    }
+    // pad: the stick (continuous), Circle for a roll
+    char tok[64];
+    std::snprintf(tok, sizeof tok, "lx=%d ly=%d%s%s", o.stick.lx, o.stick.ly, o.roll ? " circle" : "", "");
+    static const bool sprint = [] {
+        const char* e = std::getenv("BB_TEST_WALK_SPRINT");
+        return e && e[0] == '1';
+    }();
+    std::string tk = tok;
+    if (sprint && !o.roll) tk += " circle";
+    if (tk != t.nav_pad) {
+        WritePadFile(tk.c_str());
+        t.nav_pad = tk;
+    }
+    if (Seconds(t.nav_log, now) >= 1.0) {
+        t.nav_log = now;
+        Log("test: nav: (%.1f, %.1f, %.1f) path %.1f/%.1f m, off %.1f m, %.1f m/s, stick %d,%d, cam off %.0f deg (%s, observed %.0f deg)",
+            double(pos[0]), double(pos[1]), double(pos[2]), t.nav.path().Progress(), t.nav.path().Total(), t.nav.path().Cross(),
+            t.nav.speed(), o.stick.lx, o.stick.ly, t.nav.cam().off * 180 / M_PI, t.nav.cam().from_cam ? "camera" : "observed",
+            t.nav.cam().obs_off * 180 / M_PI);
     }
 }
 
@@ -3691,6 +3953,8 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             }
             if (!line.empty()) {
                 Log("test: seq %s (texts seq %llu)", line.c_str(), static_cast<unsigned long long>(seq));
+                t.st_last_line = line;
+                t.st_parked_logged = false;
             }
             // Every second: the texts on screen now (first 60 ASCII chars each), to learn the real ones.
             static std::int64_t texts_logged = 0;
@@ -3715,6 +3979,17 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             }
         }
     }
+    // A menu walk (seq) that a map load interrupts is not stuck: say so once, with the step it was at.
+    if (t.st_seq_on && t.st_phase == 3 && !t.stand_done && s.loading && !t.st_parked_logged) {
+        t.st_parked_logged = true;
+        Log("test: seq: a map load began after '%s': the rest of the walk is not run (not stuck)", t.st_last_line.c_str());
+    }
+    // Nav walker dead-man: the stick is released when the walk is not being ticked (a load, a cutscene, the place wait).
+    if (t.nav_on && !t.nav_pad.empty() && Seconds(t.nav_last, now) > 0.3) {
+        WritePadFile("");
+        t.nav_pad.clear();
+        Log("test: nav: the walk was not ticked for %.1f s: stick released", Seconds(t.nav_last, now));
+    }
     if (t.approach && !t.approach_done && s.world_up && !s.loading && Seconds(st.world_at, now) >= 12.0 &&
         (!t.place || t.place_done) && Seconds(t.ap_at, now) >= 0.0) {
         std::uint32_t area = 0;
@@ -3735,8 +4010,11 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     t.route_block = blk;
                 }
             }
+            if (!t.nav_init && (t.ap_phase == 0 || t.ap_phase == 2)) {
+                NavWalkInit(t, s, area, pos, now);
+            }
             // liftwalk077 stuck check: no 1 m of progress in 8 s ends the walk (a route first tries its hop within 6 m)
-            if (t.ap_phase == 0 || t.ap_phase == 2) {
+            if (!t.nav_on && (t.ap_phase == 0 || t.ap_phase == 2)) {
                 if (std::hypot(pos[0] - t.ap_ref[0], pos[2] - t.ap_ref[1]) > 1.0) {
                     t.ap_ref[0] = pos[0];
                     t.ap_ref[1] = pos[2];
@@ -3748,7 +4026,9 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                     t.ap_ref_at = now;
                 }
             }
-            if (t.ap_phase == 1) { // a step ends: release, let it settle
+            if (t.nav_on && (t.ap_phase == 0 || t.ap_phase == 2)) {
+                NavWalkTick(t, s, area, pos, now);
+            } else if (t.ap_phase == 1) { // a step ends: release, let it settle
                 WritePadFile("");
                 t.ap_phase = 2;
                 t.ap_at = now + std::chrono::milliseconds(on_route ? 150 : 300);
@@ -3936,7 +4216,17 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         // own spot only turns the player.
         float at[3] = {};
         std::uint64_t vtbl = 0, fn = 0;
-        if (t.ap_prompt_seen) {
+        if (!t.ap_prompt.empty() && !t.ap_prompt_seen) {
+            // The prompt never showed (not at the object's interaction spot, or not facing it): pressing Cross now
+            // would go to whatever else is up (the quick items). Fail the step here, with where the player stands.
+            float here[3] = {};
+            std::uint32_t ar = 0;
+            ReadPlayerPos(&ar, here);
+            Log("test: approach: NO PROMPT '%s' at (%.2f, %.2f, %.2f), target (%.2f, %.2f) after %d face tap(s): the menu walk (seq) is NOT started",
+                t.ap_prompt.c_str(), double(here[0]), double(here[1]), double(here[2]), double(t.ap_x), double(t.ap_z), t.ap_taps);
+            t.st_seq = MenuScript{};
+            t.stand_done = true;
+        } else if (t.ap_prompt_seen) {
             // parfin3 g1a / g1b: the turn warp below moved the facing off the prompt the taps had
             // found (the prompt went 1-2 s later and the menu never opened). Keep it.
             Log("test: approach done: '%s' shows; facing kept; the menu walk (seq) starts", t.ap_prompt.c_str());
