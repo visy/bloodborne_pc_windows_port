@@ -30,11 +30,11 @@ class OnMesh(unittest.TestCase):
 @unittest.skipUnless((GAME / "map" / "m34_00_00_00").is_dir(), "game data not present")
 class NightmareFrame(unittest.TestCase):
     def test_offsets_put_lamps_on_the_mesh(self):
-        want = {"m34_00_00_00": (-500.0, 1500.0, -500.0), "m35_00_00_00": (-792.2, 1489.5, -723.8),
-                "m24_01_00_00": (0.0, 0.0, 0.0)}
+        want = {"m34_00_00_00": (-500.0, 1500.0, -500.0, 0.0), "m35_00_00_00": (-792.2, 1489.5, -723.8, 0.0),
+                "m24_01_00_00": (0.0, 0.0, 0.0, 0.0), "m27_00_00_00": (-190.31, -187.18, 312.4, -70.0)}
         for m, off in want.items():
             got, n, total, _c = nc.choose_offset(GAME, m)
-            self.assertEqual(got, off, m)
+            self.assertEqual(got["default"], off, m)
             self.assertGreaterEqual(n, max(2, total // 2), m)
 
 
