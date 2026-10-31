@@ -967,11 +967,20 @@ LOBBY_MAGIC = b"\xfaL"
 LOBBY_FLAG_PASSWORD, LOBBY_FLAG_OWN = 1, 2
 
 
+LOBBY_NET = "10.8.0.0/22"   # 0.7.8: room for 1021 players once the server widens its pool (was /24)
+
+
 def lobby_tunnel_ip(ips):
-    """This PC's Nightwatch tunnel address (10.8.0.2 - 10.8.0.254) among `ips`, or ''."""
+    """This PC's Nightwatch tunnel address (10.8.0.0/22 minus the network, the server 10.8.0.1 and the broadcast
+    address: 10.8.0.2 - 10.8.3.254) among `ips`, or ''."""
+    import ipaddress
+    net = ipaddress.ip_network(LOBBY_NET)
     for ip in ips:
-        parts = str(ip).split(".")
-        if len(parts) == 4 and parts[:3] == ["10", "8", "0"] and parts[3].isdigit() and 2 <= int(parts[3]) <= 254:
+        try:
+            a = ipaddress.IPv4Address(str(ip))
+        except ValueError:
+            continue
+        if a in net and a not in (net.network_address, net.network_address + 1, net.broadcast_address):
             return ip
     return ""
 

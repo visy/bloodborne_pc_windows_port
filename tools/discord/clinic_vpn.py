@@ -17,6 +17,9 @@ POOL = 253
 KEEP = 90 * 86400
 NEAR = 0.8
 DOWN_AFTER = 30 * 60
+DROP_WINDOW = 15 * 60   # vpn-drop: the latest sample against the peak of this window
+DROP_MIN_PEAK = 10      # ... when that peak had at least this many players
+DROP_SHARE = 0.25       # ... and the latest is at most this share of it (45 -> 0 on 2026-10-31, a ~5 min provider outage)
 
 
 def ssh_target(env=None):
@@ -130,11 +133,12 @@ def store(clinic, sample, now=None):
     t = now or time.time()
     ok = bool(sample.get("ok"))
     lb = (sample.get("lobby") or {}) if ok else {}
-    clinic.db.execute("INSERT INTO nw_vpn (at, clients, max_clients, ok, error, games, open_games, joinable, in_games) "
-                      "VALUES (?,?,?,?,?,?,?,?,?)",
+    clinic.db.execute("INSERT INTO nw_vpn (at, clients, max_clients, ok, error, games, open_games, joinable, in_games, "
+                      "pool) VALUES (?,?,?,?,?,?,?,?,?,?)",
                       (t, sample.get("clients") if ok else None, sample.get("max_clients") if ok else None,
                        int(ok), None if ok else sample.get("error"),
-                       lb.get("games"), lb.get("open"), lb.get("joinable"), lb.get("players")))
+                       lb.get("games"), lb.get("open"), lb.get("joinable"), lb.get("players"),
+                       sample.get("pool") if ok else None))
     clinic.db.execute("DELETE FROM nw_vpn WHERE at<?", (t - KEEP,))
     clinic.db.commit()
 
@@ -173,15 +177,27 @@ def summary(clinic, now, target=None):
     target = ssh_target() if target is None else target
     if not target:
         return {"state": "off"}
-    row = clinic.db.execute("SELECT at, clients, max_clients FROM nw_vpn WHERE ok=1 ORDER BY at DESC LIMIT 1").fetchone()
+    row = clinic.db.execute("SELECT at, clients, max_clients, pool FROM nw_vpn WHERE ok=1 ORDER BY at DESC LIMIT 1").fetchone()
     if row is None:   # no good sample ever: failures stored = set up but not working yet; nothing stored = not set up
         any_row = clinic.db.execute("SELECT 1 FROM nw_vpn LIMIT 1").fetchone()
         return {"state": "waiting" if any_row else "off"}
-    at, clients, mx = row
+    at, clients, mx, pool = row
+    pool = pool or POOL
     return {"state": "ok" if now - at <= DOWN_AFTER else "down", "clients": clients, "max_clients": mx,
-            "effective_max": effective_max(mx), "age": now - at,
+            "pool": pool, "effective_max": effective_max(mx, pool), "age": now - at,
             "peak_24h": peak(clinic, now - 86400), "peak_7d": peak(clinic, now - 7 * 86400),
-            "day": window(clinic, now - 86400)}
+            "peak_15m": peak(clinic, at - DROP_WINDOW), "day": window(clinic, now - 86400),
+            "maint": _maint_window(clinic, now)}
+
+
+def _maint_window(clinic, now):
+    """A scheduled VPN maintenance runs now (1 min before to 30 min after): the drop is expected, no alert."""
+    try:
+        import clinic_vpnmaint
+        m = clinic_vpnmaint.pending(clinic)
+    except Exception:  # noqa: BLE001 - the monitor must not fail on the announcement table
+        return False
+    return bool(m) and not m["cancelled"] and m["at"] - 60 <= now <= m["at"] + clinic_vpnmaint.BACK_MAX
 
 
 def conditions(s):
@@ -192,10 +208,16 @@ def conditions(s):
             "VPN monitor down: no good sample for over 30 min (check the ssh alias and the VPN server).")]
     if s["state"] == "ok":
         n, em = s["clients"], s["effective_max"]
-        tail = "Raise max-clients in server.conf; beyond 253 the subnet must widen to /23 plus a firewall update."
+        pool = s.get("pool") or POOL
+        tail = (f"Raise max-clients in server.conf; beyond {pool} the pool must widen (/23 = 509, /22 = 1021; the game "
+                "accepts 10.8.0.0/22 from 0.7.8) plus a firewall update and one VPN restart.")
         out.append(("vpn-full", n >= em, f"VPN full: {n} of {em} clients connected, new players are refused. " + tail))
         out.append(("vpn-near", NEAR * em <= n < em,
                     f"VPN near its limit: {n} of {em} clients (80% or more). " + tail))
+        pk = s.get("peak_15m") or 0
+        out.append(("vpn-drop", pk >= DROP_MIN_PEAK and n <= DROP_SHARE * pk and not s.get("maint"),
+                    f"VPN players dropped from {pk} to {n} within 15 min: a provider outage or a VPN problem. "
+                    "Check /vpnstatus; players reconnect by themselves once the server is reachable."))
     return out
 
 
@@ -208,7 +230,7 @@ def line(s):
     if s["state"] == "down":
         return "VPN monitor: DOWN (no good sample for over 30 min)"
     out = (f"VPN players: {s['clients']} now, 24 h peak {s['peak_24h']}, 7 d peak {s['peak_7d']}, "
-           f"limit {s['effective_max']} (max-clients {s['max_clients']}, pool {POOL})")
+           f"limit {s['effective_max']} (max-clients {s['max_clients']}, pool {s.get('pool') or POOL})")
     d = s.get("day") or {}
     if d.get("samples"):
         out += f"; 24 h average {d['players_avg']:.1f} players"

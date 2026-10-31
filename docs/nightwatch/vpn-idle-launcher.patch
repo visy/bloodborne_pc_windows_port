@@ -1,0 +1,263 @@
+From 28bde7aa731a7b55c59c5cc325f724cd31bd4f43 Mon Sep 17 00:00:00 2001
+From: "visy (bbport)" <noreply@bbport>
+Date: Sat, 31 Oct 2026 18:54:32 +0200
+Subject: [PATCH] Launcher: an idle Nightwatch VPN tunnel disconnects and comes
+ back when needed (visy 0.7.8 handoff)
+
+A launcher left open held its tunnel forever (2026-10-31: 18 of 30 connected players were in no game), each one
+an address and server capacity. Core/VpnIdle.cs (pure, SeamlessTests IdleRules) decides; the Co-op page acts
+through the same ToggleVpn path as its button:
+- disconnect after 10 min (vpn_idle_minutes) with the window in the background or minimized and no game running;
+- reconnect when the window is activated, the Co-op tab is shown, or Play starts a host/join game (Play waits
+  at most 15 s, then starts anyway);
+- only for a connection the player made in this launcher and has not disconnected by hand; never while the
+  game runs, during a connect/disconnect, or for another launcher's tunnel.
+Setting: Co-op > Advanced networking "Disconnect the VPN when idle" (vpn_idle_disconnect, on by default).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../Core/LauncherSettings.cs                  |  2 +
+ .../BloodborneLauncher/Core/VpnIdle.cs        | 45 +++++++++++++++++++
+ .../BloodborneLauncher/MainWindow.xaml.cs     | 19 ++++++++
+ .../BloodborneLauncher/Views/SeamlessPage.cs  | 33 +++++++++++++-
+ launcher/windows/SeamlessTests/VpnTests.cs    | 29 ++++++++++++
+ 5 files changed, 127 insertions(+), 1 deletion(-)
+ create mode 100644 launcher/windows/BloodborneLauncher/Core/VpnIdle.cs
+
+diff --git a/launcher/windows/BloodborneLauncher/Core/LauncherSettings.cs b/launcher/windows/BloodborneLauncher/Core/LauncherSettings.cs
+index bb3d73c..33596f3 100644
+--- a/launcher/windows/BloodborneLauncher/Core/LauncherSettings.cs
++++ b/launcher/windows/BloodborneLauncher/Core/LauncherSettings.cs
+@@ -48,6 +48,8 @@ namespace BloodborneLauncher.Core
+             ["custom_args"] = "",
+             ["switch_to_output"] = true,
+             ["check_updates"] = true,
++            ["vpn_idle_disconnect"] = true,  // visy 0.7.8 handoff: drop an idle Nightwatch VPN tunnel (VpnIdle)
++            ["vpn_idle_minutes"] = "10",
+             ["save_backups"] = true,
+             ["discord_status"] = "off",
+             ["discord_timer"] = true,
+diff --git a/launcher/windows/BloodborneLauncher/Core/VpnIdle.cs b/launcher/windows/BloodborneLauncher/Core/VpnIdle.cs
+new file mode 100644
+index 0000000..2698432
+--- /dev/null
++++ b/launcher/windows/BloodborneLauncher/Core/VpnIdle.cs
+@@ -0,0 +1,45 @@
++namespace BloodborneLauncher.Core;
++
++public enum VpnIdleAction { None, Disconnect, Connect }
++
++/// <summary>Why the launcher looks now: a timer tick, or a moment the player may need the tunnel.</summary>
++public enum VpnIdleTrigger { Tick, WindowActivated, CoopShown, Play }
++
++/// <summary>What the launcher knows when it looks (visy 0.7.8 handoff, docs/nightwatch/INTEGRATION.md item 2).</summary>
++public readonly record struct VpnIdleState(
++    bool Enabled,          // setting vpn_idle_disconnect (on by default)
++    bool Wanted,           // the player connected in this launcher and has not pressed Disconnect since
++    bool Owned,            // NightwatchVpn.OwnedHere
++    bool Up,               // a tunnel address is on this PC
++    bool Busy,             // a connect / disconnect is under way, or OpenVPN is being set up
++    bool GameRunning,
++    bool WindowActive,     // the launcher window is in front and not minimized
++    DateTime? InactiveSince,
++    TimeSpan IdleAfter,    // setting vpn_idle_minutes (default 10)
++    DateTime Now);
++
++/// <summary>
++/// Drops a tunnel nobody uses and brings it back when needed, so a launcher left open does not hold a VPN address and
++/// server capacity (on 2026-10-31, 18 of 30 connected players were in no game). Only for a connection the player made in
++/// this launcher and still wants: a manual Disconnect keeps it off, and nothing here ever connects a player who never
++/// pressed Connect. Never while the game runs, while a connect or disconnect is under way, or for another launcher's tunnel.
++/// </summary>
++public static class VpnIdle
++{
++    public static readonly TimeSpan DefaultIdle = TimeSpan.FromMinutes(10);
++    public static readonly TimeSpan PlayWait = TimeSpan.FromSeconds(15);
++
++    public static VpnIdleAction Decide(in VpnIdleState s, VpnIdleTrigger trigger)
++    {
++        if (!s.Enabled || !s.Wanted || s.Busy) return VpnIdleAction.None;
++        if (!s.Up)
++            return trigger == VpnIdleTrigger.Tick ? VpnIdleAction.None : VpnIdleAction.Connect;
++        if (trigger != VpnIdleTrigger.Tick || !s.Owned || s.GameRunning || s.WindowActive || s.InactiveSince is not { } since)
++            return VpnIdleAction.None;
++        return s.Now - since >= s.IdleAfter ? VpnIdleAction.Disconnect : VpnIdleAction.None;
++    }
++
++    /// <summary>The idle time from the setting: whole minutes 1..240, anything else the default.</summary>
++    public static TimeSpan IdleAfter(string? minutes) =>
++        int.TryParse(minutes, out var m) && m is >= 1 and <= 240 ? TimeSpan.FromMinutes(m) : DefaultIdle;
++}
+diff --git a/launcher/windows/BloodborneLauncher/MainWindow.xaml.cs b/launcher/windows/BloodborneLauncher/MainWindow.xaml.cs
+index 643face..6c0519c 100644
+--- a/launcher/windows/BloodborneLauncher/MainWindow.xaml.cs
++++ b/launcher/windows/BloodborneLauncher/MainWindow.xaml.cs
+@@ -81,6 +81,13 @@ namespace BloodborneLauncher
+             Activated += (_, _) => Wake();
+             Deactivated += (_, _) => Wake();
+             StateChanged += (_, _) => Wake();
++            // visy 0.7.8 handoff (Core/VpnIdle.cs): an idle Nightwatch VPN tunnel goes, and comes back when needed.
++            Activated += (_, _) => { _inactiveSince = null; _ = VpnIdleNow(VpnIdleTrigger.WindowActivated); };
++            Deactivated += (_, _) => _inactiveSince ??= DateTime.UtcNow;
++            StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) _inactiveSince ??= DateTime.UtcNow; };
++            var vpnIdle = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
++            vpnIdle.Tick += (_, _) => _ = VpnIdleNow(VpnIdleTrigger.Tick);
++            vpnIdle.Start();
+             ApplyIcon();
+ 
+             var version = typeof(MainWindow).Assembly.GetName().Version;
+@@ -599,6 +606,14 @@ namespace BloodborneLauncher
+             WatcherText.BeginAnimation(OpacityProperty, Keys((0, 0), (0, 1216), (1, 1600), (1, 2176), (0, 2432)));
+         }
+ 
++        private DateTime? _inactiveSince;
++
++        /// <summary>The Co-op page decides (VpnIdle); before it was ever shown the player never connected here.</summary>
++        private Task VpnIdleNow(VpnIdleTrigger trigger) =>
++            _pages.TryGetValue(typeof(SeamlessPage), out var page) && page is SeamlessPage coop
++                ? coop.VpnIdleCheck(trigger, IsActive && WindowState != WindowState.Minimized, _inactiveSince)
++                : Task.CompletedTask;
++
+         // ---------------------------------------------------------------- navigation
+ 
+         private void SidebarItem_Checked(object sender, RoutedEventArgs e)
+@@ -1214,6 +1229,10 @@ namespace BloodborneLauncher
+             }
+ 
+             if (_updating) return;
++            // visy 0.7.8 handoff (VpnIdle): a VPN tunnel dropped while idle comes back before a party game starts;
++            // bounded, then the game starts anyway (the Co-op tab says if the connection did not come up).
++            if (s.Str("party_mode") is "host" or "join")
++                await Task.WhenAny(VpnIdleNow(VpnIdleTrigger.Play), Task.Delay(VpnIdle.PlayWait));
+             var error = ws.StartGame();
+             if (error != null)
+             {
+diff --git a/launcher/windows/BloodborneLauncher/Views/SeamlessPage.cs b/launcher/windows/BloodborneLauncher/Views/SeamlessPage.cs
+index 9945669..0438e5c 100644
+--- a/launcher/windows/BloodborneLauncher/Views/SeamlessPage.cs
++++ b/launcher/windows/BloodborneLauncher/Views/SeamlessPage.cs
+@@ -101,6 +101,10 @@ public sealed class SeamlessPage : LauncherPage
+         }
+         ToggleRow(SymbolRegular.Globe24, L.T("Nightwatch VPN lobby"), L.T("Controls whether your hosted party is listed. Join always browses while connected."),
+             () => Ini.Get("party_vpn_lobby", "0") == "1", v => Ini.Set("party_vpn_lobby", v ? "1" : "0"), Rows(Hosting, network));
++        if (NightwatchVpn.Shipped != null)
++            ToggleRow(SymbolRegular.Globe24, L.T("Disconnect the VPN when idle"),
++                L.T("After 10 minutes with the launcher in the background and no game running. It reconnects when you bring the launcher back, open Co-op or press Play."),
++                () => S.Bool("vpn_idle_disconnect"), v => S.Set("vpn_idle_disconnect", v), network);
+         Add(Card(SymbolRegular.Info24, L.T("Last session and firewall"), null,
+             Row(SmallButton(L.T("Check"), SymbolRegular.Info24, (_, _) => CheckConnection()),
+                 SmallButton(L.T("Fix firewall"), SymbolRegular.Wrench24, (_, _) => FixFirewall())), out _), network);
+@@ -305,6 +309,7 @@ public sealed class SeamlessPage : LauncherPage
+     /// <summary>The first time this tab is shown, the co-op setup wizard (after the page is on screen).</summary>
+     public override void OnShown()
+     {
++        _ = VpnIdleCheck(VpnIdleTrigger.CoopShown, windowActive: true, inactiveSince: null);
+         if (S.Bool(CoopPresets.DoneKey)) { OfferVpnSetup(); return; }
+         S.Set(CoopPresets.DoneKey, true);
+         Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, CoopWizard.Open);
+@@ -321,6 +326,8 @@ public sealed class SeamlessPage : LauncherPage
+     private readonly VpnConnection _vpn = new();
+     private readonly Wpf.Ui.Controls.ProgressRing _vpnRing = new() { IsIndeterminate = true, Width = 18, Height = 18, Margin = new Thickness(0, 0, 10, 0), Visibility = Visibility.Collapsed };
+     private bool _vpnSetup;
++    private static bool _vpnWanted;  // the player connected in this launcher and has not pressed Disconnect since (VpnIdle);
++                                     // static: ReloadPages makes a new page, the wish belongs to the launcher
+     private string _vpnNote = "";
+     private StackPanel _partyList = null!;
+     private TextBlock _partiesHint = null!;
+@@ -572,7 +579,29 @@ public sealed class SeamlessPage : LauncherPage
+ 
+     /// <summary>Connect / Disconnect: sets up OpenVPN and enrolls on first use, renews when due, then OpenVPN GUI runs the
+     /// tunnel. The state holds until the tunnel's adapter confirms it (<see cref="WatchVpn"/>).</summary>
+-    private async Task ToggleVpn()
++    /// <summary>MainWindow asks on a timer and when the player may need the tunnel (VpnIdle): drops a tunnel left idle,
++    /// brings back one the player wanted. Uses the same connect / disconnect path as the button.</summary>
++    public async Task VpnIdleCheck(VpnIdleTrigger trigger, bool windowActive, DateTime? inactiveSince)
++    {
++        if (NightwatchVpn.Shipped == null || NightwatchVpn.GuiExe() == null || !_vpnWanted) return;
++        _adapters = await Task.Run(NetworkRoute.Enumerate);
++        var state = new VpnIdleState(S.Bool("vpn_idle_disconnect"), _vpnWanted, NightwatchVpn.OwnedHere,
++            VpnLobby.TunnelIp(_adapters) != null, _vpn.Busy || _vpnSetup, Ws.Game.Running, windowActive, inactiveSince,
++            VpnIdle.IdleAfter(S.Str("vpn_idle_minutes")), DateTime.UtcNow);
++        switch (VpnIdle.Decide(state, trigger))
++        {
++            case VpnIdleAction.Disconnect:
++                await ToggleVpn(byPlayer: false);
++                _vpnNote = L.T("Disconnected while idle; it reconnects when you need it.");
++                UpdateVpn();
++                break;
++            case VpnIdleAction.Connect:
++                await ToggleVpn(byPlayer: false);
++                break;
++        }
++    }
++
++    private async Task ToggleVpn(bool byPlayer = true)
+     {
+         if (NightwatchVpn.Shipped is not { } endpoint || _vpn.Busy || _vpnSetup) return;
+         _adapters = await Task.Run(NetworkRoute.Enumerate);
+@@ -589,6 +618,7 @@ public sealed class SeamlessPage : LauncherPage
+         {
+             if (up)
+             {
++                if (byPlayer) _vpnWanted = false;  // a manual Disconnect stays off until Connect
+                 _vpn.BeginDisconnect(DateTime.UtcNow);
+                 UpdateVpn();
+                 await Task.Run(() => NightwatchVpn.Disconnect(gui));
+@@ -601,6 +631,7 @@ public sealed class SeamlessPage : LauncherPage
+                     UpdateVpn();
+                     return;
+                 }
++                if (byPlayer) _vpnWanted = true;
+                 _vpn.BeginConnect(DateTime.UtcNow);
+                 UpdateVpn();
+                 var install = await NightwatchVpn.ReadyAsync(endpoint, Paths.ConfigDir);
+diff --git a/launcher/windows/SeamlessTests/VpnTests.cs b/launcher/windows/SeamlessTests/VpnTests.cs
+index 286517d..649057f 100644
+--- a/launcher/windows/SeamlessTests/VpnTests.cs
++++ b/launcher/windows/SeamlessTests/VpnTests.cs
+@@ -31,6 +31,34 @@ static class VpnTests
+         throw new InvalidOperationException("VPN: " + what + ": no failure");
+     }
+ 
++    /// <summary>VpnIdle: an idle tunnel goes after the set minutes, comes back when needed, and never against the player's choice.</summary>
++    private static void IdleRules()
++    {
++        var t0 = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
++        var idle = new VpnIdleState(Enabled: true, Wanted: true, Owned: true, Up: true, Busy: false, GameRunning: false,
++            WindowActive: false, InactiveSince: t0, IdleAfter: TimeSpan.FromMinutes(10), Now: t0.AddMinutes(10));
++        var tick = VpnIdleTrigger.Tick;
++        Check(VpnIdle.Decide(idle, tick) == VpnIdleAction.Disconnect, "idle 10 min: disconnect");
++        Check(VpnIdle.Decide(idle with { Now = t0.AddMinutes(9) }, tick) == VpnIdleAction.None, "idle 9 min: keep");
++        Check(VpnIdle.Decide(idle with { GameRunning = true }, tick) == VpnIdleAction.None, "never while the game runs");
++        Check(VpnIdle.Decide(idle with { WindowActive = true }, tick) == VpnIdleAction.None, "never while the window is in front");
++        Check(VpnIdle.Decide(idle with { InactiveSince = null }, tick) == VpnIdleAction.None, "no idle start: keep");
++        Check(VpnIdle.Decide(idle with { Owned = false }, tick) == VpnIdleAction.None, "another launcher's tunnel: keep");
++        Check(VpnIdle.Decide(idle with { Busy = true }, tick) == VpnIdleAction.None, "a change under way: wait");
++        Check(VpnIdle.Decide(idle with { Enabled = false }, tick) == VpnIdleAction.None, "setting off: keep");
++        Check(VpnIdle.Decide(idle with { Wanted = false }, tick) == VpnIdleAction.None, "not this launcher's wish: keep");
++        Check(VpnIdle.Decide(idle, VpnIdleTrigger.WindowActivated) == VpnIdleAction.None, "an up tunnel is not dropped on a trigger");
++        var down = idle with { Up = false, WindowActive = true, InactiveSince = null };
++        foreach (var trigger in new[] { VpnIdleTrigger.WindowActivated, VpnIdleTrigger.CoopShown, VpnIdleTrigger.Play })
++            Check(VpnIdle.Decide(down, trigger) == VpnIdleAction.Connect, "back on demand: " + trigger);
++        Check(VpnIdle.Decide(down, tick) == VpnIdleAction.None, "a tick never connects");
++        Check(VpnIdle.Decide(down with { Wanted = false }, VpnIdleTrigger.Play) == VpnIdleAction.None, "never connects a player who did not");
++        Check(VpnIdle.Decide(down with { Enabled = false }, VpnIdleTrigger.Play) == VpnIdleAction.None, "setting off: no auto connect");
++        Check(VpnIdle.IdleAfter("25") == TimeSpan.FromMinutes(25) && VpnIdle.IdleAfter("0") == VpnIdle.DefaultIdle &&
++              VpnIdle.IdleAfter("x") == VpnIdle.DefaultIdle && VpnIdle.IdleAfter(null) == VpnIdle.DefaultIdle &&
++              VpnIdle.IdleAfter("999") == VpnIdle.DefaultIdle, "idle minutes setting");
++    }
++
+     private static void SetupAndConnectionRules()
+     {
+         var args = OpenVpnSetup.Arguments(@"C:\p q\o.msi", @"C:\l.log");
+@@ -74,6 +102,7 @@ static class VpnTests
+ 
+     public static void Run()
+     {
++        IdleRules();
+         SetupAndConnectionRules();
+         Formats();
+         Lobby();
+-- 
+2.54.0.windows.1
+

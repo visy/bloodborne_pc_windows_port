@@ -14,7 +14,7 @@ import re
 import socket
 import sys
 
-POOL = 253   # 10.8.0.0/24, topology subnet
+POOL = 253   # fallback: 10.8.0.0/24, topology subnet (the real size comes from server.conf's "server" line)
 PW_FILE = os.environ.get("NWVPN_PW") or os.path.expanduser("~/nwvpn/mgmt.pw")
 CONF = os.environ.get("NWVPN_CONF") or "/etc/openvpn/server/server.conf"
 PORT = int(os.environ.get("NWVPN_MGMT_PORT") or 7505)
@@ -26,6 +26,22 @@ def parse_stats(line):
     """'SUCCESS: nclients=3,bytesin=1,bytesout=2' -> 3, else None."""
     m = re.search(r"nclients=(\d+)", line or "")
     return int(m.group(1)) if m and line.lstrip().startswith("SUCCESS") else None
+
+
+def parse_pool(text):
+    """Client addresses of the "server <net> <mask>" line (topology subnet: hosts minus the server), else None.
+    /24 -> 253, /23 -> 509, /22 -> 1021."""
+    val = None
+    for line in text.splitlines():
+        m = re.match(r"\s*server\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)\s*(?:[#;].*)?$", line)
+        if m:
+            try:
+                bits = sum(bin(int(o)).count("1") for o in m.group(2).split("."))
+            except ValueError:
+                continue
+            if 8 <= bits <= 30:
+                val = 2 ** (32 - bits) - 3
+    return val
 
 
 def parse_max_clients(text):
@@ -106,10 +122,12 @@ def query(host="127.0.0.1", port=PORT, pw_file=PW_FILE, conf=CONF):
             return {"ok": False, "error": "no stats"}
         try:
             with open(conf) as f:
-                mx = parse_max_clients(f.read())
+                conf_text = f.read()
+            mx, pool = parse_max_clients(conf_text), parse_pool(conf_text)
         except OSError:
-            mx = None
-        return {"ok": True, "clients": n, "max_clients": mx if mx is not None else POOL, "pool": POOL}
+            mx, pool = None, None
+        pool = pool or POOL
+        return {"ok": True, "clients": n, "max_clients": mx if mx is not None else pool, "pool": pool}
     except OSError as e:   # includes socket.timeout
         return {"ok": False, "error": type(e).__name__[:40]}
     finally:
