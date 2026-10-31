@@ -3105,7 +3105,7 @@ void NavWalkTick(Test& t, const GameSnapshot& s, std::uint32_t area, const float
         Log("test: approach: %s at %.2f m (nav%s%s: %.1f s, %d replan, %d back-up, %d strafe, %d roll, %d warp, %d stall, cam %s)",
             ok ? "arrived" : "GAVE UP", dist, ok ? "" : " FAILED: ", ok ? "" : t.nav.fail_reason.c_str(), secs,
             t.nav.stats.replans, t.nav.stats.backups, t.nav.stats.strafes, t.nav.stats.rolls, t.nav.stats.warps,
-            t.nav.stats.stalls, t.nav.cam().mismatch ? "MISMATCH->observed" : t.nav.cam().from_cam ? "model" : "observed");
+            t.nav.stats.stalls, t.nav.cam().mismatch ? "MISMATCH->observed" : t.nav.cam().recovered ? "model (retaken after a mismatch)" : t.nav.cam().from_cam ? "model" : "observed");
         if (on_route) {
             std::uint32_t f = 0;
             if (t.route_god && s.player && SafeRead(s.player + 0x1e1, &f, 4)) {

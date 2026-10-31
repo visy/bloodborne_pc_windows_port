@@ -145,6 +145,11 @@ static void TestStick() {
     CHECK(w.mismatch && !w.from_cam && std::fabs(w.off - 1.5) < 0.05);
     w.FromCamera({0, 0, -5}, {0, 0, 0});
     CHECK(std::fabs(w.off - 1.5) < 0.05);
+    // ... and taken back once the camera agrees with the motion again
+    for (int i = 0; i < 12; ++i) w.Observe(0.0, 0.0);
+    CHECK(!w.mismatch && w.from_cam && w.recovered == 1);
+    w.FromCamera({0, 0, -5}, {0, 0, 0});
+    CHECK(std::fabs(w.off) < 1e-9);
 }
 
 static void TestFollower() {

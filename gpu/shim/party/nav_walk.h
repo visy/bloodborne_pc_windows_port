@@ -567,12 +567,13 @@ struct CamModel {
     double raw = 0;       // atan2(player - camera): the camera orbit centre is not exactly the player, so
     double resid = 0;     // the observed motion trims it (low-pass, at most 0.5 rad)
     double obs_off = 0;   // low-pass of the observed offset (log / fallback)
-    int obs_n = 0, bad = 0;
+    int obs_n = 0, bad = 0, agree = 0, recovered = 0;
 
     /// The camera's view direction (render camera block: the matrix row at +0x30 of the block at config +0x50).
     void FromForward(double fx, double fz) {
-        if (mismatch || std::hypot(fx, fz) < 0.2) return;
+        if (std::hypot(fx, fz) < 0.2) return;
         raw = std::atan2(fx, fz);
+        if (mismatch) return;  // the observed offset rules until the camera agrees with the motion again (Observe)
         off = Wrap(raw + resid);
         have = from_cam = true;
     }
@@ -586,7 +587,19 @@ struct CamModel {
         const double o = Wrap(vel_yaw - stick_angle);
         obs_off = obs_n == 0 ? o : Wrap(obs_off + 0.25 * Wrap(o - obs_off));
         ++obs_n;
-        if (from_cam && !mismatch) {
+        if (mismatch) {
+            // the render camera may still be swinging after a warp: take the model back after 12 agreeing samples in a row
+            agree = std::fabs(Wrap(o - raw)) < 0.3 ? agree + 1 : 0;
+            if (agree >= 12) {
+                mismatch = false;
+                from_cam = true;
+                bad = 0;
+                agree = 0;
+                resid = 0;
+                off = raw;
+                ++recovered;
+            }
+        } else if (from_cam) {
             const double err = Wrap(o - raw);
             bad = std::fabs(err) > 0.45 ? bad + 1 : 0;
             if (bad >= 8) {  // the camera position is not in the player's frame (or not the view camera)
