@@ -9249,11 +9249,17 @@ def check_cv(v, L, d: Path):
     snap = need(v, L, "cv covenant: the host's covenant flags not copied into the guest's save", 1,
                 r"covenant outcomes per player: \d+ covenant flag\(s\) set in the host's world not copied.*\b1042\b")
     # In the host's world (0.7.7): the guest sees its OWN covenant state (so its talks run on its own outcomes).
+    # The test read (load mode 1) is taken at the world's first stable frame BEFORE the covenant overlay of that same
+    # frame, so it still shows the host's values (1042=0/1: own/visible); the proof is the overlay's own log line: it
+    # replaced the host's state by the guest's own in block 1 and lists the bits that changed (Annalise's 1040 / 1042).
+    ov = L.find(1, r"guest covenant overlay: the host's covenant state replaced by the guest's own in block 1 \(bits changed:[^)]*\)", j or 0)
+    bits = set(re.findall(r"\d+", ov[1].split("bits changed:")[1])) if ov else set()
     rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", j or 0)
-    vals = dict(re.findall(r"\b(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
+    vals = dict(re.findall(r"(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
+    own_ok = vals.get("1042", "").startswith("0/") and vals.get("1040", "").startswith("1/")  # the own save holds Annalise alive
     v.step("cv covenant: in the host's world the guest sees its own state (Annalise alive 1040, not the host's 1042)",
-           vals.get("1042", "").endswith("/0") and vals.get("1040", "").endswith("/1"),
-           rd[1][:220] if rd else "no load mode 1 test read on the guest")
+           {"1040", "1042"} <= bits and own_ok,
+           (ov[1][-120:] if ov else "no covenant overlay line on the guest") + " | " + (rd[1][-160:] if rd else "no load mode 1 test read"))
     none_of(v, L, "cv covenant: no covenant flag sent up as a world action",
             r"world action sent to the host.*\b(10[45]\d|13[45]\d|179\d|180\d|725003\d\d|727003\d\d)\b", j or 0)
     lv = need(v, L, "cv covenant: the guest leaves (Party > Leave)", 1, r"guest_leave: Party > Leave pressed", j or 0)
@@ -9671,7 +9677,7 @@ def sweep_main(a, only):
 # one-off stall no longer fails a release smoke while a real fault (it fails every time) still does.
 # BB_SMOKE_NO_RETRY=1 turns it off. Retried runs are listed in the output dir's retries.txt.
 FLAKY_PHASES = {"cae", "cao", "cab", "cis", "caq", "caw", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
-                "lt", "lf", "s2", "cv", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
+                "lt", "lf", "s2", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
 FLAKY_TRIES = 3
 
 
