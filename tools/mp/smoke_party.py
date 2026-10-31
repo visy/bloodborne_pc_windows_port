@@ -543,7 +543,7 @@ def _s3_stain():
             "host_press=0@10%m24_01!"]
 
 
-def _s3_enemy(dist="0.6"):
+def _s3_enemy(dist="0.6", waits=4):
     """A nearby enemy on the same floor: R3 lock-on, R1 once (it fights back), HP lines, the kills, a vial
     (killed within ~10 s: two of them took the host's 575 HP in 13 s). R3 twice (":lock": the second
     only while not locked on): after the host_chr warp the camera can face away from the enemy, and
@@ -551,7 +551,7 @@ def _s3_enemy(dist="0.6"):
     after host_chr with and without a death before it; the second locked on)."""
     return ["host_chr=0:%s@2%%m24_01!" % dist, "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
             "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",
-            "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 4 + [                  # R1: it fights back
+            "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * waits + [                  # R1: it fights back
         "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
         "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial
 
@@ -577,7 +577,7 @@ def phase_s3(only):
     ] + _s3_stain() + _s3_enemy() + [
         "host_die@2%m24_01",                                       # 130 m from the lamp: lamp revive 2
         "host_press=0@14%m24_01!", "host_press=0@12%m24_01!",
-    ] + _s3_enemy("1.6") + [
+    ] + _s3_enemy("1.6", 6) + [  # flaky078: from 1.6 m the enemy first strikes ~11 s after the lock-on (c3 run c: HP 616 came right after the kill step)
         "host_lastlamp=2402950@1%m24_01", "host_die@2%m24_01",     # last lamp in the Cathedral Ward: a lone load
         "host_press=0@15%m24_00",                                  # its census (every 15 s), then the end
     ])
