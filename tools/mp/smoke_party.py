@@ -9276,7 +9276,7 @@ def check_cv(v, L, d: Path):
     ov = L.find(1, r"guest covenant overlay: the host's covenant state replaced by the guest's own in block 1 \(bits changed:[^)]*\)", j or 0)
     bits = set(re.findall(r"\d+", ov[1].split("bits changed:")[1])) if ov else set()
     rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", j or 0)
-    vals = dict(re.findall(r"(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
+    vals = dict(re.findall(r"\b(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
     own_ok = vals.get("1042", "").startswith("0/") and vals.get("1040", "").startswith("1/")  # the own save holds Annalise alive
     v.step("cv covenant: in the host's world the guest sees its own state (Annalise alive 1040, not the host's 1042)",
            {"1040", "1042"} <= bits and own_ok,
