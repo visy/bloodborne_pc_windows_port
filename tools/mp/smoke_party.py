@@ -4155,7 +4155,7 @@ def phase_ngp(only):
                "--watch", r"ending: staff roll / ending step t=10 s=ngpcredits@0,4",
                "--watch", r"ending: the next cycle's world is up=ngpnext@0,6",
                "--watch", r"cooperators 0 -> 1=ngpback@0,6"],
-        crash=[], until=[NGP_UNTIL], until_hold=15,
+        crash=[], until=[NGP_UNTIL], until_hold=70,  # the host is start-ready ~10 s and the guest back ~30 s after the first next-cycle line
     )
 
 
@@ -5112,14 +5112,14 @@ def phase_npf(only):
     solo = os.environ.get("BB_NPF_SOLO", "0") == "1"   # control run: the host alone (no guest), the vanilla behaviour
     order = os.environ.get("BB_NPF_ORDER", "host")      # who walks through the beast's fog first: host | guest
     hfog = (["host_press=0x4@1!", "host_press=0@1!"] + ["host_press=0x4000@3%m23_00!", "host_press=0@2%m23_00!"] * 2 +
-            sum([["host_obj=%d:1.2:%d@2%%m23_00" % (NPF_FOG, ang), "host_press=0x4@1!", "host_press=0@1!",
+            sum([["host_obj=%d:%s:%d@2%%m23_00" % (NPF_FOG, os.environ.get("BB_NPF_DIST", "0.6"), ang), "host_press=0x4@1!", "host_press=0@1!",
                   "host_press=0x4000@3%m23_00!", "host_press=0@2%m23_00!", "host_press=0x4000@3%m23_00!", "host_press=0@2%m23_00!"]
                  for ang in (180, 90, 270)], [])) if order == "host" else ["host_press=0@12%m23_00!"]
     host = ["god", "insight=20", ] + ([] if solo else ["host_warp=2302950@8^1"]) + ["host_flag=1340@2%m23_00", "host_flag=72400461@0.5%m23_00", "host_use=4312@1%m23_00", "host_move=-45:-123.9:7:90@4%m23_00", "host_press=0x4000@3%m23_00!",
             "host_press=0@25%m23_00!", "host_obj=%d@2%%m23_00" % NPF_FOG] + hfog + [
             "host_press=0@50%m23_00!", "host_press=0@40%m23_00!", "host_press=0@40%m23_00!"]
     gdelay = 220 if order == "host" else 110
-    g1 = ["god", "guest_obj=%d@%d%%m23_00" % (NPF_FOG, gdelay), "guest_press=0x4000@2%m23_00!", "guest_press=0x4000@2%m23_00!",
+    g1 = ["god"] + (["guest_move=-45:-123.9:7:90@20%m23_00"] if os.environ.get("BB_NPF_GUEST_NEAR") == "1" else []) + ["guest_obj=%d@%d%%m23_00" % (NPF_FOG, gdelay), "guest_press=0x4000@2%m23_00!", "guest_press=0x4000@2%m23_00!",
           "guest_press=0@60%m23_00!"]
     ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)] + ([] if solo else ["1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)]) + [
             "%d:BB_PARTY_TEST_NPC=%d" % (0 if ring == "host" else 1, NPF_NPC),
