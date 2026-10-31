@@ -13446,7 +13446,9 @@ bool ChaliceSummonStopped() {
         Log("chalice: %d empty loads of the host's Chalice Dungeon in a row: no more summons for it (Party > Rejoin tries again)",
             g_empty_loads.load());
         party::status::SetAlert("This game loaded the host's Chalice Dungeon empty twice, so it stops summoning into it. You "
-                         "stay in your own world; ask the host to leave and re-enter the dungeon, or use Party > Rejoin to try again.");
+                         "stay in your own world. Likely cause: a patch that changes the game's region or its network timers (for "
+                         "example Unlock Game Region or an FPS patch from another list) on this PC or the host's: turn it off "
+                         "on both. Party > Rejoin tries again.");
     }
     return true;
 }
