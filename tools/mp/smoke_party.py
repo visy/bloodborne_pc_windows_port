@@ -771,7 +771,7 @@ LW = {
         # smokefix077: the spot where the walk-ins that entered the trigger cleanly (60 FPS lfw runs) turned into the cage; a stick
         # step to it (0.5 m) before the trigger / side step makes the last 2 m the same every time (the route ends within 2 m of
         # anywhere: from its east side the straight step ran into the cage post, 2 m short of the trigger)
-        door={"top": [(-131.4, -7.1), (-129.5, -9.2)], "bottom": [(-127.0, -10.9), (-128.0, -10.2)]},  # then the cage mouth (the walk-ins' last spot before the trigger: from the door straight to the host's side spot ran into the post at (-129.6, -8.0))
+        door={"top": (-131.4, -7.1), "bottom": (-127.0, -10.9)},
         route={"top": "-180.7:-41.5:29.6/-177.6:-41.7:26.7/-173.4:-41.7:26.3/-169.0:-41.7:23.9/-165.4:-41.7:21.5/-161.9:-41.7:17.5/-158.2:-41.7:15.0/-154.3:-41.7:11.6/-151.3:-41.7:9.1/-147.6:-41.7:10.8/-144.8:-43.3:7.6/-140.4:-44.5:5.2/-136.7:-44.5:1.5/-134.7:-44.2:-2.5/-130.8:-44.5:-3.7/-130.0:-44.5:-8.0",
                "bottom": "-78.8:-55.4:14.7/-79.1:-55.5:9.9/-83.5:-55.5:8.9/-88.2:-55.4:6.2/-89.5:-55.5:2.0/-92.6:-55.5:-1.5/-96.6:-55.5:-3.9/-100.3:-55.4:-6.3/-103.5:-55.4:-10.0/-107.9:-55.4:-12.6/-110.3:-55.4:-15.8/-113.0:-56.9:-19.2/-116.5:-58.7:-21.3/-117.1:-58.5:-17.3/-121.1:-58.4:-15.6/-124.4:-58.4:-12.6/-128.1:-58.1:-10.7"},
         # liftfar077: starts more than 150 m from the car (outside the prebuild ring), walked in over the navmesh route
@@ -789,7 +789,7 @@ LW = {
         # liftreg077: the prelude's kills drop an item (a blood gem: "Beast x1" box on the host); the box stays up and blocks the
         # stick walks of the later rides (the lfwc / lfwcbs flake), so the host presses Cross after each kill group (dismiss)
         lamp="2412953", set_flags="", dismiss=True,
-        door={"top": [(24.1, 192.3), (24.1, 193.5)], "bottom": [(26.0, 194.5), (24.8, 194.7)]},
+        door={"top": (24.1, 192.3), "bottom": (26.0, 194.5)},
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
         side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
@@ -945,8 +945,8 @@ def lfw_chains(spec, slow=False):
                 if tail:
                     s.append("%s_route=%s@1%%%s" % (role, tail, m))
             if spec.get("door"):
-                for dx, dz in spec["door"][end]:
-                    s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
+                dx, dz = spec["door"][end]
+                s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
