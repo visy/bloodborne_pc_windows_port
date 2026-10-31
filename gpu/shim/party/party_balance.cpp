@@ -709,6 +709,7 @@ void EnemyPass(const GameSnapshot& s, bool scale) {
     if (!wcm || !s.player) return;
     const int sets = std::min(Field<int>(Field<u64>(wcm, 8), 0x18, -2) + 2, kMaxSets);
     int seen = 0, enemies = 0, applied = 0, removed = 0, bosses = 0, carrying = 0, counted = 0;
+    bool sample_live = false;  // the sample chr is still in a chr table (a freed chr keeps its old handle)
     // The bosses of the loaded maps, by the entity ids the boss events dope (EMEVD 2004[8] with
     // SpEffect 7500 / 7501, every map; GetChrByEntityId 0x13c97a0, as the events resolve them).
     u64 boss_chrs[sizeof kBossEntities / sizeof kBossEntities[0] + sizeof kChaliceBossEntities / sizeof(int)];
@@ -728,6 +729,7 @@ void EnemyPass(const GameSnapshot& s, bool scale) {
             const u64 chr = Field<u64>(entries + u64(i) * 0x38, 0);
             if (!chr) continue;
             ++seen;
+            if (chr == g_sample) sample_live = true;
             if (IsPlayer(wcm, chr)) continue;
             const u64 npc = Field<u64>(Field<u64>(chr, 0x3c8), 8);
             if (!npc) continue;
@@ -794,6 +796,7 @@ void EnemyPass(const GameSnapshot& s, bool scale) {
                 if (ApplyEffect(chr, int(kEnemyRow))) {
                     if (!applied) {  // one sample, followed in the log (evidence: max HP before / after)
                         g_sample = chr;
+                        sample_live = true;
                         g_sample_handle = Field<u32>(chr, 8, ~0u);
                         Log("sample chr %x before SpEffect %u: HP %d / %d", g_sample_handle, kEnemyRow, hp_before,
                             max_before);
@@ -809,7 +812,7 @@ void EnemyPass(const GameSnapshot& s, bool scale) {
         }
     }
     char sample[480] = "";
-    if (g_sample && Field<u32>(g_sample, 8, ~0u) == g_sample_handle) {
+    if (g_sample && sample_live && Field<u32>(g_sample, 8, ~0u) == g_sample_handle) {
         const u64 dm = Field<u64>(Field<u64>(g_sample, 0x3b0), 0x20);
         const u64 npc = Field<u64>(Field<u64>(g_sample, 0x3c8), 8);
         u64 node = 0;
