@@ -651,8 +651,9 @@ public:
 
     /// goals: waypoints to pass in order (the last one is the goal); radius: arrival distance to the last goal.
     PlanResult Start(const NavMesh* mesh, const V3& from, std::vector<V3> goals, std::vector<bool> goal_y_known,
-                     double radius, double now) {
+                     double radius, double now, bool allow_tail = false) {
         mesh_ = mesh;
+        allow_tail_ = allow_tail;
         goals_ = std::move(goals);
         goal_y_known_ = std::move(goal_y_known);
         goal_y_known_.resize(goals_.size(), true);
@@ -754,6 +755,7 @@ private:
     std::vector<V3> goals_;
     std::vector<bool> goal_y_known_;
     double radius_ = 1.0;
+    bool allow_tail_ = false;  // routes: goals off the mesh (a lift car, a ladder top) are walked straight to
     PathFollower path_;
     CamModel cam_;
     StallDetector stall_;
@@ -793,7 +795,17 @@ private:
             PlanInfo pi;
             std::vector<V3> leg;
             const PlanResult r = mesh_->Plan(cur, goals_[i], &leg, &pi, 2.5, 4.0, goal_y_known_[i]);
+            V3 g = goals_[i];
+            if (!goal_y_known_[i]) g.y = cur.y;
             if (r != PlanResult::Ok) {
+                // a route's off-mesh goal within 10 m of where the path is: a straight tail
+                if (allow_tail_ && r == PlanResult::GoalOff && Dist3(cur, g) <= 10.0) {
+                    if (path.empty()) path.push_back(cur);
+                    path.push_back(g);
+                    cur = g;
+                    if (i + 1 == goals_.size()) stats.snap_goal = 0;
+                    continue;
+                }
                 if (i + 1 == goals_.size()) return r;
                 last = r;
                 continue;  // a hint waypoint off the mesh: skip it
@@ -804,6 +816,11 @@ private:
             if (!path.empty() && !leg.empty()) leg.erase(leg.begin());
             path.insert(path.end(), leg.begin(), leg.end());
             cur = leg.empty() ? cur : leg.back();
+            if (allow_tail_ && pi.snap_goal > 0.4 && Dist3(cur, g) <= 10.0) {  // the goal is a little off the mesh: walk on to it
+                path.push_back(g);
+                cur = g;
+                if (i + 1 == goals_.size()) stats.snap_goal = 0;
+            }
         }
         (void)last;
         if (path.empty()) return PlanResult::NoRoute;

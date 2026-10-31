@@ -224,6 +224,24 @@ static void TestUnreachable() {
     CHECK(w2.Start(&m, sim.pos, {{200, 0, 3}}, {true}, 1.0, 0) == PlanResult::GoalOff);
 }
 
+static void TestOffMeshTail() {
+    NavMesh m = Grid(20, 20, nullptr);  // 40 x 40 m
+    {
+        Walker w;
+        Sim sim{{2, 0, 2}, 0.3};
+        // a route whose last waypoint is a lift car 6 m off the mesh
+        CHECK(w.Start(&m, sim.pos, {{38, 0, 20}, {46, 0, 20}}, {true, true}, 1.0, 0, true) == PlanResult::Ok);
+        const RunResult r = Run(w, sim, true);
+        CHECK(r.done && r.warps == 0);
+        CHECK(Dist2(sim.pos, {46, 0, 20}) <= 1.05);
+    }
+    {
+        Walker w;
+        Sim sim{{2, 0, 2}, 0.3};
+        CHECK(w.Start(&m, sim.pos, {{46, 0, 20}}, {true}, 1.0, 0, false) == PlanResult::GoalOff);  // a single goal: early failure
+    }
+}
+
 static void TestStallRecovery() {
     NavMesh m = Grid(20, 20, nullptr);
     {
@@ -293,6 +311,7 @@ int main() {
     TestWalkDetourWithoutCamera();
     TestWaypointHints();
     TestUnreachable();
+    TestOffMeshTail();
     TestStallRecovery();
     TestOffCorridorReplan();
     TestTurnRateAndEase();
