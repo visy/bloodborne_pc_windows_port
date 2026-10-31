@@ -93,6 +93,22 @@ static void TestFunnelDetour() {
     CHECK(corner);  // the agent margin keeps it off the wall's end
 }
 
+static void TestSmooth() {
+    NavMesh m = Grid(10, 10, ShortWall);
+    // a zig-zag over open floor collapses to the straight line; around the wall's end the corner stays
+    std::vector<V3> z = {{1, 0, 1}, {4, 0, 5}, {3, 0, 3}, {6, 0, 4}, {5, 0, 10}, {7, 0, 4}, {10, 0, 6}};
+    std::vector<V3> o = m.Smooth(z);
+    CHECK(o.size() <= 3);
+    std::vector<V3> around = {{1, 0, 1}, {7, 0, 18}, {9, 0, 18}, {19, 0, 1}};
+    o = m.Smooth(around);
+    CHECK(o.size() >= 3);
+    CHECK(!m.Walkable({7, 0, 2}, {11, 0, 2}));  // through the wall
+    CHECK(m.Walkable({1, 0, 1}, {7, 0, 18}));
+    NavMesh g = Grid(10, 10, nullptr);
+    CHECK(!g.Walkable({1, 0, 1}, {1, 0, 23}));  // off the mesh
+    CHECK(!g.Walkable({0.2f, 0, 5}, {0.2f, 0, 9}));  // closer than the clearance to the edge
+}
+
 static void TestIsland() {
     NavMesh m = Grid(10, 10, Island);
     std::vector<V3> p;
@@ -317,6 +333,7 @@ static void TestTurnRateAndEase() {
 int main() {
     TestPlan();
     TestFunnelDetour();
+    TestSmooth();
     TestIsland();
     TestStick();
     TestFollower();

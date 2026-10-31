@@ -182,16 +182,33 @@ public:
     /// Face containing (x, z) whose surface is closest to y (within `max_dy`), or -1. The height is interpolated
     /// over the polygon's triangle fan.
     int FaceAt(const V3& p, double max_dy = 2.5, float* y_out = nullptr) const {
-        int best = -1;
-        double by = 1e30;
+        // Pieces of the game's navmesh overlap (a face inside another piece's face): among the faces at the point whose
+        // surface is as near in height as the nearest one (+0.4 m), take the best linked one.
+        struct C {
+            std::uint32_t f;
+            double dy, y;
+        };
+        std::vector<C> c;
+        double min_dy = 1e30;
         ForCell(p.x, p.z, [&](std::uint32_t f) {
             double y;
-            if (Contains(f, p.x, p.z, &y) && std::fabs(y - p.y) < std::min(max_dy, by)) {
-                by = std::fabs(y - p.y);
-                best = int(f);
-                if (y_out) *y_out = float(y);
+            if (Contains(f, p.x, p.z, &y) && std::fabs(y - p.y) < max_dy) {
+                c.push_back({f, std::fabs(y - p.y), y});
+                min_dy = std::min(min_dy, std::fabs(y - p.y));
             }
         });
+        int best = -1;
+        double best_score = 0;
+        for (const C& x : c) {
+            if (x.dy > min_dy + 0.4) continue;
+            // links first, then the larger polygon (the small overlapping patch is the odd one)
+            const double score = (link_start_[x.f + 1] - link_start_[x.f]) * 1000.0 + Area(x.f);
+            if (best < 0 || score > best_score) {
+                best = int(x.f);
+                best_score = score;
+                if (y_out) *y_out = float(x.y);
+            }
+        }
         return best;
     }
 
@@ -260,6 +277,51 @@ public:
         return PlanResult::Ok;
     }
 
+    /// True when the segment a-b lies on the mesh (any piece: pieces overlap) with `clear` m of mesh to both sides and no
+    /// height step above 0.5 m between samples.
+    bool Walkable(const V3& a, const V3& b, double clear = 0.35) const {
+        const double len = Dist2(a, b);
+        if (len < 1e-4) return true;
+        const int n = int(std::ceil(len / 0.4));
+        const double dx = (double(b.x) - a.x) / len, dz = (double(b.z) - a.z) / len;
+        double prev_y = a.y;
+        for (int i = 0; i <= n; ++i) {
+            const double t = double(i) / n;
+            V3 q{float(a.x + (double(b.x) - a.x) * t), float(a.y + (double(b.y) - a.y) * t), float(a.z + (double(b.z) - a.z) * t)};
+            float y;
+            if (FaceAt(q, 0.8, &y) < 0 || std::fabs(y - prev_y) > 0.5) return false;
+            prev_y = y;
+            if (clear > 0) {
+                for (int side : {-1, 1}) {
+                    V3 e{float(q.x - dz * clear * side), y, float(q.z + dx * clear * side)};
+                    if (FaceAt(e, 0.8) < 0) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// Greedy shortcut of a path: from each point, the farthest later point reachable by a walkable straight segment
+    /// (points off the mesh, such as a lift car tail, are kept).
+    std::vector<V3> Smooth(const std::vector<V3>& in) const {
+        if (in.size() < 3) return in;
+        std::vector<V3> out{in[0]};
+        std::size_t i = 0;
+        while (i + 1 < in.size()) {
+            std::size_t best = i + 1;
+            const std::size_t last = std::min(in.size() - 1, i + 40);
+            for (std::size_t j = last; j > i + 1; --j) {
+                if (Walkable(in[i], in[j])) {
+                    best = j;
+                    break;
+                }
+            }
+            out.push_back(in[best]);
+            i = best;
+        }
+        return out;
+    }
+
     double agent_radius = 0.45;  // portal ends are pulled in by this much: the walk keeps off wall corners
 
 private:
@@ -308,6 +370,16 @@ private:
         auto it = grid_.find(CellKey(CellOf(x), CellOf(z)));
         if (it == grid_.end()) return;
         for (std::uint32_t f : it->second) fn(f);
+    }
+
+    double Area(std::uint32_t f) const {
+        double a = 0;
+        for (std::uint32_t k = 0; k < faces_[f].count; ++k) {
+            const V3& p = Vtx(f, k);
+            const V3& q = Vtx(f, (k + 1) % faces_[f].count);
+            a += double(p.x) * q.z - double(q.x) * p.z;
+        }
+        return std::fabs(a) / 2;
     }
 
     bool Contains(std::uint32_t f, double x, double z, double* y) const {
@@ -420,10 +492,10 @@ private:
                 const V3 b2{float(b.x + (a.x - b.x) * t), float(b.y + (a.y - b.y) * t), float(b.z + (a.z - b.z) * t)};
                 a = a2, b = b2;
             }
-            // left / right as seen when walking from this face's centroid to the next one
+            // left / right as seen when leaving this face through the portal (from its centroid to the portal's middle)
             const V3& c0 = cent_[std::size_t(cor[i])];
-            const V3& c1 = cent_[std::size_t(cor[i + 1])];
-            if (Area2(c0, c1, a) < Area2(c0, c1, b)) std::swap(a, b);  // a = left (smaller area2 = left in XZ here)
+            const V3 mid{(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2};
+            if (Area2(c0, mid, a) < Area2(c0, mid, b)) std::swap(a, b);  // a = left (counter-clockwise side)
             pt.push_back({a, b});
         }
         pt.push_back({g, g});
@@ -837,7 +909,7 @@ private:
         }
         (void)last;
         if (path.empty()) return PlanResult::NoRoute;
-        path_.Set(std::move(path));
+        path_.Set(mesh_->Smooth(path));
         stats.path_len = path_.Total();
         return PlanResult::Ok;
     }
