@@ -643,6 +643,11 @@ add_executable(party-stick-test EXCLUDE_FROM_ALL ../tests/test_party_stick.cpp)
 target_compile_options(party-stick-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-stick-test PRIVATE shim)
 set_target_properties(party-stick-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Navmesh test walker (shim/party/nav_walk.h). ninja -C out/gpu nav-walk-test
+add_executable(nav-walk-test EXCLUDE_FROM_ALL ../tests/test_nav_walk.cpp)
+target_compile_options(nav-walk-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(nav-walk-test PRIVATE shim)
+set_target_properties(nav-walk-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # C5 spectate target (party_spectate.h). ninja -C out/gpu party-spectate-test
 add_executable(party-spectate-test EXCLUDE_FROM_ALL ../tests/test_party_spectate.cpp)
 target_compile_options(party-spectate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
