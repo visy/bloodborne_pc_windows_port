@@ -103,14 +103,17 @@ class Names(unittest.TestCase):
 class Rules(unittest.TestCase):
     def test_source_filter(self):
         lob = nw.Lobby()
-        for ip in ("192.168.1.5", "10.8.1.5", "127.0.0.1", "8.8.8.8", "10.8.0.0", "10.8.0.1", "10.8.0.255",
+        for ip in ("192.168.1.5", "10.8.4.5", "10.9.0.5", "127.0.0.1", "8.8.8.8", "10.8.0.0", "10.8.0.1", "10.8.3.255",
                    "::1", "not an ip", ""):
             self.assertIsNone(lob.handle(ann(), ip, 0), ip)
             self.assertIsNone(lob.handle(nw.encode_list(), ip, 0), ip)
         self.assertEqual(len(lob.entries), 0)
         lob.handle(ann(), "10.8.0.2", 0)
         lob.handle(ann(), "10.8.0.254", 0)
-        self.assertEqual(len(lob.entries), 2)
+        lob.handle(ann(), "10.8.0.255", 0)   # 0.7.8: 10.8.0.0/22, room for 1021 players
+        lob.handle(ann(), "10.8.1.5", 0)
+        lob.handle(ann(), "10.8.3.254", 0)
+        self.assertEqual(len(lob.entries), 5)
 
     def test_test_override_net(self):
         lob = nw.Lobby("127.0.0.0/8", reserve_server=False)

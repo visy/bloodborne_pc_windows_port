@@ -87,7 +87,10 @@ class Client(unittest.TestCase):
     def test_tunnel_ip(self):
         f = self.L.lobby_tunnel_ip
         self.assertEqual(f(["192.168.1.2", "10.8.0.7"]), "10.8.0.7")
-        for none in (["10.8.0.1"], ["10.8.0.255"], ["10.8.1.7"], ["10.9.0.7"], [], ["10.8.0.x"]):
+        self.assertEqual(f(["10.8.1.7"]), "10.8.1.7")      # 0.7.8: 10.8.0.0/22
+        self.assertEqual(f(["10.8.0.255"]), "10.8.0.255")
+        self.assertEqual(f(["10.8.3.254"]), "10.8.3.254")
+        for none in (["10.8.0.1"], ["10.8.0.0"], ["10.8.3.255"], ["10.8.4.7"], ["10.9.0.7"], [], ["10.8.0.x"]):
             self.assertEqual(f(none), "")
 
     def test_target_override(self):

@@ -670,3 +670,17 @@ def test_vpn_status_versions_and_no_public():
     full = dict(LOBBY, joinable=0)
     assert "Every public game is full" in vpn.status_text(
         {"ok": True, "clients": 9, "max_clients": 255, "pool": 253, "lobby": full}, {"state": "ok"})
+
+
+def test_vpn_pool_from_server_conf(tmp_path, monkeypatch):
+    assert vpn_count.parse_pool("server 10.8.0.0 255.255.255.0\n") == 253
+    assert vpn_count.parse_pool("server 10.8.0.0 255.255.254.0 # wider\n") == 509
+    assert vpn_count.parse_pool("server 10.8.0.0 255.255.252.0\n") == 1021
+    assert vpn_count.parse_pool("port 1194\n") is None
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn.store(c, {"ok": True, "clients": 300, "max_clients": 600, "pool": 509}, clock.t)
+    s = h.vpn()
+    assert (s["pool"], s["effective_max"]) == (509, 509)
+    assert not [k for k, bad, _ in vpn.conditions(s) if bad and k == "vpn-full"]
+    assert "pool 509" in vpn.line(s)
