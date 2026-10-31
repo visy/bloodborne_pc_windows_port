@@ -58,13 +58,19 @@ def build(game, maps):
                     for t in range(n + 1):
                         q = [a[j] + (c[j] - a[j]) * t / n for j in range(3)]
                         border.setdefault((round(q[0] * 2), round(q[2] * 2)), []).append((base + fi, q, name))
+    pairs = {}  # (face i, face j) -> overlapping boundary samples of i's edge
     for lst in border.values():
         for i in range(len(lst)):
             for j in range(i + 1, len(lst)):
-                if lst[i][2] != lst[j][2] and abs(lst[i][1][1] - lst[j][1][1]) < 0.6:
-                    q = lst[i][1]
-                    links[lst[i][0]].setdefault(lst[j][0], (q, q))
-                    links[lst[j][0]].setdefault(lst[i][0], (q, q))
+                if lst[i][0] != lst[j][0] and abs(lst[i][1][1] - lst[j][1][1]) < 0.6:
+                    pairs.setdefault((lst[i][0], lst[j][0]), []).append(lst[i][1])
+                    pairs.setdefault((lst[j][0], lst[i][0]), []).append(lst[j][1])
+    for (i, j), qs in pairs.items():
+        # the portal is the overlap segment: the two samples farthest apart
+        p0 = qs[0]
+        p1 = max(qs, key=lambda q: math.dist(q, p0))
+        p2 = max(qs, key=lambda q: math.dist(q, p1))
+        links[i].setdefault(j, (tuple(p1), tuple(p2)))
     return verts, faces, links
 
 
