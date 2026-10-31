@@ -297,6 +297,8 @@ struct Test {
     // Navmesh walker (nav_walk.h, docs/party/walker.md): set up at the first tick of a walk; nav_on = this walk is
     // steered by it (BB_TEST_WALKER=old keeps the pulse walker).
     bool nav_init = false, nav_on = false;
+    std::string st_last_line;       // the menu walk's last step line (for the 'left by a load' note)
+    bool st_parked_logged = false;
     bool ap_hold = false;           // a move step became a walk (BB_TEST_MOVE_WALK): the chain waits for it like a stick step
     navwalk::Walker nav;
     Clock::time_point nav_last{}, nav_log{};
@@ -3933,6 +3935,8 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             }
             if (!line.empty()) {
                 Log("test: seq %s (texts seq %llu)", line.c_str(), static_cast<unsigned long long>(seq));
+                t.st_last_line = line;
+                t.st_parked_logged = false;
             }
             // Every second: the texts on screen now (first 60 ASCII chars each), to learn the real ones.
             static std::int64_t texts_logged = 0;
@@ -3956,6 +3960,11 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                 Log("test: seq %s", t.st_seq.stuck() ? "STUCK" : "done");
             }
         }
+    }
+    // A menu walk (seq) that a map load interrupts is not stuck: say so once, with the step it was at.
+    if (t.st_seq_on && t.st_phase == 3 && !t.stand_done && s.loading && !t.st_parked_logged) {
+        t.st_parked_logged = true;
+        Log("test: seq: a map load began after '%s': the rest of the walk is not run (not stuck)", t.st_last_line.c_str());
     }
     // Nav walker dead-man: the stick is released when the walk is not being ticked (a load, a cutscene, the place wait).
     if (t.nav_on && !t.nav_pad.empty() && Seconds(t.nav_last, now) > 0.3) {
@@ -4189,7 +4198,16 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         // own spot only turns the player.
         float at[3] = {};
         std::uint64_t vtbl = 0, fn = 0;
-        if (t.ap_prompt_seen) {
+        if (!t.ap_prompt.empty() && !t.ap_prompt_seen) {
+            // The prompt never showed (not at the object's interaction spot, or not facing it): pressing Cross now
+            // would go to whatever else is up (the quick items). Fail the step here, with where the player stands.
+            float here[3] = {};
+            std::uint32_t ar = 0;
+            ReadPlayerPos(&ar, here);
+            Log("test: approach: NO PROMPT '%s' at (%.2f, %.2f, %.2f), target (%.2f, %.2f) after %d face tap(s): the menu walk (seq) is NOT started",
+                t.ap_prompt.c_str(), double(here[0]), double(here[1]), double(here[2]), double(t.ap_x), double(t.ap_z), t.ap_taps);
+            t.st_seq = MenuScript{};
+        } else if (t.ap_prompt_seen) {
             // parfin3 g1a / g1b: the turn warp below moved the facing off the prompt the taps had
             // found (the prompt went 1-2 s later and the menu never opened). Keep it.
             Log("test: approach done: '%s' shows; facing kept; the menu walk (seq) starts", t.ap_prompt.c_str());
