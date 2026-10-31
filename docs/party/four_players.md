@@ -532,3 +532,17 @@ Next: the same run with all guests rendering-lite off (2 windows + 1 headless) t
   `two chrs read`, no same-queue overlap, no crash; screenshots show the three together after every
   rejoin. The host's Leave at the end ended the session on both guests in 0.4 s.
 
+
+## Five players (0.7.8, CL-de2e94, smoke `fp5`)
+
+Host + 4 guests (`BB_PARTY_MAX=5`) passes the smoke phase `fp5` (`--only fivep`, 30 and 60 FPS; two
+windows drawn, three headless-lite): four title joins (`cooperators ... -> 4`), the party lamp travel,
+the Cleric Beast with all guests in the arena (`H2: boss scaling sees 4 cooperators as 2`: the scaling
+stays at the three-player row 7502), a guest's death and arena revive, the boss kill, a guest's Leave
+and Rejoin (host `cooperators 4 -> 3 -> 4`). Both drawn windows show four party rows. Bugs found at 5:
+the host's direct-summon cap `HostView::max_cooperators` stayed 3 (the 4th guest's rejoin fell to the
+bell sign path); the Party members page had seven rows for six slots (the Connection warnings switch was
+dropped; *Last event* now steps aside at five). Memory on a 32 GB PC: five clients hold about 20 GB of
+working set together (host 4.3 GB, guests 3.8 GB, private bytes about 14 GB); the free physical memory
+fell to 0.4 GB and the drawn windows ran 14-16 FPS with a 60 FPS cap: five on one PC is a stress
+test, not a play setup. Not tried: five real PCs, the late areas, invaders, chalice dungeons.
