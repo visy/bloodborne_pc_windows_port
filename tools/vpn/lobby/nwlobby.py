@@ -6,7 +6,7 @@ A hosting game announces itself every ~10 s; a guest asks for the list and joins
 discovery (UDP 9308 broadcast) does not cross an OpenVPN tun, hence this tiny service.
 
 Everything is in memory: nothing is written to disk, no address is ever logged. Only senders from
-the VPN network are answered (default 10.8.0.0/24, minus the network, server and broadcast
+the VPN network are answered (default 10.8.0.0/22, minus the network, server and broadcast
 addresses). OpenVPN drops packets whose source is not the client's own tunnel address, so the
 source address is the host's real tunnel address; the entry is that address, never anything the
 packet claims.
@@ -52,7 +52,7 @@ NAME_MAX_BYTES = 48
 BUILD_MAX = 32
 RATE_PER_SEC = 2.0          # per source address, token bucket
 RATE_BURST = 8.0
-DEFAULT_NET = "10.8.0.0/24"
+DEFAULT_NET = "10.8.0.0/22"   # 0.7.8: room for 1021 players (the server pool may still be /24)
 DEFAULT_BIND = "10.8.0.1"
 DEFAULT_PORT = 9310
 DEFAULT_STATS = "127.0.0.1:9311"   # operator counts (nwstats); "off" disables
