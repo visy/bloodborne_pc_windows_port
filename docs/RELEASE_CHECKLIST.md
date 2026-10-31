@@ -52,5 +52,5 @@ a regression.
 - [ ] GitHub release `vX.Y.Z` at the full master SHA with the zip (scratchpad `make_release.py repo tag SHA title notes zip`;
       run it **without** `python -I`, or the SSL check fails).
 - [ ] Iosefka: `cl release coop X.Y.Z --next <next>` (preview with `--dry-run`); unfinished items move to the next version.
-- [ ] Optional, ask first: post the release notes in #releases (Iosefka then asks the reporters of the fixed bugs to retest).
+- [ ] No #releases post for a coop release: the Nightwatch update announcement covers it (and its retest asks).
 - [ ] Memory note `release-XYZ` with the tag, the smoke result and the gotchas.
