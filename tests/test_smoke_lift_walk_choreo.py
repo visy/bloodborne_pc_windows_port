@@ -80,5 +80,5 @@ def test_copy_freeze_detector_separates_a_stopped_copy_from_a_lagging_one():
     frozen = [(float(t), 0.0, -40.0, 0.0) for t in range(0, 20)]
     assert S.copy_freeze(real, lagging)[0] == 0.0
     assert S.copy_freeze(real, frozen)[0] > 40.0
-    gappy = [c for c in frozen if not 5 <= c[0] <= 12]  # a gap in the log is not a freeze
+    gappy = [c for c in frozen if not 3 <= c[0] <= 16]  # a gap in the log is not a freeze
     assert S.copy_freeze(real, gappy)[0] == 0.0
