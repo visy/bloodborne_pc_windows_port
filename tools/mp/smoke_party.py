@@ -2492,7 +2492,9 @@ def phase_cao(only):
         name="cao", seconds=int(os.environ.get("CAO_SECONDS", "260")), count=2, headless=0, prep=prep_chalown, post=post_chalamp, pad=1,
         env=["BB_PARTY_TRAVEL_CHOICE=party"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=log_pos"],
-        crash=[], until=[], until_hold=20,
+        # the phase is done once the guest is in the host's dungeon (its last check): end 15 s later instead of idling
+        # out the 260 s with the menu walk's leftover steps waiting for screens that never come (user, 2026-10-31)
+        crash=[], until=[r"1:map - -> m29_00"], until_hold=15,
     )
 
 
