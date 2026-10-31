@@ -10203,6 +10203,24 @@ u64 WaitingGuestEntry() {
     return 0;
 }
 
+constexpr u64 kChannelRequestByIdFn = 0x1e65290;  // DLRefCounted* FUN(out*, const ChannelId*): the get_details_info request by id
+
+/// The game's channel request for `id` (0x1e65290: the object the summon handler keeps in the entry's +0xc0), with one
+/// reference taken for the caller; 0 when the game's network is not usable for it (FrpgNetMan +8 clear, or +0x9f6 / +0x9f8 /
+/// +0xa50 set). The handler of a dungeon summon makes the same call: a null answer there leaves the quick join without its
+/// channel, and the guest loads the host's Chalice Dungeon empty (NW-5e27806). Asking first tells a delivery to wait.
+u64 ChannelRequestById(u64 id) {
+    u64 out = 0;
+    reinterpret_cast<u64*(BB_COOP_SYSV*)(u64*, const u64*)>(Guest(kChannelRequestByIdFn))(&out, &id);
+    return out;
+}
+
+void ReleaseRef(u64 obj) {
+    if (!obj) return;
+    const int rc = Field<int>(obj, 8, 0);
+    if (rc > 1) __atomic_sub_fetch(reinterpret_cast<int*>(obj + 8), 1, __ATOMIC_SEQ_CST);  // the list keeps its own
+}
+
 bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
     const u64 ssm = SummonStepManager();
     const u64 entry = WaitingGuestEntry();
@@ -10211,6 +10229,23 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
     if (fn != u64(Guest(kHandleItem))) {
         Log("direct summon: the manager's handler is %#llx, not the 1.09 one: not delivered", (unsigned long long)fn);
         return false;
+    }
+    const bool dungeon_room = dsummon::ChannelSet(room.channel);
+    if (dungeon_room) {
+        // A Chalice Dungeon: the game must be able to make the channel request by id, or the summon joins without the
+        // dungeon (an empty m29: the grey screen). Ask first; not yet usable: the delivery waits (3 tries).
+        const u64 probe = ChannelRequestById(room.channel);
+        if (!probe) {
+            const u64 nm = Field<u64>(Guest(kNetMan), 0, 0);
+            Log("direct summon: Chalice Dungeon %llu: the game cannot make the channel request yet (FrpgNetMan +8 %u, +0x9f6 %u, "
+                "+0x9f8 %u, +0xa50 %u): not delivered, tried again",
+                ull(room.channel), Field<u8>(nm, 0x8, 0xff), Field<u8>(nm, 0x9f6, 0xff), Field<u8>(nm, 0x9f8, 0xff),
+                Field<u8>(nm, 0xa50, 0xff));
+            party::status::SetAlert("This game's network is not ready to fetch the host's Chalice Dungeon yet; the summon is "
+                             "tried again in a moment.");
+            return false;
+        }
+        ReleaseRef(probe);
     }
     u8 id[8] = {};
     SafeRead(entry + 0x10, id, 8);
@@ -10249,6 +10284,20 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
         // +0xc0: the channel request by id (get_details_info) that becomes the quick join.
         Log("direct summon: Chalice Dungeon %llu (ChannelId %#llx): channel request %s", ull(room.channel), ull(room.channel),
             Field<u64>(entry, 0xc0, 0) ? "made (the quick join follows the join)" : "NOT made");
+        if (!Field<u64>(entry, 0xc0, 0)) {
+            // The handler kept no channel request: make it for the entry (it owns the reference), as the handler would.
+            const u64 req = ChannelRequestById(room.channel);
+            if (req) {
+                SafeWrite(entry + 0xc0, &req, 8);
+                Log("direct summon: the handler kept no channel request: made it for the entry now");
+            }
+        }
+        if (!Field<u64>(entry, 0xc0, 0)) {
+            const u64 nm = Field<u64>(Guest(kNetMan), 0, 0);
+            Log("direct summon: channel request diagnostics: FrpgNetMan +8 %u, +0x9f6 %u, +0x9f8 %u, +0xa50 %u, +0xa98 %u, +0xb14 %#x, +0xca8 %#llx",
+                Field<u8>(nm, 0x8, 0xff), Field<u8>(nm, 0x9f6, 0xff), Field<u8>(nm, 0x9f8, 0xff), Field<u8>(nm, 0xa50, 0xff),
+                Field<u32>(nm, 0xa98, 0xff), Field<u8>(nm, 0xb14, 0xff), ull(Field<u64>(nm, 0xca8, 0)));
+        }
     }
     return state != 0;
 }
@@ -10569,6 +10618,9 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
 /// again at every respawn). Whatever path brought it, it leaves the session at once and goes home
 /// (the game's own send-home, or the title join's lamp warp) with a notice; the summon's quick join
 /// brings it in properly next.
+std::atomic<int> g_empty_loads{0};        // empty Chalice Dungeon loads in a row (dsummon::kMaxEmptyLoads stops the summons)
+std::atomic<bool> g_empty_notice{false};
+
 void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
     static double since = 0;
     static bool bailed = false;
@@ -10577,6 +10629,15 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
     coop::MemberRoster(0, &host_state, &host_map);
     const bool empty = Role() == RoleClient && s.world_up && !s.loading && !dsummon::MapKnown(s.map_id) &&
                        dsummon::ChaliceMap(host_map);
+    if (s.world_up && !s.loading) {
+        const int was = g_empty_loads.load();
+        const int now_n = dsummon::EmptyLoadsAfter(was, dsummon::ChaliceMap(s.map_id) && dsummon::MapKnown(s.map_id),
+                                                   dsummon::ChaliceMap(host_map));
+        if (now_n != was) {
+            g_empty_loads = now_n;
+            g_empty_notice = false;
+        }
+    }
     if (!empty) {
         since = 0;
         if (s.loading) bailed = false;
@@ -10585,6 +10646,7 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
     if (since == 0) since = now;
     if (bailed || now - since < 3.0) return;
     bailed = true;
+    ++g_empty_loads;
     float p[3] = {};
     const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60);
     if (me) ChrPos(me, p);
@@ -10725,6 +10787,8 @@ bool ChaliceRejoinPressed() {
         return false;
     }
     g_chalice_chosen = false;
+    g_empty_loads = 0;
+    g_empty_notice = false;
     ChaliceLeaveSession("Party > Rejoin while apart from the host's Chalice Dungeon");
     party::status::SetLastEvent("Rejoining the host's Chalice Dungeon: the summon brings you in");
     return true;
@@ -13376,8 +13440,20 @@ bool LocalChrWarp(std::uint64_t player, const float* pos16, const float* rot16, 
 } // namespace coop::b2
 
 namespace coop::b2 {
+bool ChaliceSummonStopped() {
+    if (!dsummon::StopAfterEmptyLoads(g_empty_loads.load())) return false;
+    if (!g_empty_notice.exchange(true)) {
+        Log("chalice: %d empty loads of the host's Chalice Dungeon in a row: no more summons for it (Party > Rejoin tries again)",
+            g_empty_loads.load());
+        party::status::SetAlert("This game loaded the host's Chalice Dungeon empty twice, so it stops summoning into it. You "
+                         "stay in your own world; ask the host to leave and re-enter the dungeon, or use Party > Rejoin to try again.");
+    }
+    return true;
+}
+
 void DirectSummonRing() {
     if (!DirectSummonOn() || !g_on.load() || Role() == RoleHost || Role() == RoleClient) return;
+    if (ChaliceSummonStopped()) return;
     std::lock_guard<std::mutex> lk(DS().mu);
     const dsummon::Phase p = DS().g.phase;
     if (p == dsummon::Phase::Asked || p == dsummon::Phase::HaveRoom || p == dsummon::Phase::Delivered) return;
