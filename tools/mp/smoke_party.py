@@ -918,6 +918,11 @@ def lfw_chains(spec, slow=False):
                 s.append("%s_move=%s:pin=%d:ground@1%%%s%s" % (role, _p(*far), pin, m, g0))
             else:
                 s.append("%s_move=%s:pin=%d:ground@14%%%s%s" % (role, _p(*far), pin, m, "" if k and rode_before else gate))
+            if spec.get("dismiss"):
+                # flaky078: an item box ("Beast x1": a pickup on the pocket's platform, taken by the warp onto it) blocks the stick walk
+                # (lfwc c3: 6 m from the target, "stuck", the box on screen). Cross = OK on the box; with no box it does nothing in the
+                # world (Circle is the dodge).
+                s.append("%s_press=0x4000@2%%%s" % (role, m))
             # the second rider walks in once the first one stands on the car: two walkers on the same route block
             # each other in its narrow places and in the doorway (live lfw4 / lfw5)
             rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
