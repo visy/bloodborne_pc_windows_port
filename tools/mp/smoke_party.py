@@ -6497,7 +6497,7 @@ def measured_summary(sub, entry):
     frame generation asked but not on)."""
     sys.path.insert(0, str(HERE))
     import instances as _inst
-    want_fg = _inst.parse_fg(entry, 4)
+    want_fg = _inst.parse_fg(entry, 5)
     per = {}
     for log in sorted(Path(sub).glob("*/inst[0-9].log")):
         i = int(log.stem[-1])
