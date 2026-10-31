@@ -14,7 +14,7 @@ File (little endian):  "BBNV" u32 version(1) u32 nverts u32 nfaces u32 nlinks u3
   u32 idx * nidx | per face u32 linkStart (nfaces+1 entries) | per link: u32 face, float[6] portal a,b
   then u32 nmaps, per map: 16 bytes zero padded name.
 """
-import math, struct, sys
+import math, os, struct, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -92,7 +92,9 @@ def write(path, maps, verts, faces, links):
     out += struct.pack("<I", len(maps))
     for m in maps:
         out += m.encode().ljust(16, b"\0")
-    Path(path).write_bytes(bytes(out))
+    tmp = Path(str(path) + ".tmp%d" % os.getpid())
+    tmp.write_bytes(bytes(out))
+    os.replace(tmp, path)  # atomic: parallel harness starts
 
 
 def main():
