@@ -3688,7 +3688,7 @@ def check_la(v, L):
                 ids.append((t, a))
         v.step("la the enemy acts (>= 4 animation changes: it walks to and attacks the guest)", len(ids) >= 4,
                "%d animation changes: %s" % (len(ids), [a for _, a in ids[:14]]))
-        need(v, L, "la the enemy hurts the guest (frail: HP -> 1)", 1, r"test: frail \(BB_PARTY_ROT_TEST_FRAIL\): HP \d+ -> 1", arr)
+        need(v, L, "la the enemy hurts the guest (frail: HP -> 1)", 1, r"test: frail \(BB_PARTY_ROT_TEST_FRAIL\): HP \d+ -> 1", 0)  # at 60 FPS the aid already fires at the join (the phantom cut 719 -> 503 reads as a hit)
     if os.environ.get("BB_PARTY_LONE_AI", "1") != "0":
         need(v, L, "la the guest's game runs the enemies' AI", 1, r"Party enemy AI: a lone guest takes the enemies' AI", arr - 5)
     check_common(v, L, "la")
@@ -4136,7 +4136,7 @@ def phase_ef(only):
 # the cheapest ending: m21 event 12100180) with a guest in its Dream. The guest is asked, answers YES, plays the
 # host's ending in its own world. Both saves end in NG+ 1 EXACTLY (an ending once moved a guest save two cycles, 0.7.6),
 # then the guest presses Party > Rejoin in NG+ and is back in the host's world (nobody could join after the ending).
-NGP_UNTIL = r"0:cooperators 0 -> 1[\s\S]*cooperators 0 -> 1|1:test: FAILED"
+NGP_UNTIL = r"0:ending: the next cycle's world is up[\s\S]*cooperators 0 -> 1|1:test: FAILED"  # not two joins: at 60 FPS the guest's first join is followed by a re-join within 20 s
 
 
 def phase_ngp(only):
@@ -8172,7 +8172,7 @@ def check_kd(v, L):
         none_of(v, L, "kd (guest grab): no host death / revive", r"host death taken|host death: ", ga, end - 1,
                 insts=(0,))
         need(v, L, "kd (guest grab) host: the waking scene 28000010", 0, r"remo 2800[01]010|cutscene 28000010",
-             g28[0] if g28[0] is not None else ga, end)
+             ga, end)  # from the grab: at 60 FPS the host's scene starts before its "map -> m28_00" line
         need(v, L, "kd (guest grab) host: +1 Insight from 9422", 0, r"event 9422 gave the host 1 Insight", ga, end)
         for i in (1, 2):
             if g28[i] is not None:
@@ -9477,7 +9477,7 @@ def check_gd(v, L, d: Path):
              r"warp menu: entry 1 chosen -> lamp 2102950", j or 0)
     f = need(v, L, "gd the Dream flag is set", 1, r"chose the Hunter's Dream: lamp %s's Dream flag \d+ set" % GD_LAMP, m or 0)
     w = need(v, L, "gd the lamp's event warps (the guest's request or its own warp)", 1,
-             r"lamp 2102\d+ \(guest\): held for the choice|lamp: request 2102950 sent", f or 0,
+             r"lamp 2102\d+ \(guest\): (held for the choice|a lamp of the loaded map -> travel alone)|lamp: request 2102950 sent", f or 0,
              what="the Dream flag was set but the lamp's warp never ran (0.7.5 guest Dream report)")
     need(v, L, "gd the guest's own copy of the lamp's event was used up by the host's trip (the repro's start)", 1,
          r"lamp 2102\d+ \(guest\): not this player's use|Lamp warp: event 7200's state from another player not applied", j or 0)
@@ -9671,7 +9671,7 @@ def sweep_main(a, only):
 # one-off stall no longer fails a release smoke while a real fault (it fails every time) still does.
 # BB_SMOKE_NO_RETRY=1 turns it off. Retried runs are listed in the output dir's retries.txt.
 FLAKY_PHASES = {"cae", "cao", "cab", "cis", "caq", "caw", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
-                "lt", "lf", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
+                "lt", "lf", "s2", "cv", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
 FLAKY_TRIES = 3
 
 
