@@ -28,6 +28,7 @@ sys.path.insert(0, str(HERE))
 import clinic_changes  # noqa: E402
 import clinic_health  # noqa: E402
 import clinic_vpn  # noqa: E402
+import clinic_vpnmaint  # noqa: E402
 import clinic_outbox  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_cl  # noqa: E402
@@ -35,7 +36,7 @@ from clinic_logic import mask_ips  # noqa: E402
 
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
 CLOSED = ("fixed", "closed", "duplicate")
-VISY_ONLY = ("export", "confirm-export", "import")
+VISY_ONLY = ("export", "confirm-export", "import", "vpn-maint")
 DEVS_ONLY = ("vpn-profile",)  # how to enroll on the Nightwatch VPN (address + pin): only the two devs
 DEVS = ("visy", "vlad")
 BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
@@ -89,6 +90,14 @@ def build_parser():
     add("health")
     add("vpn-profile")
     add("vpn-status")
+    s = add("vpn-maint")   # VPN maintenance announcement (clinic_vpnmaint): schedule | list | cancel ID | preview
+    s.add_argument("action", choices=("schedule", "list", "cancel", "preview"))
+    s.add_argument("id", nargs="?", type=int)
+    s.add_argument("--at", help='local time "2026-11-02 20:00" (in --tz) or a unix time')
+    s.add_argument("--tz", default="Europe/Helsinki")
+    s.add_argument("--channel", help="channel name to post in, e.g. announcements")
+    s.add_argument("--note", default="", help="one extra line for the announcement")
+    s.add_argument("--announce-at", help="post the announcement later (same format as --at); default now")
     s = add("title")
     s.add_argument("bug")
     s.add_argument("title_text")
@@ -576,7 +585,7 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args([_norm_ids(x) for x in argv])
     if not a.cmd:
-        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile, vpn-status)")
+        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile, vpn-status, vpn-maint)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
     if a.cmd in DEVS_ONLY and who not in DEVS:
@@ -748,6 +757,32 @@ def _run(argv, who, out, db, stdin):
     if a.cmd == "vpn-profile":
         out.write(_vpn_profile())
         return 0
+    if a.cmd == "vpn-maint":
+        try:
+            if a.action == "schedule":
+                if not a.at or not a.channel:
+                    raise CliError("schedule needs --at and --channel")
+                at = clinic_vpnmaint.parse_when(a.at, a.tz)
+                ann = clinic_vpnmaint.parse_when(a.announce_at, a.tz) if a.announce_at else None
+                mid = clinic_vpnmaint.schedule(c, at, a.channel, a.note, who, ann)
+                m = [r for r in clinic_vpnmaint.rows(c) if r["id"] == mid][0]
+                return emit({"scheduled": mid, "at": _iso(at), "channel": a.channel,
+                             "announce": clinic_vpnmaint.announce_text(m), "posted_by": "the bot, within 5 minutes"})
+            if a.action == "cancel":
+                if a.id is None:
+                    raise CliError("cancel needs the maintenance id")
+                clinic_vpnmaint.cancel(c, a.id)
+                return emit({"cancelled": a.id})
+            if a.action == "preview":
+                at = clinic_vpnmaint.parse_when(a.at, a.tz) if a.at else time.time() + 3600
+                m = {"at": at, "note": a.note}
+                return emit({"announce": clinic_vpnmaint.announce_text(m), "reminder": clinic_vpnmaint.reminder_text(m),
+                             "back": clinic_vpnmaint.back_text(m, {"ok": True, "clients": 40, "max_clients": 500, "pool": 1021}),
+                             "cancel": clinic_vpnmaint.cancel_text(m)})
+            return emit([{k: (_iso(v) if k in ("at", "created", "announce_at", "announced", "reminded", "done", "cancelled",
+                                                 "cancel_told") and v else v) for k, v in r.items()} for r in clinic_vpnmaint.rows(c)])
+        except ValueError as e:
+            raise CliError(str(e))
     if a.cmd == "vpn-status":   # the same text /vpnstatus posts (a live sample, stored like the health loop's)
         target = clinic_vpn.ssh_target()
         sample = clinic_vpn.fetch(target) if target else {"ok": False, "error": "not set up"}

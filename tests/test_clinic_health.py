@@ -543,7 +543,7 @@ def test_vpn_thresholds_and_rate_limit(tmp_path, monkeypatch):
     run(h.flush())
     assert len([s for s in sent if "VPN full" in s]) == 1
     clock.t += 300
-    vpn_sample(c, clock, 10)
+    vpn_sample(c, clock, 30)   # (100 -> 10 would now be a vpn-drop: at most 25 % of the 15 min peak)
     h.check()
     assert not [k for k in h.active_alerts() if k.startswith("vpn")]
     # max 255 -> effective 253: 203 is over 80%
@@ -684,3 +684,96 @@ def test_vpn_pool_from_server_conf(tmp_path, monkeypatch):
     assert (s["pool"], s["effective_max"]) == (509, 509)
     assert not [k for k, bad, _ in vpn.conditions(s) if bad and k == "vpn-full"]
     assert "pool 509" in vpn.line(s)
+
+
+# --- VPN drop alert + maintenance announcements (clinic_vpnmaint) ------------------------------------------
+
+import clinic_vpnmaint as vm  # noqa: E402
+
+
+def test_vpn_drop_alert(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    for n in (40, 45, 44):
+        vpn.store(c, {"ok": True, "clients": n, "max_clients": 255}, clock.t)
+        clock.t += 300
+    vpn.store(c, {"ok": True, "clients": 2, "max_clients": 255}, clock.t)
+    kinds = {k: bad for k, bad, _ in vpn.conditions(h.vpn())}
+    assert kinds["vpn-drop"]
+    clock.t += 300
+    vpn.store(c, {"ok": True, "clients": 38, "max_clients": 255}, clock.t)   # back: resolved
+    assert not {k: bad for k, bad, _ in vpn.conditions(h.vpn())}["vpn-drop"]
+
+
+def test_vpn_drop_quiet_for_small_counts_and_maintenance(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn.store(c, {"ok": True, "clients": 6, "max_clients": 255}, clock.t)
+    clock.t += 300
+    vpn.store(c, {"ok": True, "clients": 0, "max_clients": 255}, clock.t)
+    assert not {k: bad for k, bad, _ in vpn.conditions(h.vpn())}["vpn-drop"]   # peak below 10
+    vm.schedule(c, clock.t + 600, "announcements", now=clock.t)
+    vpn.store(c, {"ok": True, "clients": 40, "max_clients": 255}, clock.t + 300)
+    clock.t += 630
+    vpn.store(c, {"ok": True, "clients": 0, "max_clients": 255}, clock.t)
+    s = vpn.summary(c, clock.t)
+    assert s["maint"] and not {k: bad for k, bad, _ in vpn.conditions(s)}["vpn-drop"]
+
+
+def test_vpn_maint_flow(tmp_path):
+    c, h, clock, sent = make(tmp_path, expect=())
+    t0 = clock.t
+    with pytest.raises(ValueError):
+        vm.schedule(c, t0 + 30, "announcements", now=t0)          # too soon
+    with pytest.raises(ValueError):
+        vm.schedule(c, t0 + 7200, "bad channel!", now=t0)
+    mid = vm.schedule(c, t0 + 7200, "announcements", note="Update to 0.2.7 first.", by="visy", now=t0)
+    with pytest.raises(ValueError):
+        vm.schedule(c, t0 + 9000, "announcements", now=t0)        # one at a time
+    d = vm.due(c, t0)
+    assert [k for k, _, _ in d] == ["announce"]
+    txt = d[0][2]
+    assert "<t:%d:F>" % int(t0 + 7200) in txt and "<t:%d:R>" % int(t0 + 7200) in txt and "Update to 0.2.7 first." in txt
+    vm.mark(c, "announce", mid, t0)
+    assert vm.due(c, t0 + 60) == []
+    assert not vm.soon(c, t0 + 60) and vm.soon(c, t0 + 7200 - 3000)
+    assert [k for k, _, _ in vm.due(c, t0 + 7200 - 600)] == ["remind"]
+    vm.mark(c, "remind", mid, t0 + 7200 - 600)
+    assert vm.due(c, t0 + 7200 + 30) == []                           # restart under way
+    vpn.store(c, {"ok": True, "clients": 0, "max_clients": 500, "pool": 1021}, t0 + 7200 + 90)
+    assert vm.due(c, t0 + 7200 + 100) == []                          # nobody back yet
+    vpn.store(c, {"ok": True, "clients": 31, "max_clients": 500, "pool": 1021}, t0 + 7200 + 400)
+    d = vm.due(c, t0 + 7200 + 410)
+    assert [k for k, _, _ in d] == ["back"] and "31 players connected, room for 500" in d[0][2]
+    vm.mark(c, "back", mid, t0 + 7200 + 410)
+    assert vm.pending(c) is None and vm.due(c, t0 + 9000) == []
+
+
+def test_vpn_maint_back_fallback_and_cancel(tmp_path):
+    c, h, clock, sent = make(tmp_path, expect=())
+    t0 = clock.t
+    mid = vm.schedule(c, t0 + 300, "announcements", now=t0)            # closer than 15 min: no reminder
+    vm.mark(c, "announce", mid, t0)
+    assert vm.due(c, t0 + 200) == []
+    d = vm.due(c, t0 + 300 + vm.BACK_MAX)                               # no good sample: back after 30 min anyway
+    assert [k for k, _, _ in d] == ["back"] and "is over" in d[0][2]
+    vm.mark(c, "back", mid, t0 + 300 + vm.BACK_MAX)
+    mid2 = vm.schedule(c, t0 + 7200, "announcements", now=t0 + 2000)
+    vm.cancel(c, mid2, t0 + 2001)                                       # never announced: nothing to tell
+    assert vm.pending(c) is None
+    mid3 = vm.schedule(c, t0 + 9000, "announcements", now=t0 + 2002)
+    vm.mark(c, "announce", mid3, t0 + 2002)
+    vm.cancel(c, mid3, t0 + 2003)
+    d = vm.due(c, t0 + 2004)
+    assert [k for k, _, _ in d] == ["cancel"] and "cancelled" in d[0][2]
+    vm.mark(c, "cancel", mid3, t0 + 2004)
+    assert vm.pending(c) is None
+
+
+def test_vpn_maint_parse_when():
+    import time
+    assert vm.parse_when("1800000000") == 1800000000.0
+    t = vm.parse_when("2026-11-02 20:00", "Europe/Helsinki")
+    assert time.strftime("%Y-%m-%d %H:%M", time.gmtime(t)) == "2026-11-02 18:00"   # EET = UTC+2 in November
+    with pytest.raises(ValueError):
+        vm.parse_when("tomorrow")
