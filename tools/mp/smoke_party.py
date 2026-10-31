@@ -3128,26 +3128,28 @@ def check_bv(v, L):
 
 
 # Phase bw (invis078, Iosefka CL-23a8a1, group `boss_visible`): a death in the host's boss fight must not
-# leave a LIVING member invisible to the others. Guest 2 dies in the fight (its limbo: every peer copy at
-# HP 0 may be hidden as a spectator's body, a 300 s window), then guest 1 re-joins by a Hunter's Mark
-# (a load: every copy of it is built again and reads HP 0 until its state arrives). Live bug (0.7.6): the
-# fresh copy was hidden for good (SetDisable) while the member lived. Checks: after the re-join the
-# living members see each other (drawn, HP up), and no copy that is hidden as a spectator's body is
-# ever seen with HP again. Screenshots (shots/) show the fight from every rendered game.
-BW_UNTIL = [r"1:guest_use goods 100[\s\S]*went through boss fog", r"2:guest: dead in a boss fight"]
+# leave a LIVING member invisible to the others. The host dies in the fight (its limbo: the guests'
+# peer copies at HP 0 may be hidden as a spectator's body, a 300 s window), then guest 1 re-joins by a
+# Hunter's Mark (a load: every copy on it is built again and reads HP 0 until its state arrives). Live
+# bug (0.7.6, 3 players): the fresh copy of the living guest was hidden for good (SetDisable) - one
+# guest invisible to the other, the boss ignoring it. Checks: after the re-join every game sees the
+# living guests drawn with HP, and no copy hidden as a spectator's body is ever seen with HP again.
+# Screenshots (shots/) show the fight from every rendered game.
+BW_UNTIL = [r"1:guest_use goods 100[\s\S]*went through boss fog", r"2:guest: went through boss fog"]
 
 
 def phase_bw(only):
-    host = ",".join(["god", "host_warp=2412953@8^2", "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER])
-    g1 = ",".join(["god", "guest_lastlamp=2412953@4%m24_01~", "guest_use=100@3%m24_01",
+    host = ",".join(["host_warp=2412953@8^2", "host_move=%s@3%%m24_01" % GASCOIGNE_TRIGGER, "host_die@45%m24_01~"])
+    g1 = ",".join(["god", "guest_lastlamp=2412953@75%m24_01~", "guest_use=100@3%m24_01",
                    "guest_press=0x0@5%m24_01!", "guest_obj=2411810@3%m24_01",
                    "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!", "guest_press=0x0@2%m24_01"])
-    g2 = "guest_die@8%m24_01~"
+    g2 = ",".join(["god", "guest_press=0x0@14%m24_01&", "guest_obj=2411810@3%m24_01",
+                   "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!", "guest_press=0x0@2%m24_01"])
     return dict(
-        name="bw", seconds=420, count=3, headless=0, until_hold=40,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1", "BB_PARTY_HOLD_LOG=1"],
+        name="bw", seconds=480, count=3, headless=0, until_hold=40,
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + GASCOIGNE_CLEAR, "BB_PARTY_HOLD_LOG=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
-              "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+              "1:BB_PARTY_TRAVEL_CHOICE=alone", "2:BB_PARTY_TRAVEL_CHOICE=alone"],
         crash=[], until=BW_UNTIL,
     )
 
@@ -3161,11 +3163,11 @@ def check_bw(v, L):
     if on is None:
         check_common(v, L, "bw")
         return
-    d2 = need(v, L, "bw guest 2 dies in the fight (limbo)", 2, r"guest: dead in a boss fight", on)
-    need(v, L, "bw the peers hear of the spectator", 0, r"slot 2 (spectates|is down)", on)
-    mark = need(v, L, "bw guest 1 uses a Hunter's Mark in the fight", 1, r"guest_use goods 100", on)
+    hd = need(v, L, "bw the host dies in the fight (limbo)", 0, r"host death in a boss fight", on)
+    need(v, L, "bw the guests hear of the spectator", 1, r"slot 0 spectates", on)
+    mark = need(v, L, "bw guest 1 uses a Hunter's Mark in the limbo", 1, r"guest_use goods 100", hd or on)
     arr = need(v, L, "bw guest 1 back in the host's world", 1, r"arrived in the host world \(flow 4\)", mark or on)
-    if arr is None or d2 is None:
+    if arr is None or hd is None:
         check_common(v, L, "bw")
         return
     t0 = arr + 4.0
@@ -3184,15 +3186,15 @@ def check_bw(v, L):
                         break
         v.step("bw inst%d: no living member's copy stays hidden as a spectator's body" % i, not wrong,
                "none" if not wrong else "+%.1f s copy %s reads HP while hidden (%d lines)" % (wrong[0][0], wrong[0][1], len(wrong)))
-    # The two living members (host, guest 1) see each other, drawn, after the re-join.
-    for i in (0, 1):
+    # The living guests see each other (and the host sees both) drawn after the re-join.
+    for i in (0, 1, 2):
         hits = L.all(i, r"remote chrs: ", t0, 1e9)
         alive = []
         for h in hits:
             chrs = [(c.group(1), float(c.group(4)), float(c.group(5)), int(c.group(6))) for c in _BW_CHR.finditer(h[1])]
             alive.append([c for c in chrs if c[3] > 0])
         ok = bool(alive) and all(a and all(d > 0.05 and al > 0.05 for _, d, al, _ in a) for a in alive[-5:])
-        v.step("bw instance %d sees the other living member after the re-join (drawn, HP up; last %d lines)" % (i, min(5, len(alive))),
+        v.step("bw instance %d sees a living member after the re-join (drawn, HP up; last %d lines)" % (i, min(5, len(alive))),
                ok, ("%d lines" % len(alive)) if ok else (hits[-1][1][:240] if hits else "no remote chrs line"))
     check_common(v, L, "bw")
 
