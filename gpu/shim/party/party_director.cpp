@@ -297,6 +297,7 @@ struct Test {
     // Navmesh walker (nav_walk.h, docs/party/walker.md): set up at the first tick of a walk; nav_on = this walk is
     // steered by it (BB_TEST_WALKER=old keeps the pulse walker).
     bool nav_init = false, nav_on = false;
+    bool ap_hold = false;           // a move step became a walk (BB_TEST_MOVE_WALK): the chain waits for it like a stick step
     navwalk::Walker nav;
     Clock::time_point nav_last{}, nav_log{};
     std::string nav_pad;            // the pad tokens last written (rewritten only on change)
@@ -1930,6 +1931,8 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
     }
 }
 
+bool MoveAsWalk(Test& tt, const GameSnapshot& s, const TravelStep& step, Clock::time_point now);
+
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
     TargetAnimTick(t, now);
@@ -2078,7 +2081,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
     if (t.ran &&
         (t.last_kind == TravelStep::GuestStick || t.last_kind == TravelStep::HostStick ||
-         t.last_kind == TravelStep::HostRoute || t.last_kind == TravelStep::GuestRoute) &&
+         t.last_kind == TravelStep::HostRoute || t.last_kind == TravelStep::GuestRoute || t.ap_hold) &&
         t.approach && !t.approach_done) {
         t.step_at = now;
         return;
@@ -2422,7 +2425,9 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         const std::uint64_t player = LocalPlayer();
         std::uint64_t pm = 0, a = 0, b = 0, vt = 0, fn = 0;
         alignas(16) float pos[4] = {step.pos[0], step.pos[1], step.pos[2], 1.0f}, rot[4] = {0, 0, 0, 0};
-        if (player && SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
+        if (MoveAsWalk(t, s, step, now)) {
+            // walked there instead (BB_TEST_MOVE_WALK): the nav walker runs, the chain waits for it
+        } else if (player && SafeGet(player + 0x58, &a) && a && SafeGet(a + 8, &b) && b && SafeGet(b + 0x3b0, &pm) && pm &&
             SafeGet(pm + 0x68, &pm) && pm && SafeRead(pm + 0x1d0, rot, sizeof rot) && SafeGet(player, &vt) && vt &&
             SafeGet(vt + 0x5f8, &fn) && fn) {
             if (step.has_yaw) {
@@ -2991,6 +2996,48 @@ void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float
         t.nav_goal = goals.back();
         t.nav.fail_reason = navwalk::PlanName(r);
     }
+}
+
+/// BB_TEST_MOVE_WALK=1: a host_move / guest_move that only gets the player to a walkable spot is walked there by the
+/// nav walker when the planner reaches it (same map, 3 to 80 m, no pin / native warp / yaw: those are the test).
+/// Anything else stays the warp.
+bool MoveAsWalk(Test& tt, const GameSnapshot& s, const TravelStep& step, Clock::time_point now) {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_TEST_MOVE_WALK");
+        return e && e[0] == '1' && NavWalkerWanted();
+    }();
+    if (!on || step.pin > 0 || step.warp == 1 || step.has_yaw || !s.player) return false;
+    std::uint32_t area = 0;
+    float here[3] = {};
+    if (!ReadPlayerPos(&area, here)) return false;
+    const double d = std::hypot(double(step.pos[0]) - here[0], double(step.pos[2]) - here[2]);
+    if (d < 3.0 || d > 80.0 || std::fabs(step.pos[1] - here[1]) > 6.0) return false;
+    const navwalk::NavMesh* mesh = NavMeshForArea(area);
+    if (!mesh || mesh->Empty()) return false;
+    std::vector<navwalk::V3> path;
+    navwalk::PlanInfo pi;
+    const navwalk::PlanResult r =
+        mesh->Plan({here[0], here[1], here[2]}, {step.pos[0], step.pos[1], step.pos[2]}, &path, &pi);
+    if (r != navwalk::PlanResult::Ok || pi.snap_goal > 1.5 || pi.length > 120.0) {
+        Log("test: %s: not walkable (%s, snap %.1f m, %.0f m): the warp", TravelStepName(step.kind), navwalk::PlanName(r),
+            pi.snap_goal, pi.length);
+        return false;
+    }
+    tt.route.clear();
+    tt.approach = true;
+    tt.approach_done = false;
+    tt.ap_x = step.pos[0];
+    tt.ap_z = step.pos[2];
+    tt.ap_r = 1.0f;
+    tt.ap_max = 80;
+    tt.ap_button = 0;
+    tt.ap_steps = tt.ap_still = tt.ap_slide = tt.ap_slides_here = tt.ap_phase = 0;
+    tt.ap_at = now;
+    tt.nav_init = tt.nav_on = false;
+    tt.ap_hold = true;
+    Log("test: %s: walked to (%.1f, %.1f, %.1f), %.0f m of path, instead of the warp", TravelStepName(step.kind),
+        double(step.pos[0]), double(step.pos[1]), double(step.pos[2]), pi.length);
+    return true;
 }
 
 /// One tick of a nav walk (about 25 Hz): steer, and handle the end. Sets t.ap_phase = 3 when the walk is over.
