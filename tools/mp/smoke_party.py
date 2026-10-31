@@ -1169,6 +1169,9 @@ def check_lfw(v, L, key, tag):
                                                                    len(L.all(i, r"test: route: HOP"))))
     jump_steps(v, tag, L, rides, (spec["trig"]["top"][0], spec["trig"]["top"][2]),
                ["%d %s %s" % (k + 1, r, d) for k, (d, r, _e) in enumerate(plan)])
+    # flaky078: one side waiting out a step's 120 s condition (the other player never came / the car was elsewhere) and skipping to the
+    # last step is a failure, never a pass: every ride is synchronised on the other player's state (near the first rider, the car's anim)
+    none_of(v, L, tag + " no step waited out its condition (nobody skipped ahead)", r"travel step \d+ \(\w+\): condition timed out", 0, 1e9, (0, 1))
     none_of(v, L, tag + " nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     none_of(v, L, tag + " no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
     holds = sum(len(L.all(i, r"lift car hold:|lift car floor:|lift car prebuild:")) for i in (0, 1))
