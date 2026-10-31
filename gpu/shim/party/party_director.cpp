@@ -2932,15 +2932,17 @@ const navwalk::NavMesh* NavMeshForArea(std::uint32_t area) {
     return (cache[a] = std::move(m)).get();
 }
 
-/// The view camera's world position (RendMan config +0x50 block, +0x80), the player-camera direction is the camera yaw.
-bool ReadCameraPos(navwalk::V3* out) {
+/// The view camera's forward vector: the render camera block (RendMan config +0x50) holds the camera's matrix, the
+/// row at +0x30 is the view direction (checked live: its yaw equals the yaw the stick is relative to).
+bool ReadCameraForward(float* fx, float* fz) {
     std::uint64_t rm = 0, cfg = 0;
-    float c[3] = {};
-    if (!SafeGet(Guest(0x5540298), &rm) || !rm || !SafeGet(rm + 0x10, &cfg) || !cfg || !SafeRead(cfg + 0x50 + 0x80, c, sizeof c)) {
+    float row[3] = {};
+    if (!SafeGet(Guest(0x5540298), &rm) || !rm || !SafeGet(rm + 0x10, &cfg) || !cfg || !SafeRead(cfg + 0x50 + 0x30, row, sizeof row)) {
         return false;
     }
-    if (!std::isfinite(c[0]) || !std::isfinite(c[1]) || !std::isfinite(c[2])) return false;
-    *out = {c[0], c[1], c[2]};
+    if (!std::isfinite(row[0]) || !std::isfinite(row[2]) || std::fabs(row[1]) > 0.95f) return false;
+    *fx = row[0];
+    *fz = row[2];
     return true;
 }
 
@@ -2971,7 +2973,7 @@ void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float
     const double radius = t.route.empty() ? std::max(0.25f, t.ap_r) : 1.2;
     (void)s;
     t.nav = navwalk::Walker{};
-    const navwalk::PlanResult r = t.nav.Start(mesh, {pos[0], pos[1], pos[2]}, goals, known, radius, 0.0, !t.route.empty());
+    const navwalk::PlanResult r = t.nav.Start(mesh, {pos[0], pos[1], pos[2]}, goals, known, radius, 0.0, true, !t.route.empty());
     if (r == navwalk::PlanResult::Ok) {
         t.nav.cfg.timeout_s = 45 + t.nav.stats.path_len / 2.0;
         t.nav_on = true;
@@ -3056,21 +3058,9 @@ void NavWalkTick(Test& t, const GameSnapshot& s, std::uint32_t area, const float
         }
     }
     const navwalk::V3 here{pos[0], pos[1], pos[2]};
-    navwalk::V3 cam;
-    if (ReadCameraPos(&cam)) {
-        t.nav.cam().FromCamera(cam, here);
-    }
-    if (!t.nav_cam_logged) {
-        // one dump of the render camera block (find the view matrix: orthonormal rows next to the position at +0x80)
-        t.nav_cam_logged = true;
-        std::uint64_t rm = 0, cfg = 0;
-        float f[72] = {};
-        if (SafeGet(Guest(0x5540298), &rm) && rm && SafeGet(rm + 0x10, &cfg) && cfg && SafeRead(cfg + 0x50, f, sizeof f)) {
-            for (int r = 0; r < 72; r += 8) {
-                Log("test: nav: camblock +%03x: %.3f %.3f %.3f %.3f  %.3f %.3f %.3f %.3f", r * 4, double(f[r]), double(f[r + 1]),
-                    double(f[r + 2]), double(f[r + 3]), double(f[r + 4]), double(f[r + 5]), double(f[r + 6]), double(f[r + 7]));
-            }
-        }
+    float cfx = 0, cfz = 0;
+    if (ReadCameraForward(&cfx, &cfz)) {
+        t.nav.cam().FromForward(cfx, cfz);
     }
     const double clock = Seconds(t.nav_t0, now);
     navwalk::WalkOut o = t.nav.Tick(here, clock, dt);
