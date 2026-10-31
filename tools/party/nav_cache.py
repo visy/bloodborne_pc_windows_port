@@ -14,15 +14,16 @@ File (little endian):  "BBNV" u32 version(1) u32 nverts u32 nfaces u32 nlinks u3
   u32 idx * nidx | per face u32 linkStart (nfaces+1 entries) | per link: u32 face, float[6] portal a,b
   then u32 nmaps, per map: 16 bytes zero padded name.
 """
-import math, os, struct, sys
+import collections, math, os, re, struct, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import flag_tool as ft  # noqa: E402
 import nav_route as nr  # noqa: E402
+import ids_tool as it  # noqa: E402
 
 
-def build(game, maps):
+def build(game, maps, offsets=None):
     faces, edges_of, border = [], [], {}   # faces: (map, [vertex idx]); links: face -> {nb: portal}
     verts, vkey = [], {}
     links = []
@@ -35,6 +36,7 @@ def build(game, maps):
         return vkey[k]
 
     for mi, m in enumerate(maps):
+        ox, oy, oz = (offsets or {}).get(m, (0.0, 0.0, 0.0))
         p = Path(game) / "map" / m / f"{m}.nvmhktbnd.dcx"
         if not p.exists():
             continue
@@ -44,6 +46,7 @@ def build(game, maps):
             if not r:
                 continue
             fs, es, vs = r
+            vs = [(v[0] + ox, v[1] + oy, v[2] + oz, v[3]) for v in vs]
             base = len(faces)
             for fi, f in enumerate(fs):
                 faces.append((mi, [vid(vs[es[f[0] + k][0]][:3]) for k in range(f[2])]))
@@ -72,6 +75,91 @@ def build(game, maps):
         p2 = max(qs, key=lambda q: math.dist(q, p1))
         links[i].setdefault(j, (tuple(p1), tuple(p2)))
     return verts, faces, links
+
+
+_MSBS = []
+
+
+def _msbs(game):
+    if not _MSBS:
+        _MSBS.extend(it.scan_maps(Path(game))[1])
+    return _MSBS
+
+
+def part_offsets(game, m):
+    """Candidate map-origin translations of a map: positions of its MSB collision (5) / connect-collision (11) /
+    navmesh (8) parts (the Nightmare maps sit at y 1500 etc.: the hkaiNavMesh is in the part's local frame)."""
+    out = collections.Counter()
+    for (a, b, c, d), path in _msbs(game):
+        if path.name.startswith(m):
+            data = ft.read_maybe_dcx(path)
+            for o in dict(it.msb_lists(data)).get("PARTS_PARAM_ST", []):
+                if struct.unpack_from("<i", data, o + 0x14)[0] in (5, 8, 11):
+                    v = struct.unpack_from("<6f", data, o + 0x28)
+                    out[(round(v[0], 2), round(v[1], 2), round(v[2], 2))] += 1
+            break
+    return out
+
+
+def spots_of(m):
+    """Lamp / revive spots of a map (world frame) from the generated party_ids.inc."""
+    inc = Path(__file__).resolve().parents[2] / "gpu/shim/party/party_ids.inc"
+    key = m[1:3] + m[5:6]  # AA + block digit of mAA_0B: the ids are AABnnnn
+    pts = []
+    for line in inc.read_text(errors="replace").splitlines():
+        r = re.match(r"\s+(-?[\d.]+)f, (-?[\d.]+)f, (-?[\d.]+)f, -?[\d.]+f,\s+// (\d{7})$", line)
+        if r and r.group(4)[:3] == key:
+            pts.append(tuple(float(r.group(i)) for i in (1, 2, 3)))
+    return pts
+
+
+def on_mesh_count(verts, faces, pts, tol=1.5):
+    """How many points (x, y, z) lie on a face (XZ inside, |y| within tol)."""
+    grid = collections.defaultdict(list)
+    for fi, (_mi, vl) in enumerate(faces):
+        xs = [verts[v][0] for v in vl]
+        zs = [verts[v][2] for v in vl]
+        for cx in range(int(min(xs) // 8), int(max(xs) // 8) + 1):
+            for cz in range(int(min(zs) // 8), int(max(zs) // 8) + 1):
+                grid[(cx, cz)].append(fi)
+    n = 0
+    for x, y, z in pts:
+        hit = False
+        for fi in grid.get((int(x // 8), int(z // 8)), ()):
+            vl = faces[fi][1]
+            a = verts[vl[0]]
+            for k in range(1, len(vl) - 1):
+                b, c = verts[vl[k]], verts[vl[k + 1]]
+                d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2])
+                if abs(d) < 1e-9:
+                    continue
+                l1 = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / d
+                l2 = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / d
+                l3 = 1 - l1 - l2
+                if min(l1, l2, l3) >= -1e-6 and abs(l1 * a[1] + l2 * b[1] + l3 * c[1] - y) <= tol:
+                    hit = True
+                    break
+            if hit:
+                break
+        n += hit
+    return n
+
+
+def choose_offset(game, m):
+    """The translation of map m that puts the most of its lamp spots on its navmesh (0,0,0 when none helps)."""
+    pts = spots_of(m)
+    cands = [(0.0, 0.0, 0.0)] + [o for o in part_offsets(game, m) if o != (0.0, 0.0, 0.0)]
+    if not pts or len(cands) == 1:
+        return (0.0, 0.0, 0.0), 0, len(pts), len(cands)
+    best, bn = cands[0], -1
+    for o in cands:
+        verts, faces, _links = build(game, [m], {m: o})
+        n = on_mesh_count(verts, faces, pts)
+        if n > bn:
+            best, bn = o, n
+    if best != (0.0, 0.0, 0.0) and bn < max(2, (len(pts) + 1) // 2):
+        best = (0.0, 0.0, 0.0)  # too little evidence for a shift: keep the local frame
+    return best, bn, len(pts), len(cands)
 
 
 def write(path, maps, verts, faces, links):
@@ -114,7 +202,13 @@ def main():
         maps = [m for m in allmaps if m[1:3] == a]
         if not maps:
             continue
-        verts, faces, links = build(game, maps)
+        offsets = {}
+        for m in maps:
+            o, n, tot, nc = choose_offset(game, m)
+            offsets[m] = o
+            if o != (0.0, 0.0, 0.0) or nc > 1:
+                print("  %s: offset %s (%d of %d spots on the mesh, %d candidate(s))" % (m, o, n, tot, nc))
+        verts, faces, links = build(game, maps, offsets)
         write(outdir / f"nav_m{a}.bin", maps, verts, faces, links)
         print("area m%s: %d maps, %d faces, %d verts" % (a, len(maps), len(faces), len(verts)))
 
