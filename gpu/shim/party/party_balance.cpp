@@ -708,15 +708,15 @@ void AiProbeTick(const GameSnapshot& s) {
 // 0.7.8 (CL-7fc9fe): the enemy pass of a freshly loaded map (hundreds of chrs, a SpEffect applied to each enemy)
 // runs in slices of at most LoadBudgetUs() per frame instead of in one frame; chrs within kNearM of the player
 // are always done in the first slice (an enemy at the spawn is scaled before control returns), the far
-// ones follow on the next frames. BB_PARTY_LOAD_SPREAD=0 (or bbport.ini party_load_spread=0) restores the
-// old all-at-once pass; BB_PARTY_LOAD_BUDGET_US sets the slice (default 400, 0 = unlimited).
+// ones follow on the next frames. Opt-in (no measurable gain in the 2-client A/B): BB_PARTY_LOAD_SPREAD=1 (or
+// bbport.ini party_load_spread=1); BB_PARTY_LOAD_BUDGET_US sets the slice (default 400, 0 = unlimited).
 bool LoadSpreadOn() {
     static const bool on = [] {
         if (const char* e = std::getenv("BB_PARTY_LOAD_SPREAD"); e && e[0]) return e[0] != '0';
         const char* cfg = std::getenv("BB_CONFIG");
         if (FILE* f = std::fopen(cfg && cfg[0] ? cfg : "bbport.ini", "r")) {
             char line[256];
-            bool v = true;
+            bool v = false;
             while (std::fgets(line, sizeof line, f)) {
                 if (std::strncmp(line, "party_load_spread", 17) != 0) continue;
                 const char* q = line + 17;
@@ -729,7 +729,7 @@ bool LoadSpreadOn() {
             std::fclose(f);
             return v;
         }
-        return true;
+        return false;
     }();
     return on;
 }
