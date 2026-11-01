@@ -1026,6 +1026,19 @@ target_compile_definitions(party-fourp-test PRIVATE BB_PARTY_FOURP_NO_GAME)
 target_compile_options(party-fourp-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(party-fourp-test PRIVATE shim)
 set_target_properties(party-fourp-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Save commit (src/runtime_savecommit.c; in bbport through RUNTIME_SOURCES): background commit of a
+# closed save file, ordering and kills. ninja -C out/gpu savecommit-test
+set(SAVECOMMIT_TEST_SOURCES ../tests/test_savecommit.c ../src/runtime_savecommit.c)
+if(WIN32)
+    list(APPEND SAVECOMMIT_TEST_SOURCES ../src/win32_compat.c)
+endif()
+add_executable(savecommit-test EXCLUDE_FROM_ALL ${SAVECOMMIT_TEST_SOURCES})
+target_compile_options(savecommit-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(savecommit-test PRIVATE ../src)
+if(WIN32)
+    target_link_libraries(savecommit-test PRIVATE ws2_32 bcrypt)
+endif()
+set_target_properties(savecommit-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Save policy (C5, src/runtime_savepolicy.c; in bbport through RUNTIME_SOURCES): party save folder,
 # rotating backups, save check, on temporary folders. ninja -C out/gpu save-policy-test
 add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../src/runtime_savepolicy.c)
