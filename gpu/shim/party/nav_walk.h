@@ -919,6 +919,7 @@ private:
             if (i + 1 == goals_.size()) {
                 stats.snap_goal = pi.snap_goal;
             }
+            leg = mesh_->Smooth(leg);  // a route's waypoints are known-good spots: only inside a leg, never across one
             if (!path.empty() && !leg.empty()) leg.erase(leg.begin());
             path.insert(path.end(), leg.begin(), leg.end());
             cur = leg.empty() ? cur : leg.back();
@@ -930,7 +931,7 @@ private:
         }
         (void)last;
         if (path.empty()) return PlanResult::NoRoute;
-        path_.Set(mesh_->Smooth(path));
+        path_.Set(goals_.size() - from_goal > 1 ? std::move(path) : mesh_->Smooth(path));
         stats.path_len = path_.Total();
         return PlanResult::Ok;
     }
