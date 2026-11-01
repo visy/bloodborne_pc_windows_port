@@ -3914,6 +3914,7 @@ def phase_amp(only):
         "host_die@8%s?member=bar" % m,                                  # once the guest is in her fight: the wipe follows
         # try 2 (after the wipe: no intro; her fog is up for the host too now: it walks to it and presses Cross)
         "host_move=%s:pin=3:ground@12%s" % (AMP_OUT_HOST, m),
+    ] + ([os.environ["BB_AMP_TRY2_PRE"]] if os.environ.get("BB_AMP_TRY2_PRE") else []) + [
         "host_fog=%s@6%s?near=%s:3" % (fog, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
         "host_stick=%s@3%s" % (AMP_IN, m),
         "host_face=2400800@3%s" % m,
