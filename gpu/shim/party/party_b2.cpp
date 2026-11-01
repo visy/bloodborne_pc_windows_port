@@ -6662,12 +6662,40 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
         u64 rvt = 0, rfn = 0;
         if (ref && SafeGet(ref, &rvt) && rvt && SafeGet(rvt + 0xa8, &rfn) && rfn)
             handle = reinterpret_cast<u32(BB_COOP_SYSV*)(u64)>(rfn)(ref);
-        char b[96];
-        std::snprintf(b, sizeof b, " [fl %02x kind %u 2c %u b40 %u h %08x]", unsigned(Field<u8>(n, 2)), kind,
-                      Field<u32>(n, 0x2c), unsigned(Field<u8>(n, 0x40)), handle);
+        char b[128];
+        float t38 = 0, t3c = 0;
+        SafeGet(n + 0x38, &t38);
+        SafeGet(n + 0x3c, &t3c);
+        std::snprintf(b, sizeof b, " [fl %02x kind %u t20 %u t38 %.2f t3c %.2f b40 %u h %08x]", unsigned(Field<u8>(n, 2)), kind,
+                      Field<u32>(n, 0x20), double(t38), double(t3c), unsigned(Field<u8>(n, 0x40)), handle);
         out += b;
     }
     Log("boss target dump %s: boss %08x:%s", tag, bh, out.empty() ? " (empty)" : out.c_str());
+}
+
+/// The AI keeps a per-chr hate record (its target list entries of kind 1: flags 0x81 / 0x82, +0x20 type, +0x38
+/// remaining seconds, +0x40 active): a chr that hurt the boss gets +0x20 = 3, +0x38 = 10.0 s, +0x2C = 0, +0x40 = 1
+/// (0x12A9230, the "attacker of a hit" path) and the boss's goals go for the chr with the live record. The event
+/// ChangeTarget alone (0x1299CD0) only moved the AI's active entry (flags 0x87), which the goals did not follow for a
+/// guest standing at some spots 7-8 m from the boss (live hg guest-first, BB_HG_GUESTAT: 0 hits in 140 s; with the
+/// record set: hits within seconds). BossAttentionTick writes the record of the chr it hands the boss to.
+void BossLockEntry(u64 boss, u32 want) {
+    u64 vt = 0, fn = 0;
+    if (!SafeGet(boss, &vt) || !vt || !SafeGet(vt + 0x160, &fn) || !fn) return;
+    const u64 ai = reinterpret_cast<u64(BB_COOP_SYSV*)(u64)>(fn)(boss);
+    const u64 holder = ai ? Field<u64>(Field<u64>(ai, 0xb0), 0x560) : 0;
+    u64 n = holder ? Field<u64>(holder, 0x18) : 0;
+    for (int k = 0; n && k < 12; ++k, n = Field<u64>(n, 8)) {
+        if (Field<u32>(n, 0x28) != 1 || (Field<u8>(n, 2) & 0x7f) != 1 || Field<u32>(n, 0x50) != want) continue;
+        const u32 three = 3, zero = 0;
+        const float ten = 10.0f;
+        const u8 one = 1;
+        SafeWrite(n + 0x20, &three, 4);
+        SafeWrite(n + 0x38, &ten, 4);
+        SafeWrite(n + 0x2c, &zero, 4);
+        SafeWrite(n + 0x40, &one, 1);
+        Log("boss attention: the boss's hate record of %08x is set as for the attacker of a hit (10 s)", want);
+    }
 }
 
 /// Host (the boss AI's owner), main thread, twice a second: while a boss bar is up and two or more
@@ -6734,6 +6762,7 @@ void BossAttentionTick(const GameSnapshot& s, double now) {
         e.last[ph] = now;
         Log("boss attention: boss %08x turns to player chr %08x (%.1f m, ChangeTarget %s)", h, ph,
             double(std::sqrt(d2[size_t(pick)])), ok ? "ok" : "refused: no AI");
+        BossLockEntry(boss, ph);
         if (ai_log) BossTargetDump(boss, h, "after the turn");
     }
     if (!any) st.clear();

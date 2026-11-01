@@ -1805,7 +1805,9 @@ void start_host(LinkConfig cfg) {
             a.name = rr.cfg.name;
             a.port = rr.cfg.port;
             a.password = !rr.cfg.password.empty();  // only whether one is set
-            a.open = !a.password && BbSettings::Get().party_open.load();
+            // open for any scope (party_open on, or the VPN lobby on: the tunnel's open party), never with a password
+            a.open = party::open_party::ScopeOf(a.password, BbSettings::Get().party_vpn_lobby, BbSettings::Get().party_open) !=
+                     party::open_party::Scope::None;
             a.build = rr.cfg.build_id;
         }
         int players = 0;

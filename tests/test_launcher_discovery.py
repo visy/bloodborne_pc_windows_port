@@ -40,6 +40,28 @@ class Discovery(unittest.TestCase):
         self.assertEqual((e["build"], e["area"], e["id"]), ("0.7.5 (abc)", "the Cathedral Ward", 0xDEADBEEF))
         self.assertFalse(self.L.parse_discovery_packet(packet(password=False))["password"])
 
+    def test_open_flag(self):
+        """0.7.8 open party: flags bit 1 is an announcement of a host that takes plain-address joins."""
+        P = self.L.parse_discovery_packet
+        self.assertFalse(P(packet(flags=0))["open"])
+        e = P(packet(flags=2))
+        self.assertTrue(e["open"] and not e["password"])
+        rows = self.L.discovery_rows([dict(e, ip="192.168.1.5")], [], "0.7.5")
+        self.assertEqual((rows[0]["password"], rows[0]["password_set"]), ("open", False))
+        plain = self.L.discovery_rows([dict(P(packet(flags=0)), ip="192.168.1.6")], [], "0.7.5")
+        self.assertEqual(plain[0]["password"], "no")
+
+    def test_open_party_checkbox_rule(self):
+        A = self.L.party_open_available
+        self.assertTrue(A("host", ""))
+        self.assertTrue(A("host", "  "))
+        self.assertFalse(A("host", "secret"))
+        self.assertFalse(A("join", ""))
+        self.assertFalse(A("", ""))
+        env = self.L.party_env({"party_mode": "host"})
+        self.assertIn("BB_PARTY_OPEN", env)
+        self.assertIsNone(env["BB_PARTY_OPEN"])  # the ini decides, a stale variable never overrides it
+
     def test_parse_rejects(self):
         good = packet()
         P = self.L.parse_discovery_packet
@@ -47,7 +69,8 @@ class Discovery(unittest.TestCase):
             self.assertIsNone(P(good[:n]), n)
         self.assertIsNone(P(good + b"\0"))
         self.assertIsNone(P(packet(version=2)))
-        self.assertIsNone(P(packet(flags=2)))
+        self.assertIsNone(P(packet(flags=4)))
+        self.assertIsNone(P(packet(flags=0x80)))
         self.assertIsNone(P(packet(port=0)))
         self.assertIsNone(P(packet(players=5, maxp=4)))
         self.assertIsNone(P(packet(maxp=9, players=1)))

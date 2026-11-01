@@ -329,6 +329,10 @@ struct Test {
     std::string st_last_texts;
     Clock::time_point st_at{};
     bool god = false;     // god: the own chr kept invincible (test aid)
+    bool clear_enemies = false;  // clear_enemies[=R] (flaky078): every loaded regular enemy (not bosses / NPCs) dies quietly, each second, also after a load
+    float clear_radius = 0;      // 0: the whole loaded map, else only within R m of the player
+    Clock::time_point clear_at{};
+    int clear_total = 0;
     bool log_pos = false; // log_pos: the player's area and position (FrpgNetMan +0xa7c / +0xaac) every 3 s
     bool log_anim = false; // log_anim (covleft077): every new animation of the local player (its TimeAct ring), e.g. a gesture's
     bool log_oath = false; // log_oath (covfx077): every 2 s the covenant (oath rune) SpEffects on the local player
@@ -2620,8 +2624,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 }
             }
             char b[220];
-            std::snprintf(b, sizeof b, "; own HP %d/%d, lock-on %u (target at (%.1f, %.1f, %.1f): enemy %u, HP %d)", hp,
-                          mhp, unsigned(lock), double(lp[0]), double(lp[1]), double(lp[2]), lent, lhp);
+            std::uint32_t f1e1 = 0;
+            if (player) SafeRead(player + 0x1e1, &f1e1, 4);
+            std::snprintf(b, sizeof b, "; own HP %d/%d, lock-on %u (target at (%.1f, %.1f, %.1f): enemy %u, HP %d)%s", hp,
+                          mhp, unsigned(lock), double(lp[0]), double(lp[1]), double(lp[2]), lent, lhp,
+                          (f1e1 & (1u << 14)) ? ", INVINCIBLE" : "");
             target += b;
         }
         Log("test: %s 0x%x%s", TravelStepName(step.kind), step.buttons, target.c_str());
@@ -3671,6 +3678,27 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         t.fx_at = now;
         Log("test: SpEffect %d is %s on the local player", t.log_fx, HasSpEffect(s.player, t.log_fx) ? "ON" : "off");
     }
+    if (t.clear_enemies && s.world_up && !s.loading && s.player && Seconds(t.clear_at, now) >= 1.0) {
+        // clear_enemies (flaky078): phases that do not test enemies lose the regular ones (team 23, the census list: no bosses,
+        // no NPC hunters) as the area loads: they stopped autopilot walks and the lift walk-ins. A quiet death (no echoes, no drop
+        // box); the pass repeats every second so a map that streams in later is cleared too.
+        t.clear_at = now;
+        float me[3] = {};
+        const bool have_me = balance::ChrPosition(s.player, me);
+        int n = 0;
+        for (const auto& e : balance::LoadedEnemies()) {
+            if (!e.alive || !e.chr || EnemyIsBossEntity(e.entity)) continue;
+            if (t.clear_radius > 0 && have_me && e.have_pos) {
+                const float dx = e.pos[0] - me[0], dy = e.pos[1] - me[1], dz = e.pos[2] - me[2];
+                if (dx * dx + dy * dy + dz * dz > t.clear_radius * t.clear_radius) continue;
+            }
+            if (balance::SetEnemyDeadQuietly(e.chr)) ++n;
+        }
+        if (n > 0) {
+            t.clear_total += n;
+            Log("test: clear_enemies: %d loaded enemies set dead quietly (%d so far)", n, t.clear_total);
+        }
+    }
     if (t.log_pos && s.world_up && !s.loading && Seconds(t.pos_at, now) >= t.log_pos_every) {
         // Every second: the physics position (as DescribeHere; the map man's +0xAAC is the last
         // grounded / area position and goes stale after a re-created PlayerIns) and the area id.
@@ -4549,6 +4577,9 @@ void PartyDirector::ConfigureFromEnv() {
                 }
             } else if (item == "god") {
                 st.test.god = true;
+            } else if (item == "clear_enemies" || item.rfind("clear_enemies=", 0) == 0) {
+                st.test.clear_enemies = true;
+                st.test.clear_radius = item.size() > 14 ? static_cast<float>(std::atof(item.c_str() + 14)) : 0.0f;
             } else if (item.rfind("log_fx=", 0) == 0) {
                 st.test.log_fx = std::atoi(item.c_str() + 7);
             } else if (item == "log_anim") {
