@@ -102,3 +102,16 @@ starts once the tunnel is up (15 s at most).
   status-file fix).
 - Server scripts: `tools/vpn/server/` (cutover.sh, rollback.sh, no-status-file.sh, ssh-no-password.sh), lobby:
   `tools/vpn/lobby/`. The server's address is never in this repo.
+
+## Patches that touch the party's bytes (0.7.8, NW-5e27806)
+
+* **Unlock Game Region** (`0x023b9190 b805000000c3`, the region function returns 5) leaves the game with no ss.info server
+  address (region 5 has an empty URL): its FROM client stays offline, so every board request fails (a Chalice summon loaded the
+  dungeon empty and looped). The engine now repoints the region 5 URL (`online_watch.cpp`), so the patch can stay on in a party;
+  NW's own `breaks_online()` skip need not apply to party co-op with this engine build (0.7.8 or later).
+* **FPS patches writing the peer-keep timers**: the list of the Lantern engine's `60 FPS++`, `90 FPS++`, `60FPS (no deltatime)`
+  and `Uncap FPS++` also writes 60.0 (`00007042`) at XML 0x0187afec / 0x0187b0ad / 0x01880cfd / 0x01880e1a, the floats `Party: Fast
+  rejoin` sets to 10.0: the check reported `MISMATCH (0 sites applied, 4 mismatched)` and kept the 30 s / 60 s timers. The 0.7.8
+  patch builder makes the `Party: ` patches win on any overlapping bytes and logs a WARNING naming the patch; the launcher
+  logs the same warning in a party. `tests/test_patches.py::PartyOverlapTest` checks our own list has no overlap; run it
+  against NW's `engine/patches/Bloodborne.xml` after changing it.

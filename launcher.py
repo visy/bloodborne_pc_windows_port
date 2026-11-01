@@ -5947,6 +5947,25 @@ class BloodborneLauncher(tk.Tk):
         self.log("[PRE-LAUNCH] Old bbport.exe terminated.")
         return False
 
+    def warn_patch_party_overlap(self):
+        """Party on: log the enabled patches that write the same bytes as a "Party: " patch (e.g. a 60 FPS++ of another
+        patch list vs "Party: Fast rejoin"). The party patches win at build time; the player should know."""
+        if str(self.settings.get("party_mode", "") or "") not in ("host", "join"):
+            return
+        try:
+            scripts_dir = str(APP_DIR / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            import patches as patches_mod
+            hits = patches_mod.party_overlap_report(APP_DIR / "patches" / "Bloodborne.xml",
+                                                    list(self.current_settings().get("enabled_patches", [])))
+        except Exception as ex:  # a warning only
+            self.log(f"[PATCHES] Party overlap check skipped: {ex}")
+            return
+        for name, party in hits:
+            self.log(f"[PATCHES] WARNING: '{name}' writes the same game bytes as {', '.join(party)}. In a party the party "
+                     f"patch wins on those bytes; if joining or the Chalice Dungeons misbehave, turn '{name}' off on every PC.")
+
     def launch_game(self, warper: bool = False):
         if self.proc is not None:
             return
@@ -5982,6 +6001,7 @@ class BloodborneLauncher(tk.Tk):
         for line in details:
             self.log(f"  {line}")
         self.warn_unclean_eboot(game_dir)
+        self.warn_patch_party_overlap()
         for name, stats in import_dropped_caches():
             if stats is None:
                 self.log(f"Shader cache {name} in {cache_import_dir()}: not a cache archive (renamed .bad)")
