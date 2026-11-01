@@ -6039,7 +6039,10 @@ def check_cy(v, L, tag="cy"):
 
 def phase_clw(only):
     host = ",".join(["log_pos", "host_move=-49.4:30.6:-91.0@4%m29!",
-                     "host_die@16%m29",                            # 4 s after the guest's death: a wipe
+                     # a wipe: the host dies 16 s after the join (the guest dies 17-23 s after it; the host's death anim
+                     # runs ~9 s, the guest's held death revives in place ~2 s after it is taken, so the host must die
+                     # BEFORE the guest or at the same time: it came from the host's own move timer, 3 s before..7 s after the guest)
+                     "host_die@16%m29^1",
                      "host_press=0@40%m29!"])
     g1 = ",".join(["log_pos=0.5", "echoes=15000",
                    "guest_move=-48.0:30.6:-91.0@4%m29!",
@@ -6057,7 +6060,7 @@ def phase_clw(only):
 
 def phase_chw(only):
     """chw: the chc fixture, then clw's wipe (guest down, then the host): the respawn load runs the map's events again."""
-    host = ",".join(["log_pos=2", "host_move=-49.4:30.6:-91.0@4%m29!", "host_die@16%m29", "host_press=0@40%m29!"])
+    host = ",".join(["log_pos=2", "host_move=-49.4:30.6:-91.0@4%m29!", "host_die@16%m29^1", "host_press=0@40%m29!"])
     g1 = ",".join(["log_pos=2", "guest_move=-48.0:30.6:-91.0@4%m29!", "guest_die@12%m29", "guest_press=0@40%m29!"])
     return dict(
         name="chw", seconds=300, count=2, headless=0, prep=prep_chalcurse, post=post_chalamp,
@@ -6076,8 +6079,10 @@ def check_clw(v, L):
     if hd:
         none_of(v, L, "clw the host's respawn in the dungeon the guest stands in is followed (never 'not followed')",
                 r"host_death .* not followed", hd - 3, hd + 3, (1,))
+        # both orders are the wipe: the guest's death held when the host's travel comes, or the guest dying while the
+        # host's death animation runs (its death is taken after the host's load came and follows it dead)
         need(v, L, "clw the dead guest goes with the host's load", 1,
-             r"guest: held death goes with the host's travel", hd)
+             r"guest: held death goes with the host's travel|guest: own death taken [\d.]+ s after the host's wipe load came: follows it dead", hd - 15)
         rp = need(v, L, "clw the guest replays the respawn (lamp warp)", 1, r"replay now #\d+ host_death", hd)
         if rp:
             back = need(v, L, "clw the guest is back in the dungeon after the load", 1, r"map .* -> m29_00", rp)
@@ -6127,8 +6132,10 @@ def phase_sj(only):
     # it and the host starts its step over as the guest reaches the seam (still in m24_00: once the
     # guest is over, the host's step chain is out of the party - cooperators 0 - and would wait), so
     # it is back beside the guest within the leave state's ~5 s, before its send-home. (Live sj10: a
-    # route ending at x -148.6 is "done" 2 m short, still in m24_00 for the host; it goes on to the
-    # report's own spot in the cave.)
+    # route ending at x -148.6 is "done" 2 m short, still in m24_00 for the host.) Still flaky (flaky2078, 0.7.8): the walker (camera-relative stick) circles 5-12 s at the seam
+    # in some runs and the "map -> m27" log line lags the stage flip by 1-10 s, so the host is back after the
+    # guest's send-home; gating the host on the guest being over the seam (near its final waypoint) or a
+    # warp instead of the walk was tried and did not run/help.
     host = ",".join(["god", "host_move=%s:pin=10:ground@12^1" % SJ_H24,
                      "host_route=-147.5:-33.5:177.6/-149.3:-33.7:177.4/-151.1:-35.0:183.5@0.5?near=-146.6:-33.5:178.0:1.5",
                      "host_warp=2102950@30"])
@@ -6172,7 +6179,7 @@ def check_sj(v, L):
     if tr:
         need(v, L, "sj party travel: guest in the Dream", 1, r"map .*-> m21_00", tr[0])
         need(v, L, "sj guest's action buttons free after the stay (hold log)", 1,
-             r"hold log: ctx 0x[0-9a-f]+ wait 0 hold 0 evstate 0 flag4047 0 role 6 m21_00", tr[0])
+             r"hold log: ctx 0x[0-9a-f]+ wait 0 hold 0 evstate 0 flag4047 0 role 6 (?:chrtype -?\d+ )?m21_00", tr[0])
         # after a B2 load into the Dream (live sj8 before the fix: the Doll's lines, no LevelUp menu)
         need(v, L, "sj guest levels up at the Doll after a party travel", 1, r"test: levelup: LEVEL UP on the guest", tr[0])
     check_common(v, L, "sj")
@@ -9093,14 +9100,14 @@ def check_kd(v, L):
         none_of(v, L, "kd (guest grab): no host death / revive", r"host death taken|host death: ", ga, end - 1,
                 insts=(0,))
         need(v, L, "kd (guest grab) host: the waking scene 28000010", 0, r"remo 2800[01]010|cutscene 28000010",
-             ga, end)  # from the grab: at 60 FPS the host's scene starts before its "map -> m28_00" line
-        need(v, L, "kd (guest grab) host: +1 Insight from 9422", 0, r"event 9422 gave the host 1 Insight", ga, end)
+             max(0.0, ga - 15), end)  # the host's scene can start before the guest logs its grab (other clock, 60 FPS)
+        need(v, L, "kd (guest grab) host: +1 Insight from 9422", 0, r"event 9422 gave the host 1 Insight", max(0.0, ga - 15), end)
         for i in (1, 2):
             if g28[i] is not None:
                 need(v, L, "kd (guest grab) guest %d: the waking scene in the cell" % i, i, r"remo 2800[01]010 mode",
                      g28[i], end)
                 need(v, L, "kd (guest grab) guest %d: +1 Insight (9422)" % i, i,
-                     r"event 9422, 1 Insight\): \+1 here", ga, end)
+                     r"event 9422, 1 Insight\): \+1 here", max(0.0, ga - 15), end)
         need(v, L, "kd guest 1's own save: no kidnap trigger after the grab", 1,
              r"test read \(load mode \d, own save / visible\): 9420=0/", ga)
         none_of(v, L, "kd the guests' own saves never hold 9420",
@@ -10173,9 +10180,9 @@ def check_cv(v, L, d: Path):
     # The test read (load mode 1) is taken at the world's first stable frame BEFORE the covenant overlay of that same
     # frame, so it still shows the host's values (1042=0/1: own/visible); the proof is the overlay's own log line: it
     # replaced the host's state by the guest's own in block 1 and lists the bits that changed (Annalise's 1040 / 1042).
-    ov = L.find(1, r"guest covenant overlay: the host's covenant state replaced by the guest's own in block 1 \(bits changed:[^)]*\)", j or 0)
+    ov = L.find(1, r"guest covenant overlay: the host's covenant state replaced by the guest's own in block 1 \(bits changed:[^)]*\)", 0)  # from 0: the host's join line is on another clock (the guest's world can be up first)
     bits = set(re.findall(r"\d+", ov[1].split("bits changed:")[1])) if ov else set()
-    rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", j or 0)
+    rd = L.find(1, r"test read \(load mode 1, own save / visible\): ", 0)
     vals = dict(re.findall(r"\b(\d+)=([0-9?]/[0-9?])", rd[1])) if rd else {}
     own_ok = vals.get("1042", "").startswith("0/") and vals.get("1040", "").startswith("1/")  # the own save holds Annalise alive
     v.step("cv covenant: in the host's world the guest sees its own state (Annalise alive 1040, not the host's 1042)",
