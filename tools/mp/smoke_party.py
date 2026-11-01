@@ -3633,7 +3633,7 @@ def phase_bg(only):
         "host_chr=3400850:%s@20%%m34_00" % hdist,                   # after the scene: beside the boss, passive
         "host_press=0x0@%d%%m34_00" % lap,
     ])
-    g1 = ",".join([
+    g1 = ",".join((["god"] if os.environ.get("BB_BG_GUESTGOD") == "1" else []) + [
         "guest_move=%s@6%%m34_00" % BR_SIGNAL,                      # inside, by the lamp
         "guest_press=0x0@22%m34_00!",                               # the scene
         "guest_chr=3400850:%s@2%%m34_00" % gdist,                   # in the arena, away from the boss
@@ -3642,7 +3642,7 @@ def phase_bg(only):
     ])
     return dict(
         name="bg", seconds=420, count=2, headless=0, until_hold=4,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         crash=[], until=BG_UNTIL,
     )
@@ -3656,7 +3656,13 @@ def check_bg(v, L):
         return
     need(v, L, "bg the guest's game shows the boss bar too", 1, r"boss health bar shown")
     turn = need(v, L, "bg the boss turns to the guest (ChangeTarget)", 0, r"boss attention: boss [0-9a-f]+ turns to player chr", on)
+    need(v, L, "bg boss state is logged on the host's game", 0, r"boss state: [0-9a-f]+ at \(", on)
+    need(v, L, "bg boss state is logged on the guest's game", 1, r"boss state: [0-9a-f]+ at \(", on)
+    none_of(v, L, "bg the boss never stands still (no 'may be stuck' on either game)", r"boss state: [0-9a-f]+ may be stuck", on, 1e9, (0, 1))
     hits = L.all(1, r"Party balance: hit: HP (\d+) -> (\d+)", on, on + 400.0)
+    if os.environ.get("BB_BG_GUESTGOD") == "1":
+        check_common(v, L, "bg")
+        return
     v.step("bg the boss hits the guest (hit lines on the guest's game while the host stands by)",
            len(hits) >= 1, "%d hit(s) on the guest after the bar: %s" % (len(hits), [ln.split("hit: ")[1][:28] for _, ln in hits[:6]]))
     if turn is not None and hits:
@@ -5412,26 +5418,35 @@ def phase_npf(only):
     hfog = (["host_press=0x4@1!", "host_press=0@1!"] + ["host_press=0x4000@3%m23_00!", "host_press=0@2%m23_00!"] * 2 +
             sum([["host_obj=%d:%s:%d@2%%m23_00" % (NPF_FOG, os.environ.get("BB_NPF_DIST", "0.6"), ang), "host_press=0x4@1!", "host_press=0@1!",
                   "host_press=0x4000@3%m23_00!", "host_press=0@2%m23_00!", "host_press=0x4000@3%m23_00!", "host_press=0@2%m23_00!"]
-                 for ang in (180, 90, 270)], [])) if order == "host" else ["host_press=0@12%m23_00!"]
-    host = ["god", "insight=20", ] + ([] if solo else ["host_warp=2302950@8^1"]) + ["host_flag=1340@2%m23_00", "host_flag=72400461@0.5%m23_00", "host_use=4312@1%m23_00", "host_move=-45:-123.9:7:90@4%m23_00", "host_press=0x4000@3%m23_00!",
-            "host_press=0@25%m23_00!", "host_obj=%d@2%%m23_00" % NPF_FOG] + hfog + [
+                 for ang in (0, 180, 90, 270)], [])) if order == "host" else ["host_press=0@12%m23_00!"]
+    quick = os.environ.get("BB_NPF_QUICK") == "1"   # the host stands at the fog (right spot) while the helper materializes
+    if quick:
+        hfog = ["host_press=0@18%m23_00!"] + hfog
+    if os.environ.get("BB_NPF_SWEEP") == "1":   # diagnostic: stand around the fog at several distances / angles, no presses
+        hfog = sum([["host_obj=%d:%s:%d@3%%m23_00" % (NPF_FOG, d, a), "host_press=0@1%m23_00!"]
+                    for d in ("0.6", "1.5", "3", "5") for a in (0, 90, 180, 270)], [])
+    host = ["god", "insight=20", ] + ([] if solo else ["host_warp=2302950@8^1"]) + ["host_flag=1340@2%m23_00", "host_flag=72400461@0.5%m23_00", ] + (["host_flag=12301802@3%m23_00"] if os.environ.get("BB_NPF_LATESET") == "1" else []) + [] + ([] if os.environ.get("BB_NPF_NONPC") == "1" else ["host_use=4312@1%m23_00"]) + (["host_press=0@4%m23_00!"] if os.environ.get("BB_NPF_NONPC") == "1" else ["host_move=-45:-123.9:7:90@4%m23_00", "host_press=0x4000@3%m23_00!",
+            "host_press=0@%d%%m23_00!" % (2 if quick else 25)]) + ["host_obj=%d%s@2%%m23_00" % (NPF_FOG, ":0.6:0" if quick else "")] + hfog + [
             "host_press=0@50%m23_00!", "host_press=0@40%m23_00!", "host_press=0@40%m23_00!"]
     gdelay = 220 if order == "host" else 110
-    g1 = ["god"] + (["guest_move=-45:-123.9:7:90@20%m23_00"] if os.environ.get("BB_NPF_GUEST_NEAR") == "1" else []) + ["guest_obj=%d@%d%%m23_00" % (NPF_FOG, gdelay), "guest_press=0x4000@2%m23_00!", "guest_press=0x4000@2%m23_00!",
+    g1 = ["god"] + (["guest_move=-45:-123.9:7:90@20%m23_00"] if os.environ.get("BB_NPF_GUEST_NEAR") == "1" else []) + ["guest_obj=%d:0.6:0@%d%%m23_00" % (NPF_FOG, gdelay), "guest_press=0x4000@2%m23_00!", "guest_press=0x4000@2%m23_00!",
           "guest_press=0@60%m23_00!"]
     ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)] + ([] if solo else ["1:BB_PARTY_DIRECTOR_TEST=" + ",".join(g1)]) + [
             "%d:BB_PARTY_TEST_NPC=%d" % (0 if ring == "host" else 1, NPF_NPC),
             "%d:BB_PARTY_TEST_NPC_MODE=log" % (0 if ring == "host" else 1),
             "%d:BB_PARTY_TEST_NPC_FLAGS=%s" % (0 if ring == "host" else 1, NPF_FLAGS)]
+    if os.environ.get("BB_NPF_NONPC") == "1":   # control run: no bell helper at all
+        ienv = [e for e in ienv if "BB_PARTY_TEST_NPC" not in e]
     if os.environ.get("BB_NPF_TRACE") == "1":   # the instructions of the NPC's two events, every call (host game)
         ienv += ["0:BB_PARTY_EMEVD_TRACE=1", "0:BB_PARTY_EMEVD_TRACE_ALL=12304450,12304460,12304410,12304810,12304811"]
+        ienv += ["0:BB_PARTY_HOLD_LOG=1", "0:BB_PARTY_GUESTSVC_TEST=buttonprobe;promptlog"]
     if solo:
-        ienv += ["0:BB_PARTY_TEST_START_LAMP=2302950"]     # start at Old Yharnam's lamp: no party travel
+        ienv += ["0:BB_PARTY_TEST_START_LAMP=2302950", "0:BB_PARTY_DIRECTOR_TEST_SOLO=1"]     # start at Old Yharnam's lamp: no party travel
     if pvp:
         ienv += ["0:BB_PARTY_PVP_TEST=on@2,log@200"]
     return dict(
         name="npf", seconds=420, count=1 if solo else 2, headless=0,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=12301800", "BB_PARTY_PROGRESS_TEST_SET=12301802,72400461,1340", "BB_PARTY_TEST_COND_TIMEOUT=100",
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=12301800", "BB_PARTY_PROGRESS_TEST_SET=" + ("72400461,1340" if os.environ.get("BB_NPF_LATESET") == "1" else "12301802,72400461,1340"), "BB_PARTY_TEST_COND_TIMEOUT=100",
              "BB_PARTY_CHR_DUMP=60"],
         ienv=ienv, watch=[], crash=[], until=[NPF_UNTIL], until_hold=10,
     )
