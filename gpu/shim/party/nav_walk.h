@@ -560,20 +560,24 @@ inline Stick MakeStick(double angle, double tilt) {
 /// World direction yaw (atan2(dx, dz)) the chr moves in for a stick angle: the camera yaw plus the stick angle.
 /// The camera yaw is the direction the camera looks (player - camera position).
 struct CamModel {
-    double off = 0;       // current offset (world yaw of stick-forward) = raw camera yaw + resid
+    // The stick is relative to the game's input camera. The render camera's matrix gives its yaw `raw` (and follows
+    // every swing of the auto-following camera frame by frame), but after a ride, a warp or a cut the input camera
+    // may differ from it by a while-constant amount (seen: up to 180 deg for seconds). So off = raw + resid, and
+    // resid is trimmed from the observed motion (low-pass, any size): the matrix supplies the swings, the motion the
+    // offset. With no camera at all, off is the observed offset alone.
+    double off = 0;       // current offset (world yaw of stick-forward)
     bool have = false;    // an offset is known
     bool from_cam = false;
-    bool mismatch = false;  // the camera model disagreed with the observed motion: the observation rules
-    double raw = 0;       // atan2(player - camera): the camera orbit centre is not exactly the player, so
-    double resid = 0;     // the observed motion trims it (low-pass, at most 0.5 rad)
-    double obs_off = 0;   // low-pass of the observed offset (log / fallback)
+    bool mismatch = false;  // |resid| is large: the matrix and the motion disagree (a log flag, the walker keeps steering)
+    double raw = 0;
+    double resid = 0;
+    double obs_off = 0;   // low-pass of the observed offset (fallback with no camera)
     int obs_n = 0, bad = 0, agree = 0, recovered = 0;
 
     /// The camera's view direction (render camera block: the matrix row at +0x30 of the block at config +0x50).
     void FromForward(double fx, double fz) {
         if (std::hypot(fx, fz) < 0.2) return;
         raw = std::atan2(fx, fz);
-        if (mismatch) return;  // the observed offset rules until the camera agrees with the motion again (Observe)
         off = Wrap(raw + resid);
         have = from_cam = true;
     }
@@ -582,38 +586,22 @@ struct CamModel {
         if (Dist2(cam, player) < 0.3) return;
         FromForward(double(player.x) - cam.x, double(player.z) - cam.z);
     }
-    /// A step of observed motion under a known stick angle: speed above ~1.5 m/s, stick tilt above 0.7.
+    /// A step of observed motion under a known stick angle (speed above ~1.5 m/s, stick tilt above 0.7).
     void Observe(double stick_angle, double vel_yaw, double speed = 4.0) {
+        (void)speed;
         const double o = Wrap(vel_yaw - stick_angle);
         obs_off = obs_n == 0 ? o : Wrap(obs_off + 0.25 * Wrap(o - obs_off));
         ++obs_n;
-        if (mismatch) {
-            // the render camera may still be swinging after a warp: take the model back after 12 agreeing samples in a row
-            agree = std::fabs(Wrap(o - raw)) < 0.3 ? agree + 1 : 0;
-            if (agree >= 12) {
+        if (from_cam) {
+            resid = Wrap(resid + 0.3 * Wrap(Wrap(o - raw) - resid));
+            off = Wrap(raw + resid);
+            const bool big = std::fabs(resid) > 0.45;
+            if (big && !mismatch) mismatch = true;
+            if (!big && mismatch) {
                 mismatch = false;
-                from_cam = true;
-                bad = 0;
-                agree = 0;
-                resid = 0;
-                off = raw;
                 ++recovered;
             }
-        } else if (from_cam) {
-            const double err = Wrap(o - raw);
-            // only steady running counts against the camera: the first moments of a walk (acceleration, a turning body,
-            // momentum of the last move) give any direction; 30 samples = 1.2 s of it
-            if (speed >= 2.5) bad = std::fabs(err) > 0.45 ? bad + 1 : 0;
-            if (bad >= 30) {  // the camera position is not in the player's frame (or not the view camera)
-                mismatch = true;
-                from_cam = false;
-                resid = 0;
-            } else if (std::fabs(err) <= 0.45) {
-                resid = std::clamp(resid + 0.15 * Wrap(err - resid), -0.5, 0.5);
-                off = Wrap(raw + resid);
-            }
-        }
-        if (!from_cam && obs_n >= 2) {
+        } else if (obs_n >= 2) {
             off = obs_off;
             have = true;
         }
