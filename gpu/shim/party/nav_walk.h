@@ -583,7 +583,7 @@ struct CamModel {
         FromForward(double(player.x) - cam.x, double(player.z) - cam.z);
     }
     /// A step of observed motion under a known stick angle: speed above ~1.5 m/s, stick tilt above 0.7.
-    void Observe(double stick_angle, double vel_yaw) {
+    void Observe(double stick_angle, double vel_yaw, double speed = 4.0) {
         const double o = Wrap(vel_yaw - stick_angle);
         obs_off = obs_n == 0 ? o : Wrap(obs_off + 0.25 * Wrap(o - obs_off));
         ++obs_n;
@@ -601,8 +601,10 @@ struct CamModel {
             }
         } else if (from_cam) {
             const double err = Wrap(o - raw);
-            bad = std::fabs(err) > 0.45 ? bad + 1 : 0;
-            if (bad >= 8) {  // the camera position is not in the player's frame (or not the view camera)
+            // only steady running counts against the camera: the first moments of a walk (acceleration, a turning body,
+            // momentum of the last move) give any direction; 30 samples = 1.2 s of it
+            if (speed >= 2.5) bad = std::fabs(err) > 0.45 ? bad + 1 : 0;
+            if (bad >= 30) {  // the camera position is not in the player's frame (or not the view camera)
                 mismatch = true;
                 from_cam = false;
                 resid = 0;
@@ -799,7 +801,7 @@ public:
             const double vx = (pos.x - last_pos_.x) / dt, vz = (pos.z - last_pos_.z) / dt;
             speed_ = std::hypot(vx, vz);
             if (speed_ > 1.5 && state_ == WalkState::Walking && last_tilt_ > 0.7 && !stalled_recent_) {
-                cam_.Observe(last_stick_angle_, std::atan2(vx, vz));
+                cam_.Observe(last_stick_angle_, std::atan2(vx, vz), speed_);
             }
             vel_yaw_ = std::atan2(vx, vz);
         }
