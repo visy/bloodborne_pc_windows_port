@@ -3393,7 +3393,8 @@ def phase_hg(only):
                          "host_kill=2410810:hp%s@8%%m24_01" % hp])
         g1 = ",".join(([] if mortal else ["god"]) + ["guest_press=0x0@4%m24_01!", "guest_obj=2411810@3%m24_01",
                        "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
-                       "guest_chr=2410810:%s@25%%m24_01" % gdist] +
+                       ("guest_move=%s@25%%m24_01" % os.environ["BB_HG_GUESTAT"] if os.environ.get("BB_HG_GUESTAT")
+                        else "guest_chr=2410810:%s@25%%m24_01" % gdist)] +   # (BB_HG_GUESTAT=x:y:z: a fixed spot)
                       ["guest_press=0x800@1.5%m24_01"] * 60 + ["guest_press=0x0@2%m24_01"])
     else:
         host = ",".join(["god", "host_warp=2412953@8^1",                      # the party to the Tomb of Oedon
