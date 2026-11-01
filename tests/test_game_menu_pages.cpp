@@ -614,7 +614,7 @@ static void RulesPages() {
                                        u"Party rules: Enemies", u"My party: Bosses", u"Party rules: Phantoms",
                                        u"My party: Your save",
                                        u"My party: Your items", u"My party: Display", u"My party: Look & notices",
-                                       u"My party: Splitscreen"};
+                                       u"My party: Splitscreen", u"My party: Chalice"};
             for (std::size_t i = 0; i < std::size(group); ++i) assert(at(group[i]) == first + long(i));
         }
         const std::string shared_line = P::ShownSummary(PageNamed(u"Party rules: World"));
