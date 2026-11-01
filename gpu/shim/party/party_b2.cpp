@@ -6703,6 +6703,7 @@ void BossLockEntry(u64 boss, u32 want) {
 /// had no boss position to tell the host's copy from the guest's).
 void BossStateTick(const GameSnapshot& s, double now) {
     static double next = 0;
+    static const bool boss_log = std::getenv("BB_BOSS_LOG") && std::getenv("BB_BOSS_LOG")[0] == '1';
     if (now < next) return;
     next = now + 1.0;
     struct Track {
@@ -6746,7 +6747,7 @@ void BossStateTick(const GameSnapshot& s, double now) {
             if (ChrHp(pl) > 0 && ChrPos(pl, pp))
                 near_m = std::min(near_m, std::sqrt((pp[0] - bp[0]) * (pp[0] - bp[0]) + (pp[2] - bp[2]) * (pp[2] - bp[2])));
         }
-        if (now - t.logged >= 10.0) {
+        if (boss_log && now - t.logged >= 10.0) {
             t.logged = now;
             Log("boss state: %08x at (%.1f, %.1f, %.1f), animation %d, HP %d, nearest player %.1f m, still for %.0f s", h,
                 double(bp[0]), double(bp[1]), double(bp[2]), anim, ChrHp(boss), double(near_m), now - t.moved_at);

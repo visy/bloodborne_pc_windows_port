@@ -1775,6 +1775,7 @@ def settings_env(s: dict) -> dict:
     env["BB_SAVE_LOG"] = "1" if on("feat_save_log", False) else "0"
     # Sound timing log for crackle reports: late buffers, underruns, a summary per minute
     env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
+    env["BB_BOSS_LOG"] = "1" if on("feat_boss_log", False) else "0"
     # Party network receive gap log: was a peer quiet, or this PC's receive thread late (outage reports)
     env["BB_NET_RXGAP_LOG"] = "1" if on("feat_net_rxgap_log", False) else "0"
     # Party arrival render log for black-world reports: did the 3D scene draw after a party travel
@@ -3004,6 +3005,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
         self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
+        self.feat_boss_log = tk.BooleanVar(value=self.settings.get("feat_boss_log", False))
         self.feat_net_rxgap_log = tk.BooleanVar(value=self.settings.get("feat_net_rxgap_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
         self.feat_heap_watch_log = tk.BooleanVar(value=self.settings.get("feat_heap_watch_log", False))
@@ -3483,6 +3485,10 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Audio log (crackling sound)", self.feat_audio_log,
                     "Logs late sound buffers, sound dropouts and a sound timing summary once a minute, "
                     "for crackling or popping reports. At most one line a second. Default: off (BB_AUDIO_LOG).")
+        self._check(sec, "Boss log (stuck or ignoring bosses)", self.feat_boss_log,
+                    "Logs a boss's position, animation, health and the nearest player every 10 s while a boss bar "
+                    "is up, for reports of a boss that stands still or ignores a player in a party. The "
+                    "\"may be stuck\" line is always logged. Default: off (BB_BOSS_LOG).")
         self._check(sec, "Network receive gap log (co-op outages)", self.feat_net_rxgap_log,
                     "For reports of \"connection unstable\" or outage lines in a party: when a player's game "
                     "traffic was silent for 2 s or more, whether this PC's receive thread ran on time "
@@ -5538,6 +5544,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),
             "feat_save_log": self.feat_save_log.get(),
             "feat_audio_log": self.feat_audio_log.get(),
+            "feat_boss_log": self.feat_boss_log.get(),
             "feat_net_rxgap_log": self.feat_net_rxgap_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),
             "feat_heap_watch_log": self.feat_heap_watch_log.get(),
