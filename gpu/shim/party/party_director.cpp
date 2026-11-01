@@ -4794,7 +4794,7 @@ void PartyDirector::ConfigureFromEnv() {
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
             } else if (item.rfind("hp_floor=", 0) == 0) {
-                st.test.hp_floor = std::clamp(std::atoi(item.c_str() + 9), 0, 95);
+                st.test.hp_floor = std::clamp(std::atoi(item.c_str() + 9), 0, 100);
             } else if (item.rfind("goal=", 0) == 0) {
                 unsigned e = 0;
                 int pct = 50;
