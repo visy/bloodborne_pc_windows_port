@@ -18,6 +18,7 @@
 // 1 / 1 (the remote data module is not kept up to date): HP comes from VITALS, the position (exact,
 // every frame) from the chr.
 #include "party_hud.h"
+#include "party_b2.h"
 #include "party_balance.h"
 #include "game_state.h"
 #include "coop_hooks.h"
@@ -466,6 +467,7 @@ void PartyHudTick(const GameSnapshot& s, party::PartyLink* link, party::MemberSt
             std::lock_guard<std::mutex> lk(g_body_mu);
             for (int i = 0; i < 3; ++i) me.pos[i] = std::round(g_body[i] * 100.0f) / 100.0f;
         }
+        if (b2::BossBarLine(nullptr)) me.flags |= party::kVitalsBossBar;  // its boss fight is on (test gates)
         me.yaw = std::round(mine.yaw * 100.0f) / 100.0f;
         me.level = static_cast<std::uint16_t>(s.level > 0 && s.level < 1000 ? s.level : 0);
     }
