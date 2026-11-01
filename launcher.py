@@ -763,7 +763,7 @@ def parse_discovery_packet(data: bytes):
     None for anything that is not exactly a version 1 announcement (untrusted input: strict)."""
     if not isinstance(data, (bytes, bytearray)) or not 17 <= len(data) <= DISCOVERY_MAX_PACKET:
         return None
-    if data[0] != 0xFA or data[1] != 0x41 or data[2] != 1 or data[3] & ~1:
+    if data[0] != 0xFA or data[1] != 0x41 or data[2] != 1 or data[3] & ~3:
         return None
     port = (data[8] << 8) | data[9]
     players, maxp = data[12], data[13]
@@ -786,7 +786,7 @@ def parse_discovery_packet(data: bytes):
     if pos != len(data) or not strings[1]:
         return None
     return {"id": int.from_bytes(data[4:8], "big"), "port": port, "level": (data[10] << 8) | data[11],
-            "players": players, "max": maxp, "password": bool(data[3] & 1),
+            "players": players, "max": maxp, "password": bool(data[3] & 1), "open": bool(data[3] & 2),
             "build": strings[0], "name": strings[1], "area": strings[2]}
 
 
@@ -929,7 +929,7 @@ def discovery_rows(found: list, peers: list, my_version: str) -> list:
         seen_ids.add(e["id"])
         rows.append({"iid": f"{e['ip']}/{e['id']}", "name": e["name"], "level": str(e["level"] or "?"),
                      "players": f"{e['players']}/{e['max']}", "area": e["area"] or "-",
-                     "password": "yes" if e["password"] else "no", "build": e["build"],
+                     "password": "yes" if e["password"] else ("open" if e.get("open") else "no"), "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
                      "ok": discovery_build_matches(e["build"], my_version), "kind": "announce"})
     for p in peers:
@@ -1077,7 +1077,7 @@ def lobby_rows(entries: list, my_version: str) -> list:
         if e["own"]:
             continue
         rows.append({"iid": f"vpn/{i}", "name": e["name"], "players": f"{e['players']}/{e['max']}",
-                     "password": "yes" if e["password"] else "no", "build": e["build"],
+                     "password": "yes" if e["password"] else "open", "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
                      "ok": discovery_build_matches(e["build"], my_version)})
     return rows
@@ -1608,13 +1608,26 @@ PARTY_IPV6_TIP = (
     "network. Default: off (BB_PARTY_IPV6=1/0).")
 
 
+PARTY_OPEN_TIP = (
+    "Host only, and only without a password. Players on your own LAN or VPN network (Radmin, Tailscale, "
+    "ZeroTier, the Nightwatch VPN) can then join with just your address, like 192.168.1.5:9307: no party "
+    "code, no password. Anyone on those networks can join, and the party's key is not secret there, so use it "
+    "only on networks you trust. Strangers on the internet still cannot join. A password turns this off. "
+    "Off by default (bbport.ini party_open; in the game: System > Party access).")
+
+
+def party_open_available(mode: str, password: str) -> bool:
+    """Whether the Open party option means anything now: hosting, and no password (the password decides then)."""
+    return mode == "host" and not (password or "").strip()
+
+
 def party_env(s: dict) -> dict:
     """BB_PARTY_* environment from launcher settings; party off unsets every variable."""
     keys = ["BB_PARTY", "BB_PARTY_NAME", "BB_PARTY_PORT", "BB_PARTY_CODE", "BB_PARTY_PASSWORD",
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
             "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS",
-            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN"]
+            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN", "BB_PARTY_OPEN"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     # bbport.ini's (unset here, so a stale variable never overrides the ini; BB_PARTY_GUEST_INSIGHT too)
     keys += [env_name for _, env_name, _ in PARTY_INI_SWITCHES]
@@ -3083,6 +3096,9 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_info_var = tk.StringVar(value="")
         self._vpn_lobby_busy = False
         self._vpn_join_addr = ""
+        self._vpn_join_needs_password = True
+        # 0.7.8 open party (bbport.ini party_open, off by default): a host without a password also takes plain-address joins
+        self.party_open = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_open", False))
         self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
         self.party_port_suffix_var = tk.StringVar(value="")
         self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
@@ -3892,6 +3908,8 @@ class BloodborneLauncher(tk.Tk):
             "is not easy to guess: it then carries the party's protection. Setting or removing it "
             "gives the host a new party code (once): send friends the new one. "
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
+        open_cb = self._check(sec, "Open party: no password, join by address (LAN/VPN)", self.party_open,
+                              PARTY_OPEN_TIP, command=self.on_party_open_toggle)
         code_tip = (f"The code the host gave you, like {PARTY_CODE_EXAMPLE} (letters are not "
                     "case-sensitive; I, L and O count as 1, 1 and 0), or the host's address as host:port "
                     "(LAN, VPN, port forwarding). Older BBP2- / BBP1- codes work too. (BB_PARTY_CODE)")
@@ -3944,13 +3962,15 @@ class BloodborneLauncher(tk.Tk):
                                  self.party_stun_entry,
                                  pw_lbl, self.party_password_entry]
         self.party_widgets_host = [vpn_lbl, self.party_vpn_combo, vpn_addr_lbl, self.party_vpn_addr_entry,
-                                   vpn_copy_btn, public_lbl, self.party_public_entry,
+                                   vpn_copy_btn, public_lbl, open_cb, self.party_public_entry,
                                    host_lbl, self.party_host_code_entry, copy_btn, new_code_btn,
                                    lan_lbl, self.party_lan_code_entry, lan_copy_btn]
         self.party_widgets_join = [code_lbl, self.party_code_entry, paste_btn]
+        self.party_open_cb = open_cb
         for var in (self.party_name_var, self.party_port_var, self.party_code_var, self.party_password_var,
                     self.feat_tracing):
             var.trace_add("write", lambda *a: self.update_party_hints())
+        self.party_password_var.trace_add("write", lambda *a: self.update_party_open_state())
         self.party_port_var.trace_add("write", lambda *a: self.update_vpn_address())
         self.party_code_var.trace_add("write", lambda *a: self.update_port_suffix())
         self.update_port_suffix()
@@ -4103,6 +4123,8 @@ class BloodborneLauncher(tk.Tk):
             self.on_discovery_toggle(save=False)
         if hasattr(self, "vpn_lobby_tree"):
             self.party_vpn_lobby.set(ini_flag_value(ini, "party_vpn_lobby", False))
+        if hasattr(self, "party_open_cb"):
+            self.party_open.set(ini_flag_value(ini, "party_open", False))
 
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
@@ -4159,6 +4181,19 @@ class BloodborneLauncher(tk.Tk):
             self.update_vpn_address()
         self.save_settings()
 
+    def on_party_open_toggle(self):
+        try:
+            update_ini(bbport_ini_path(), {"party_open": "1" if self.party_open.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save party_open to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
+
+    def update_party_open_state(self):
+        """The Open party checkbox needs hosting and no password (a password decides who joins)."""
+        if hasattr(self, "party_open_cb"):
+            ok = party_open_available(self.party_mode(), self.party_password_var.get())
+            self.party_open_cb.state(["!disabled"] if ok else ["disabled"])
+
     def update_party_state(self):
         mode = self.party_mode()
         for widgets, enabled in ((self.party_widgets_on, bool(mode)),
@@ -4166,6 +4201,7 @@ class BloodborneLauncher(tk.Tk):
                                  (self.party_widgets_join, mode == "join")):
             for w in widgets:
                 w.state(["!disabled"] if enabled else ["disabled"])
+        self.update_party_open_state()
         # One code row at a time: the host's own code, or the code to join with
         show, hide = (self.party_host_row, self.party_join_row) if mode == "host" else \
                      (self.party_join_row, self.party_host_row)
@@ -4188,7 +4224,7 @@ class BloodborneLauncher(tk.Tk):
         if party_port(self.party_port_var.get()) is None:
             problems.append("Port: a number from 1024 to 65535.")
         if mode == "join" and self._vpn_join_addr:
-            if not self.party_password_var.get():
+            if self._vpn_join_needs_password and not self.party_password_var.get():
                 problems.append("Enter the game's password.")
         elif mode == "join":
             problem = party_code_problem(self.party_code_var.get())
@@ -4323,7 +4359,7 @@ class BloodborneLauncher(tk.Tk):
                     "Off by default. On the Nightwatch VPN (your 10.8.0.x address), hosting with a password "
                     "shows your character name, slots and version to the other VPN players, and this list shows "
                     "theirs. Nobody sees an address, a password or an account name. Needs the VPN connected "
-                    "(bbport.ini party_vpn_lobby; in the game: System > Party network).",
+                    "(bbport.ini party_vpn_lobby; in the game: System > Party access).",
                     command=self.on_vpn_lobby_toggle)
         cols = ("name", "players", "password", "build")
         heads = {"name": "Hunter", "players": "Slots", "password": "Pass", "build": "Build"}
@@ -4344,7 +4380,7 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_join_btn = ttk.Button(row, text="Join", style="Secondary.TButton",
                                              command=self.join_vpn_lobby_game)
         self.vpn_lobby_join_btn.pack(side="left")
-        Tooltip(self.vpn_lobby_join_btn, "Asks for the host's password, then starts the game as a guest. "
+        Tooltip(self.vpn_lobby_join_btn, "Asks for the host's password (not for an open game), then starts the game as a guest. "
                                          "Greyed rows run another bbport version.")
         ttk.Label(row, textvariable=self.vpn_lobby_info_var, style="Hint.TLabel").pack(side="left", padx=(8, 0))
         self.after(1000, self.vpn_lobby_tick)
@@ -4429,12 +4465,15 @@ class BloodborneLauncher(tk.Tk):
                 "Other version", f"{row['name']} runs {row['build']}, you run {PORT_VERSION}. The game will "
                                  "refuse to join. Try anyway?"):
             return
-        from tkinter import simpledialog
-        password = simpledialog.askstring("Password", f"Password of {row['name']}'s game:", show="*", parent=self)
-        if not password:
-            return
+        password = ""
+        if row["password_set"]:  # an open game (no password) is joined by its address alone
+            from tkinter import simpledialog
+            password = simpledialog.askstring("Password", f"Password of {row['name']}'s game:", show="*", parent=self)
+            if not password:
+                return
         before = (self.party_mode_var.get(), self.party_password_var.get(), self.party_code_var.get())
         self._vpn_join_addr = row["address"]       # for the launch only; not shown, not saved
+        self._vpn_join_needs_password = bool(row["password_set"])
         self.party_mode_var.set(PARTY_MODES[2][0])
         self.party_code_var.set("")
         self.party_password_var.set(password)
@@ -4443,6 +4482,7 @@ class BloodborneLauncher(tk.Tk):
             self.launch_game()
         finally:
             self._vpn_join_addr = ""
+            self._vpn_join_needs_password = True
             self.party_mode_var.set(before[0])
             self.party_password_var.set(before[1])
             self.party_code_var.set(before[2])

@@ -146,3 +146,26 @@ Smoke phase `bg` (group `boss_guest`, Laurence, BR fixture, host god beside the 
 both games, the boss turns to the guest and its hit lands on the guest's game 4.5 s after the turn (both screens looked at).
 Tune knobs: BB_BG_HOSTDIST, BB_BG_GUESTDIST, BB_BG_LAP. Not reproduced / unproven: the intermittent "stuck on the statue"
 (CL-7b1d4e), the guest not starting the fight (every guest log with a fight shows the bar).
+
+### Guest-first Gascoigne: the boss ignores a guest at some spots (0.7.8, bossg078; solved, see the root cause below)
+
+Reproduced deterministically: smoke `hg` with `BB_HG_ORDER=guest BB_HG_MORTAL=1 BB_HG_HOSTDIST=1 BB_HG_GUESTAT=-42.1:-40.76:77.3`
+(guest 7-8 m from the boss at a fixed spot; host god beside the boss): every ChangeTarget answers ok, the boss never leaves the
+host (0.8 m for 140+ s) and the guest's HP stays flat. The same run with the guest 1.5 m to the east (-40.5:-40.76:77.6,
+what `guest_chr=...:8` gave on most runs, 1 in ~4 runs landed on the bad spot because the boss's position varies) is adopted at
+once and the guest dies within 20 s. Boss AI target list (`BB_PARTY_AI_LOG=1`, "boss target dump"): AI chr vfunc+0x160 -> +0xB0 ->
++0x560 -> entries from +0x18 (next +8, flags byte +2, kind +0x28, ref +0x48, handle at +0x50, slot ptr +0x58). One entry with
+flags 0x87 is the active target; a good ChangeTarget puts the chosen chr's handle there ~1 s later. At the bad spot, and for a guest
+19-20 m away anywhere, it never does. Tried and ruled out: re-asserting ChangeTarget up to 3x per turn (no effect); writing the
+guest's handle/slot into the 0x87 entry every frame (it holds, the boss still does not move: that entry is a view, the AI goals do
+not follow it). So the rejection is inside the AI's own goal / perception logic, position dependent (sight / path / region). Open.
+
+### Root cause and fix (0.7.8, bossg078)
+
+The boss's goals follow the AI's per-chr hate record, not the active entry (flags 0x87) that the event ChangeTarget moves.
+A record is a kind-1 entry (flags 0x81 / 0x82) with +0x20 type, +0x38 seconds left, +0x2C, +0x40 active; the game's own "attacker of a hit"
+path (0x12A9230) sets type 3, 10.0 s, +0x2C 0, +0x40 1 on the chr that hurt the boss. The host keeps a live record because it hits the
+boss; a passive guest has none, so at some spots the boss never turned to it (ChangeTarget ok, active entry moved for a second or not at
+all, no hits). `BossLockEntry` (party_b2.cpp) now sets the same record on the chr BossAttentionTick hands the boss to. Proof: smoke `hg`
+with `BB_HG_GUESTAT=-42.1:-40.76:77.3` (the former dead spot): 0 hits in 140 s before, 6 hits after (2/2 runs); guest-first `hg` 8/8 runs
+with the guest's HP falling; `bg` (Laurence) and `bv`, `bw`, `s3`, `s1` green.
