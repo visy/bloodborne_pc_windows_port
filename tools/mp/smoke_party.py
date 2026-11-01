@@ -3633,7 +3633,7 @@ def phase_bg(only):
         "host_chr=3400850:%s@20%%m34_00" % hdist,                   # after the scene: beside the boss, passive
         "host_press=0x0@%d%%m34_00" % lap,
     ])
-    g1 = ",".join([
+    g1 = ",".join((["god"] if os.environ.get("BB_BG_GUESTGOD") == "1" else []) + [
         "guest_move=%s@6%%m34_00" % BR_SIGNAL,                      # inside, by the lamp
         "guest_press=0x0@22%m34_00!",                               # the scene
         "guest_chr=3400850:%s@2%%m34_00" % gdist,                   # in the arena, away from the boss
@@ -3656,7 +3656,13 @@ def check_bg(v, L):
         return
     need(v, L, "bg the guest's game shows the boss bar too", 1, r"boss health bar shown")
     turn = need(v, L, "bg the boss turns to the guest (ChangeTarget)", 0, r"boss attention: boss [0-9a-f]+ turns to player chr", on)
+    need(v, L, "bg boss state is logged on the host's game", 0, r"boss state: [0-9a-f]+ at \(", on)
+    need(v, L, "bg boss state is logged on the guest's game", 1, r"boss state: [0-9a-f]+ at \(", on)
+    none_of(v, L, "bg the boss never stands still (no 'may be stuck' on either game)", r"boss state: [0-9a-f]+ may be stuck", on, 1e9, (0, 1))
     hits = L.all(1, r"Party balance: hit: HP (\d+) -> (\d+)", on, on + 400.0)
+    if os.environ.get("BB_BG_GUESTGOD") == "1":
+        check_common(v, L, "bg")
+        return
     v.step("bg the boss hits the guest (hit lines on the guest's game while the host stands by)",
            len(hits) >= 1, "%d hit(s) on the guest after the bar: %s" % (len(hits), [ln.split("hit: ")[1][:28] for _, ln in hits[:6]]))
     if turn is not None and hits:
