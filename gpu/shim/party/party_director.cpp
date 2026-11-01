@@ -188,6 +188,10 @@ struct TravelStep {
         // host_face=ENTITY|X:Z / guest_face=... (amelia2078): one short stick tap toward that chr (or point), as a
         // player turns to an enemy before an attack; no warp. ENTITY becomes the target of the press / anim logs.
         HostFace, GuestFace,
+        // host_fog=X:Z / guest_fog=X:Z (amelia2078): walk by the stick toward a boss fog at (X, Z) until its prompt
+        // ("... Fog") shows, press Cross, and hold the chain until the player is through it (past the fog point) with
+        // a boss bar up; up to 3 tries, then "NOT through"
+        HostFog, GuestFog,
         HostStick,  // the same on the host
         HostRoute, GuestRoute, // a stick walk along waypoints X:Z[:R]/...: a real path through the level (B1)
         GuestHome,  // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
@@ -457,6 +461,11 @@ struct Test {
     Clock::time_point face_release{};  // host_face / guest_face: the stick tap ends then
     std::uint32_t face_entity = 0;     // ENTITY:R: the stick stays toward it until it is within face_r m (or the release)
     float face_r = 0;
+    bool fog_on = false;   // host_fog / guest_fog running
+    int fog_phase = 0, fog_tries = 0;
+    float fog_x = 0, fog_z = 0, fog_dir[2] = {0, 1};
+    Clock::time_point fog_t{};
+    std::int64_t fog_from_ms = 0;
     int hp_floor = 0;      // hp_floor=PCT (amelia2078): own HP back to max under PCT % (every drop logged)
     std::int32_t hp_last = -1, hp_max_last = -1;
     std::uint32_t goal_entity = 0;  // goal=ENTITY:PCT:SECS: "test: goal reached" once ENTITY was SECS s under PCT % HP
@@ -1416,6 +1425,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
     case TravelStep::GuestStick: return "guest_stick";
     case TravelStep::HostFace: return "host_face";
+    case TravelStep::HostFog: return "host_fog";
+    case TravelStep::GuestFog: return "guest_fog";
     case TravelStep::GuestFace: return "guest_face";
     case TravelStep::HostStick: return "host_stick";
     case TravelStep::HostRoute: return "host_route";
@@ -2027,6 +2038,57 @@ void TestAidTick(Test& t, Clock::time_point now) {
             WritePadFile("");
         }
     }
+    if (t.fog_on) {
+        float me[3] = {};
+        const std::uint64_t player = LocalPlayer();
+        const std::int64_t now_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+        if (player && balance::ChrPosition(player, me)) {
+            // how far past the fog point along the walk's direction
+            const float past = (me[0] - t.fog_x) * t.fog_dir[0] + (me[2] - t.fog_z) * t.fog_dir[1];
+            if (t.fog_phase == 0) {
+                const std::int64_t seen = BbGameMenu::TextSeenMs("Fog");
+                if (seen > t.fog_from_ms && now_ms - seen < 500) {
+                    WritePadFile("");
+                    runtime_pad_director_press(0x4000);
+                    t.press_at = now;
+                    t.pressing = true;
+                    t.release_at = now + std::chrono::milliseconds(150);
+                    t.fog_phase = 1;
+                    t.fog_t = now;
+                    Log("test: fog: the prompt shows at (%.2f, %.2f), %.2f m before the fog point: Cross (try %d)",
+                        double(me[0]), double(me[2]), double(-past), t.fog_tries + 1);
+                } else if (Seconds(t.fog_t, now) > 10.0) {
+                    WritePadFile("");
+                    t.fog_on = false;
+                    Log("test: fog: NOT through: no fog prompt in 10 s (at (%.2f, %.2f), %.2f m before the fog point)",
+                        double(me[0]), double(me[2]), double(-past));
+                } else {
+                    // a point 3 m past the fog: the walk does not stop short of it
+                    const float at[3] = {t.fog_x + 3 * t.fog_dir[0], me[1], t.fog_z + 3 * t.fog_dir[1]};
+                    double deg = 0;
+                    float d = 0;
+                    StickToward(at, &deg, &d);
+                }
+            } else if (past > 0.8f && b2::BossBarLine(nullptr)) {
+                t.fog_on = false;
+                Log("test: fog: through the fog at (%.2f, %.2f), %.2f m past it, boss bar up", double(me[0]), double(me[2]),
+                    double(past));
+            } else if (Seconds(t.fog_t, now) > 5.0) {
+                if (++t.fog_tries >= 3) {
+                    t.fog_on = false;
+                    Log("test: fog: NOT through after 3 tries (at (%.2f, %.2f), %.2f m past the fog point, bar %d)",
+                        double(me[0]), double(me[2]), double(past), int(b2::BossBarLine(nullptr)));
+                } else {
+                    t.fog_phase = 0;
+                    t.fog_t = now;
+                    t.fog_from_ms = now_ms;
+                    Log("test: fog: not through 5 s after the Cross (%.2f m past, bar %d): walking on (try %d)",
+                        double(past), int(b2::BossBarLine(nullptr)), t.fog_tries + 1);
+                }
+            }
+        }
+    }
     if (t.hp_floor > 0) {
         std::int32_t hp = -1, mhp = -1;
         if (ChrHpOf(LocalPlayer(), &hp, &mhp) && mhp > 0) {
@@ -2183,7 +2245,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
-                step.kind == TravelStep::GuestFace || step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
+                step.kind == TravelStep::GuestFace || step.kind == TravelStep::GuestFog || step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
                 step.kind == TravelStep::GuestLastLamp || step.kind == TravelStep::GuestLeave ||
                 step.kind == TravelStep::GuestRejoin || step.kind == TravelStep::GuestGather) == (role == PartyRole::Guest) || step.kind == TravelStep::OwnRule;
@@ -2213,7 +2275,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         }
     }
     // A host_face / guest_face walk toward its chr (ENTITY:R) holds the chain the same way.
-    if (t.ran && (t.last_kind == TravelStep::HostFace || t.last_kind == TravelStep::GuestFace) && t.face_entity) {
+    if (t.ran && (((t.last_kind == TravelStep::HostFace || t.last_kind == TravelStep::GuestFace) && t.face_entity) ||
+                  ((t.last_kind == TravelStep::HostFog || t.last_kind == TravelStep::GuestFog) && t.fog_on))) {
         t.step_at = now;
         return;
     }
@@ -2400,6 +2463,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::HostUse || next_kind == TravelStep::GuestUse || next_kind == TravelStep::GuestFixture ||
          next_kind == TravelStep::GuestStick || next_kind == TravelStep::HostStick ||
          next_kind == TravelStep::HostFace || next_kind == TravelStep::GuestFace ||
+         next_kind == TravelStep::HostFog || next_kind == TravelStep::GuestFog ||
          next_kind == TravelStep::HostRoute || next_kind == TravelStep::GuestRoute ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         const bool out = !steady && t.steps[t.next_step].out_ok && t.ran && t.world;
@@ -2863,6 +2927,23 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
             ok ? what.c_str() : "FAILED: not loaded");
+    } else if (step.kind == TravelStep::HostFog || step.kind == TravelStep::GuestFog) {
+        float me[3] = {};
+        const std::uint64_t player = LocalPlayer();
+        if (std::sscanf(step.args.c_str(), "%f:%f", &t.fog_x, &t.fog_z) == 2 && player && balance::ChrPosition(player, me)) {
+            const float dx = t.fog_x - me[0], dz = t.fog_z - me[2], d = std::sqrt(dx * dx + dz * dz);
+            t.fog_dir[0] = d > 0.01f ? dx / d : 0.f;
+            t.fog_dir[1] = d > 0.01f ? dz / d : 1.f;
+            t.fog_on = true;
+            t.fog_phase = 0;
+            t.fog_tries = 0;
+            t.fog_t = now;
+            t.fog_from_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+            Log("test: %s: walk to the fog at (%.1f, %.1f) from (%.1f, %.1f), %.1f m, until its prompt shows",
+                TravelStepName(step.kind), double(t.fog_x), double(t.fog_z), double(me[0]), double(me[2]), double(d));
+        } else {
+            Log("test: %s: not X:Z (or no player)", TravelStepName(step.kind));
+        }
     } else if (step.kind == TravelStep::HostFace || step.kind == TravelStep::GuestFace) {
         // A short stick tap toward the chr ENTITY (or the point X:Z): the player turns to it (and takes a small
         // step), as a player does before an attack; the stick is camera-relative (ReadCameraForward). No warp.
@@ -5066,6 +5147,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
                        item.rfind("guest_stick=", 0) == 0 || item.rfind("host_use=", 0) == 0 ||
                        item.rfind("host_face=", 0) == 0 || item.rfind("guest_face=", 0) == 0 ||
+                       item.rfind("host_fog=", 0) == 0 || item.rfind("guest_fog=", 0) == 0 ||
                        item.rfind("host_stick=", 0) == 0 || item.rfind("host_route=", 0) == 0 ||
                        item.rfind("guest_route=", 0) == 0 || item.rfind("guest_fixture", 0) == 0 ||
                        item.rfind("guest_use=", 0) == 0) {
@@ -5084,6 +5166,8 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                             : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick
                             : item.rfind("host_face=", 0) == 0     ? TravelStep::HostFace
+                            : item.rfind("host_fog=", 0) == 0      ? TravelStep::HostFog
+                            : item.rfind("guest_fog=", 0) == 0     ? TravelStep::GuestFog
                             : item.rfind("guest_face=", 0) == 0    ? TravelStep::GuestFace
                             : item.rfind("host_stick=", 0) == 0    ? TravelStep::HostStick
                             : item.rfind("host_route=", 0) == 0    ? TravelStep::HostRoute
