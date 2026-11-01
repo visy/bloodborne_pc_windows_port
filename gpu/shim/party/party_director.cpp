@@ -467,13 +467,13 @@ struct Test {
     Clock::time_point fog_t{};
     std::int64_t fog_from_ms = 0;
     int hp_floor = 0;      // hp_floor=PCT (amelia2078): own HP back to max under PCT % (every drop logged)
-    int hp_max = 0;        // hp_max=N (amelia2078): own max HP raised to N (a boss's heaviest hit no longer kills)
     std::int32_t hp_last = -1, hp_max_last = -1;
     std::uint32_t goal_entity = 0;  // goal=ENTITY:PCT:SECS: "test: goal reached" once ENTITY was SECS s under PCT % HP
     int goal_pct = 50;
     double goal_secs = 40;
     Clock::time_point goal_under{}, goal_check{};
     bool goal_done = false;
+    bool goal_god = false;  // goal=...:god: this player turns invincible once ENTITY is under PCT % (its window measured)
     Clock::time_point peer_since{};  // the next step's "?host=" / "?member=" condition met (its clock)
     std::size_t peer_step = ~std::size_t(0);
     Clock::time_point press_at{};  // the last host_press / guest_press tap (BB_PARTY_TARGET_ANIM)
@@ -2114,20 +2114,6 @@ void TestAidTick(Test& t, Clock::time_point now) {
             }
         }
     }
-    if (t.hp_max > 0) {
-        std::int32_t hp = -1, mhp = -1;
-        std::uint64_t cm = 0, dm = 0;
-        if (ChrHpOf(LocalPlayer(), &hp, &mhp) && hp > 0 && mhp > 0 && mhp < t.hp_max &&
-            SafeGet(LocalPlayer() + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
-            SafeWrite(dm + 0xfc, &t.hp_max, 4);
-            SafeWrite(dm + 0xf8, &t.hp_max, 4);
-            static bool logged = false;
-            if (!logged) {
-                logged = true;
-                Log("test: hp max: own max HP %d -> %d (test aid)", mhp, t.hp_max);
-            }
-        }
-    }
     if (t.hp_floor > 0) {
         std::int32_t hp = -1, mhp = -1;
         if (ChrHpOf(LocalPlayer(), &hp, &mhp) && mhp > 0) {
@@ -2153,8 +2139,9 @@ void TestAidTick(Test& t, Clock::time_point now) {
         const bool have = ChrHpOf(chr, &hp, &mhp) && mhp > 0;
         if (have && hp > 0 && hp * 100 < mhp * t.goal_pct && t.goal_under == Clock::time_point{}) {
             t.goal_under = now;
-            Log("test: goal: entity %u under %d %% (HP %d/%d): %.0f s to measure", t.goal_entity, t.goal_pct, hp, mhp,
-                t.goal_secs);
+            Log("test: goal: entity %u under %d %% (HP %d/%d): %.0f s to measure%s", t.goal_entity, t.goal_pct, hp, mhp,
+                t.goal_secs, t.goal_god ? "; this player invincible from now" : "");
+            if (t.goal_god) t.god = true;
         }
         if (have && hp <= 0 && t.goal_under != Clock::time_point{}) {
             t.goal_done = true;
@@ -4808,8 +4795,6 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.start = true;
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
-            } else if (item.rfind("hp_max=", 0) == 0) {
-                st.test.hp_max = std::clamp(std::atoi(item.c_str() + 7), 0, 99999);
             } else if (item.rfind("hp_floor=", 0) == 0) {
                 st.test.hp_floor = std::clamp(std::atoi(item.c_str() + 9), 0, 100);
             } else if (item.rfind("goal=", 0) == 0) {
@@ -4817,6 +4802,7 @@ void PartyDirector::ConfigureFromEnv() {
                 int pct = 50;
                 double secs = 40;
                 if (std::sscanf(item.c_str() + 5, "%u:%d:%lf", &e, &pct, &secs) >= 1 && e) {
+                    st.test.goal_god = item.find(":god") != std::string::npos;
                     st.test.goal_entity = e;
                     st.test.goal_pct = std::clamp(pct, 1, 100);
                     st.test.goal_secs = std::max(0.0, secs);
