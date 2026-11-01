@@ -6630,6 +6630,28 @@ void BossRoomNoticeTick(const GameSnapshot& s, double now) {
             last = b;
         }
     }
+    {
+        // BB_AMP_TEST_1E5=1 (experiment): every tick, every player chr here (own and members' copies) gets +0x1E5 bit
+        // 0x10 while a boss bar is up (the game rewrites it every frame)
+        static const bool force = std::getenv("BB_AMP_TEST_1E5") && std::getenv("BB_AMP_TEST_1E5")[0] == '1';
+        static bool logged = false;
+        if (force && s.world_up && !s.loading && BossFightActive()) {
+            std::vector<u64> pl;
+            if (s.player) pl.push_back(s.player);
+            for (const TaskInfo& t : Tasks(false)) {
+                const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+                if (c) pl.push_back(c);
+            }
+            for (u64 c : pl) {
+                const u8 nb = u8(Field<u8>(c, 0x1e5) | 0x10);
+                SafeWrite(c + 0x1e5, &nb, 1);
+            }
+            if (!logged) {
+                logged = true;
+                Log("test 1e5: +0x1E5 bit 0x10 forced on %zu player chr(s) every tick while a boss bar is up", pl.size());
+            }
+        }
+    }
     static double next = 0;
     static int tries = 0;
     static bool fight = false;
