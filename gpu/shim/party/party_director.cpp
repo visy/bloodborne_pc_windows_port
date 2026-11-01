@@ -1045,6 +1045,10 @@ int ClearStalePeers(const std::string& online_id) {
 }
 
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
+    if (std::strcmp(event, kHostBell) != 0 && b2::ChaliceSummonStopped()) {
+        st.last_ring = now;
+        return;
+    }
     if (!st.rung_ever && st.world_seen) {  // A4 join speed: the first bell's wait in the world
         Log("first bell %.1f s after the world was steady", Seconds(st.world_at, now));
     }
