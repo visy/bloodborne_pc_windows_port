@@ -23,8 +23,9 @@ DEFAULTS = {
     "grace_days": 3,                # renewal still accepted this long after expiry
     "crl_days": 90,
     "crl_refresh_hours": 6,
-    "enroll_per_ip_day": 10,        # successful enrollments; households and carrier NAT share one address (was 3)
-    "enroll_global_day": 200,
+    "enroll_per_ip_day": 60,        # successful enrollments; carrier NAT (Starlink, Spectrum, mobile) puts many players
+                                    # behind one address: 10 locked several out for 15-17 h on 2026-11-01 (was 3, then 10)
+    "enroll_global_day": 2000,      # the pool holds 1021 tunnel addresses; 200 could run out on a release day
     "renew_per_install_day": 10,
     "general_per_ip_hour": 120,
     "max_body": 8192,

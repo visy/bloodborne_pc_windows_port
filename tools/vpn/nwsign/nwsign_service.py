@@ -85,7 +85,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def limited(self, wait):
+    def limited(self, wait, why):
+        # which limit answered (never the address): a lock-out report can be told apart from the journal
+        print("nwsign: 429 %s, retry after %d min" % (why, (wait + 59) // 60), flush=True)
         self.send_json(429, {"error": "rate limited", "retry_after": wait}, {"Retry-After": str(wait)})
 
     def do_GET(self):
@@ -99,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.client_address[0]
         wait = lim.hit(lim.key("g", ip), cfg["general_per_ip_hour"], 3600)
         if wait:
-            return self.limited(wait)
+            return self.limited(wait, "general per address")
         if self.path not in ("/v1/enroll", "/v1/renew"):
             return self.send_json(404, {"error": "not found"})
         try:
@@ -119,9 +121,12 @@ class Handler(BaseHTTPRequestHandler):
                 # only a successful enrollment uses up a slot: a failed one (bad CSR, server error) left a player
                 # locked out for a day after three tries (2026-10-31, "Minutes left: 1436")
                 ekey = lim.key("e", ip)
-                wait = lim.peek(ekey, cfg["enroll_per_ip_day"], DAY) or lim.peek("global-enroll", cfg["enroll_global_day"], DAY)
+                wait = lim.peek(ekey, cfg["enroll_per_ip_day"], DAY)
                 if wait:
-                    return self.limited(wait)
+                    return self.limited(wait, "enroll per address")
+                wait = lim.peek("global-enroll", cfg["enroll_global_day"], DAY)
+                if wait:
+                    return self.limited(wait, "enroll global")
                 resp = s.enroll(req.get("csr"))
                 lim.hit(ekey, cfg["enroll_per_ip_day"], DAY)
                 lim.hit("global-enroll", cfg["enroll_global_day"], DAY)
@@ -130,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(iid, str):
                     wait = lim.hit(lim.key("r", ip) + iid, cfg["renew_per_install_day"], DAY)  # per caller too: an unsigned spam with a victim's id cannot use up its renewals
                     if wait:
-                        return self.limited(wait)
+                        return self.limited(wait, "renew per install")
                 resp = s.renew(iid, req.get("csr"), req.get("timestamp"), req.get("signature"), req.get("cert"))
         except CAError as e:
             code = e.status if e.status in (400, 401, 403, 404) else 500
