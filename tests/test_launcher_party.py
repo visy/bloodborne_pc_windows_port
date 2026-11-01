@@ -655,5 +655,28 @@ class LayerTravelSetting(unittest.TestCase):
         self.assertIn('("check", "party_layer_travel", "Chalice layer travel",', src)
 
 
+class GlyphListSetting(unittest.TestCase):
+    """0.7.8 (CL-420d9f): the Chalice glyph list checkbox: bbport.ini party_glyph_list, off by default, no variable
+    set (System > My party: Chalice)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_switch_default_off_and_ini(self):
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        self.assertEqual(switches["party_glyph_list"], ("BB_PARTY_GLYPH_LIST", False))
+        env = self.L.party_env({"party_mode": "join", "party_name": "A", "party_code": "x"})
+        self.assertIsNone(env["BB_PARTY_GLYPH_LIST"])  # bbport.ini decides
+        self.assertEqual(self.L.party_rules_ini({}, "")["party_glyph_list"], "0")
+        self.assertEqual(self.L.party_rules_ini({"party_glyph_list": True}, "")["party_glyph_list"], "1")
+        from pathlib import Path
+        src = Path(self.L.__file__).read_text(encoding="utf-8")
+        self.assertIn('("check", "party_glyph_list", "Chalice glyph list",', src)
+
+
 if __name__ == "__main__":
     unittest.main()
