@@ -427,6 +427,10 @@ void TestCensus() {
         }
         CHECK(kills == 2 && stuck.size() == 10);
         CHECK(led.Filter(0x18010000u, tg).size() == 2);  // another map: a fresh ledger
+        for (const auto& t : tg) led.Done(t.first);
+        CHECK(led.Filter(0x18010000u, tg).empty());
+        led.Reset();  // a world load on the SAME map (lamp rest, death): the enemies respawned
+        CHECK(led.Filter(0x18010000u, tg).size() == 2);
     }
     // hostcheck (live): enemies without an id read -1 (0xFFFFFFFF), not only 0: never one shared id
     // whose alive count (it follows streaming) makes the repair put them all to death.
