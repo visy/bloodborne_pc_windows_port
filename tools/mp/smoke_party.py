@@ -6026,10 +6026,12 @@ def phase_sj(only):
     # it and the host starts its step over as the guest reaches the seam (still in m24_00: once the
     # guest is over, the host's step chain is out of the party - cooperators 0 - and would wait), so
     # it is back beside the guest within the leave state's ~5 s, before its send-home. (Live sj10: a
-    # route ending at x -148.6 is "done" 2 m short, still in m24_00 for the host; it goes on to the
-    # report's own spot in the cave.)
+    # route ending at x -148.6 is "done" 2 m short, still in m24_00 for the host.) Still flaky (flaky2078, 0.7.8): the walker (camera-relative stick) circles 5-12 s at the seam
+    # in some runs and the "map -> m27" log line lags the stage flip by 1-10 s, so the host is back after the
+    # guest's send-home; gating the host on the guest being over the seam (near its final waypoint) or a
+    # warp instead of the walk was tried and did not run/help.
     host = ",".join(["god", "host_move=%s:pin=10:ground@12^1" % SJ_H24,
-                     "host_route=-147.5:-33.5:177.6/-149.3:-33.7:177.4/-151.1:-35.0:183.5@0.5%m24_00&?near=" + SJ_G27.replace(" ", "") + ":3",
+                     "host_route=-147.5:-33.5:177.6/-149.3:-33.7:177.4/-151.1:-35.0:183.5@0.5?near=-146.6:-33.5:178.0:1.5",
                      "host_warp=2102950@30"])
     g1 = ",".join(["god", "guest_move=%s:pin=10:ground@6%%m24_00" % SJ_G24,
                    "guest_route=-143.2:-33.4:177.0/-146.6:-33.5:178.0/%s@4%%m24_00?near=%s:3" % (SJ_G27, SJ_H24)])
