@@ -279,8 +279,8 @@ Key findings behind the rows:
   Corruption 180010 changeHpPoint -1 every 2 s with conditionHp 12.5, Hunter 180020 staminaRecoverChangeSpeed +3; Impurity 6142 has
   none. `log_oath` now dumps them and logs HP / stamina every 0.5 s (smoke `covenant_measure` cvm, Hunter host vs Corruption guest, no god
   mode): both rows are on their own chr only; HP stayed flat on the Corruption member at 70 % HP (no drain: the effect is gated by
-  conditionHp 12.5, i.e. it acts only at very low HP, not measured); stamina refills ~40-48 / s on both members, the Hunter +3 / s is
-  below the 0.5 s sampling's resolution (reported, not asserted). The vial heal (Radiance) was not measured (no low-HP aid).
+  conditionHp 12.5, i.e. it acts only at very low HP, not measured); the stamina bar (0-100) refills in 2-3 s on both members; the straight-line fits over three runs were noisy (host 8.1 / 8.3 / 14.8, guest
+  9.0 / 9.5 / 42 per s), so the Hunter +3 / s is not resolved at the 0.5 s sampling (reported, not asserted). The vial heal (Radiance) was not measured (no low-HP aid).
 - **Session/runtime**: 2000-2099, 7000-7399 and 7600-7699 (common event completions), 9200-9299,
   zones 1AAB5/6/7nnn, restart events. **boss_area** (1AAB4nnn: fight state, fog, NPC summons) is
   not synced live; the vanilla session already carries it.
