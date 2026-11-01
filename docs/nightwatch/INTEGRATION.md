@@ -96,6 +96,44 @@ starts once the tunnel is up (15 s at most).
 
 ---
 
+## 3. Party traffic stays on the VPN tunnel (0.7.8, engine only)
+
+**Why.** In a 4-player session over the Nightwatch VPN the game took the PC's LAN adapter as its address (the
+OpenVPN adapter, TAP-Windows or *OpenVPN Data Channel Offload*, was not recognised), the host advertised its
+WAN address from a public STUN server, and after a host restart a guest adopted the host's LAN address: some
+pairs' game traffic left the tunnel, and those pairs had ~130 short (4-5 s) game-traffic gaps. Also, a few
+game datagrams were larger than what the tunnel carries unfragmented. Workaround until this ships:
+`party_vpn=OpenVPN` in every player's bbport.ini (works when the adapter's name contains OpenVPN).
+
+**Engine side** (our commit for CL-79fe9c, "party: Nightwatch tunnel address and packet size"):
+- `gpu/shim/net/net_socket.cpp`: `vpn_kind()` returns the new `VpnKind::Nightwatch` for a virtual adapter
+  with a 10.8.0.0/22 player address that is not the default route; `vpn_adapter_score(auto)` takes it first;
+  `nightwatch_vpn_mode()`; the punch ignores a non-tunnel local candidate of a tunnel peer; game datagrams
+  over 1232 bytes are split toward a tunnel peer, unsplittable ones counted (p2p port line `sent > 1232 B`,
+  `> 1400 B`, `unsplit`); 1 MiB party-port socket buffers; paced resume replay.
+- `gpu/shim/net/bbnet_internal.h` (the enum and declarations), `party_vpnlobby.h` (`is_tunnel_player_address`
+  is now inline, same rule as item 1), `party_udp.cpp/.h` (`tunnel_candidate_ok`), `nr_outage.h`
+  (`oversize_shape`), `netsim.cpp/.h` (`mtu=`, `block_every=` test options), `bbnet_glue.cpp` (status line).
+- `gpu/shim/party/party_runtime.cpp`: in Nightwatch mode the host advertises its tunnel address (no STUN, no
+  UPnP) and a guest makes no guest code.
+- Tests: `tests/test_party_net.cpp` (`test_vpn_nightwatch`, netsim, oversize), smoke group `vpn_mtu`.
+
+**Launcher side:** nothing. NW's launcher does not need to write `party_vpn` any more (if it does, a value
+naming the adapter still wins, and `off` still turns VPN hosting off). Env `BB_PARTY_NW_AUTO=0` restores the
+old behaviour for a test.
+
+**Check:** party-net-test passes. On a VPN PC, the game log has `local address 10.8.x.y on ... [hosting over
+Nightwatch VPN, party_vpn=auto]` and `Nightwatch VPN: party traffic stays on the tunnel address`; the host's
+log has `public address 10.8.x.y:<port> (Nightwatch VPN tunnel)` and no `STUN:` / `UPnP:` mapping attempt;
+no `punch ...: using its local address` line names a non-10.8 address. The 60 s `p2p port` lines show
+`unsplit` near 0. A PC on a commercial VPN that routes all traffic, or with no VPN, logs its LAN address as
+before.
+
+**Do not:** set `IP_DONTFRAGMENT` on the party port (unsplittable game datagrams would be dropped with no
+fallback); widen the tunnel rule beyond item 1's /22.
+
+---
+
 ## Reference
 
 - Our VPN docs: [docs/party/nightwatch_vpn.md](../party/nightwatch_vpn.md) (lobby wire format, counts socket,
