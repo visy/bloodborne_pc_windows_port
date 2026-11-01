@@ -455,8 +455,10 @@ struct Test {
     bool pressing = false;
     std::uint32_t chr_target = 0;  // the last host_chr / guest_chr entity (press logs its HP)
     Clock::time_point face_release{};  // host_face / guest_face: the stick tap ends then
+    std::uint32_t face_entity = 0;     // ENTITY:R: the stick stays toward it until it is within face_r m (or the release)
+    float face_r = 0;
     int hp_floor = 0;      // hp_floor=PCT (amelia2078): own HP back to max under PCT % (every drop logged)
-    std::int32_t hp_last = -1;
+    std::int32_t hp_last = -1, hp_max_last = -1;
     std::uint32_t goal_entity = 0;  // goal=ENTITY:PCT:SECS: "test: goal reached" once ENTITY was SECS s under PCT % HP
     int goal_pct = 50;
     double goal_secs = 40;
@@ -1967,6 +1969,13 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
             std::int32_t anim = 0;
             SafeGet(ta + 0x20 + std::uint64_t(k) * 0x10, &anim);
             const double since = t.press_at == Clock::time_point{} ? -1.0 : Seconds(t.press_at, now);
+            // the same id again within 1 s is not logged (a boss whose ring took animation 0 every frame flooded
+            // the log at 30 lines a second, amelia2078)
+            static std::int32_t last_anim = -1;
+            static Clock::time_point last_anim_at{};
+            if (anim == last_anim && Seconds(last_anim_at, now) < 1.0) continue;
+            last_anim = anim;
+            last_anim_at = now;
             Log("test: target anim: entity %u animation %d (HP %d/%d, %.2f s = %d frame(s) at 30 fps after the last press)",
                 entity, anim, hp, mhp, since, since < 0 ? -1 : int(since * 30.0 + 0.5));
         }
@@ -2001,16 +2010,27 @@ bool ChrHpOf(std::uint64_t chr, std::int32_t* hp, std::int32_t* mhp) {
 ///    the max the HP goes back to the max, so a long boss fight measures her attacks without the test player dying.
 ///  - goal: twice a second ENTITY's HP; once it is under PCT % "test: goal: ... under" and SECS s later (or at its
 ///    death) "test: goal reached" (the smoke run ends on it: a phase-2 window measured, not a fixed press count).
-/// Also ends a host_face / guest_face stick tap.
+/// Also steers / ends a host_face / guest_face stick tap (ENTITY:R: walks toward the chr until within R m).
+bool StickToward(const float at[3], double* stick_deg, float* dist);
 void TestAidTick(Test& t, Clock::time_point now) {
-    if (t.face_release != Clock::time_point{} && now >= t.face_release) {
-        t.face_release = {};
-        WritePadFile("");
+    if (t.face_release != Clock::time_point{}) {
+        float at[3] = {}, d = 1e9f;
+        double deg = 0;
+        const bool walk = t.face_entity && t.face_r > 0 && balance::ChrPosition(ChrOfEntity(t.face_entity), at);
+        if (walk && StickToward(at, &deg, &d) && d <= t.face_r) {
+            Log("test: face: within %.1f m of entity %u (%.1f m): stick released", double(t.face_r), t.face_entity, double(d));
+            t.face_release = now;
+        }
+        if (now >= t.face_release) {
+            t.face_release = {};
+            t.face_entity = 0;
+            WritePadFile("");
+        }
     }
     if (t.hp_floor > 0) {
         std::int32_t hp = -1, mhp = -1;
         if (ChrHpOf(LocalPlayer(), &hp, &mhp) && mhp > 0) {
-            if (t.hp_last > 0 && hp >= 0 && hp < t.hp_last) {
+            if (t.hp_last > 0 && hp >= 0 && hp < t.hp_last && mhp == t.hp_max_last) {  // a hit (not a max HP change)
                 Log("test: hp: own HP %d -> %d (-%d) of %d", t.hp_last, hp, t.hp_last - hp, mhp);
             }
             if (hp > 0 && hp * 100 < mhp * t.hp_floor) {
@@ -2022,6 +2042,7 @@ void TestAidTick(Test& t, Clock::time_point now) {
                 }
             }
             t.hp_last = hp;
+            t.hp_max_last = mhp;
         }
     }
     if (t.goal_entity && !t.goal_done && now >= t.goal_check) {
@@ -2190,6 +2211,11 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!scene) {
             t.scene_end_at = now;
         }
+    }
+    // A host_face / guest_face walk toward its chr (ENTITY:R) holds the chain the same way.
+    if (t.ran && (t.last_kind == TravelStep::HostFace || t.last_kind == TravelStep::GuestFace) && t.face_entity) {
+        t.step_at = now;
+        return;
     }
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
     if (t.ran &&
@@ -2844,26 +2870,26 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         unsigned entity = 0;
         float px = 0, pz = 0;
         bool have = false;
-        if (step.args.find(':') != std::string::npos && std::sscanf(step.args.c_str(), "%f:%f", &px, &pz) == 2) {
+        float near_r = 0;
+        if (step.args.find('.') != std::string::npos || (step.args.find(':') != std::string::npos &&
+                                                         std::strtoul(step.args.c_str(), nullptr, 10) < 1000000)) {
+            have = std::sscanf(step.args.c_str(), "%f:%f", &px, &pz) == 2;
             at[0] = px, at[2] = pz;
-            have = true;
-        } else if (std::sscanf(step.args.c_str(), "%u", &entity) == 1 && entity) {
+        } else if (std::sscanf(step.args.c_str(), "%u:%f", &entity, &near_r) >= 1 && entity) {
             have = balance::ChrPosition(ChrOfEntity(entity), at);
             t.chr_target = entity;
         }
-        float fx = 0, fz = 1;
         const std::uint64_t player = LocalPlayer();
-        if (have && player && balance::ChrPosition(player, me) && ReadCameraForward(&fx, &fz)) {
+        double stick_deg = 0;
+        float dist = 0;
+        if (have && player && balance::ChrPosition(player, me) && StickToward(at, &stick_deg, &dist)) {
             const double want = std::atan2(double(at[0] - me[0]), double(at[2] - me[2]));
-            double stick = want - std::atan2(double(fx), double(fz));
-            while (stick > M_PI) stick -= 2 * M_PI;
-            while (stick < -M_PI) stick += 2 * M_PI;
-            const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(stick)));
-            const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(stick)));
-            char tok[48];
-            std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
-            WritePadFile(tok);
-            t.face_release = now + std::chrono::milliseconds(140);
+            const double stick = stick_deg * M_PI / 180;
+            // ENTITY:R and farther than R: the stick stays toward it (re-aimed every tick) until within R m, 5 s at most
+            const bool walk = near_r > 0 && dist > near_r;
+            t.face_entity = walk ? entity : 0;
+            t.face_r = near_r;
+            t.face_release = now + std::chrono::milliseconds(walk ? 5000 : 140);
             std::int32_t hp = -1, mhp = -1;
             ChrHpOf(entity ? ChrOfEntity(entity) : 0, &hp, &mhp);
             std::uint8_t lock = 0;
@@ -3116,6 +3142,26 @@ bool ReadCameraForward(float* fx, float* fz) {
     if (!std::isfinite(row[0]) || !std::isfinite(row[2]) || std::fabs(row[1]) > 0.95f) return false;
     *fx = row[0];
     *fz = row[2];
+    return true;
+}
+
+/// Writes the left stick toward the world point `at` (camera-relative, as a player steers); its stick angle and the
+/// distance (x/z) out. False when the player or the camera is not readable.
+bool StickToward(const float at[3], double* stick_deg, float* dist) {
+    float me[3] = {}, fx = 0, fz = 1;
+    const std::uint64_t player = LocalPlayer();
+    if (!player || !balance::ChrPosition(player, me) || !ReadCameraForward(&fx, &fz)) return false;
+    const double want = std::atan2(double(at[0] - me[0]), double(at[2] - me[2]));
+    double stick = want - std::atan2(double(fx), double(fz));
+    while (stick > M_PI) stick -= 2 * M_PI;
+    while (stick < -M_PI) stick += 2 * M_PI;
+    const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(stick)));
+    const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(stick)));
+    char tok[48];
+    std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
+    WritePadFile(tok);
+    *stick_deg = stick * 180 / M_PI;
+    *dist = float(std::sqrt(double((at[0] - me[0]) * (at[0] - me[0]) + (at[2] - me[2]) * (at[2] - me[2]))));
     return true;
 }
 
