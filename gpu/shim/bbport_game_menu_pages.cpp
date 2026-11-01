@@ -1608,8 +1608,8 @@ void DefineAll() {
             "Yours: the Ritual Altar lists the party's Chalice Glyphs to pick from (bbport)",
             "Ваше: Алтарь ритуалов показывает глифы чаши группы на выбор (bbport)");
     own(&Values::party_glyph_list, "Chalice glyph list", "Список глифов чаши",
-        "Ritual Altar > Search by Chalice Glyph shows the party's glyphs to pick from, before the keyboard. Off by default",
-        "Алтарь ритуалов > Поиск по глифу показывает глифы группы на выбор, до клавиатуры. По умолчанию выкл.");
+        "The Ritual Altar's glyph search lists the party's glyphs to pick from first. Off by default",
+        "Поиск глифа у Алтаря ритуалов сначала показывает глифы группы. По умолчанию выкл.");
 
     // ---- Party rules: Phantoms (0.7.5, levelsync, party_levelsync_rules.h): what a hunter keeps of its
     // stats when it joins a party. Both ON = Bloodborne's own co-op. ----
