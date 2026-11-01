@@ -146,6 +146,20 @@ int main() {
     assert(!s.party_layer_travel);
     assert(bb_test_setenv("BB_PARTY_LAYER_TRAVEL", "") == 0);
     s.party_layer_travel = false;
+    // 0.7.8 (CL-420d9f): the Chalice glyph pick list: this player's own, OFF by default, ini key + variable
+    assert(bb_test_setenv("BB_PARTY_GLYPH_LIST", "") == 0);
+    BbSettings::Load();
+    assert(!s.party_glyph_list);
+    s.party_glyph_list = true;
+    BbSettings::Save();
+    assert(Read(path).find("party_glyph_list=1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(s.party_glyph_list);
+    assert(bb_test_setenv("BB_PARTY_GLYPH_LIST", "0") == 0);
+    BbSettings::Load();
+    assert(!s.party_glyph_list);
+    assert(bb_test_setenv("BB_PARTY_GLYPH_LIST", "") == 0);
+    s.party_glyph_list = false;
     s.party_kill_record = true;
     s.party_gather = true;
     s.party_key_items_summoned = true;

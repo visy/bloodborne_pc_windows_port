@@ -269,6 +269,8 @@ bool ToastWanted() {
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
+std::vector<std::string> prompt_choices;
+int prompt_selected = -1;
 
 // Present rate for the FPS counter and the HUD.
 std::chrono::steady_clock::time_point last_present{};
@@ -3539,10 +3541,14 @@ void PartyNpcCaption() {
 
 void TextPrompt() {
     std::string title, text;
+    std::vector<std::string> choices;
+    int selected = -1;
     {
         std::scoped_lock lock{prompt_mutex};
         title = prompt_title;
         text = prompt_text;
+        choices = prompt_choices;
+        selected = prompt_selected;
     }
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -3555,10 +3561,24 @@ void TextPrompt() {
                      ImGuiWindowFlags_NoFocusOnAppearing);
     ImGui::TextUnformatted(title.c_str());
     ImGui::Separator();
+    if (!choices.empty()) {
+        // The party's Chalice glyphs to pick from (docs/party/chalice.md 11): Up / Down, Enter; typing a code still works.
+        for (std::size_t i = 0; i < choices.size(); ++i) {
+            const bool on = int(i) == selected;
+            ImGui::TextColored(on ? ImVec4(1.0f, 0.88f, 0.45f, 1.0f) : ImVec4(0.78f, 0.78f, 0.78f, 1.0f), "%s %s",
+                               on ? ">" : " ", choices[i].c_str());
+        }
+        ImGui::Separator();
+    }
     ImGui::Text("%s_", text.c_str());
     ImGui::Separator();
-    ImGui::TextUnformatted("Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel");
-    ImGui::TextUnformatted("Controller: Cross (A) = OK, Circle (B) = cancel");
+    if (!choices.empty()) {
+        ImGui::TextUnformatted("Keyboard: Up / Down pick, or type a code, Enter = OK, Esc = cancel");
+        ImGui::TextUnformatted("Controller: D-pad pick, Cross (A) = OK, Circle (B) = cancel");
+    } else {
+        ImGui::TextUnformatted("Keyboard: type, Backspace = delete, Enter = OK, Esc = cancel");
+        ImGui::TextUnformatted("Controller: Cross (A) = OK, Circle (B) = cancel");
+    }
     ImGui::End();
 }
 
@@ -3616,6 +3636,12 @@ void ScriptedKeys() {
 }
 
 } // namespace
+
+void SetTextChoices(const std::vector<std::string>& lines, int selected) {
+    std::scoped_lock lock{prompt_mutex};
+    prompt_choices = lines;
+    prompt_selected = selected;
+}
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
     {

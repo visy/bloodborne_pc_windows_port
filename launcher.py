@@ -186,6 +186,8 @@ PARTY_INI_SWITCHES = [
     ("party_guest_gather", "BB_PARTY_GUEST_GATHER", False),
     # 0.7.7 (CL-48ee07): a Chalice Dungeon lamp lists the dungeon's lit lamps for the party (the host's rule, OFF by default)
     ("party_layer_travel", "BB_PARTY_LAYER_TRAVEL", False),
+    # 0.7.8 (CL-420d9f): the Ritual Altar's Chalice Glyph pick list (this player's own, OFF by default)
+    ("party_glyph_list", "BB_PARTY_GLYPH_LIST", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -426,6 +428,13 @@ MY_PARTY_TAB = [
          "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
          "few metres further is attacked too. Takes effect when you host. Default: on (bbport.ini "
          "party_boss_share; in the game: System > My party: Bosses)."),
+    ]),
+    (1, 1, "Chalice", [
+        ("check", "party_glyph_list", "Chalice glyph list",
+         "At the Ritual Altar, Search by Chalice Glyph first shows a list of the party's glyphs to pick from "
+         "(your own dungeons, the guests' dungeons and the shipped patches/chalice_glyphs.json), then the code "
+         "keyboard: typing a code still works. Pick one and the whole party enters that dungeon together. "
+         "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > My party: Chalice)."),
     ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
@@ -2064,6 +2073,7 @@ INI_FLAG_SETTINGS = [
     ("feat_async_pipelines", "async_pipelines", True, "BB_ASYNC_SHADERS"),
     ("feat_gpl", "gpl", False, "BB_GPL"),
     ("feat_compile_indicator", "compile_indicator", True, "BB_COMPILE_INDICATOR"),
+    ("feat_save_commit_async", "save_commit_async", False, "BB_SAVE_COMMIT_ASYNC"),
 ]
 # Every BB_* variable the launcher no longer sets because its setting lives in bbport.ini.
 GAME_SETTING_ENVS = ["BB_UPSCALER", "BB_VOLUMETRIC_RES"] + [env for *_, env in INI_FLAG_SETTINGS]
@@ -3026,6 +3036,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_async_shaders = self.ini_flag_vars["async_pipelines"]
         self.feat_gpl = self.ini_flag_vars["gpl"]
         self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
+        self.feat_save_commit_async = self.ini_flag_vars["save_commit_async"]
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
         self.feat_hud = self.ini_flag_vars["show_hud"]
         self.feat_mouse_keyboard = self.ini_flag_vars["mk_enabled"]
@@ -3520,6 +3531,13 @@ class BloodborneLauncher(tk.Tk):
                     "or the title's party Continue stops), writes every game thread's state and stack to "
                     "out\boot_hang_<time>.log and the log. For reports of a game that stays on a gray or "
                     "black screen at start. Default: off (BB_BOOT_WATCHDOG).")
+
+        self._check(sec, "Background save writes (experimental)", self.feat_save_commit_async,
+                    "May reduce the freezes of a few seconds some guests see when the game saves. Closing a save file hands the flush to disk and the rename to a background thread, so a slow "
+                    "or synced save folder cannot freeze the game for seconds. Experimental. A game setting "
+                    "(bbport.ini save_commit_async; BB_SAVE_COMMIT_ASYNC=1 also forces it). Restart "
+                    "required. Default: off.",
+                    command=lambda: self.save_game_settings("save_commit_async"))
 
         sec = self._section(tab, 1, "Watchdog")
         self._check(sec, "Watchdog", self.feat_watchdog,

@@ -552,6 +552,7 @@ static void RulesPages() {
         BbSettings::Get().party_travel_vote = false;
         BbSettings::Get().party_guest_gather = false;
         BbSettings::Get().party_layer_travel = false;
+        BbSettings::Get().party_glyph_list = false;
         P::Load();
         Advance(300);
         assert(names(u"Party rules: World") == shared);
@@ -613,7 +614,7 @@ static void RulesPages() {
                                        u"Party rules: Enemies", u"My party: Bosses", u"Party rules: Phantoms",
                                        u"My party: Your save",
                                        u"My party: Your items", u"My party: Display", u"My party: Look & notices",
-                                       u"My party: Splitscreen"};
+                                       u"My party: Splitscreen", u"My party: Chalice"};
             for (std::size_t i = 0; i < std::size(group); ++i) assert(at(group[i]) == first + long(i));
         }
         const std::string shared_line = P::ShownSummary(PageNamed(u"Party rules: World"));
@@ -676,6 +677,7 @@ static void RulesPages() {
           std::tuple{u"Party rules: World", u"Host can gather", "party_gather", &BbSettings::Values::party_gather},
           std::tuple{u"Party rules: Travel", u"Guests can gather", "party_guest_gather", &BbSettings::Values::party_guest_gather},
           std::tuple{u"Party rules: PvP & lamps", u"Chalice layer travel", "party_layer_travel", &BbSettings::Values::party_layer_travel},
+          std::tuple{u"My party: Chalice", u"Chalice glyph list", "party_glyph_list", &BbSettings::Values::party_glyph_list},
           std::tuple{u"Party rules: World", u"NPCs as in host's world", "party_npc_mirror", &BbSettings::Values::party_npc_mirror},
           std::tuple{u"Party rules: World", u"Party votes on travel", "party_travel_vote", &BbSettings::Values::party_travel_vote},
           std::tuple{u"Party rules: World", u"NPC hunters fight all", "party_npc_fights", &BbSettings::Values::party_npc_fights},
