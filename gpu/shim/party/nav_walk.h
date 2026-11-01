@@ -560,20 +560,24 @@ inline Stick MakeStick(double angle, double tilt) {
 /// World direction yaw (atan2(dx, dz)) the chr moves in for a stick angle: the camera yaw plus the stick angle.
 /// The camera yaw is the direction the camera looks (player - camera position).
 struct CamModel {
-    double off = 0;       // current offset (world yaw of stick-forward) = raw camera yaw + resid
+    // The stick is relative to the game's input camera. The render camera's matrix gives its yaw `raw` (and follows
+    // every swing of the auto-following camera frame by frame), but after a ride, a warp or a cut the input camera
+    // may differ from it by a while-constant amount (seen: up to 180 deg for seconds). So off = raw + resid, and
+    // resid is trimmed from the observed motion (low-pass, any size): the matrix supplies the swings, the motion the
+    // offset. With no camera at all, off is the observed offset alone.
+    double off = 0;       // current offset (world yaw of stick-forward)
     bool have = false;    // an offset is known
     bool from_cam = false;
-    bool mismatch = false;  // the camera model disagreed with the observed motion: the observation rules
-    double raw = 0;       // atan2(player - camera): the camera orbit centre is not exactly the player, so
-    double resid = 0;     // the observed motion trims it (low-pass, at most 0.5 rad)
-    double obs_off = 0;   // low-pass of the observed offset (log / fallback)
+    bool mismatch = false;  // |resid| is large: the matrix and the motion disagree (a log flag, the walker keeps steering)
+    double raw = 0;
+    double resid = 0;
+    double obs_off = 0;   // low-pass of the observed offset (fallback with no camera)
     int obs_n = 0, bad = 0, agree = 0, recovered = 0;
 
     /// The camera's view direction (render camera block: the matrix row at +0x30 of the block at config +0x50).
     void FromForward(double fx, double fz) {
         if (std::hypot(fx, fz) < 0.2) return;
         raw = std::atan2(fx, fz);
-        if (mismatch) return;  // the observed offset rules until the camera agrees with the motion again (Observe)
         off = Wrap(raw + resid);
         have = from_cam = true;
     }
@@ -582,36 +586,22 @@ struct CamModel {
         if (Dist2(cam, player) < 0.3) return;
         FromForward(double(player.x) - cam.x, double(player.z) - cam.z);
     }
-    /// A step of observed motion under a known stick angle: speed above ~1.5 m/s, stick tilt above 0.7.
-    void Observe(double stick_angle, double vel_yaw) {
+    /// A step of observed motion under a known stick angle (speed above ~1.5 m/s, stick tilt above 0.7).
+    void Observe(double stick_angle, double vel_yaw, double speed = 4.0) {
+        (void)speed;
         const double o = Wrap(vel_yaw - stick_angle);
         obs_off = obs_n == 0 ? o : Wrap(obs_off + 0.25 * Wrap(o - obs_off));
         ++obs_n;
-        if (mismatch) {
-            // the render camera may still be swinging after a warp: take the model back after 12 agreeing samples in a row
-            agree = std::fabs(Wrap(o - raw)) < 0.3 ? agree + 1 : 0;
-            if (agree >= 12) {
+        if (from_cam) {
+            resid = Wrap(resid + 0.3 * Wrap(Wrap(o - raw) - resid));
+            off = Wrap(raw + resid);
+            const bool big = std::fabs(resid) > 0.45;
+            if (big && !mismatch) mismatch = true;
+            if (!big && mismatch) {
                 mismatch = false;
-                from_cam = true;
-                bad = 0;
-                agree = 0;
-                resid = 0;
-                off = raw;
                 ++recovered;
             }
-        } else if (from_cam) {
-            const double err = Wrap(o - raw);
-            bad = std::fabs(err) > 0.45 ? bad + 1 : 0;
-            if (bad >= 8) {  // the camera position is not in the player's frame (or not the view camera)
-                mismatch = true;
-                from_cam = false;
-                resid = 0;
-            } else if (std::fabs(err) <= 0.45) {
-                resid = std::clamp(resid + 0.15 * Wrap(err - resid), -0.5, 0.5);
-                off = Wrap(raw + resid);
-            }
-        }
-        if (!from_cam && obs_n >= 2) {
+        } else if (obs_n >= 2) {
             off = obs_off;
             have = true;
         }
@@ -636,6 +626,7 @@ public:
     const std::vector<V3>& Points() const { return pts_; }
     double Total() const { return total_; }
     double Progress() const { return progress_; }
+    double ArcAt(std::size_t i) const { return i < cum_.size() ? cum_[i] : total_; }
     double Remaining() const { return total_ - progress_; }
     double Cross() const { return cross_; }
 
@@ -776,6 +767,7 @@ public:
     const PathFollower& path() const { return path_; }
     CamModel& cam() { return cam_; }
     double speed() const { return speed_; }
+    const V3& last_target() const { return last_target_; }
 
     WalkOut Tick(const V3& pos, double now, double dt) {
         WalkOut o;
@@ -797,7 +789,7 @@ public:
             const double vx = (pos.x - last_pos_.x) / dt, vz = (pos.z - last_pos_.z) / dt;
             speed_ = std::hypot(vx, vz);
             if (speed_ > 1.5 && state_ == WalkState::Walking && last_tilt_ > 0.7 && !stalled_recent_) {
-                cam_.Observe(last_stick_angle_, std::atan2(vx, vz));
+                cam_.Observe(last_stick_angle_, std::atan2(vx, vz), speed_);
             }
             vel_yaw_ = std::atan2(vx, vz);
         }
@@ -835,7 +827,14 @@ public:
         // pure pursuit
         const double rem = path_.Remaining();
         const double look = std::clamp(cfg.lookahead * std::min(1.0, 0.4 + speed_ / 6.0), cfg.lookahead_min, cfg.lookahead);
+        // the aim point may not cut a corner across something that is not walkable: shorten the lookahead until the
+        // straight run to it lies on the mesh (a hairpin round a parapet, a door frame)
         V3 tgt = path_.Lookahead(std::min(look, rem));
+        for (double f : {1.0, 0.65, 0.4, 0.25}) {
+            tgt = path_.Lookahead(std::min(look * f, rem));
+            if (mesh_->Walkable(pos, tgt, 0.3)) break;
+        }
+        last_target_ = tgt;
         if (Dist2(pos, tgt) < 0.2) tgt = goal;
         const double want = std::atan2(double(tgt.x) - pos.x, double(tgt.z) - pos.z);
         double cmd = want;
@@ -873,6 +872,10 @@ private:
     double stage_until_ = 0, recover_end_ = 0, roll_until_ = 0;
     std::size_t next_goal_ = 0;
     double last_now_ = -1, paused_ = 0;
+    V3 last_target_;
+    std::vector<std::size_t> goal_idx_;
+    std::vector<double> goal_arc_;
+    std::size_t goal_from_ = 0;
 
     WalkOut& Emit(WalkOut& o, double stick_angle, double tilt) {
         o.stick = MakeStick(stick_angle, tilt);
@@ -897,7 +900,9 @@ private:
         std::vector<V3> path;
         V3 cur = pos;
         PlanResult last = PlanResult::Ok;
+        goal_idx_.assign(goals_.size(), 0);
         for (std::size_t i = from_goal; i < goals_.size(); ++i) {
+            if (i > from_goal) goal_idx_[i - 1] = path.empty() ? 0 : path.size() - 1;
             PlanInfo pi;
             std::vector<V3> leg;
             const PlanResult r = mesh_->Plan(cur, goals_[i], &leg, &pi, 2.5, 4.0, goal_y_known_[i]);
@@ -919,6 +924,7 @@ private:
             if (i + 1 == goals_.size()) {
                 stats.snap_goal = pi.snap_goal;
             }
+            leg = mesh_->Smooth(leg);  // a route's waypoints are known-good spots: only inside a leg, never across one
             if (!path.empty() && !leg.empty()) leg.erase(leg.begin());
             path.insert(path.end(), leg.begin(), leg.end());
             cur = leg.empty() ? cur : leg.back();
@@ -930,8 +936,12 @@ private:
         }
         (void)last;
         if (path.empty()) return PlanResult::NoRoute;
-        path_.Set(mesh_->Smooth(path));
+        goal_idx_[goals_.size() - 1] = path.size() - 1;
+        goal_from_ = from_goal;
+        path_.Set(goals_.size() - from_goal > 1 ? std::move(path) : mesh_->Smooth(path));
         stats.path_len = path_.Total();
+        goal_arc_.assign(goals_.size(), 0.0);
+        for (std::size_t i = from_goal; i < goals_.size(); ++i) goal_arc_[i] = path_.ArcAt(goal_idx_[i]);
         return PlanResult::Ok;
     }
 
@@ -952,7 +962,10 @@ private:
 
     // Goals already passed: every waypoint closer than 2.5 m along the walk is behind us.
     std::size_t PassedGoals(const V3& pos) {
-        while (next_goal_ + 1 < goals_.size() && Dist2(pos, goals_[next_goal_]) < 2.5) ++next_goal_;
+        (void)pos;
+        // a goal is passed when the walk's progress along the path is beyond it (not only when the player is near it)
+        if (next_goal_ < goal_from_) next_goal_ = goal_from_;
+        while (next_goal_ + 1 < goals_.size() && next_goal_ < goal_arc_.size() && goal_arc_[next_goal_] < path_.Progress() + 0.5) ++next_goal_;
         return next_goal_;
     }
 

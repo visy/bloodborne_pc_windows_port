@@ -84,6 +84,35 @@ class Client(unittest.TestCase):
         shown = [str(v) for r in rows for k, v in r.items() if k not in ("address",)]
         self.assertFalse(any("10.8." in s for s in shown), shown)
 
+    def test_open_game_joins_without_a_password(self):
+        """0.7.8: a lobby game without a password is open (joined by its address alone); a launcher asks for no password."""
+        lob = nw.Lobby("10.8.0.0/16")
+        lob.handle(nw.encode_announce("Open", 9400, 1, 4, "0.7.8 (abc)", False), "10.8.0.30", 0)
+        lob.handle(nw.encode_announce("Locked", 9401, 1, 4, "0.7.8 (abc)", True), "10.8.0.31", 0)
+        _, _, ents = nw.parse_reply(lob.handle(nw.encode_list(0), "10.8.0.99", 1))
+        rows = {r["name"]: r for r in self.L.lobby_rows(ents, "0.7.8")}
+        self.assertEqual((rows["Open"]["password"], rows["Open"]["password_set"]), ("open", False))
+        self.assertEqual((rows["Locked"]["password"], rows["Locked"]["password_set"]), ("yes", True))
+
+        class Stub:  # the launcher's own checks, without a window
+            _vpn_join_addr = "10.8.0.30:9400"
+            _vpn_join_needs_password = False
+
+            def party_mode(self):
+                return "join"
+
+            class _V:
+                def __init__(self, v):
+                    self.v = v
+
+                def get(self):
+                    return self.v
+            party_name_var, party_port_var, party_password_var = _V("Alice"), _V("9307"), _V("")
+        problems = self.L.BloodborneLauncher.party_problems(Stub())
+        self.assertEqual(problems, [])
+        Stub._vpn_join_needs_password = True
+        self.assertEqual(self.L.BloodborneLauncher.party_problems(Stub()), ["Enter the game's password."])
+
     def test_tunnel_ip(self):
         f = self.L.lobby_tunnel_ip
         self.assertEqual(f(["192.168.1.2", "10.8.0.7"]), "10.8.0.7")
