@@ -141,7 +141,9 @@ static void TestStick() {
     // a camera model that disagrees with the motion is dropped for the observation
     CamModel w;
     w.FromCamera({0, 0, -5}, {0, 0, 0});
-    for (int i = 0; i < 12; ++i) w.Observe(0.0, 1.5);
+    for (int i = 0; i < 12; ++i) w.Observe(0.0, 1.5, 1.8);  // a slow start: not held against the camera
+    CHECK(!w.mismatch);
+    for (int i = 0; i < 40; ++i) w.Observe(0.0, 1.5, 4.0);
     CHECK(w.mismatch && !w.from_cam && std::fabs(w.off - 1.5) < 0.05);
     w.FromCamera({0, 0, -5}, {0, 0, 0});
     CHECK(std::fabs(w.off - 1.5) < 0.05);
