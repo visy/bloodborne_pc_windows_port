@@ -6687,7 +6687,7 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
     static double next_players = 0;
     const double now = Now();
     if (now < next_players) return;
-    next_players = now + 5.0;
+    next_players = now + 2.0;
     const u64 bank = Slot(0x553b098);
     std::vector<u64> v;
     const u64 b = bank ? Field<u64>(bank, 8) : 0, e = bank ? Field<u64>(bank, 0x10) : 0;
@@ -6705,10 +6705,19 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
     std::string ps;
     for (u64 c : players) {
         const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
-        char pb[128];
-        std::snprintf(pb, sizeof pb, " [chr %08x hp %d team %d bank %d f1e1 %08x]", Field<u32>(c, 8), ChrHp(c),
-                      Field<int>(c, 0x88), ent && std::find(v.begin(), v.end(), ent) != v.end() ? 1 : 0,
-                      Field<u32>(c, 0x1e1));
+        // the bank entry as the target search 0x12ADC50 filters it: vfunc +0x78 (valid), [3] +0x20 flags (bits 1 / 4
+        // exclude, bit 2 needs [3]+0x30 -> +0x18 bit 0), [3] +0x10 (must be 4), [3]+0x30 -> +0xD bit 0x10 (excludes)
+        int valid = -1;
+        u64 evt = 0, efn = 0;
+        if (ent && SafeGet(ent, &evt) && evt && SafeGet(evt + 0x78, &efn) && efn)
+            valid = reinterpret_cast<bool(BB_COOP_SYSV*)(u64)>(efn)(ent) ? 1 : 0;
+        const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
+        char pb[256];
+        std::snprintf(pb, sizeof pb, " [chr %08x hp %d team %d bank %d f1e1 %08x entry valid %d f20 %02x k10 %d o0d %02x o18 %02x]",
+                      Field<u32>(c, 8), ChrHp(c), Field<int>(c, 0x88),
+                      ent && std::find(v.begin(), v.end(), ent) != v.end() ? 1 : 0, Field<u32>(c, 0x1e1), valid,
+                      e3 ? unsigned(Field<u8>(e3, 0x20)) : 0xffu, e3 ? Field<int>(e3, 0x10) : -1,
+                      e30 ? unsigned(Field<u8>(e30, 0xd)) : 0xffu, e30 ? unsigned(Field<u8>(e30, 0x18)) : 0xffu);
         ps += pb;
     }
     Log("boss target dump %s: players (bank %zu entries):%s", tag, v.size(), ps.c_str());
