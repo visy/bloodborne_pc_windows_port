@@ -10334,6 +10334,13 @@ constexpr u64 kChannelRequestByIdFn = 0x1e65290;  // DLRefCounted* FUN(out*, con
 /// reference taken for the caller; 0 when the game's network is not usable for it (FrpgNetMan +8 clear, or +0x9f6 / +0x9f8 /
 /// +0xa50 set). The handler of a dungeon summon makes the same call: a null answer there leaves the quick join without its
 /// channel, and the guest loads the host's Chalice Dungeon empty (NW-5e27806). Asking first tells a delivery to wait.
+/// Test aid BB_PARTY_CHALICE_MSG_TEST=offline|stop: the guest's game reads as offline / its empty-load count is forced to the
+/// stop (smoke cam / camo: the notices appear).
+bool ChaliceMsgTest(const char* what) {
+    const char* v = std::getenv("BB_PARTY_CHALICE_MSG_TEST");
+    return v && std::strcmp(v, what) == 0;
+}
+
 u64 ChannelRequestById(u64 id) {
     u64 out = 0;
     reinterpret_cast<u64*(BB_COOP_SYSV*)(u64*, const u64*)>(Guest(kChannelRequestByIdFn))(&out, &id);
@@ -10359,17 +10366,37 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
     if (dungeon_room) {
         // A Chalice Dungeon: the game must be able to make the channel request by id, or the summon joins without the
         // dungeon (an empty m29: the grey screen). Ask first; not yet usable: the delivery waits (3 tries).
-        const u64 probe = ChannelRequestById(room.channel);
+        static int offline_fails = 0;
+        static bool offline_shown = false;
+        const bool test_offline = ChaliceMsgTest("offline");  // test aid: the game reads as offline
+        const u64 probe = test_offline ? 0 : ChannelRequestById(room.channel);
         if (!probe) {
             const u64 nm = Field<u64>(Guest(kNetMan), 0, 0);
+            const unsigned online = test_offline ? 0 : Field<u8>(nm, 0x8, 0xff);
+            const dsummon::NoChannel why = dsummon::WhyNoChannel(online, Field<u8>(nm, 0x9f6, 0), Field<u8>(nm, 0x9f8, 0),
+                                                                  Field<u8>(nm, 0xa50, 0));
             Log("direct summon: Chalice Dungeon %llu: the game cannot make the channel request yet (FrpgNetMan +8 %u, +0x9f6 %u, "
-                "+0x9f8 %u, +0xa50 %u): not delivered, tried again",
-                ull(room.channel), Field<u8>(nm, 0x8, 0xff), Field<u8>(nm, 0x9f6, 0xff), Field<u8>(nm, 0x9f8, 0xff),
-                Field<u8>(nm, 0xa50, 0xff));
-            party::status::SetAlert("This game's network is not ready to fetch the host's Chalice Dungeon yet; the summon is "
-                             "tried again in a moment.");
+                "+0x9f8 %u, +0xa50 %u): %s, not delivered, tried again",
+                ull(room.channel), online, Field<u8>(nm, 0x9f6, 0xff), Field<u8>(nm, 0x9f8, 0xff), Field<u8>(nm, 0xa50, 0xff),
+                why == dsummon::NoChannel::Offline ? "this game is OFFLINE" : "busy");
+            if (why == dsummon::NoChannel::Offline) ++offline_fails;
+            else offline_fails = 0;
+            if (dsummon::OfflineNoticeDue(why, offline_fails)) {
+                if (!offline_shown) {
+                    offline_shown = true;
+                    Log("chalice: notice shown: %s (this game never came online: no channel request is possible; a region / "
+                        "online patch is the likely cause)", dsummon::OfflineTitle());
+                    party::status::SetAlert(dsummon::GuestNotice(dsummon::StuckWhy::Offline));
+                    Send(0, dsummon::EncodeStuck(dsummon::StuckWhy::Offline));
+                }
+            } else if (why != dsummon::NoChannel::Offline) {
+                party::status::SetAlert("This game's network is not ready to fetch the host's Chalice Dungeon yet; the summon is "
+                                 "tried again in a moment.");
+            }
             return false;
         }
+        offline_fails = 0;
+        offline_shown = false;
         ReleaseRef(probe);
     }
     u8 id[8] = {};
@@ -10754,6 +10781,11 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
     coop::MemberRoster(0, &host_state, &host_map);
     const bool empty = Role() == RoleClient && s.world_up && !s.loading && !dsummon::MapKnown(s.map_id) &&
                        dsummon::ChaliceMap(host_map);
+    if (ChaliceMsgTest("stop") && Role() != RoleHost && Role() != RoleClient && s.world_up && !s.loading && g_empty_loads.load() < dsummon::kMaxEmptyLoads) {
+        g_empty_loads = dsummon::kMaxEmptyLoads;  // test aid: two empty loads, without making them
+        ChaliceSummonStopped();                   // the notice at once (no summon needed)
+        return;
+    }
     if (s.world_up && !s.loading) {
         const int was = g_empty_loads.load();
         const int now_n = dsummon::EmptyLoadsAfter(was, dsummon::ChaliceMap(s.map_id) && dsummon::MapKnown(s.map_id),
@@ -10932,6 +10964,19 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
         }
         party::bridge::OnHostBusy(dsummon::BusyText(b, false), b == dsummon::Busy::Cutscene, StoryMirrorPlaying());
         Log("A11: the host's hold: %s%s", dsummon::BusyWord(b), b == dsummon::Busy::None ? " (its bell rings again)" : "");
+        return;
+    }
+    case dsummon::Kind::Stuck: {  // host: a guest's Chalice summons stopped (empty loads / offline): tell the host
+        dsummon::StuckWhy why = dsummon::StuckWhy::Empty;
+        if (Role() != RoleHost || !dsummon::DecodeStuck(body, &why)) return;
+        std::string name;
+        {
+            std::lock_guard<std::mutex> lk(DS().mu);
+            if (DS().names.count(from_slot)) name = DS().names[from_slot];
+        }
+        Log("chalice: notice shown: Chalice summon stopped for a guest (slot %d, %s)", from_slot,
+            why == dsummon::StuckWhy::Offline ? "offline" : "empty loads");
+        party::status::SetAlert(dsummon::HostNotice(why, name));
         return;
     }
     case dsummon::Kind::Req: {
@@ -13571,10 +13616,9 @@ bool ChaliceSummonStopped() {
     if (!g_empty_notice.exchange(true)) {
         Log("chalice: %d empty loads of the host's Chalice Dungeon in a row: no more summons for it (Party > Rejoin tries again)",
             g_empty_loads.load());
-        party::status::SetAlert("This game loaded the host's Chalice Dungeon empty twice, so it stops summoning into it. You "
-                         "stay in your own world. Likely cause: a patch that changes the game's region or its network timers (for "
-                         "example Unlock Game Region or an FPS patch from another list) on this PC or the host's: turn it off "
-                         "on both. Party > Rejoin tries again.");
+        Log("chalice: notice shown: %s", dsummon::StopTitle());
+        party::status::SetAlert(dsummon::GuestNotice(dsummon::StuckWhy::Empty));
+        Send(0, dsummon::EncodeStuck(dsummon::StuckWhy::Empty));
     }
     return true;
 }
