@@ -5211,11 +5211,11 @@ void PartyDirector::Tick() {
         g_host_prologue.store(false);
     }
     // C4 rot, D7 enemy scaling, E2 extras: the host's rules for the party (party_balance.h).
-    if (role != PartyRole::None) balance::Tick(s, link, role == PartyRole::Host);
-    if (role != PartyRole::None) npcfight::Tick(s, role == PartyRole::Host);  // D11: the assassins on a guest
-    if (role != PartyRole::None) enemyai::Tick(s, role == PartyRole::Guest);  // a lone guest's enemies' AI
+    if (role != PartyRole::None) PARTY_PERF_CALL(balance::Tick(s, link, role == PartyRole::Host));
+    if (role != PartyRole::None) PARTY_PERF_CALL(npcfight::Tick(s, role == PartyRole::Host));  // D11: the assassins on a guest
+    if (role != PartyRole::None) PARTY_PERF_CALL(enemyai::Tick(s, role == PartyRole::Guest));  // a lone guest's enemies' AI
     // I1 friendly fire / PvP (party_pvp.h): the party rule on this game's team tables.
-    if (role != PartyRole::None) pvp::Tick(s, role == PartyRole::Host);
+    if (role != PartyRole::None) PARTY_PERF_CALL(pvp::Tick(s, role == PartyRole::Host));
     // B1: the host's warps go to every guest (reliable: replayed to a member who reconnects).
     if (link && role == PartyRole::Guest) {
         StoryIntent up;
@@ -5387,17 +5387,17 @@ void PartyDirector::Tick() {
     // Phantoms as full players: the host's lamp / rest / boss Insight out, the guest's refill and
     // Insight in (party_phantom.h).
     zone.Next(perf::Zone::Phantom);
-    PhantomTick(link);
+    PARTY_PERF_CALL(PhantomTick(link));
     // Guests use the Doll, shops and workshop in the host's Dream (party_guestsvc.h).
-    GuestServicesTick(s, link);
+    PARTY_PERF_CALL(GuestServicesTick(s, link));
     // A guest's levers / doors / NPC talk change the host's world (party_worldact.h).
-    worldact::Tick(s, link);
-    npctalk::Tick(s, link);  // shared NPC dialogue (party_npctalk.h)
-    split::Tick(s, link);  // split travel: the lamp choice dialog (party_split.h)
+    PARTY_PERF_CALL(worldact::Tick(s, link));
+    PARTY_PERF_CALL(npctalk::Tick(s, link));  // shared NPC dialogue (party_npctalk.h)
+    PARTY_PERF_CALL(split::Tick(s, link));  // split travel: the lamp choice dialog (party_split.h)
     if (role != PartyRole::None) {
-        gather::Tick(s, link, role == PartyRole::Host);  // I5 Gather the party (party_gather.h)
-        vote::Tick(s, link, role == PartyRole::Host);    // 0.7.3 lamp travel voting (party_vote.h)
-        stayhome::Tick(link, role == PartyRole::Host);   // CL-adeb50 stay in my world
+        PARTY_PERF_CALL(gather::Tick(s, link, role == PartyRole::Host));  // I5 Gather the party (party_gather.h)
+        PARTY_PERF_CALL(vote::Tick(s, link, role == PartyRole::Host));    // 0.7.3 lamp travel voting (party_vote.h)
+        PARTY_PERF_CALL(stayhome::Tick(link, role == PartyRole::Host));   // CL-adeb50 stay in my world
     }
     if (role == PartyRole::Host) {
         AltarAutopilotTick(s);  // "Enter the party's dungeon" in one press
