@@ -2977,8 +2977,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         float px = 0, pz = 0;
         bool have = false;
         float near_r = 0;
-        if (step.args.find('.') != std::string::npos || (step.args.find(':') != std::string::npos &&
-                                                         std::strtoul(step.args.c_str(), nullptr, 10) < 1000000)) {
+        if (std::strtoul(step.args.c_str(), nullptr, 10) < 1000000) {  // X:Z (an entity id has 7+ digits)
             have = std::sscanf(step.args.c_str(), "%f:%f", &px, &pz) == 2;
             at[0] = px, at[2] = pz;
         } else if (std::sscanf(step.args.c_str(), "%u:%f", &entity, &near_r) >= 1 && entity) {
