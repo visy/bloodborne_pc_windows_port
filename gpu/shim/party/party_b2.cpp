@@ -6752,13 +6752,21 @@ bool BossHateRecord(u64 boss, u64 chr) {
     if (!holder || !Field<u64>(holder, 8)) return false;
     alignas(16) static std::uint8_t hit[0x200];
     std::memset(hit, 0, sizeof hit);
-    reinterpret_cast<u64(BB_COOP_SYSV*)(u64, u64, u64)>(Guest(0x12a9230))(holder, chr, reinterpret_cast<u64>(hit));
+    const u64 r = reinterpret_cast<u64(BB_COOP_SYSV*)(u64, u64, u64)>(Guest(0x12a9230))(holder, chr, reinterpret_cast<u64>(hit));
     const u32 want = Field<u32>(chr, 8);
+    bool found = false;
     u64 n = Field<u64>(holder, 0x18);
-    for (int k = 0; n && k < 16; ++k, n = Field<u64>(n, 8)) {
-        if (Field<u32>(n, 0x28) == 1 && (Field<u8>(n, 2) & 0x7f) == 1 && Field<u32>(n, 0x50) == want) return true;
+    for (int k = 0; n && k < 16 && !found; ++k, n = Field<u64>(n, 8)) {
+        found = Field<u32>(n, 0x28) == 1 && (Field<u8>(n, 2) & 0x7f) == 1 && Field<u32>(n, 0x50) == want;
     }
-    return false;
+    static u64 last_key = ~0ull;
+    const u64 key = (u64(want) << 32) ^ (r << 1) ^ u64(found);
+    if (key != last_key) {
+        last_key = key;
+        Log("boss hate record: %08x for chr %08x: 0x12A9230 returned %#llx, entry %s", Field<u32>(boss, 8), want, ull(r),
+            found ? "there" : "MISSING");
+    }
+    return found;
 }
 
 /// Any role, main thread: while a boss bar is up, one line every 10 s per boss with its position, its latest

@@ -2093,7 +2093,7 @@ void TestAidTick(Test& t, Clock::time_point now) {
                     Log("test: fog: NOT through: no fog prompt (walk over or 25 s) (at (%.2f, %.2f), %.2f m before the fog point)",
                         double(me[0]), double(me[2]), double(-past));
                 }
-            } else if (past > 0.8f && b2::BossBarLine(nullptr)) {
+            } else if (past > 0.3f && b2::BossBarLine(nullptr)) {
                 t.fog_on = false;
                 Log("test: fog: through the fog at (%.2f, %.2f), %.2f m past it, boss bar up", double(me[0]), double(me[2]),
                     double(past));
