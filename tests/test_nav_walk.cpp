@@ -138,18 +138,16 @@ static void TestStick() {
     o.Observe(0.2, 1.0);
     o.Observe(0.2, 1.0);
     CHECK(o.have && std::fabs(o.off - 0.8) < 1e-6);
-    // a camera model that disagrees with the motion is dropped for the observation
+    // a constant 150 degree disagreement between the matrix and the motion is learned, and the swings still come
+    // from the matrix: off = raw + resid
     CamModel w;
-    w.FromCamera({0, 0, -5}, {0, 0, 0});
-    for (int i = 0; i < 12; ++i) w.Observe(0.0, 1.5);
-    CHECK(w.mismatch && !w.from_cam && std::fabs(w.off - 1.5) < 0.05);
-    w.FromCamera({0, 0, -5}, {0, 0, 0});
-    CHECK(std::fabs(w.off - 1.5) < 0.05);
-    // ... and taken back once the camera agrees with the motion again
-    for (int i = 0; i < 12; ++i) w.Observe(0.0, 0.0);
-    CHECK(!w.mismatch && w.from_cam && w.recovered == 1);
-    w.FromCamera({0, 0, -5}, {0, 0, 0});
-    CHECK(std::fabs(w.off) < 1e-9);
+    w.FromForward(0.0, 1.0);  // raw 0
+    for (int i = 0; i < 40; ++i) w.Observe(0.0, 2.6, 4.0);  // the motion says 2.6 rad
+    CHECK(w.mismatch && std::fabs(w.resid - 2.6) < 0.05);
+    w.FromForward(1.0, 0.0);  // the camera swings 90 degrees: off follows at once
+    CHECK(std::fabs(Wrap(w.off - (kPi / 2 + 2.6))) < 0.05);
+    for (int i = 0; i < 40; ++i) w.Observe(0.0, kPi / 2, 4.0);  // and when the motion agrees with the matrix again
+    CHECK(!w.mismatch && w.recovered == 1 && std::fabs(w.resid) < 0.45);
 }
 
 static void TestFollower() {
@@ -235,6 +233,12 @@ static void TestWaypointHints() {
     Sim sim{{3, 0, 3}, 0.4};
     CHECK(w.Start(&m, sim.pos, {{9, 0, 36}, {20, 0, 36}, {20, 0, 3}}, {false, false, false}, 1.0, 0) == PlanResult::Ok);
     CHECK(w.stats.path_len > 60);
+    // every route waypoint (known walkable) stays on the path: the shortcut never skips one
+    for (const V3& g : std::vector<V3>{{9, 0, 36}, {20, 0, 36}}) {
+        double best = 1e9;
+        for (const V3& p : w.path().Points()) best = std::min(best, Dist2(p, g));
+        CHECK(best < 0.5);
+    }
     const RunResult r = Run(w, sim, true);
     CHECK(r.done && r.warps == 0);
 }
@@ -273,6 +277,47 @@ static void TestOffMeshTail() {
         const RunResult r = Run(w, sim, true);
         CHECK(r.done && Dist2(sim.pos, {41.5f, 0, 20}) <= 0.35);
     }
+}
+
+static void TestCornerAim() {
+    NavMesh m = Grid(10, 10, ShortWall);  // the wall x 8..10 (m), z 0..16
+    Walker w;
+    Sim sim{{7, 0, 12}, 0.0};
+    CHECK(w.Start(&m, sim.pos, {{14, 0, 2}}, {true}, 1.0, 0) == PlanResult::Ok);
+    double now = 0;
+    for (int i = 0; i < 400 && w.state() == WalkState::Walking; ++i, now += 0.05) {
+        w.cam().FromForward(0, 1);
+        WalkOut o = w.Tick(sim.pos, now, 0.05);
+        // every aim point is reachable in a straight line over the mesh (never across the wall)
+        if (o.state == WalkState::Walking) {
+            for (int k = 1; k < 10; ++k) {  // the aim line stays out of the wall block (x 8..10, z 0..16)
+                const double x = sim.pos.x + (w.last_target().x - sim.pos.x) * k / 10.0;
+                const double z = sim.pos.z + (w.last_target().z - sim.pos.z) * k / 10.0;
+                CHECK(!(x > 8.05 && x < 9.95 && z < 15.95));
+            }
+        }
+        sim.Step(o, 0.05);
+    }
+    CHECK(w.state() == WalkState::Done);
+}
+
+static void TestReplanKeepsDirection() {
+    NavMesh m = Grid(20, 20, nullptr);
+    Walker w;
+    Sim sim{{2, 0, 2}, 0.0};
+    CHECK(w.Start(&m, sim.pos, {{10, 0, 2}, {20, 0, 2}, {30, 0, 2}, {38, 0, 2}}, {true, true, true, true}, 1.0, 0) == PlanResult::Ok);
+    double now = 0;
+    int tick = 0;
+    double len_at_stall = -1;
+    for (; tick < 600 && w.state() == WalkState::Walking; ++tick, now += 0.05) {
+        w.cam().FromForward(0, 1);
+        sim.blocked = sim.pos.x > 24 && sim.pos.x < 25.5 && w.stats.replans == 0;  // stuck at x 24 for a while
+        WalkOut o = w.Tick(sim.pos, now, 0.05);
+        if (w.stats.replans == 1 && len_at_stall < 0) len_at_stall = w.path().Total();
+        sim.Step(o, 0.05);
+    }
+    CHECK(w.state() == WalkState::Done);
+    CHECK(len_at_stall > 0 && len_at_stall < 16.5);  // from x 24 to 38 (14 m), not back through the passed goals
 }
 
 static void TestPause() {
@@ -360,6 +405,8 @@ int main() {
     TestUnreachable();
     TestOffMeshTail();
     TestPause();
+    TestReplanKeepsDirection();
+    TestCornerAim();
     TestStallRecovery();
     TestOffCorridorReplan();
     TestTurnRateAndEase();

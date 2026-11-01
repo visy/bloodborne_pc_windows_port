@@ -296,9 +296,20 @@ discovery* (launcher, or *System > My party: Look & notices*).
 ### Nightwatch VPN games
 
 On the Nightwatch VPN (opt-in, see docs/party/nightwatch_vpn.md) a host with a password can list the game
-for other VPN players: turn on *Nightwatch VPN lobby* (launcher Party tab, or *System > Party network*).
+for other VPN players: turn on *Nightwatch VPN lobby* (launcher Party tab, or *System > Party access*).
 The launcher's **Nightwatch VPN games** list shows the host's character name, slots, password flag and
-version, never an address; **Join** asks for the password and starts the game as a guest. Off by default.
+version, never an address; **Join** asks for the password (not for an *open* game, see below) and starts the game as a guest. Off by default.
+
+### Open party (no password, LAN or VPN)
+
+A host with no password can let players on its own network join by plain address (`192.168.1.5:9307`, a Radmin or
+Tailscale address), without a party code. Turn on *Open party* (launcher Party tab, host only and greyed out while a
+password is set, or *System > Party access > Open party (no password)*, live; bbport.ini `party_open`, `BB_PARTY_OPEN`).
+Off by default. The host accepts a plain-address join only from a peer on the subnet of one of its private or VPN
+adapters; a public address, the router itself and relayed guests are refused. A password always wins: with one, the
+open party is off. Everyone on those networks can join and holds the same link key, so the encryption does not protect
+an open party from them: use it on networks you trust. The host's LAN announcement and the Nightwatch VPN lobby mark such
+a game *open*; the launcher's lists then join it without asking for a password. Rules: docs/party/open_party.md.
 
 ### Connection doctor (`net_doctor.bat`)
 

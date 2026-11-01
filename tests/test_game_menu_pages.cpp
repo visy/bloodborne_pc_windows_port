@@ -399,6 +399,7 @@ static void Party() {
     const P::Row& hud = RowNamed(PageNamed(u"My party: Display"), u"Party HUD");
     assert(hud.visible && hud.visible());
     RowNamed(PageNamed(u"Party network"), u"Find via public DHT");
+    RowNamed(PageNamed(u"Party access"), u"Open party (no password)");
     RowNamed(PageNamed(u"My party: Look & notices"), u"Join/leave notices");
     RowNamed(PageNamed(u"Party rules: Travel"), u"Guests use lamps");
     assert(std::u16string(P::Text(members.rows[0].name, false)) == u"Hunter0 (host) (you)");
@@ -514,7 +515,8 @@ static void RulesPages() {
                       u"Guest gets up, no load", u"Respawn at host's lamp", u"Refill vials, bullets"};
     // 0.7.2: rot and what else cleanses it, the host's rules, on a page of their own.
     const V rot = {u"Rot on death", u"Rot: boss kill cleanses", u"Rot: kill your killer", u"Rot: echoes back"};
-    const V world = {u"Friendly fire / PvP", u"Full health in PvP", u"Shared lamps", u"Guests bring their lamps"};
+    const V world = {u"Friendly fire / PvP", u"Full health in PvP", u"Shared lamps", u"Guests bring their lamps",
+                   u"Chalice layer travel"};
     const V travel = {u"Guests use lamps", u"Guests use Hunter's Mark", u"Open world", u"Stay in Chalice Dungeons",
                       u"Guests can gather", u"Cutscenes live with host"};
     const V look = {u"No companion glow", u"Ping in the party list", u"Join/leave notices", u"Share NPC dialogue",
