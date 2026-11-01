@@ -4193,7 +4193,10 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                            // player off it (the altar prompt flashed for 1 s and the Cross found nothing).
                            const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                                            Clock::now().time_since_epoch()).count();
-                           if (t.ap_taps == 0 && seen > 0 && now_ms - seen <= 6000) {
+                           // flaky2078: only a prompt that shows NOW counts (the text is looked up every frame it is up): the
+                           // final side steps of the walk (jitter) can lose a prompt that showed 1-6 s ago, and the
+                           // seq's first Cross then found nothing (cao STUCK at step 5).
+                           if (t.ap_taps == 0 && seen > 0 && now_ms - seen <= 600) {
                                Log("test: approach: '%s' already shows at the arrival (no tap)", t.ap_prompt.c_str());
                                t.ap_prompt_seen = true;
                                return false;
