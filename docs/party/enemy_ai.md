@@ -146,3 +146,16 @@ Smoke phase `bg` (group `boss_guest`, Laurence, BR fixture, host god beside the 
 both games, the boss turns to the guest and its hit lands on the guest's game 4.5 s after the turn (both screens looked at).
 Tune knobs: BB_BG_HOSTDIST, BB_BG_GUESTDIST, BB_BG_LAP. Not reproduced / unproven: the intermittent "stuck on the statue"
 (CL-7b1d4e), the guest not starting the fight (every guest log with a fight shows the bar).
+
+### Guest-first Gascoigne: the boss ignores a guest at some spots (0.7.8, bossg078, still open)
+
+Reproduced deterministically: smoke `hg` with `BB_HG_ORDER=guest BB_HG_MORTAL=1 BB_HG_HOSTDIST=1 BB_HG_GUESTAT=-42.1:-40.76:77.3`
+(guest 7-8 m from the boss at a fixed spot; host god beside the boss): every ChangeTarget answers ok, the boss never leaves the
+host (0.8 m for 140+ s) and the guest's HP stays flat. The same run with the guest 1.5 m to the east (-40.5:-40.76:77.6,
+what `guest_chr=...:8` gave on most runs, 1 in ~4 runs landed on the bad spot because the boss's position varies) is adopted at
+once and the guest dies within 20 s. Boss AI target list (`BB_PARTY_AI_LOG=1`, "boss target dump"): AI chr vfunc+0x160 -> +0xB0 ->
++0x560 -> entries from +0x18 (next +8, flags byte +2, kind +0x28, ref +0x48, handle at +0x50, slot ptr +0x58). One entry with
+flags 0x87 is the active target; a good ChangeTarget puts the chosen chr's handle there ~1 s later. At the bad spot, and for a guest
+19-20 m away anywhere, it never does. Tried and ruled out: re-asserting ChangeTarget up to 3x per turn (no effect); writing the
+guest's handle/slot into the 0x87 entry every frame (it holds, the boss still does not move: that entry is a view, the AI goals do
+not follow it). So the rejection is inside the AI's own goal / perception logic, position dependent (sight / path / region). Open.
