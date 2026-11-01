@@ -4468,10 +4468,11 @@ void StayActionHoldTick(const GameSnapshot& s, double now) {
             next_check = now + 0.25;
             bool f4047 = false;
             const bool f_ok = ReadEventFlag(4047, &f4047);
-            char b[200];
-            std::snprintf(b, sizeof b, "ctx %#llx wait %d hold %d evstate %d flag4047 %s role %d %s%s", ull(ctx), wait, hold,
+            char b[240];
+            // chr type: the player ChrIns +0x78 (EMEVD 4[3](10000, type) tests it; a host's fog waits for 0)
+            std::snprintf(b, sizeof b, "ctx %#llx wait %d hold %d evstate %d flag4047 %s role %d chrtype %d %s%s", ull(ctx), wait, hold,
                           Field<int>(Slot(0x553b0d8), 0, -1), f_ok ? (f4047 ? "1" : "0") : "?", Role(),
-                          MapName(s.map_id).c_str(), s.loading ? " loading" : "");
+                          s.player ? Field<int>(s.player, 0x78, -1) : -1, MapName(s.map_id).c_str(), s.loading ? " loading" : "");
             if (last != b) {
                 last = b;
                 Log("hold log: %s", b);
