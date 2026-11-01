@@ -5298,19 +5298,20 @@ def check_rwt(v, L):
 # (2) The guest without the Rune Workshop Tool stands at the Memory Altar (t210699): the gate keeps it vanilla ("kept vanilla").
 def phase_gag(only):
     host = ",".join(["god", "host_flag=72100120@8", "log_flag=72100120/72100121"])
-    guest = ",".join(["god", "log_flag=72100120/72100121"])
+    guest = ",".join(["god", "guest_flag=72100121@16", "log_flag=72100120/72100121"])
     return dict(
         name="gag", seconds=200, count=2, headless=0,
         ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
               "1:BB_PARTY_DIRECTOR_TEST=" + guest,
               "1:BB_PARTY_GUESTSVC_TEST=warp=talk:210699;open;keys=left,cross,w,w"],
-        crash=[], until=[r"1:Memory Altar \(t210699\): kept vanilla", r"1:test: flags 72100120=1"], until_hold=25,
+        crash=[], until=[r"1:Memory Altar \(t210699\): kept vanilla", r"0:test: flags 72100120=1 72100121=1"], until_hold=25,
     )
 
 
 def check_gag(v, L):
     need(v, L, "gag join: 2 players", 0, r"cooperators 0 -> 1")
     need(v, L, "gag the guest reads Gehrman's flag 72100120 as set by the host", 1, r"test: flags 72100120=1")
+    need(v, L, "gag the guest's own Gehrman flag 72100121 reaches the host (both directions)", 0, r"test: flags 72100120=1 72100121=1")
     need(v, L, "gag the Memory Altar is kept vanilla for a guest without the tool", 1, r"Memory Altar \(t210699\): kept vanilla")
     none_of(v, L, "gag the guest's altar talk is not overridden", r"Memory Altar \(t210699\): a guest may use it", insts=(1,))
     check_common(v, L, "gag")
