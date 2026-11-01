@@ -3617,7 +3617,11 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         static const std::pair<int, const char*> kOath[] = {
             {6100, "Corruption"}, {6110, "Radiance"}, {6120, "Hunter"}, {6142, "Impurity"}, {250, "BeastEmbrace"},
             {252, "BeastEmbrace2"}, {253, "BeastEmbrace3"}, {6661, "BeastEmbrace4"}, {180050, "BeastResist"}, {255, "Milkweed"},
-            {257, "Milkweed2"}, {180060, "MilkweedDrop"}};
+            {257, "Milkweed2"}, {180060, "MilkweedDrop"},
+            // the numbers of Radiance / Corruption / Hunter (covnpc078): the oath gem's SECOND effect row (GemeffectParam
+            // 2107002 / 2108002 / 2110002): Radiance transfusionHpRecoverRate 1.02, Corruption changeHpPoint -1 every 2 s
+            // (conditionHp 12.5), Hunter staminaRecoverChangeSpeed 3
+            {180000, "RadianceVial"}, {180010, "CorruptionDrain"}, {180020, "HunterStamina"}};
         std::string on;
         static std::set<int> dumped;
         for (const auto& [e, n] : kOath) {
@@ -3655,8 +3659,20 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             Log("test: oath row %s(%d): node row %s param row (0x%llx / 0x%llx):%s", n, e, nrow == prow && prow ? "IS the" : "is NOT the",
                 static_cast<unsigned long long>(nrow), static_cast<unsigned long long>(prow), f.empty() ? " none" : f.c_str());
         }
-        Log("test: oath: covenant effects on the local player: %s (role %d, map 0x%08x)", on.empty() ? "none" : on.c_str(),
-            int(s.session_role), unsigned(s.map_id));
+        // HP / stamina (the player's data module +0xf8 / 0xfc, +0x134 / 0x138) for the rune amounts measured in game
+        const std::uint64_t dm = [&] {
+            std::uint64_t a = 0, b = 0;
+            return SafeGet(s.player + 0x3b0, &a) && a && SafeGet(a + 0x20, &b) ? b : 0;
+        }();
+        std::int32_t hp = -1, hpmax = -1, st = -1, stmax = -1;
+        if (dm) {
+            SafeGet(dm + 0xf8, &hp);
+            SafeGet(dm + 0xfc, &hpmax);
+            SafeGet(dm + 0x134, &st);
+            SafeGet(dm + 0x138, &stmax);
+        }
+        Log("test: oath: covenant effects on the local player: %s (role %d, map 0x%08x) vitals HP %d/%d stamina %d/%d",
+            on.empty() ? "none" : on.c_str(), int(s.session_role), unsigned(s.map_id), hp, hpmax, st, stmax);
     }
     if (t.log_fx < 0 && s.world_up && !s.loading && s.player && Seconds(t.fx_at, now) >= 1.0) {
         // log_fx=-1 (poison077): every SpEffect id on the local player, logged when the set changes.
