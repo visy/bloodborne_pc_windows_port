@@ -636,6 +636,7 @@ public:
     const std::vector<V3>& Points() const { return pts_; }
     double Total() const { return total_; }
     double Progress() const { return progress_; }
+    double ArcAt(std::size_t i) const { return i < cum_.size() ? cum_[i] : total_; }
     double Remaining() const { return total_ - progress_; }
     double Cross() const { return cross_; }
 
@@ -776,6 +777,7 @@ public:
     const PathFollower& path() const { return path_; }
     CamModel& cam() { return cam_; }
     double speed() const { return speed_; }
+    const V3& last_target() const { return last_target_; }
 
     WalkOut Tick(const V3& pos, double now, double dt) {
         WalkOut o;
@@ -835,7 +837,14 @@ public:
         // pure pursuit
         const double rem = path_.Remaining();
         const double look = std::clamp(cfg.lookahead * std::min(1.0, 0.4 + speed_ / 6.0), cfg.lookahead_min, cfg.lookahead);
+        // the aim point may not cut a corner across something that is not walkable: shorten the lookahead until the
+        // straight run to it lies on the mesh (a hairpin round a parapet, a door frame)
         V3 tgt = path_.Lookahead(std::min(look, rem));
+        for (double f : {1.0, 0.65, 0.4, 0.25}) {
+            tgt = path_.Lookahead(std::min(look * f, rem));
+            if (mesh_->Walkable(pos, tgt, 0.3)) break;
+        }
+        last_target_ = tgt;
         if (Dist2(pos, tgt) < 0.2) tgt = goal;
         const double want = std::atan2(double(tgt.x) - pos.x, double(tgt.z) - pos.z);
         double cmd = want;
@@ -873,6 +882,10 @@ private:
     double stage_until_ = 0, recover_end_ = 0, roll_until_ = 0;
     std::size_t next_goal_ = 0;
     double last_now_ = -1, paused_ = 0;
+    V3 last_target_;
+    std::vector<std::size_t> goal_idx_;
+    std::vector<double> goal_arc_;
+    std::size_t goal_from_ = 0;
 
     WalkOut& Emit(WalkOut& o, double stick_angle, double tilt) {
         o.stick = MakeStick(stick_angle, tilt);
@@ -897,7 +910,9 @@ private:
         std::vector<V3> path;
         V3 cur = pos;
         PlanResult last = PlanResult::Ok;
+        goal_idx_.assign(goals_.size(), 0);
         for (std::size_t i = from_goal; i < goals_.size(); ++i) {
+            if (i > from_goal) goal_idx_[i - 1] = path.empty() ? 0 : path.size() - 1;
             PlanInfo pi;
             std::vector<V3> leg;
             const PlanResult r = mesh_->Plan(cur, goals_[i], &leg, &pi, 2.5, 4.0, goal_y_known_[i]);
@@ -931,8 +946,12 @@ private:
         }
         (void)last;
         if (path.empty()) return PlanResult::NoRoute;
+        goal_idx_[goals_.size() - 1] = path.size() - 1;
+        goal_from_ = from_goal;
         path_.Set(goals_.size() - from_goal > 1 ? std::move(path) : mesh_->Smooth(path));
         stats.path_len = path_.Total();
+        goal_arc_.assign(goals_.size(), 0.0);
+        for (std::size_t i = from_goal; i < goals_.size(); ++i) goal_arc_[i] = path_.ArcAt(goal_idx_[i]);
         return PlanResult::Ok;
     }
 
@@ -953,7 +972,10 @@ private:
 
     // Goals already passed: every waypoint closer than 2.5 m along the walk is behind us.
     std::size_t PassedGoals(const V3& pos) {
-        while (next_goal_ + 1 < goals_.size() && Dist2(pos, goals_[next_goal_]) < 2.5) ++next_goal_;
+        (void)pos;
+        // a goal is passed when the walk's progress along the path is beyond it (not only when the player is near it)
+        if (next_goal_ < goal_from_) next_goal_ = goal_from_;
+        while (next_goal_ + 1 < goals_.size() && next_goal_ < goal_arc_.size() && goal_arc_[next_goal_] < path_.Progress() + 0.5) ++next_goal_;
         return next_goal_;
     }
 
