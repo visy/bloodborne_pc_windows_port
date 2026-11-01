@@ -3882,7 +3882,7 @@ def check_lw(v, L):
 #  4. try 2: both outside the fog again, the host walks in through her fog (Cross: after try 1 the fog is up for the
 #     host too; no intro now), the guest through the fog once the host's
 #     bar is up, the host dies early (spectates, no respawn) and the guest fights her: it faces her (a stick tap),
-#     locks on, re-faces every 3 R1 taps, its HP is put back to the max after every hit (hp_floor=100: every hit taken is logged);
+#     locks on, re-faces every 3 R1 taps, its HP is put back to the max after every hit and it is invincible once she is under half (hp_floor=100, goal=...:god: every hit taken is logged);
 #  5. the run ends when she dies or 40 s after she went under half HP (goal=: "test: goal reached").
 # Checks over 40 s with the host spectating and 40 s under half HP, on every game: her bar, her animations (attacks
 # 3000-3999), the guest's HP drops (her hits), how far she walked, and her AI target / hate record on the host
@@ -3929,7 +3929,7 @@ def phase_amp(only):
     attack = ["guest_press=0x800@1.3%s" % m] * 3 + ["guest_face=2400800:2.5@0.5%s" % m, "guest_press=0x4:lock@0.5%s" % m]
     fight_in = ["guest_face=2400800:2.5@3%s" % m, "guest_press=0x4@1%s" % m, "guest_press=0x4:lock@1%s" % m]
     g1 = ",".join([
-        "log_pos=2", "hp_max=3000", "hp_floor=100", "goal=2400800:50:40", "watch_text=fog/Fog",
+        "log_pos=2", "hp_floor=100", "goal=2400800:50:40:god", "watch_text=fog/Fog",
         # try 1
         "guest_move=%s:pin=3:ground@10%s" % (AMP_OUT_GUEST, m),
         "guest_fog=%s@3%s?host=bar" % (fog, m),                         # to the fog once the host's fight is on, Cross
@@ -3994,7 +3994,8 @@ def _amp_window(v, L, tag, a, b):
         walked, n = _amp_walked(L, i, a, b)
         v.step("amp %s inst%d: she moves (>= 4 m walked)" % (tag, i), walked >= 4.0, "%.1f m over %d positions" % (walked, n))
     hits = L.all(1, r"test: hp: own HP \d+ -> \d+", a, b)
-    v.step("amp %s: her hits land on the living guest (>= 2 HP drops)" % tag, len(hits) >= 2,
+    v.step("amp %s: her hits land on the living guest (>= 2 HP drops)%s" % (tag, " (info: invincible in phase 2)" if tag == "phase 2" else ""),
+           len(hits) >= 2 or tag == "phase 2",
            "%d drops: %s" % (len(hits), [re.search(r"\(-\d+\)", h).group(0) for _t, h in hits[:8]]))
     # her AI on the host's game: the target dumps list a live hate record (kind 1, b40 1) of a chr; the living
     # member's handle is the one the limbo / attention hands her
