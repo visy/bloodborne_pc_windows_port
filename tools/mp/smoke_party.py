@@ -6086,6 +6086,9 @@ def check_cis(v, L, d=None):
     need(v, L, "cis guest: 5090 (Bone Ash unlock) reaches the guest", 1, r"test: flags (?:\S+ )*5090=1", kill or 0)
     need(v, L, "cis guest: Insight rises after the kill", 1, r"Party: \[[\d:.]+\] Insight (\d+) -> (\d+)", kill or 0)
     need(v, L, "cis guest: the Insight messenger's menu opened (Buy with Insight)", 1, r"test: levelup: key ", kill or 0)
+    # CL-8e5fc4: the census repair puts one boss copy to death once, not every 15 s for ever
+    reps = L.all(1, r"enemy census: repair: [1-9]\d* enemy chr\(s\) .*: [\d ]*\b2900101\b")
+    v.step("cis guest: the census repair killed the boss copy at most once (CL-8e5fc4)", len(reps) <= 1, "%d repair kill(s) of 2900101" % len(reps))
     # the shop (screenshots, looked at: the Attire tab lists Bone Ash Mask / Armour / Gauntlets / Leggings for the guest) and the purchase
     # of the Bone Ash Mask (row 200060, 2 Insight, qwcId 5090): the Insight is spent, the piece is in the guest's save
     buy = need(v, L, "cis guest: bought one Insight item (Insight spent)", 1, r"test: levelup: PURCHASE on the guest: .* Insight (\d+) -> (\d+)", kill or 0)
