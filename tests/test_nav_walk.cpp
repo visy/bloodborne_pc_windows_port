@@ -281,6 +281,47 @@ static void TestOffMeshTail() {
     }
 }
 
+static void TestCornerAim() {
+    NavMesh m = Grid(10, 10, ShortWall);  // the wall x 8..10 (m), z 0..16
+    Walker w;
+    Sim sim{{7, 0, 12}, 0.0};
+    CHECK(w.Start(&m, sim.pos, {{14, 0, 2}}, {true}, 1.0, 0) == PlanResult::Ok);
+    double now = 0;
+    for (int i = 0; i < 400 && w.state() == WalkState::Walking; ++i, now += 0.05) {
+        w.cam().FromForward(0, 1);
+        WalkOut o = w.Tick(sim.pos, now, 0.05);
+        // every aim point is reachable in a straight line over the mesh (never across the wall)
+        if (o.state == WalkState::Walking) {
+            for (int k = 1; k < 10; ++k) {  // the aim line stays out of the wall block (x 8..10, z 0..16)
+                const double x = sim.pos.x + (w.last_target().x - sim.pos.x) * k / 10.0;
+                const double z = sim.pos.z + (w.last_target().z - sim.pos.z) * k / 10.0;
+                CHECK(!(x > 8.05 && x < 9.95 && z < 15.95));
+            }
+        }
+        sim.Step(o, 0.05);
+    }
+    CHECK(w.state() == WalkState::Done);
+}
+
+static void TestReplanKeepsDirection() {
+    NavMesh m = Grid(20, 20, nullptr);
+    Walker w;
+    Sim sim{{2, 0, 2}, 0.0};
+    CHECK(w.Start(&m, sim.pos, {{10, 0, 2}, {20, 0, 2}, {30, 0, 2}, {38, 0, 2}}, {true, true, true, true}, 1.0, 0) == PlanResult::Ok);
+    double now = 0;
+    int tick = 0;
+    double len_at_stall = -1;
+    for (; tick < 600 && w.state() == WalkState::Walking; ++tick, now += 0.05) {
+        w.cam().FromForward(0, 1);
+        sim.blocked = sim.pos.x > 24 && sim.pos.x < 25.5 && w.stats.replans == 0;  // stuck at x 24 for a while
+        WalkOut o = w.Tick(sim.pos, now, 0.05);
+        if (w.stats.replans == 1 && len_at_stall < 0) len_at_stall = w.path().Total();
+        sim.Step(o, 0.05);
+    }
+    CHECK(w.state() == WalkState::Done);
+    CHECK(len_at_stall > 0 && len_at_stall < 16.5);  // from x 24 to 38 (14 m), not back through the passed goals
+}
+
 static void TestPause() {
     NavMesh m = Grid(20, 20, nullptr);
     Walker w;
@@ -366,6 +407,8 @@ int main() {
     TestUnreachable();
     TestOffMeshTail();
     TestPause();
+    TestReplanKeepsDirection();
+    TestCornerAim();
     TestStallRecovery();
     TestOffCorridorReplan();
     TestTurnRateAndEase();
