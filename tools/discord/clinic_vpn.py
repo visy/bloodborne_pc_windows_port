@@ -5,7 +5,9 @@ ssh Host alias (default "nwvpn") whose forced command runs tools/discord/vpn/vpn
 JSON line. Only a COUNT and the max come back: no addresses or names are read, stored or alerted, and the server's
 address is configured outside the repo (the alias). Unset / "off" / no alias = "not set up", never an alert.
 Samples live in nw_vpn (at, clients, max_clients, ok, error, and the lobby's games, open_games, joinable,
-in_games: NULL when the lobby did not answer), kept 90 days.
+in_games: NULL when the lobby did not answer; and the sign-up counts installs, issued_24h, enroll_global_used,
+enroll_global_day, refused_24h_total, refused_global_24h: NULL when nwsign's stats did not answer), kept 90 days.
+The sign-up counts are for staff (daily report, alerts), never for /vpnstatus.
 """
 import json
 import os
@@ -54,6 +56,16 @@ def parse_reply(text):
                 v["sizes"] = {str(k)[:4]: int(n) for k, n in dict(lb.get("sizes") or {}).items()}
                 v["builds"] = {str(k)[:32]: int(n) for k, n in list(dict(lb.get("builds") or {}).items())[:5]}
                 out["lobby"] = v
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass
+        out["signups"] = None
+        su = d.get("signups")
+        if isinstance(su, dict):
+            try:
+                v = {k: int(su[k]) for k in ("installs", "active_certs", "issued_last_24h", "banned",
+                                             "enroll_global_used", "enroll_global_day", "enroll_per_ip_day")}
+                v["refused_24h"] = {str(k)[:40]: int(n) for k, n in list(dict(su.get("refused_24h") or {}).items())[:10]}
+                out["signups"] = v
             except (KeyError, TypeError, ValueError, AttributeError):
                 pass
         return out
@@ -133,12 +145,18 @@ def store(clinic, sample, now=None):
     t = now or time.time()
     ok = bool(sample.get("ok"))
     lb = (sample.get("lobby") or {}) if ok else {}
+    su = (sample.get("signups") or {}) if ok else {}
+    ref = su.get("refused_24h") or {}
     clinic.db.execute("INSERT INTO nw_vpn (at, clients, max_clients, ok, error, games, open_games, joinable, in_games, "
-                      "pool) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      "pool, installs, issued_24h, enroll_global_used, enroll_global_day, refused_24h_total, "
+                      "refused_global_24h) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                       (t, sample.get("clients") if ok else None, sample.get("max_clients") if ok else None,
                        int(ok), None if ok else sample.get("error"),
                        lb.get("games"), lb.get("open"), lb.get("joinable"), lb.get("players"),
-                       sample.get("pool") if ok else None))
+                       sample.get("pool") if ok else None,
+                       su.get("installs"), su.get("issued_last_24h"), su.get("enroll_global_used"),
+                       su.get("enroll_global_day"), sum(ref.values()) if su else None,
+                       ref.get("enroll global", 0) if su else None))
     clinic.db.execute("DELETE FROM nw_vpn WHERE at<?", (t - KEEP,))
     clinic.db.commit()
 
@@ -187,7 +205,18 @@ def summary(clinic, now, target=None):
             "pool": pool, "effective_max": effective_max(mx, pool), "age": now - at,
             "peak_24h": peak(clinic, now - 86400), "peak_7d": peak(clinic, now - 7 * 86400),
             "peak_15m": peak(clinic, at - DROP_WINDOW), "day": window(clinic, now - 86400),
+            "signups": _signups(clinic, now),
             "maint": _maint_window(clinic, now)}
+
+
+def _signups(clinic, now):
+    """The latest sample that had sign-up counts, if it is under 2 h old; else None. Staff only."""
+    r = clinic.db.execute("SELECT at, installs, issued_24h, enroll_global_used, enroll_global_day, refused_24h_total, "
+                          "refused_global_24h FROM nw_vpn WHERE ok=1 AND installs IS NOT NULL "
+                          "ORDER BY at DESC LIMIT 1").fetchone()
+    if r is None or now - r[0] > 7200:
+        return None
+    return dict(zip(("at", "installs", "issued_24h", "global_used", "global_day", "refused", "refused_global"), r))
 
 
 def _maint_window(clinic, now):
@@ -218,6 +247,13 @@ def conditions(s):
         out.append(("vpn-drop", pk >= DROP_MIN_PEAK and n <= DROP_SHARE * pk and not s.get("maint"),
                     f"VPN players dropped from {pk} to {n} within 15 min: a provider outage or a VPN problem. "
                     "Check /vpnstatus; players reconnect by themselves once the server is reachable."))
+        su = s.get("signups")
+        if su and su["global_day"]:
+            out.append(("vpn-signup-cap",
+                        su["global_used"] >= NEAR * su["global_day"] or bool(su["refused_global"]),
+                        f"VPN sign-ups near the global enroll cap: {su['global_used']} of {su['global_day']} slots used "
+                        f"in 24 h, {su['refused_global'] or 0} refused. New players are locked out at the cap: "
+                        "raise enroll_global_day in the nwsign config and restart nwsign."))
     return out
 
 
@@ -238,4 +274,8 @@ def line(s):
         out += (f"; games 24 h: average {d['games_avg']:.1f}, peak {d['games_peak']} ({d['open_peak']} public at most), "
                 f"{d['in_games_avg']:.1f} players in games on average, a public game with room "
                 f"{100 * d['room_share']:.0f}% of the time")
+    su = s.get("signups")
+    if su:
+        out += (f"; Sign-ups: {su['installs']} installs (+{su['issued_24h']} in 24 h), global cap "
+                f"{su['global_used']}/{su['global_day']} used, refused {su['refused']}")
     return out

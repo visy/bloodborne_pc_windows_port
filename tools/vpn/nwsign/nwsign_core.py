@@ -427,6 +427,12 @@ class RateLimiter:
             q = [t for t in self.hits.get(key, ()) if t > now - window]
             return max(1, int(q[0] + window - now) + 1) if len(q) >= limit else 0
 
+    def count(self, key, window, now=None):
+        """How many hits of `key` are inside the window (counts nothing, changes nothing)."""
+        now = now or time.time()
+        with self.lock:
+            return sum(1 for t in self.hits.get(key, ()) if t > now - window)
+
     def hit(self, key, limit, window, now=None):
         """Count a hit. Returns 0 if allowed, else seconds until a slot frees."""
         now = now or time.time()
