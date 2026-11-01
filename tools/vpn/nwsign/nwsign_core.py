@@ -23,8 +23,9 @@ DEFAULTS = {
     "grace_days": 3,                # renewal still accepted this long after expiry
     "crl_days": 90,
     "crl_refresh_hours": 6,
-    "enroll_per_ip_day": 10,        # successful enrollments; households and carrier NAT share one address (was 3)
-    "enroll_global_day": 200,
+    "enroll_per_ip_day": 60,        # successful enrollments; carrier NAT (Starlink, Spectrum, mobile) puts many players
+                                    # behind one address: 10 locked several out for 15-17 h on 2026-11-01 (was 3, then 10)
+    "enroll_global_day": 2000,      # the pool holds 1021 tunnel addresses; 200 could run out on a release day
     "renew_per_install_day": 10,
     "general_per_ip_hour": 120,
     "max_body": 8192,
@@ -425,6 +426,12 @@ class RateLimiter:
         with self.lock:
             q = [t for t in self.hits.get(key, ()) if t > now - window]
             return max(1, int(q[0] + window - now) + 1) if len(q) >= limit else 0
+
+    def count(self, key, window, now=None):
+        """How many hits of `key` are inside the window (counts nothing, changes nothing)."""
+        now = now or time.time()
+        with self.lock:
+            return sum(1 for t in self.hits.get(key, ()) if t > now - window)
 
     def hit(self, key, limit, window, now=None):
         """Count a hit. Returns 0 if allowed, else seconds until a slot frees."""

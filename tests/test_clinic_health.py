@@ -777,3 +777,66 @@ def test_vpn_maint_parse_when():
     assert time.strftime("%Y-%m-%d %H:%M", time.gmtime(t)) == "2026-11-02 18:00"   # EET = UTC+2 in November
     with pytest.raises(ValueError):
         vm.parse_when("tomorrow")
+
+
+SIGNUPS = {"installs": 412, "active_certs": 380, "issued_last_24h": 400, "banned": 2, "enroll_global_used": 37,
+           "enroll_global_day": 2000, "enroll_per_ip_day": 3, "refused_24h": {}}
+
+
+def test_vpn_count_parse_signups():
+    body = ('{"ok":true,"installs":412,"active_certs":380,"expired":1,"banned":2,"issued_last_24h":400,'
+            '"expiring_next_24h":5,"limits":{"enroll_per_ip_day":3,"enroll_global_day":2000},'
+            '"refused_24h":{"enroll global":4},"enroll_global_used":37,"junk":"x"}')
+    d = vpn_count.parse_signups(body.encode())
+    assert d == {**SIGNUPS, "refused_24h": {"enroll global": 4}}
+    assert vpn_count.parse_signups(b'{"ok":false}') is None
+    assert vpn_count.parse_signups(b'{"ok":true,"installs":"x"}') is None
+    assert vpn_count.parse_signups(b"nope") is None
+    assert vpn_count.signups(port=1) is None   # nothing listens: null, never an exception
+
+
+def test_vpn_signups_store_report_and_alert(tmp_path, monkeypatch):
+    monkeypatch.setenv("NETDOCTOR_VPN_SSH", "nwvpn")
+    reply = vpn.parse_reply('{"ok":true,"clients":3,"max_clients":100,"pool":253,"signups":'
+                            + json.dumps(SIGNUPS) + "}")
+    assert reply["signups"]["installs"] == 412
+    assert vpn.parse_reply('{"ok":true,"clients":3,"signups":{"installs":"x"}}')["signups"] is None
+    assert vpn.parse_reply('{"ok":true,"clients":3,"signups":null}')["signups"] is None
+    c, h, clock, sent = make(tmp_path, expect=())
+    vpn.store(c, reply, clock.t)
+    row = c.db.execute("SELECT installs, issued_24h, enroll_global_used, enroll_global_day, refused_24h_total "
+                       "FROM nw_vpn").fetchone()
+    assert row == (412, 400, 37, 2000, 0)
+    s = h.vpn()
+    ln = vpn.line(s)
+    assert "Sign-ups: 412 installs (+400 in 24 h), global cap 37/2000 used, refused 0" in ln
+    assert not [k for k, bad, _t in vpn.conditions(s) if bad]
+    # not for players
+    assert "Sign-ups" not in vpn.status_text(reply, s) and "installs" not in vpn.status_text(reply, s)
+    # 80% of the cap, or any global refusal, raises the warning
+    clock.t += 300
+    vpn.store(c, {**reply, "signups": {**SIGNUPS, "enroll_global_used": 1600}}, clock.t)
+    assert [k for k, bad, _t in vpn.conditions(h.vpn()) if bad] == ["vpn-signup-cap"]
+    clock.t += 300
+    vpn.store(c, {**reply, "signups": {**SIGNUPS, "refused_24h": {"enroll global": 2}}}, clock.t)
+    assert [k for k, bad, _t in vpn.conditions(h.vpn()) if bad] == ["vpn-signup-cap"]
+    clock.t += 300
+    vpn.store(c, {**reply, "signups": {**SIGNUPS, "refused_24h": {"enroll per address": 9}}}, clock.t)
+    assert not [k for k, bad, _t in vpn.conditions(h.vpn()) if bad]
+    clock.t += 3 * 3600
+    vpn.store(c, {**reply, "signups": None}, clock.t)   # sign-up part gone for over 2 h: no line, no alert
+    s = h.vpn()
+    assert s["signups"] is None and "Sign-ups" not in vpn.line(s)
+
+
+def test_vpn_signup_columns_migrate(tmp_path):
+    import sqlite3
+    p = tmp_path / "old.db"
+    db = sqlite3.connect(p)
+    db.execute("CREATE TABLE nw_vpn (at REAL, clients INTEGER, max_clients INTEGER, ok INTEGER, error TEXT)")
+    db.commit()
+    db.close()
+    import clinic_store
+    cl = clinic_store.Clinic(p)
+    have = {r[1] for r in cl.db.execute("PRAGMA table_info(nw_vpn)")}
+    assert {"installs", "issued_24h", "enroll_global_used", "enroll_global_day", "refused_24h_total"} <= have

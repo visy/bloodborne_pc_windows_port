@@ -1755,6 +1755,14 @@ void DefineAll() {
            AddText("Which party notices show: all, errors only (lost link, failed join) or none. Splitscreen: errors",
                    "Какие сообщения группы видны: все, только ошибки (связь, вход) или никакие. Раздельный экран: ошибки"),
            {AddText("All", "Все"), AddText("Errors only", "Только ошибки"), AddText("Off", "Выкл.")}, Kind::List);
+
+    // ---- My party: Chalice (0.7.8, CL-420d9f): the Ritual Altar's glyph pick list. The host's altar is where it shows. ----
+    AddPage("My party: Chalice", "Моя группа: чаша",
+            "Yours: the Ritual Altar lists the party's Chalice Glyphs to pick from (bbport)",
+            "Ваше: Алтарь ритуалов показывает глифы чаши группы на выбор (bbport)");
+    own(&Values::party_glyph_list, "Chalice glyph list", "Список глифов чаши",
+        "The Ritual Altar's glyph search lists the party's glyphs to pick from first. Off by default",
+        "Поиск глифа у Алтаря ритуалов сначала показывает глифы группы. По умолчанию выкл.");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.
