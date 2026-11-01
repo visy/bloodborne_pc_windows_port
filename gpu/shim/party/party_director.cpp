@@ -2021,18 +2021,43 @@ bool ChrHpOf(std::uint64_t chr, std::int32_t* hp, std::int32_t* mhp) {
 ///    the max the HP goes back to the max, so a long boss fight measures her attacks without the test player dying.
 ///  - goal: twice a second ENTITY's HP; once it is under PCT % "test: goal: ... under" and SECS s later (or at its
 ///    death) "test: goal reached" (the smoke run ends on it: a phase-2 window measured, not a fixed press count).
+/// Starts the closed-loop stick walker (the guest_stick driver: it learns the stick's world direction from the
+/// player's own movement, the camera model alone walked the wrong way) toward (x, z), within r m, `steps` at most.
+void StartStickWalk(Test& t, float x, float z, float r, int steps, Clock::time_point now) {
+    t.route.clear();
+    t.approach = true;
+    t.approach_done = false;
+    t.ap_x = x;
+    t.ap_z = z;
+    t.ap_r = r;
+    t.ap_max = steps;
+    t.ap_button = 0;
+    t.ap_steps = 0;
+    t.ap_still = 0;
+    t.ap_slide = 0;
+    t.ap_slides_here = 0;
+    t.ap_phase = 0;
+    t.ap_at = now;
+    t.ap_ref[0] = t.ap_ref[1] = 1e9f;
+    t.ap_ref_at = now;
+    t.nav_init = t.nav_on = false;
+}
+
 /// Also steers / ends a host_face / guest_face stick tap (ENTITY:R: walks toward the chr until within R m).
 bool StickToward(const float at[3], double* stick_deg, float* dist);
 void TestAidTick(Test& t, Clock::time_point now) {
     if (t.face_release != Clock::time_point{}) {
-        float at[3] = {}, d = 1e9f;
-        double deg = 0;
-        const bool walk = t.face_entity && t.face_r > 0 && balance::ChrPosition(ChrOfEntity(t.face_entity), at);
-        if (walk && StickToward(at, &deg, &d) && d <= t.face_r) {
-            Log("test: face: within %.1f m of entity %u (%.1f m): stick released", double(t.face_r), t.face_entity, double(d));
-            t.face_release = now;
+        float at[3] = {};
+        if (t.face_entity && t.face_r > 0 && balance::ChrPosition(ChrOfEntity(t.face_entity), at)) {
+            t.ap_x = at[0];  // the walker's goal follows her
+            t.ap_z = at[2];
+            if (t.approach_done) {
+                Log("test: face: the walk to entity %u ended (within %.1f m or stopped)", t.face_entity, double(t.face_r));
+                t.face_release = now;
+            }
         }
         if (now >= t.face_release) {
+            if (t.face_entity && t.approach && !t.approach_done) t.approach_done = true;
             t.face_release = {};
             t.face_entity = 0;
             WritePadFile("");
@@ -2049,6 +2074,7 @@ void TestAidTick(Test& t, Clock::time_point now) {
             if (t.fog_phase == 0) {
                 const std::int64_t seen = BbGameMenu::TextSeenMs("Fog");
                 if (seen > t.fog_from_ms && now_ms - seen < 500) {
+                    t.approach_done = true;  // the walk stops at the prompt
                     WritePadFile("");
                     runtime_pad_director_press(0x4000);
                     t.press_at = now;
@@ -2058,17 +2084,12 @@ void TestAidTick(Test& t, Clock::time_point now) {
                     t.fog_t = now;
                     Log("test: fog: the prompt shows at (%.2f, %.2f), %.2f m before the fog point: Cross (try %d)",
                         double(me[0]), double(me[2]), double(-past), t.fog_tries + 1);
-                } else if (Seconds(t.fog_t, now) > 10.0) {
+                } else if (Seconds(t.fog_t, now) > 25.0 || (t.approach_done && Seconds(t.fog_t, now) > 2.0)) {
+                    t.approach_done = true;
                     WritePadFile("");
                     t.fog_on = false;
-                    Log("test: fog: NOT through: no fog prompt in 10 s (at (%.2f, %.2f), %.2f m before the fog point)",
+                    Log("test: fog: NOT through: no fog prompt (walk over or 25 s) (at (%.2f, %.2f), %.2f m before the fog point)",
                         double(me[0]), double(me[2]), double(-past));
-                } else {
-                    // a point 3 m past the fog: the walk does not stop short of it
-                    const float at[3] = {t.fog_x + 3 * t.fog_dir[0], me[1], t.fog_z + 3 * t.fog_dir[1]};
-                    double deg = 0;
-                    float d = 0;
-                    StickToward(at, &deg, &d);
                 }
             } else if (past > 0.8f && b2::BossBarLine(nullptr)) {
                 t.fog_on = false;
@@ -2083,6 +2104,7 @@ void TestAidTick(Test& t, Clock::time_point now) {
                     t.fog_phase = 0;
                     t.fog_t = now;
                     t.fog_from_ms = now_ms;
+                    StartStickWalk(t, t.fog_x + 3 * t.fog_dir[0], t.fog_z + 3 * t.fog_dir[1], 0.3f, 40, now);
                     Log("test: fog: not through 5 s after the Cross (%.2f m past, bar %d): walking on (try %d)",
                         double(past), int(b2::BossBarLine(nullptr)), t.fog_tries + 1);
                 }
@@ -2939,6 +2961,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             t.fog_tries = 0;
             t.fog_t = now;
             t.fog_from_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+            StartStickWalk(t, t.fog_x + 3 * t.fog_dir[0], t.fog_z + 3 * t.fog_dir[1], 0.3f, 40, now);
             Log("test: %s: walk to the fog at (%.1f, %.1f) from (%.1f, %.1f), %.1f m, until its prompt shows",
                 TravelStepName(step.kind), double(t.fog_x), double(t.fog_z), double(me[0]), double(me[2]), double(d));
         } else {
@@ -2970,7 +2993,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
             const bool walk = near_r > 0 && dist > near_r;
             t.face_entity = walk ? entity : 0;
             t.face_r = near_r;
-            t.face_release = now + std::chrono::milliseconds(walk ? 5000 : 140);
+            t.face_release = now + std::chrono::milliseconds(walk ? 6000 : 140);
+            if (walk) StartStickWalk(t, at[0], at[2], near_r, 10, now);
             std::int32_t hp = -1, mhp = -1;
             ChrHpOf(entity ? ChrOfEntity(entity) : 0, &hp, &mhp);
             std::uint8_t lock = 0;
