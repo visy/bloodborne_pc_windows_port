@@ -6697,6 +6697,68 @@ void BossLockEntry(u64 boss, u32 want) {
     }
 }
 
+/// Any role, main thread: while a boss bar is up, one line every 10 s per boss with its position, its latest
+/// animation and HP, and a "boss may be stuck" line when it has not moved 0.3 m and played no new animation for
+/// 15 s with a player within 30 m (player reports: Laurence stays on the statue, falls and cannot move; the logs
+/// had no boss position to tell the host's copy from the guest's).
+void BossStateTick(const GameSnapshot& s, double now) {
+    static double next = 0;
+    if (now < next) return;
+    next = now + 1.0;
+    struct Track {
+        float pos[3] = {};
+        int anim = -1;
+        double moved_at = 0, logged = 0;
+        bool stuck_logged = false;
+    };
+    static std::map<u32, Track> tr;
+    const u64 hud = (s.world_up && !s.loading) ? Slot(0x5562878) : 0;
+    if (!hud) {
+        tr.clear();
+        return;
+    }
+    for (int i = 0; i < 3; ++i) {
+        const u32 h = Field<u32>(hud, 0x165c + u64(i) * 0x14, ~0u);
+        const u64 boss = h == ~0u ? 0 : ChrOfHandle(h);
+        float bp[3] = {};
+        if (!boss || ChrHp(boss) <= 0 || !ChrPos(boss, bp)) continue;
+        int anim = -1;
+        const u64 cm = Field<u64>(boss, 0x3b0), ta = cm ? Field<u64>(cm, 0x18) : 0;
+        const int idx = ta ? Field<int>(ta, 0xc0) : -1;
+        if (ta && idx >= 0 && idx < 10) anim = Field<int>(ta, 0x20 + u64((idx + 9) % 10) * 0x10);
+        Track& t = tr[h];
+        const float dx = bp[0] - t.pos[0], dy = bp[1] - t.pos[1], dz = bp[2] - t.pos[2];
+        if (t.moved_at == 0 || dx * dx + dy * dy + dz * dz > 0.09f || anim != t.anim) {
+            t.moved_at = now;
+            t.stuck_logged = false;
+            std::copy(bp, bp + 3, t.pos);
+            t.anim = anim;
+        }
+        float near_m = 1e9f;
+        std::vector<u64> players;
+        if (s.player) players.push_back(s.player);
+        for (const TaskInfo& tk : Tasks(false)) {
+            const u64 c = (tk.mode == 1 || tk.mode == 2) ? PlayerForPeer(tk.task + kTaskPeer) : 0;
+            if (c) players.push_back(c);
+        }
+        for (u64 pl : players) {
+            float pp[3] = {};
+            if (ChrHp(pl) > 0 && ChrPos(pl, pp))
+                near_m = std::min(near_m, std::sqrt((pp[0] - bp[0]) * (pp[0] - bp[0]) + (pp[2] - bp[2]) * (pp[2] - bp[2])));
+        }
+        if (now - t.logged >= 10.0) {
+            t.logged = now;
+            Log("boss state: %08x at (%.1f, %.1f, %.1f), animation %d, HP %d, nearest player %.1f m, still for %.0f s", h,
+                double(bp[0]), double(bp[1]), double(bp[2]), anim, ChrHp(boss), double(near_m), now - t.moved_at);
+        }
+        if (!t.stuck_logged && enemyai_rules::BossLooksStuck(now - t.moved_at, 15.0, true, double(near_m < 1e8f ? near_m : -1.0f), 30.0)) {
+            t.stuck_logged = true;
+            Log("boss state: %08x may be stuck: at (%.1f, %.1f, %.1f), animation %d for %.0f s, HP %d, nearest player %.1f m", h,
+                double(bp[0]), double(bp[1]), double(bp[2]), anim, now - t.moved_at, ChrHp(boss), double(near_m));
+        }
+    }
+}
+
 /// Host (the boss AI's owner), main thread, twice a second: while a boss bar is up and two or more
 /// living players (the host's own chr and the members' copies) are within reach of the boss, the boss
 /// is handed each of them in turn as a forced target (the event ChangeTarget path 0x1299CD0, as the
@@ -12278,6 +12340,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     DeadPlayerUntargetTick(s, now);
+    BossStateTick(s, now);
     BossAttentionTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
