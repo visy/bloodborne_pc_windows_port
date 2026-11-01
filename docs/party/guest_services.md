@@ -96,6 +96,10 @@ opened t210698, one sink 3007036 when it closed; its talk script clears 12105044
 12101021 (starting weapons), 12101022 (Notebook), 12101024 / 12101026 (bells) and 12101028 (Eye):
 a guest's copy ending ended the host's (the host's weapon messengers sank before it picked; items.md 10.8).
 
+0.7.8 (`PerPlayerItemGateEvent`, `BB_PARTY_ITEM_GATE_SYNC=1` restores it): also the badge rows 12101000 (every slot: slot n
+ends when the player holds badge goods 4110 + n; a guest's seven badges opened seven rows in the host's shop, playtest
+2026-11-01) and Amygdala's grab 12405263 (needs the player's own Eye 4311; a guest's grab carried the host into the DLC).
+
 ### 2.2 Which talk scripts (MSB m21_00_00_00 entity -> talk script) [C]
 
 The filter allows by talk script id; the entity column is where the script is placed.

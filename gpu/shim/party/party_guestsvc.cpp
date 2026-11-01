@@ -1502,6 +1502,14 @@ bool EventSyncLogOn() {
     }();
     return on;
 }
+/// BB_PARTY_ITEM_GATE_SYNC=1 (testing): another player's state of the badge rows / Amygdala's grab is applied again.
+bool ItemGateSyncFilterOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_ITEM_GATE_SYNC");
+        return !(v && v[0] == '1' && !v[1]);
+    }();
+    return on;
+}
 bool MessengerSyncFilterOn() {
     static const bool on = [] {
         const char* v = std::getenv("BB_PARTY_MESSENGER_SYNC");
@@ -1532,6 +1540,7 @@ BB_COOP_SYSV u64 EventSyncRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
         }
         if (std::int32_t(r) <= 0 || !buf || !SafeGet(buf, &kind) || kind != 0 || !SafeGet(buf + 8, &event) ||
             !((MessengerSyncFilterOn() && PerPlayerMessengerEvent(std::uint32_t(event))) ||
+              (ItemGateSyncFilterOn() && PerPlayerItemGateEvent(std::uint32_t(event))) ||
               (LampSyncFilterOn() && deathrules::LampWarpEvent(std::uint32_t(event))) ||
               (BossPhaseSyncFilterOn() && bossfog::HostOnlyBossEvent(std::uint32_t(event)) &&
                PartyDirector::Get().Role() == PartyRole::Host))) {
@@ -1543,6 +1552,20 @@ BB_COOP_SYSV u64 EventSyncRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
             if (boss_drops.fetch_add(1) < 8) {
                 Log("Boss phase: event %d's state from a guest not applied (the host's own boss chr decides when "
                     "the phase scene plays)", event);
+            }
+            continue;
+        }
+        if (PerPlayerItemGateEvent(std::uint32_t(event))) {
+            // 0.7.8 (playtest 2026-11-01): another player's copy of a badge row (12101000, its own badge) or of
+            // Amygdala's grab (12405263, its own Eye) ended / ran this game's copy: the host's shop listed a guest's
+            // badge rows and the host was grabbed into the DLC with no Eye of its own.
+            static std::atomic<int> gate_drops{0};
+            if (gate_drops.fetch_add(1) < 12) {
+                std::int16_t slot = 0;
+                SafeGet(buf + 0xc, &slot);
+                Log("Item gates: event %d slot %d's state from another player not applied (%s)", event, int(slot),
+                    event == 12405263 ? "the grab into the DLC needs this player's own Eye of a Blood-drunk Hunter"
+                                      : "a Messenger badge row opens with this player's own badge");
             }
             continue;
         }
