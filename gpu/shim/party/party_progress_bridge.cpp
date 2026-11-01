@@ -488,7 +488,10 @@ void GuestCensus(party::PartyLink* link) {
     }
 }
 
-void GuestDesync(party::PartyLink* link, bool in_world) {
+void GuestDesync(party::PartyLink* link, bool in_world, bool world_steady) {
+    // Every world load (lamp rest, death, quit-out, travel) respawns the enemies on both games: a repair from
+    // before the load is spent, a new difference after it is a new one.
+    if (!world_steady) CC().ledger.Reset();
     KillRecordTick(link, false, in_world, {});
     std::string body;
     if (link && !link->is_host() && desync::GuestPopResync(&body)) {
@@ -662,7 +665,7 @@ void DirectorTick(const GameSnapshot& s, party::PartyLink* link) {
         break;
     case Role::Guest:
         GuestSide(b, s);
-        GuestDesync(link, b.guest_in_world);
+        GuestDesync(link, b.guest_in_world, s.world_up && !s.loading);
         break;
     default:
         break;
