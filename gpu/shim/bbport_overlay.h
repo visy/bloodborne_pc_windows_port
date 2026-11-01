@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
@@ -46,5 +47,7 @@ bool MenuOpen();
 
 /// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
+/// The text box's pick list (window.cpp): one line per choice, `selected` highlighted (-1: typing). Empty: none.
+void SetTextChoices(const std::vector<std::string>& lines, int selected);
 
 } // namespace BbOverlay

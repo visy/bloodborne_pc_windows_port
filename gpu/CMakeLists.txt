@@ -692,6 +692,11 @@ add_executable(party-chalice-merge-test EXCLUDE_FROM_ALL ../tests/test_party_cha
 target_compile_options(party-chalice-merge-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-chalice-merge-test PRIVATE shim)
 set_target_properties(party-chalice-merge-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# The Chalice glyph pick list (party_chalice_glyphs.h). ninja -C out/gpu party-chalice-glyphs-test
+add_executable(party-chalice-glyphs-test EXCLUDE_FROM_ALL ../tests/test_party_chalice_glyphs.cpp shim/net/json.cpp)
+target_compile_options(party-chalice-glyphs-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-chalice-glyphs-test PRIVATE shim)
+set_target_properties(party-chalice-glyphs-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Split travel notice text + rate limit (party_split_notice.h). ninja -C out/gpu party-split-notice-test
 add_executable(party-split-notice-test EXCLUDE_FROM_ALL ../tests/test_party_split_notice.cpp)
 target_compile_options(party-split-notice-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

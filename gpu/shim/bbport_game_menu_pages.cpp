@@ -1603,6 +1603,14 @@ void DefineAll() {
         "A boss in a party fight turns on each hunter in reach in turn instead of keeping to one. Party rule (host)",
         "Босс в бою группы поочерёдно атакует каждого охотника поблизости. Правило группы (хост)");
 
+    // ---- My party: Chalice (0.7.8, CL-420d9f): the Ritual Altar's glyph pick list. The host's altar is where it shows. ----
+    AddPage("My party: Chalice", "Моя группа: чаша",
+            "Yours: the Ritual Altar lists the party's Chalice Glyphs to pick from (bbport)",
+            "Ваше: Алтарь ритуалов показывает глифы чаши группы на выбор (bbport)");
+    own(&Values::party_glyph_list, "Chalice glyph list", "Список глифов чаши",
+        "Ritual Altar > Search by Chalice Glyph shows the party's glyphs to pick from, before the keyboard. Off by default",
+        "Алтарь ритуалов > Поиск по глифу показывает глифы группы на выбор, до клавиатуры. По умолчанию выкл.");
+
     // ---- Party rules: Phantoms (0.7.5, levelsync, party_levelsync_rules.h): what a hunter keeps of its
     // stats when it joins a party. Both ON = Bloodborne's own co-op. ----
     AddPage("Party rules: Phantoms", "Правила: призраки",

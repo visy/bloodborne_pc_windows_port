@@ -4534,6 +4534,14 @@ void PartyDirector::ConfigureFromEnv() {
                     Log("BB_PARTY_DIRECTOR_TEST: seq token '%s' unknown; seq ignored", bad.c_str());
                     st.test.st_seq = MenuScript{};
                 }
+            } else if (item.rfind("host_glyph=", 0) == 0) {
+                // host_glyph=CODE (CL-420d9f): CODE is typed into the altar's next Chalice Glyph box (the keyboard path)
+                chalice::SetTestGlyph(item.substr(11));
+                Log("BB_PARTY_DIRECTOR_TEST: host_glyph %s", item.substr(11).c_str());
+            } else if (item.rfind("host_pick=", 0) == 0) {
+                // host_pick=N: the altar's glyph box picks the N-th row of the pick list (Down, Enter)
+                chalice::SetTestPick(std::atoi(item.c_str() + 10));
+                Log("BB_PARTY_DIRECTOR_TEST: host_pick %d", std::atoi(item.c_str() + 10));
             } else if (item.rfind("prompt=", 0) == 0) {
                 st.test.ap_prompt = item.substr(7);
             } else if (item.rfind("face=", 0) == 0) {
@@ -5302,7 +5310,7 @@ void PartyDirector::Tick() {
             link->post_event(party::kHostSlot, gestures::kEventName, gestures::ToJsonText(gestures));
         }
         std::string form;  // its own ritual dungeon's FormData for the host's board
-        if (chalice::PopGuestForm(&form)) {
+        while (chalice::PopGuestForm(&form)) {
             link->post_event(party::kHostSlot, chalice::kFormEventName, form);
         }
         std::string gift;  // D5: an NPC's gift to this guest in the host's world (party_items.h)

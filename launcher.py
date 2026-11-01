@@ -186,6 +186,8 @@ PARTY_INI_SWITCHES = [
     ("party_guest_gather", "BB_PARTY_GUEST_GATHER", False),
     # 0.7.7 (CL-48ee07): a Chalice Dungeon lamp lists the dungeon's lit lamps for the party (the host's rule, OFF by default)
     ("party_layer_travel", "BB_PARTY_LAYER_TRAVEL", False),
+    # 0.7.8 (CL-420d9f): the Ritual Altar's Chalice Glyph pick list (this player's own, OFF by default)
+    ("party_glyph_list", "BB_PARTY_GLYPH_LIST", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -426,6 +428,13 @@ MY_PARTY_TAB = [
          "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
          "few metres further is attacked too. Takes effect when you host. Default: on (bbport.ini "
          "party_boss_share; in the game: System > My party: Bosses)."),
+    ]),
+    (1, 1, "Chalice", [
+        ("check", "party_glyph_list", "Chalice glyph list",
+         "At the Ritual Altar, Search by Chalice Glyph first shows a list of the party's glyphs to pick from "
+         "(your own dungeons, the guests' dungeons and the shipped patches/chalice_glyphs.json), then the code "
+         "keyboard: typing a code still works. Pick one and the whole party enters that dungeon together. "
+         "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > My party: Chalice)."),
     ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",

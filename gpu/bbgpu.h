@@ -30,6 +30,17 @@ int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
 /* The text an ImeDialog of max_length characters is confirmed with at once (party co-op: the
  * party's Chalice Dungeon glyph at the altar), or NULL to ask the player. */
 const char *bbgpu_ime_preset(uint32_t max_length);
+/* Party co-op (Chalice glyph pick list): called when an ImeDialog of max_length characters opens and no
+ * preset answered. Returns the box's pick list, one "value<TAB>label" line per choice, or NULL for the
+ * plain keyboard box. Also where the test aids queue their keys. */
+const char *bbgpu_ime_choices(uint32_t max_length);
+/* The ImeDialog of max_length characters ended: the text it was confirmed with (cancelled != 0: none). */
+void bbgpu_ime_closed(uint32_t max_length, const char *text_utf8, int cancelled);
+/* Like bbgpu_text_input_begin with a pick list (bbgpu_ime_choices' lines). */
+int bbgpu_text_input_begin_list(const char *initial_utf8, const char *prompt_utf8, const char *choices);
+/* Test aid: keys the next text box takes as soon as it opens (bbgpu_text_input_test_type's keys plus
+ * 0x01 for Up and 0x02 for Down). */
+int bbgpu_text_input_test_queue(const char *keys);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 int bbgpu_text_input_is_active(void);
 /* Test aid: keys into the text box as if typed (ASCII; '\n' Enter, '\x1b' Esc, '\b' Backspace). */
