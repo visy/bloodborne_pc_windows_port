@@ -96,3 +96,13 @@ Camera model in m34 / m35: the render-matrix yaw disagreed with the motion in th
 steers, all walks arrive. The block is the same one (the rows are unit vectors, up = +y); the likely cause is the
 camera still swinging after the warp that put the player there. Unproven; a longer walk with the raw yaw logged each
 second would settle it.
+
+## 5. Lift phases (0.7.8, post lift fix on master b28827b3) - nav is NOT the default
+
+60 FPS, one run each: old walker lfwf PASS 39/39 (26 walks, 0 hops, 3 side steps on inst1 + 2), lfwcf FAIL 37/39 (one route stopped,
+the non-riding guest walked 2.0 m of 3.0 m); nav walker lfw 39/39 once and 31/34, 21/29, 21/29 in three other runs, lfwf 37/39,
+lfwcf 29/34. Failures are (1) a hairpin of the recorded route at (-116.6, -58.7, -20.7) where the player stands pressed
+against something the mesh does not know (1-2 counted warps per walk), (2) stick steps onto the car ("blocked near the goal":
+the trigger spot is off the mesh and the car moves), (3) islands: the Cathedral pocket routes cross ladders and gates (now the
+old walker takes over on "no route"; BB_TEST_NAV_STRICT=1 fails at the start). The camera model (matrix yaw plus learned
+residual) is not the cause. Until (1) and (2) are solved the default stays old.
