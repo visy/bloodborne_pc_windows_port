@@ -5300,7 +5300,7 @@ def phase_gag(only):
     host = ",".join(["god", "host_flag=72100120@8", "log_flag=72100120/72100121"])
     guest = ",".join(["god", "guest_flag=72100121@16", "log_flag=72100120/72100121"])
     return dict(
-        name="gag", seconds=200, count=2, headless=0,
+        name="gag", seconds=200, count=2, headless=0, env=[],
         ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=" + host,
               "1:BB_PARTY_DIRECTOR_TEST=" + guest,
               "1:BB_PARTY_GUESTSVC_TEST=warp=talk:210699;open;keys=left,cross,w,w"],
