@@ -3922,12 +3922,14 @@ def phase_amp(only):
         "host_face=2400800@3%s" % m,
     ] + (["host_stick=52.5:313.0:1.0:40@6%s?member=bar" % m]           # BB_AMP_HOST_AWAY=1: alive, back at the fog
          if os.environ.get("BB_AMP_HOST_AWAY") == "1" else
-         ["host_die@6%s?member=bar" % m]))                              # early: dead before half, spectates
+         ["host_die@6%s?member=bar" % m,                               # early: dead before half, spectates
+          "host_kill=2400800:hp55@50%s" % m]))                           # 50 s later (dead, a test aid): 55 % HP, the guest
+                                                                        # takes her under half: her phase 2 is measured too
     # R1 x3, then face her again and walk up to her (a stick toward her until within 2.5 m), lock on if it was lost
     attack = ["guest_press=0x800@1.3%s" % m] * 3 + ["guest_face=2400800:2.5@0.5%s" % m, "guest_press=0x4:lock@0.5%s" % m]
     fight_in = ["guest_face=2400800:2.5@3%s" % m, "guest_press=0x4@1%s" % m, "guest_press=0x4:lock@1%s" % m]
     g1 = ",".join([
-        "log_pos=2", "hp_floor=100", "goal=2400800:50:40", "watch_text=fog/Fog",
+        "log_pos=2", "hp_max=3000", "hp_floor=100", "goal=2400800:50:40", "watch_text=fog/Fog",
         # try 1
         "guest_move=%s:pin=3:ground@10%s" % (AMP_OUT_GUEST, m),
         "guest_fog=%s@3%s?host=bar" % (fog, m),                         # to the fog once the host's fight is on, Cross

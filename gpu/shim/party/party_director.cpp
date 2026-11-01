@@ -467,6 +467,7 @@ struct Test {
     Clock::time_point fog_t{};
     std::int64_t fog_from_ms = 0;
     int hp_floor = 0;      // hp_floor=PCT (amelia2078): own HP back to max under PCT % (every drop logged)
+    int hp_max = 0;        // hp_max=N (amelia2078): own max HP raised to N (a boss's heaviest hit no longer kills)
     std::int32_t hp_last = -1, hp_max_last = -1;
     std::uint32_t goal_entity = 0;  // goal=ENTITY:PCT:SECS: "test: goal reached" once ENTITY was SECS s under PCT % HP
     int goal_pct = 50;
@@ -2110,6 +2111,20 @@ void TestAidTick(Test& t, Clock::time_point now) {
                     Log("test: fog: not through 5 s after the Cross (%.2f m past, bar %d): walking on (try %d)",
                         double(past), int(b2::BossBarLine(nullptr)), t.fog_tries + 1);
                 }
+            }
+        }
+    }
+    if (t.hp_max > 0) {
+        std::int32_t hp = -1, mhp = -1;
+        std::uint64_t cm = 0, dm = 0;
+        if (ChrHpOf(LocalPlayer(), &hp, &mhp) && hp > 0 && mhp > 0 && mhp < t.hp_max &&
+            SafeGet(LocalPlayer() + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
+            SafeWrite(dm + 0xfc, &t.hp_max, 4);
+            SafeWrite(dm + 0xf8, &t.hp_max, 4);
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                Log("test: hp max: own max HP %d -> %d (test aid)", mhp, t.hp_max);
             }
         }
     }
@@ -4793,6 +4808,8 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.start = true;
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
+            } else if (item.rfind("hp_max=", 0) == 0) {
+                st.test.hp_max = std::clamp(std::atoi(item.c_str() + 7), 0, 99999);
             } else if (item.rfind("hp_floor=", 0) == 0) {
                 st.test.hp_floor = std::clamp(std::atoi(item.c_str() + 9), 0, 100);
             } else if (item.rfind("goal=", 0) == 0) {
