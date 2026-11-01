@@ -179,6 +179,15 @@ constexpr double kAnswerWait = 4.0;   // no dsum_room within this: the host does
 constexpr double kEntryWait = 8.0;    // the bell's own entry (sign sender, ~2 s) not up within this
 constexpr double kJoinWait = 8.0;     // delivered, but no session (client) within this
 constexpr double kRearmAfter = 2.5;   // the room is here, no entry yet: re-ring the bell (normal: ~2 s)
+/// A guest that loaded the host's Chalice Dungeon empty this many times (m29 without the dungeon, sent home each time) stops
+/// ringing for it: the summon only repeats the same empty load (NW-5e27806: 10 loops). Party > Rejoin tries again.
+constexpr int kMaxEmptyLoads = 2;
+constexpr bool StopAfterEmptyLoads(int empty_loads) { return empty_loads >= kMaxEmptyLoads; }
+/// The empty-load count after a look at the guest's state: it is in a known dungeon map (the dungeon came) or the host is not
+/// in a dungeon any more: back to 0; otherwise unchanged.
+constexpr int EmptyLoadsAfter(int empty_loads, bool in_known_dungeon, bool host_in_dungeon) {
+    return (in_known_dungeon || !host_in_dungeon) ? 0 : empty_loads;
+}
 /// One tick. `entry_waiting`: the game has a passive guest entry not yet answered;
 /// `joined`: the guest's session is a client of the host's room.
 Action Step(Guest& g, double now, bool entry_waiting, bool joined);
