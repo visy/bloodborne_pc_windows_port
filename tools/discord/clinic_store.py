@@ -90,7 +90,10 @@ class Clinic:
                            ("nw_bugs", "activity REAL"), ("nw_outbox", "kind TEXT"), ("nw_outbox", "merged_into INTEGER"),
                            ("nw_vpn", "games INTEGER"), ("nw_vpn", "open_games INTEGER"),
                            ("nw_vpn", "joinable INTEGER"), ("nw_vpn", "in_games INTEGER"),
-                           ("nw_vpn", "pool INTEGER")):
+                           ("nw_vpn", "pool INTEGER"), ("nw_vpn", "installs INTEGER"),
+                           ("nw_vpn", "issued_24h INTEGER"), ("nw_vpn", "enroll_global_used INTEGER"),
+                           ("nw_vpn", "enroll_global_day INTEGER"), ("nw_vpn", "refused_24h_total INTEGER"),
+                           ("nw_vpn", "refused_global_24h INTEGER")):
             have = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
             if col.split()[0] not in have:  # database from before the column: add it
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col}")
