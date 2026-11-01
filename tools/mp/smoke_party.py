@@ -3906,7 +3906,7 @@ def phase_amp(only):
     m = "%m24_00"
     fog = "%.1f:%.1f" % AMP_FOG   # host_fog / guest_fog: walk until the fog prompt shows, Cross, held until through
     host = ",".join([
-        "log_pos=2",
+        "log_pos=2"] + (["hp_floor=60"] if os.environ.get("BB_AMP_HOST_AWAY") == "1" else []) + [
         # try 1 (first meeting: her intro)
         "host_move=%s:pin=3:ground@8%s" % (AMP_OUT_HOST, m),
         "host_stick=%s@6%s?near=%s:3" % (AMP_IN, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),   # in, once the guest is outside
@@ -3918,8 +3918,9 @@ def phase_amp(only):
         "host_fog=%s@6%s?near=%s:3" % (fog, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
         "host_stick=%s@3%s" % (AMP_IN, m),
         "host_face=2400800@3%s" % m,
-        "host_die@6%s?member=bar" % m,                                  # early: dead before half, spectates
-    ])
+    ] + (["host_stick=52.5:313.0:1.0:40@6%s?member=bar" % m]           # BB_AMP_HOST_AWAY=1: alive, back at the fog
+         if os.environ.get("BB_AMP_HOST_AWAY") == "1" else
+         ["host_die@6%s?member=bar" % m]))                              # early: dead before half, spectates
     # R1 x3, then face her again and walk up to her (a stick toward her until within 2.5 m), lock on if it was lost
     attack = ["guest_press=0x800@1.3%s" % m] * 3 + ["guest_face=2400800:2.5@0.5%s" % m, "guest_press=0x4:lock@0.5%s" % m]
     fight_in = ["guest_face=2400800:2.5@3%s" % m, "guest_press=0x4@1%s" % m, "guest_press=0x4:lock@1%s" % m]
@@ -3998,8 +3999,9 @@ def _amp_window(v, L, tag, a, b):
         gh = re.search(r"(?:living member|player chr) ([0-9a-f]+)", line).group(1)
     dumps = L.all(0, r"boss target dump", a, b)
     live = [d for _t, d in dumps if gh and re.search(r"kind 1 t20 \d+ t38 [\d.]+ t3c [\d.]+ b40 1 h %s" % gh, d)]
-    v.step("amp %s host: her hate record holds the living guest (AI dumps)" % tag, bool(live),
-           "guest chr %s: %d of %d dumps; last: %s" % (gh, len(live), len(dumps), (dumps[-1][1][-200:] if dumps else "none")))
+    v.step("amp %s host (info): her hate record / the boss room notice" % tag, True,
+           "guest chr %s: %d of %d dumps with its live record; notices: %d" % (gh, len(live), len(dumps),
+                                                                              len(L.all(0, r"boss room notice", 0, b)) + len(L.all(1, r"boss room notice", 0, b))))
 
 
 def check_amp(v, L):

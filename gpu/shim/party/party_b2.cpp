@@ -6621,6 +6621,15 @@ bool BossHateRecord(u64 boss, u64 chr);
 /// (3 tries). BB_PARTY_BOSS_ROOM_NOTICE=0 off (A/B).
 void BossRoomNoticeTick(const GameSnapshot& s, double now) {
     static const bool on = !(std::getenv("BB_PARTY_BOSS_ROOM_NOTICE") && std::getenv("BB_PARTY_BOSS_ROOM_NOTICE")[0] == '0');
+    {
+        // diagnostics: the own chr's +0x1E5 bit 0x10 (logged when it changes)
+        static int last = -1;
+        const int b = s.player && s.world_up && !s.loading ? (Field<u8>(s.player, 0x1e5) & 0x10) != 0 : -1;
+        if (b >= 0 && b != last) {
+            Log("boss room notice: own chr +0x1E5 bit 0x10 %d -> %d (boss bar %d)", last, b, int(BossFightActive()));
+            last = b;
+        }
+    }
     static double next = 0;
     static int tries = 0;
     static bool fight = false;
