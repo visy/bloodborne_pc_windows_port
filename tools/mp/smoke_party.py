@@ -2653,11 +2653,11 @@ def check_caa(v, L):
 # cam = "stop": the empty-load count is forced to the loop stop (no real empty loads needed): the guest's alert box and the host's;
 # camo = "offline": the guest's game reads as offline when the summon is delivered: the specific offline notice. The shots/ show the box.
 def phase_cam(only, mode="stop"):
-    d = phase_cao(only)
+    d = phase_cae(only) if mode == "stop" else phase_cao(only)  # cao is flaky; the stop notice needs no summon
     d["name"] = "cam" if mode == "stop" else "camo"
     d["ienv"] = d["ienv"] + ["1:BB_PARTY_CHALICE_MSG_TEST=" + mode]
     d["crash"] = []
-    d["until"] = [r"1:chalice: notice shown: " + ("Chalice Dungeon loaded empty twice" if mode == "stop" else "This game is offline")]
+    d["until"] = [r"1:chalice: notice shown: " + ("Chalice Dungeon loaded empty twice" if mode == "stop" else "This game is offline"), r"0:seq STUCK"]  # a stuck altar menu ends the run (the check then fails)
     d["until_hold"] = 12
     d["seconds"] = int(os.environ.get("CAM_SECONDS", "200"))
     return d
