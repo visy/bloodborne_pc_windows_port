@@ -6611,21 +6611,42 @@ void AppearanceTick(const GameSnapshot& s) {
 void BossLockEntry(u64 boss, u32 want);
 bool BossHateRecord(u64 boss, u64 chr);
 
-void Test1e5Tick() {
-    // amelia2078 experiment: the host's copies of members get chr +0x1E5 bit 0x10 (set on the copy during a first
-    // fight with her intro, missing on a copy re-created by a wipe's load)
-    static const bool on = std::getenv("BB_AMP_TEST_1E5") && std::getenv("BB_AMP_TEST_1E5")[0] == '1';
-    if (!on || Role() != RoleHost) return;
-    for (const TaskInfo& t : Tasks(false)) {
-        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
-        if (!c) continue;
-        const u8 b = Field<u8>(c, 0x1e5);
-        if (!(b & 0x10)) {
-            const u8 nb = u8(b | 0x10);
-            SafeWrite(c + 0x1e5, &nb, 1);
-            Log("test 1e5: chr %08x +0x1E5 %02x -> %02x", Field<u32>(c, 8), unsigned(b), unsigned(nb));
-        }
+/// CL-2c1eef (amelia2078), any role, main thread: a boss fight is on here (its bar) but this player's chr never got
+/// the boss room entry notice (EMEVD 2009[6] "ボス部屋侵入通知": Lua event 4068 on SprjLuaEventMan, handler 0x17C5D90
+/// case 6; the chr's +0x1E5 bit 0x10 while it holds). Boss events give it only on paths a co-op session skips: Vicar
+/// Amelia's re-fight 12404802 jumps over its 2009[6] in multiplayer (1003[105]); only her first fight with the intro
+/// (12401802) gives it. Without it on any player (live amp: host and guest copies alike, after a wipe), the boss
+/// attacked the host while it lived and nobody once the host was dead (the 4-player playtest's frozen Amelia on her
+/// second try). The notice is raised here as 2009[6] does: once per fight, again 3 s later while the bit is missing
+/// (3 tries). BB_PARTY_BOSS_ROOM_NOTICE=0 off (A/B).
+void BossRoomNoticeTick(const GameSnapshot& s, double now) {
+    static const bool on = !(std::getenv("BB_PARTY_BOSS_ROOM_NOTICE") && std::getenv("BB_PARTY_BOSS_ROOM_NOTICE")[0] == '0');
+    static double next = 0;
+    static int tries = 0;
+    static bool fight = false;
+    if (!on || now < next) return;
+    next = now + 0.5;
+    const bool up = g_on.load() && SessionUp() && s.world_up && !s.loading && s.player && BossFightActive();
+    if (!up) {
+        fight = false;
+        tries = 0;
+        return;
     }
+    if (!fight) {
+        fight = true;
+        tries = 0;
+        next = now + 1.0;  // the boss events' own 2009[6] first
+        return;
+    }
+    if ((Field<u8>(s.player, 0x1e5) & 0x10) || ChrHp(s.player) <= 0 || tries >= 3) return;
+    const u64 lem = Slot(0x553b0c8);
+    const u64 lua = lem ? Field<u64>(lem, 8) : 0;
+    if (!lua) return;
+    ++tries;
+    reinterpret_cast<void(BB_COOP_SYSV*)(u64, int, int)>(Guest(0x132e960))(lua, 0xfe4, 1);
+    next = now + 3.0;
+    Log("boss room notice: a boss fight is on but this player never got its boss room entry notice (2009[6], Lua event "
+        "4068; +0x1E5 %02x): raised (try %d)", unsigned(Field<u8>(s.player, 0x1e5)), tries);
 }
 
 void LimboBossTargetTick(double now) {
@@ -12486,7 +12507,7 @@ void Tick(const GameSnapshot& s) {
     DeadPlayerUntargetTick(s, now);
     BossStateTick(s, now);
     BossAttentionTick(s, now);
-    Test1e5Tick();
+    BossRoomNoticeTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
