@@ -261,7 +261,9 @@ def phase_s2(only):
         "guest_move=%s@18%%m24_01" % CLERIC_SPOT_GUEST,     # into the fight (invincible)
         "guest_die@3%m24_01",                               # dead in the fight: its limbo
         "guest_press=0x0@3%m24_01!",                        # waits until it is up again (logs its HP)
-        "guest_chr=2410100@3%m24_01",                       # next to an enemy on that enemy's floor
+        # flaky078: entity 2410260 (HP 279, 418 scaled; the plaza enemy s3 fights, it hit the host every run), not 2410100 (HP 70): the weak
+        # one died to the first R1 (or stood passive at 0.2 m for 12 s) before it ever struck: "takes an enemy hit" missing in every run
+        "guest_chr=2410260@3%m24_01",                       # next to an enemy on that enemy's floor
     ] + ["guest_press=0x800@1.5%m24_01"] * 4 + [            # R1: draws the enemy (A2: hit 8 s after)
         "guest_press=0x0@12%m24_01",                        # its HP after the enemy's hits
         "guest_move=%s@1%%m24_01" % CLERIC_TRIGGER_HOST,    # back to the arena (invincible)
@@ -541,15 +543,15 @@ def _s3_stain():
             "host_press=0@10%m24_01!"]
 
 
-def _s3_enemy():
+def _s3_enemy(dist="0.6", waits=4):
     """A nearby enemy on the same floor: R3 lock-on, R1 once (it fights back), HP lines, the kills, a vial
     (killed within ~10 s: two of them took the host's 575 HP in 13 s). R3 twice (":lock": the second
     only while not locked on): after the host_chr warp the camera can face away from the enemy, and
     an R3 then only turns the camera behind the player, as on a pad (deaths071: the first R3 missed
     after host_chr with and without a death before it; the second locked on)."""
-    return ["host_chr=0:0.6@2%m24_01!", "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
+    return ["host_chr=0:%s@2%%m24_01!" % dist, "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",  # R3: lock-on
             "host_press=0x4:lock@1%m24_01!", "host_press=0@1%m24_01!",
-            "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * 4 + [                  # R1: it fights back
+            "host_press=0x800@1%m24_01!"] + ["host_press=0@2%m24_01!"] * waits + [                  # R1: it fights back
         "host_kill=0@1%m24_01", "host_kill=0@1%m24_01", "host_press=0@2%m24_01!",
         "host_press=0x1000@1%m24_01!", "host_press=0@3%m24_01!"]                           # Triangle: a Blood Vial
 
@@ -572,10 +574,10 @@ def phase_s3(only):
         "host_die@1%m24_01",                                       # in the fight: the limbo
         "host_kill=2410810:hp@22%m24_01",                          # the guests' kill: the arena revive
         "host_press=0@8%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@2%m24_01!",  # OK on the key's box
-    ] + _s3_stain() + _s3_enemy() + [
+    ] + _s3_stain() + _s3_enemy("0.6", 5) + [
         "host_die@2%m24_01",                                       # 130 m from the lamp: lamp revive 2
         "host_press=0@14%m24_01!", "host_press=0@12%m24_01!",
-    ] + _s3_enemy() + [
+    ] + _s3_enemy("1.6", 5) + [  # flaky078: 5 waits (10 s): the first strike lands 8-11 s after the lock-on; 4 waits killed it first (e4 run 2), 7 let it kill the host (k run 1: HP 719 -> 261, dead, 133 m away)
         "host_lastlamp=2402950@1%m24_01", "host_die@2%m24_01",     # last lamp in the Cathedral Ward: a lone load
         "host_press=0@15%m24_00",                                  # its census (every 15 s), then the end
     ])
@@ -760,7 +762,7 @@ def _p(*a):
 LW = {
     "yh": dict(
         tag="lfw", map="m24_01", car="2411320", pos="12410350", busy="12415350", start="top", top_val=1,
-        lamp="2412953", set_flags="12410330,12410350",
+        mirror=True, lamp="2412953", set_flags="12410330,12410350", dismiss=True,  # flaky078: a "Beast x1" item box showed up mid-walk in lfw too (c3 run c)
         trig={"top": (-128.72, -44.3, -9.73), "bottom": (-128.72, -58.0, -9.73)},
         side={"top": (-128.19, -44.3, -9.20), "bottom": (-129.25, -58.0, -10.26)},
         out_h={"top": (-134.70, -44.2, -2.50), "bottom": (-125.28, -58.4, -11.69)},
@@ -790,13 +792,17 @@ LW = {
         # liftreg077: the prelude's kills drop an item (a blood gem: "Beast x1" box on the host); the box stays up and blocks the
         # stick walks of the later rides (the lfwc / lfwcbs flake), so the host presses Cross after each kill group (dismiss)
         lamp="2412953", set_flags="", dismiss=True,
+        skip1={"top": 1},
         door={"top": (24.1, 192.3), "bottom": (26.0, 194.5)},
         trig={"top": (24.28, 3.0, 194.17), "bottom": (24.28, -45.5, 194.17)},
         side={"top": (25.4, 3.0, 193.3), "bottom": (25.4, -45.6, 193.3)},
         out_h={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
         out_g={"top": (16.9, 3.8, 187.9), "bottom": (33.3, -45.8, 201.3)},
         wk={"top": (21.3, 2.8, 191.2), "bottom": (30.11, -45.6, 197.56)},
-        far={"top": (13.1, 3.6, 188.9), "bottom": (66.2, -51.0, 236.6)},
+        # flaky078: the top far spot is the route's own first waypoint (a recorded walked spot on the pocket's floor): a warp to
+        # (13.1, 3.6, 188.9) landed on the ledge 3 m below (y 0.3) every run; the route's "hop" teleported it back up, and when the hop
+        # failed the walk gave up on the lower ledge (lfwc c2: "STOPPED at waypoint 3/4 ... y 0.1")
+        far={"top": (16.1, 3.8, 186.9), "bottom": (66.2, -51.0, 236.6)},
         route={"top": "16.1:3.8:186.9/18.5:3.6:189.1/21.3:2.8:191.2/23.2:2.9:192.3/23.8:2.8:194.0",
                "bottom": "64.1:-51.0:235.7/63.1:-50.9:235.4/62.7:-49.8:232.6/61.2:-47.8:229.2/59.2:-46.3:227.4/57.1:-45.8:226.2/55.9:-45.7:223.7/52.2:-45.6:221.7/52.2:-45.7:218.9/49.8:-45.7:217.6/48.3:-45.7:215.0/46.1:-45.7:212.7/41.0:-45.8:211.8/41.1:-45.7:208.5/38.2:-45.8:206.8/36.4:-45.7:204.2/33.3:-45.8:201.3/30.6:-45.6:201.0/28.3:-45.7:199.4/27.6:-45.8:196.7/25.0:-45.5:194.9/24.3:-45.4:194.3"},
         # liftfar077: the top end is reached on foot from the Oedon Chapel side (the Great Bridge gate, 238 m of navmesh route);
@@ -857,7 +863,7 @@ def lfw_chains(spec, slow=False):
     for n, (e, kind) in enumerate(pre):
         steps["host"].append("host_move=%s:pin=4:ground@%s%%%s%s" % (_p(*spec[kind][e]), "4" if n == 0 else "1", m,
                                                                       "^1" if n == 0 else ""))
-        if len(pre) == 4:
+        if len(pre) == 4 and not spec.get("_noenemies"):  # flaky078: clear_enemies phases have none to kill
             steps["host"] += ["host_kill=0@0.6%%%s" % m] * (spec["kills"][e] if kind == "far" else 5)
             if spec.get("dismiss"):
                 steps["host"].append("host_press=0x4000@1.5%%%s" % m)  # OK on the drop's item box (no box: nothing)
@@ -891,6 +897,15 @@ def lfw_chains(spec, slow=False):
             # (the guest of lfwbs never saw the end-animation gate of ride 2 and waited 700 s); a waiter before needs it
             far, route = spec["far"][end], spec["route"][end]
             pin = 10 if far in spec.get("farlong", {}).values() and spec.get("_farwalk") else 4  # a far warp: the floor streams in slowly
+            if not (second and spec.get("stagger")) and spec.get("skip1", {}).get(end) and not spec.get("_farwalk"):
+                # flaky078: lfwc's top pocket: the first waypoint lies on the ledge 3 m BELOW the platform (a warp there lands on y 0.1 and
+                # the walker only got up by the route's "hop", when it hopped at all: lfwc c3 "STOPPED at waypoint 4/4 (15.9, 0.1, 185.1)").
+                # Start on the second waypoint, as the staggered second rider does (it never got stuck).
+                pts = route.split("/")
+                # a pair: the first rider starts one waypoint AHEAD of where the staggered second rider (pts[1]) stands, so the second
+                # one never has to pass it in the narrow pocket (lfwc 90 FPS: both warped to pts[1], the host stuck behind the idle guest)
+                n0 = 2 if riders == "both" else 1
+                far, route = tuple(float(x) for x in pts[n0].split(":")), "/".join(pts[n0 + 1:])
             if second and spec.get("stagger"):
                 # the second rider starts 2 waypoints further on: two walkers warped to one spot push each other off
                 # a ledge (live lfwc4: the top pocket's floor edge)
@@ -906,6 +921,11 @@ def lfw_chains(spec, slow=False):
                 s.append("%s_move=%s:pin=%d:ground@1%%%s%s" % (role, _p(*far), pin, m, g0))
             else:
                 s.append("%s_move=%s:pin=%d:ground@14%%%s%s" % (role, _p(*far), pin, m, "" if k and rode_before else gate))
+            if spec.get("dismiss"):
+                # flaky078: an item box ("Beast x1": a pickup on the pocket's platform, taken by the warp onto it) blocks the stick walk
+                # (lfwc c3: 6 m from the target, "stuck", the box on screen). Cross = OK on the box; with no box it does nothing in the
+                # world (Circle is the dodge).
+                s.append("%s_press=0x4000@2%%%s" % (role, m))
             # the second rider walks in once the first one stands on the car: two walkers on the same route block
             # each other in its narrow places and in the doorway (live lfw4 / lfw5)
             rc = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
@@ -915,14 +935,18 @@ def lfw_chains(spec, slow=False):
                 s.append("%s_move=%s:pin=4:ground@8%%%s%s" % (role, _p(*rw), m, rc))
                 rc = ""
                 pin = 4
-            if slow:
+            if True:  # flaky078: every rider
+                # flaky078: the route (the second rider's, and a lone rider's: lfwc c1 ride 2) must not end inside the trigger cylinder either: lfwc's bottom route ends 0.1 m from the
+                # trigger, the ride started mid-route (the host already beside it) and the guest's later "near the host" step then waited
+                # 120 s on a host that was gone, skipped to the last step and ride 4 never ran (the lfwc flake). The stick step into the
+                # trigger (after the first rider stands beside it) starts the ride.
                 # liftbis077: the route's last waypoints can lie inside the trigger cylinder (r 0.55 m: lfwcs top 0.5 m): the ride then
                 # starts mid-route, and the tail walk below (a HOP back to the landing) warped the carried host to the top and into the
                 # open shaft (live lfwcs, car down: fell 48 m). The slow phases' route stops outside the cylinder; the stick step rides.
                 _tx, _ty, _tz = spec["trig"][end]
                 _head, _bar, _last = route.rpartition("|")
                 _wp = [w for w in _last.split("/") if w]
-                while len(_wp) > 3 and math.dist((float(_wp[-1].split(":")[0]), float(_wp[-1].split(":")[2])), (_tx, _tz)) <= 0.8:
+                while len(_wp) > (3 if slow and not second else 2) and math.dist((float(_wp[-1].split(":")[0]), float(_wp[-1].split(":")[2])), (_tx, _tz)) <= 0.8:
                     _wp.pop()
                 route = _head + _bar + "/".join(_wp)
             legs = route.split("|")  # a leg ends at a ladder's foot: Cross climbs it, the next leg starts at the top
@@ -948,16 +972,43 @@ def lfw_chains(spec, slow=False):
             if spec.get("door"):
                 dx, dz = spec["door"][end]
                 s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
+                if spec.get("dismiss"):
+                    s.append("%s_press=0x4000@0.5%%%s" % (role, m))  # OK on an item box before the last 2 m (flaky078)
             if riders == "both" and role == "host":
                 # on the car beside the trigger box; the guest steps into the box once the host stands there
                 sx, sy, sz = spec["side"][end]
-                s.append("%s_stick=%.2f:%.2f:0.2:30@0.2%%%s" % (role, sx, sz, m))
+                # flaky078: the side spot lies 0.75 m from the trigger centre (cylinder r 0.55). The stick walker's FIRST burst of a
+                # step is a guess of the camera's direction (live lfw 15:50: -151 deg, then 61 deg: 0.9 m the wrong way, into the
+                # cylinder): the ride started with the second rider still outside ("0 samples on the car"; the 0.7.7 triage cause).
+                # No stick step can be that exact, so the first rider's last 2 m (door -> side spot) is the game's own in-world warp
+                # to the verified spot beside the trigger (as the exit warps at the arrival); the walk-in route up to the door is
+                # still walked, and the second rider still walks into the trigger.
+                s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s" % (role, sx, sy, sz, m))
             else:
                 tx, ty, tz = spec["trig"][end]
                 cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
+                if second and spec.get("mirror"):
+                    # flaky078: the second rider the same (lfw f_lfw_1: its stick from the door GAVE UP at the cage post, the host waited 240 s
+                    # for a ride that never started): the in-world warp, once the first rider stands beside the trigger, to the point
+                    # mirrored through the trigger (the other end's side spot: the car's footprint is the same at both ends, this end's
+                    # height), 0.75 m from the trigger on its far side; the stick step then walks the 0.75 m into the trigger.
+                    ox_, oy_, oz_ = spec["side"]["bottom" if end == "top" else "top"]
+                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s%s" % (role, ox_, spec["side"][end][1], oz_, m, cond))
+                    cond = ""
+                if not second:
+                    # flaky078: a lone rider too: the stick walker's first burst from the door (-127, -10.9) went east into the cage post
+                    # (-126.5, -10.4) twice (lfw c3 run c, c4 run 2: "stuck", ride 2 never started, the host waited 240 s). The 0.75 m
+                    # from the side spot into the trigger is the walked part that is left; the door -> side spot part is the in-world warp.
+                    sx, sy, sz = spec["side"][end]
+                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s" % (role, sx, sy, sz, m))
                 # liftreg077: the slow phases (sprint overshoot) end the step inside the trigger cylinder (r 0.55): at 0.25 a sprinter
                 # circles the trigger, walks off the rising car and into the open shaft (live lfwcs: HP 0 at y -70)
                 s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s%s" % (role, tx, tz, "0.45" if slow else "0.25", m, cond))
+                # flaky078: the walker's heading flips between +100 and -12 deg for all 30 steps of one stick step and hovers 0.8 m from the
+                # trigger without entering it (lfw 90 FPS: the ride never started, the host waited 240 s). The same step again (no
+                # condition): a second and third try from where it stands; once the ride has started it is "arrived" at once (xz only)
+                for _ in range(2):
+                    s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s" % (role, tx, tz, "0.45" if slow else "0.25", m))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
             if os.environ.get("BB_LFW_EXIT") == "walk":
@@ -971,9 +1022,11 @@ def lfw_chains(spec, slow=False):
 
 def phase_lfw_for(key, slow=False, name=None, far=False, sprint=True):
     spec = LW[key]
+    if (name or spec["tag"]) in CLEAR_ENEMY_PHASES and os.environ.get("BB_SMOKE_CLEAR_ENEMIES", "1") != "0":
+        spec = dict(spec, _noenemies=True)
     host, guest = lfw_chains(lfw_far_spec(spec) if far else spec, slow)
     common = "god,log_pos=0.5,log_objanim=%s,log_obj=%s,log_flag=%s/%s" % (spec["car"], spec["car"], spec["pos"], spec["busy"])
-    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=%d" % (180 if far else 120)]
+    env = ["BB_TEST_REMO_SKIP_AFTER=5", "BB_PARTY_TEST_START_LAMP=" + spec["lamp"], "BB_PARTY_TEST_COND_TIMEOUT=%d" % (180 if far else 240)]  # flaky078: 240: the guest's script runs 30-50 s behind the host's; a wait that long is a failed row (none_of in check_lfw), never a skip
     if spec["set_flags"]:
         env.append("BB_PARTY_PROGRESS_TEST_SET=" + spec["set_flags"])
     if slow:
@@ -1066,6 +1119,53 @@ def lw_anim_at(L, i, spec, w):
     return val
 
 
+REMOTE_RX = re.compile(r"Party B2: remote chrs: \[mode \d+ 0x[0-9a-f]+ \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)")
+
+
+def copy_freeze(real, copies, span=6.0, moved=5.0, still=0.3):
+    """A remote copy that stops while its player moves: over a stretch of `span` s the copy stays within `still` m although the
+    player's real position travels more than `moved` m (the copy of a chr riding a car not updating: the liftwalk077 note). Lag is not
+    a freeze: under load the games run at different game-time rates (a lift ride took twice the wall time on one of them).
+    [(t, x, y, z)] lists on one clock. -> (worst real travel while frozen, t, windows tested)."""
+    worst, wt, n = 0.0, 0.0, 0
+    for k, (t, x, y, z) in enumerate(copies):
+        end = [c for c in copies[k + 1:] if c[0] - t >= span]
+        if not end:
+            break
+        c1 = end[0]
+        window = [c for c in copies[k:] if c[0] <= c1[0]]
+        if any(b[0] - a[0] > 2.5 for a, b in zip(window, window[1:])):
+            continue  # the copy lines are 1 s apart; a gap is a gap in the log, not a stopped copy
+        if max(math.dist((x, y, z), c[1:]) for c in window) > still:
+            n += 1
+            continue
+        n += 1
+        pts = [r for r in real if t <= r[0] <= c1[0]]
+        if len(pts) < 2:
+            continue
+        travel = max(math.dist(pts[0][1:], q[1:]) for q in pts)
+        if travel > moved and travel > worst:
+            worst, wt = travel, t
+    return worst, wt, n
+
+
+def lw_copy_rows(v, L, tag, t0):
+    """flaky078: the other player's body on each screen follows the real player through the rides (the user saw a host without a
+    body on the guest's screen): every copy sample of 'remote chrs' within 5 m of the real position (the log_pos lines of the other game)."""
+    # the log offsets ([+ s]) start at each process's own start: put both instances on the wall clock of their pos lines
+    off = {}
+    for k in (0, 1):
+        d = sorted(wall(l) - t for t, l in L.all(k, POS_RX.pattern) if wall(l) is not None)
+        off[k] = d[len(d) // 2] if d else 0.0
+    for i, j, who in ((1, 0, "host"), (0, 1, "guest")):
+        real = [(t + off[j],) + tuple(float(x) for x in POS_RX.search(l).groups()) for t, l in L.all(j, POS_RX.pattern)]
+        copies = [(t + off[i],) + tuple(float(x) for x in REMOTE_RX.search(l).groups())
+                  for t, l in L.all(i, REMOTE_RX.pattern, t0)]  # from 5 s before the first ride: the join and the first warps (two maps, 100+ m) are not rides
+        worst, wt, n = copy_freeze(real, copies)
+        v.step("%s the %s's copy on the other screen does not freeze while it moves" % (tag, who), n >= 20 and worst == 0.0,
+               "%d windows of 6 s, worst: copy still while the player travelled %.1f m (at wall +%.0f s)" % (n, worst, wt % 3600))
+
+
 def check_lfw(v, L, key, tag):
     spec = LW[key]
     plan = lfw_plan(spec, tag.endswith("s"))
@@ -1103,16 +1203,28 @@ def check_lfw(v, L, key, tag):
             after = L.all(i, POS_RX.pattern, (r["t_arr"] or r["t_end"]) + 0.5, (r["t_arr"] or r["t_end"]) + 3.0)
             y2 = float(POS_RX.search(after[0][1]).group(2)) if after else None
             n = off = 0
-            for _t, line in L.all(i, POS_RX.pattern, r["t"] + 0.6, (arr or r["t"]) - 0.3):
+            bits = []  # (counted, on): the sample just before the window is context for "isolated", it is not counted
+            for _t, line in L.all(i, POS_RX.pattern, r["t"] - 1.0, (arr or r["t"]) - 0.3):
                 m = POS_RX.search(line)
                 f = re.search(r" f ([0-9a-f]{10})", line)
                 if f and ((float(m.group(1)) - ax) ** 2 + (float(m.group(3)) - az) ** 2) ** 0.5 < 2.0:
-                    n += 1
-                    off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+                    on = bool(int(f.group(1), 16) & RIDE_BIT)
+                    counted = _t >= r["t"] + 0.6
+                    bits.append((counted, on))
+                    if counted:
+                        n += 1
+                        off += 0 if on else 1
+            # one isolated off sample with on-car samples on both sides is the ride bit flickering as the car starts (lfwc 30 / 60 FPS, the
+            # host of a pair at the top end): not a fall, but kept visible in the evidence; several off samples, or one at either end, fail
+            flicker = False
+            if off == 1:
+                k_off = next(k for k, (c, on) in enumerate(bits) if c and not on)
+                flicker = 0 < k_off < len(bits) - 1 and bits[k_off - 1][1] and bits[k_off + 1][1]
             v.step("%s %s: the %s rode along to the %s end, on the floor after" % (tag, name, role, arrive),
-                   y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and off == 0,
-                   "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it" %
-                   ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off))
+                   y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and (off == 0 or flicker),
+                   "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it%s" %
+                   ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off,
+                    " (ride bit flicker (1 sample))" if flicker else ""))
     need_far = 1.5 if tag.endswith("s") else 3.0  # sprinting walkers meet the other player's exit spot
     for k, (d, riders, end) in enumerate(plan):
         for role in ("host", "guest"):
@@ -1138,6 +1250,11 @@ def check_lfw(v, L, key, tag):
                                                                    len(L.all(i, r"test: route: HOP"))))
     jump_steps(v, tag, L, rides, (spec["trig"]["top"][0], spec["trig"]["top"][2]),
                ["%d %s %s" % (k + 1, r, d) for k, (d, r, _e) in enumerate(plan)])
+    first = [r[0]["t"] for r in rides if r]
+    lw_copy_rows(v, L, tag, (min(first) - 5.0) if first else 1e9)
+    # flaky078: one side waiting out a step's 120 s condition (the other player never came / the car was elsewhere) and skipping to the
+    # last step is a failure, never a pass: every ride is synchronised on the other player's state (near the first rider, the car's anim)
+    none_of(v, L, tag + " no step waited out its condition (nobody skipped ahead)", r"travel step \d+ \(\w+\): condition timed out", 0, 1e9, (0, 1))
     none_of(v, L, tag + " nobody died", r"local death: HP 0", 0, 1e9, (0, 1))
     none_of(v, L, tag + " no fall recovery", r"recovery: falling", 0, 1e9, (0, 1))
     holds = sum(len(L.all(i, r"lift car hold:|lift car floor:|lift car prebuild:")) for i in (0, 1))
@@ -6684,6 +6801,12 @@ def measured_summary(sub, entry):
     return lines, problems
 
 
+# flaky078: phases that do NOT test enemies, fights, drops or echoes: every loaded regular enemy is killed quietly as its area
+# loads (director clear_enemies; bosses and NPCs stay). Phases that test enemy behaviour (s2 / s3 arena hits, bosses, invasions,
+# drops, echoes) must not be listed. BB_SMOKE_CLEAR_ENEMIES=0 turns it off for a comparison run.
+CLEAR_ENEMY_PHASES = {"lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs"}
+
+
 def run_phase(a, ph, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     root = Path(a.root)
@@ -6734,7 +6857,10 @@ def run_phase(a, ph, out: Path):
         return e.replace("{root}", str(root)).replace("{out}", str(out.resolve()))
     for e in ph["env"]:
         cmd += ["--env", subst(e)]
+    clear = ph["name"] in CLEAR_ENEMY_PHASES and os.environ.get("BB_SMOKE_CLEAR_ENEMIES", "1") != "0"
     for e in ph["ienv"]:
+        if clear:  # flaky078: no enemies to run into / get hit by in a phase that does not test them (director clear_enemies)
+            e = re.sub(r"^(\d+:)?BB_PARTY_DIRECTOR_TEST=", lambda m: m.group(0) + "clear_enemies,", e)
         cmd += ["--ienv", subst(e.replace("{hold}", hold))]
     for w in ph.get("start_when", []):
         cmd += ["--start-when", w]
