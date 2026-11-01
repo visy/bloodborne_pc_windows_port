@@ -6,13 +6,17 @@ Reads only the count (management `load-stats`) and max-clients from server.conf:
 L = nwlobby's counts from its loopback socket (127.0.0.1:9311): {"games","players","open","full","joinable",
 "free_slots","sizes","builds"}, or null when
 the lobby does not answer (an older nwlobby, or it is down). Counts only.
+"signups" = nwsign's loopback GET /v1/stats (https://127.0.0.1:$NWSIGN_PORT, default 8443): {installs, active_certs,
+issued_last_24h, banned, enroll_global_used, enroll_global_day, enroll_per_ip_day, refused_24h:{reason: n}} or null.
 Standard library only. Paths/ports can be overridden with NWVPN_PW, NWVPN_CONF, NWVPN_MGMT_PORT.
 """
 import json
 import os
 import re
 import socket
+import ssl
 import sys
+import urllib.request
 
 POOL = 253   # fallback: 10.8.0.0/24, topology subnet (the real size comes from server.conf's "server" line)
 PW_FILE = os.environ.get("NWVPN_PW") or os.path.expanduser("~/nwvpn/mgmt.pw")
@@ -81,6 +85,38 @@ def lobby(addr=LOBBY_STATS, timeout=2.0):
         return None
 
 
+SIGNUP_KEYS = ("installs", "active_certs", "issued_last_24h", "banned")
+
+
+def parse_signups(data):
+    """nwsign's /v1/stats JSON (bytes or str) -> counts dict, else None. Only known integer keys pass."""
+    try:
+        d = json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
+        if not isinstance(d, dict) or d.get("ok") is not True:
+            return None
+        out = {k: int(d[k]) for k in SIGNUP_KEYS}
+        lim = d.get("limits") or {}
+        out["enroll_global_used"] = int(d["enroll_global_used"])
+        out["enroll_global_day"] = int(lim["enroll_global_day"])
+        out["enroll_per_ip_day"] = int(lim["enroll_per_ip_day"])
+        out["refused_24h"] = {str(k)[:40]: int(v) for k, v in list(dict(d.get("refused_24h") or {}).items())[:10]}
+        return out
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def signups(port=None, timeout=2.0):
+    port = int(port or os.environ.get("NWSIGN_PORT") or 8443)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE   # loopback to our own self-signed service
+    try:
+        with urllib.request.urlopen("https://127.0.0.1:%d/v1/stats" % port, timeout=timeout, context=ctx) as r:
+            return parse_signups(r.read(65536))
+    except (OSError, ValueError):   # URLError, timeouts, ssl errors are OSError
+        return None
+
+
 def _wait(sock, want, timeout=5.0):
     """Read until a line starts with one of `want` (a prompt without newline counts); return that line, else ''."""
     sock.settimeout(timeout)
@@ -138,6 +174,10 @@ def main():
     d = query()
     if d.get("ok"):
         d["lobby"] = lobby()
+        try:
+            d["signups"] = signups()
+        except Exception:   # noqa: BLE001 - never fail the whole reply
+            d["signups"] = None
     print(json.dumps(d, separators=(",", ":")))
     return 0
 
