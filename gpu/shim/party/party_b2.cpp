@@ -6669,15 +6669,18 @@ void BossRoomNoticeTick(const GameSnapshot& s, double now) {
         next = now + 1.0;  // the boss events' own 2009[6] first
         return;
     }
-    if ((Field<u8>(s.player, 0x1e5) & 0x10) || ChrHp(s.player) <= 0 || tries >= 3) return;
+    if (ChrHp(s.player) <= 0 || tries >= 1) return;
     const u64 lem = Slot(0x553b0c8);
     const u64 lua = lem ? Field<u64>(lem, 8) : 0;
+    const u64 gm = Slot(0x5556678);
+    const u64 lst = gm ? Field<u64>(gm, 0x16f8) : 0;
     if (!lua) return;
     ++tries;
+    // exactly what 2009[6] runs (0x17C5D90 case 6): the Lua event 4068 and 0x15BBC00 on GameMan +0x16F8
     reinterpret_cast<void(BB_COOP_SYSV*)(u64, int, int)>(Guest(0x132e960))(lua, 0xfe4, 1);
-    next = now + 3.0;
-    Log("boss room notice: a boss fight is on but this player never got its boss room entry notice (2009[6], Lua event "
-        "4068; +0x1E5 %02x): raised (try %d)", unsigned(Field<u8>(s.player, 0x1e5)), tries);
+    if (lst) reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x15bbc00))(lst);
+    Log("boss room notice: the boss room entry notice (2009[6]: Lua event 4068, 0x15BBC00 %s) run for this fight",
+        lst ? "run" : "skipped: no list");
 }
 
 void LimboBossTargetTick(double now) {
