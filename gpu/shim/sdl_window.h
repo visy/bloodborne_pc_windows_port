@@ -4,6 +4,8 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 #include "common/types.h"
 #include "mouse_buttons.h"
 
@@ -35,7 +37,13 @@ public:
     /// Processes pending window events. Returns false once the user closed the window.
     bool PollEvents();
     /// Keyboard text entry for the system IME dialog; typed text shows in the title bar.
-    void BeginTextInput(const std::string& initial, const std::string& prompt);
+    /// `choices`: a pick list (value, label) shown above the box - Up / Down (keyboard, d-pad) move the
+    /// selection, which sets the text, Enter / Cross confirm; typing or Backspace leaves the list for the
+    /// keyboard. Empty: the plain box. (Chalice glyphs, docs/party/chalice.md 11.)
+    void BeginTextInput(const std::string& initial, const std::string& prompt,
+                        const std::vector<std::pair<std::string, std::string>>& choices = {});
+    /// Test aid (any thread): keys (TestType's) the next text box takes as soon as it opens.
+    void QueueTestKeys(const std::string& keys);
     /// 0 while typing, 1 confirmed (Enter), 2 cancelled (Escape); text is UTF-8.
     int PollTextInput(std::string& text);
     bool IsTextInputActive() const { return text_active; }
@@ -67,6 +75,10 @@ private:
     bool text_requested{}, text_active{};
     int text_state{};
     std::string text, text_prompt, base_title;
+    std::vector<std::pair<std::string, std::string>> text_choices;
+    int text_sel{-1};  ///< the selected choice, -1: typing
+    std::string text_test_keys;
+    void UpdateChoices();
     void UpdateTextTitle();
     void UpdateCursor();
     void UpdateMouseMode();

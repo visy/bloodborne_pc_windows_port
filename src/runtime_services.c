@@ -254,6 +254,7 @@ static void ime_complete(int end_status, const char *text) {
     } else if (end_status && ime.buffer && ime.max_length && ime.buffer[0] == 0) {
         utf8_to_utf16("Hunter", ime.buffer, ime.max_length);
     }
+    bbgpu_ime_closed(ime.max_length ? ime.max_length - 1 : 0, text, end_status); /* party: the Chalice glyph box */
     ime.end_status=end_status; ime.finished=1; ime.running=0;
     printf("Runtime: ImeDialog %s%s%s\n",end_status ? "cancelled (default used)" : "text: ",end_status ? "Hunter" : (text ? text : "Hunter"),"");
 }
@@ -285,7 +286,9 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     if ((!preset || !*preset) && getenv("BB_TEST_NEWGAME") && getenv("BB_TEST_NEWGAME")[0] &&
         getenv("BB_TEST_NEWGAME")[0] != '0') preset="Hunter";
     if (preset) { ime_complete(0,preset); return 0; }
-    if (!bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Name")) {
+    const char *choices=bbgpu_ime_choices(param->max_length); /* party: the Chalice glyph pick list */
+    if (!(choices && choices[0] ? bbgpu_text_input_begin_list(initial,prompt[0] ? prompt : "Name",choices)
+                                : bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Name"))) {
         const char *name=getenv("BB_USER_NAME");
         ime_complete(0,name ? name : initial[0] ? initial : "Hunter");
     } else printf("Runtime: ImeDialog opened: type in the game window, Enter to confirm, Esc to cancel\n");
