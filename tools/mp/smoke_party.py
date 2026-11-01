@@ -6210,11 +6210,16 @@ def prep_sgb2(root: Path):
 def phase_sgb2(only):
     host = ",".join(["god", "goods=4110:0", "log_flag=12101000/12101004/9801/50000100/12101101",
                      "host_lamp=2102950@20%m24_00^1", "host_press=0@45%m21!"])
-    ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=god",
+    # The guest without its summoned shop-gate overlay (BB_PARTY_SHOP_GATES=0): its copy of 12101000 slot 0 then
+    # waits for and ends on its own Saw badge in the host's Dream as a 0.7.7 guest's did (with the overlay it ends at
+    # once from its own save's 12101000 and sends no state), so the host's packet filter alone is what is tested.
+    ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_SHOP_GATES=0",
             "0:BB_PARTY_PROGRESS_TEST_CLEAR=12101000,60009997,60009996", "0:BB_PARTY_SPLIT_TEST=yes",
             "1:BB_PARTY_SPLIT_TEST=yes"]
     if os.environ.get("BB_SGB2_CONTROL"):
         ienv.append("0:BB_PARTY_ITEM_GATE_SYNC=1")
+    if os.environ.get("BB_SGB2_NETSIM"):  # e.g. dsl / bad: the players' internet link (both games)
+        ienv += ["0:BB_NET_SIM=" + os.environ["BB_SGB2_NETSIM"], "1:BB_NET_SIM=" + os.environ["BB_SGB2_NETSIM"]]
     return dict(
         name="sgb2", seconds=330, count=2, headless=0, prep=prep_sgb2,
         env=[], ienv=ienv,
@@ -6234,11 +6239,15 @@ def check_sgb2(v, L):
     j = need(v, L, "sgb2 join: the guest is in", 0, r"cooperators 0 -> 1")
     dream = need(v, L, "sgb2 the party is in the Hunter's Dream (host)", 0, r"map .* -> m21_00_00_00", j or 0)
     need(v, L, "sgb2 the guest is in the host's Dream", 1, r"map .* -> m21_00_00_00", j or 0)
-    drop = need(v, L, "sgb2 the guest's badge row state (12101000 slot 0) dropped on the host", 0,
-                r"Item gates: event 12101000 slot 0's state from another player not applied", dream or 0)
+    drop = None if os.environ.get("BB_SGB2_CONTROL") else need(
+        v, L, "sgb2 the guest's badge row state (12101000 slot 0) dropped on the host", 0,
+        r"Item gates: event 12101000 slot 0's state from another player not applied", dream or 0)
     bad = L.find(0, r"test: flags 12101000=1", dream or 0)
-    v.step("sgb2 the host's 12101000 stays 0 in the Dream with the guest (no Saw badge of its own)", not bad and dream,
-           bad[1][:160] if bad else ("drop seen" if drop else "no drop line"))
+    if os.environ.get("BB_SGB2_CONTROL"):
+        v.step("sgb2 CONTROL (filter off): the guest's state sets the host's 12101000", bad, "no 12101000=1 on the host")
+    else:
+        v.step("sgb2 the host's 12101000 stays 0 in the Dream with the guest (no Saw badge of its own)", not bad and dream,
+               bad[1][:160] if bad else ("drop seen" if drop else "no drop line"))
     check_common(v, L, "sgb2")
 
 

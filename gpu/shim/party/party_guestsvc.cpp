@@ -1560,7 +1560,7 @@ BB_COOP_SYSV u64 EventSyncRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
             // Amygdala's grab (12405263, its own Eye) ended / ran this game's copy: the host's shop listed a guest's
             // badge rows and the host was grabbed into the DLC with no Eye of its own.
             static std::atomic<int> gate_drops{0};
-            if (gate_drops.fetch_add(1) < 12) {
+            if (gate_drops.fetch_add(1) < 40) {
                 std::int16_t slot = 0;
                 SafeGet(buf + 0xc, &slot);
                 Log("Item gates: event %d slot %d's state from another player not applied (%s)", event, int(slot),
