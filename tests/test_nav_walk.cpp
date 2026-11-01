@@ -138,20 +138,16 @@ static void TestStick() {
     o.Observe(0.2, 1.0);
     o.Observe(0.2, 1.0);
     CHECK(o.have && std::fabs(o.off - 0.8) < 1e-6);
-    // a camera model that disagrees with the motion is dropped for the observation
+    // a constant 150 degree disagreement between the matrix and the motion is learned, and the swings still come
+    // from the matrix: off = raw + resid
     CamModel w;
-    w.FromCamera({0, 0, -5}, {0, 0, 0});
-    for (int i = 0; i < 12; ++i) w.Observe(0.0, 1.5, 1.8);  // a slow start: not held against the camera
-    CHECK(!w.mismatch);
-    for (int i = 0; i < 40; ++i) w.Observe(0.0, 1.5, 4.0);
-    CHECK(w.mismatch && !w.from_cam && std::fabs(w.off - 1.5) < 0.05);
-    w.FromCamera({0, 0, -5}, {0, 0, 0});
-    CHECK(std::fabs(w.off - 1.5) < 0.05);
-    // ... and taken back once the camera agrees with the motion again
-    for (int i = 0; i < 12; ++i) w.Observe(0.0, 0.0);
-    CHECK(!w.mismatch && w.from_cam && w.recovered == 1);
-    w.FromCamera({0, 0, -5}, {0, 0, 0});
-    CHECK(std::fabs(w.off) < 1e-9);
+    w.FromForward(0.0, 1.0);  // raw 0
+    for (int i = 0; i < 40; ++i) w.Observe(0.0, 2.6, 4.0);  // the motion says 2.6 rad
+    CHECK(w.mismatch && std::fabs(w.resid - 2.6) < 0.05);
+    w.FromForward(1.0, 0.0);  // the camera swings 90 degrees: off follows at once
+    CHECK(std::fabs(Wrap(w.off - (kPi / 2 + 2.6))) < 0.05);
+    for (int i = 0; i < 40; ++i) w.Observe(0.0, kPi / 2, 4.0);  // and when the motion agrees with the matrix again
+    CHECK(!w.mismatch && w.recovered == 1 && std::fabs(w.resid) < 0.45);
 }
 
 static void TestFollower() {
