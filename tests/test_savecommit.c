@@ -19,11 +19,13 @@
 #include <direct.h>
 #define MSLEEP(ms) Sleep(ms)
 #define MKDIR(p) _mkdir(p)
+#define SETENV(v) _putenv("BB_SAVE_COMMIT_ASYNC=" v)
 #define OPEN_FLAGS (O_RDWR|O_BINARY)
 #else
 #include <unistd.h>
 #define MSLEEP(ms) usleep((ms)*1000)
 #define MKDIR(p) mkdir(p,0755)
+#define SETENV(v) ((v)[0] ? setenv("BB_SAVE_COMMIT_ASYNC",v,1) : unsetenv("BB_SAVE_COMMIT_ASYNC"))
 #define OPEN_FLAGS O_RDWR
 #endif
 
@@ -120,7 +122,20 @@ static void inprocess(const char *where) {
     assert(content(temp)==0);
     printf("savecommit-test ok (fix steps %d; the close returned in %.2f ms while its steps took 400 ms)\n",fixes,(double)submitted/1e6);
 }
+/* Default (BB_SAVE_COMMIT_ASYNC unset): submit does the steps inline, nothing is queued. */
+static void inline_default(const char *where) {
+    setup(where);
+    char path[600]; snprintf(path,sizeof(path),"%s/file.dat",dir);
+    fill(path,0xA1);
+    assert(!runtime_savecommit_enabled());
+    assert(submit("file.dat",0xB2)==0);
+    assert(runtime_savecommit_pending()==0 && content(path)==0xB2);
+    printf("savecommit-test inline ok\n");
+}
 int main(int argc,char **argv) {
+    if (argc==2 && !strcmp(argv[1],"--ini-on")) { SETENV(""); return runtime_savecommit_enabled() ? 0 : 1; } /* BB_CONFIG from the caller */
+    if (argc==3 && !strcmp(argv[1],"--inline")) { SETENV(""); inline_default(argv[2]); return 0; }
+    if (!getenv("BB_SAVE_COMMIT_ASYNC")) SETENV("1"); /* the cases below are the background path */
     if (argc==4 && !strcmp(argv[1],"--child")) return child(argv[2],argv[3]);
     if (argc==3 && !strcmp(argv[1],"--check")) { printf("%d\n",content(argv[2])); return 0; }
     if (argc!=2) { fprintf(stderr,"usage: savecommit-test DIR | --child STAGE DIR | --check FILE\n"); return 2; }
