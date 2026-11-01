@@ -6653,6 +6653,22 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
         Log("boss target dump %s: boss %08x: no target holder", tag, bh);
         return;
     }
+    {
+        // once: the holder's vtable and its first slots as image offsets (static RE of the list's update / prune)
+        static bool vt_logged = false;
+        if (!vt_logged) {
+            vt_logged = true;
+            const u64 base = Guest(0), hv = Field<u64>(holder, 0);
+            std::string vs;
+            for (int k = 0; hv && k < 16; ++k) {
+                char vb[32];
+                std::snprintf(vb, sizeof vb, " +%x=%llx", k * 8, ull(Field<u64>(hv, u64(k) * 8) - base));
+                vs += vb;
+            }
+            Log("boss target dump: holder vtable %llx:%s; owner (+8) vtable %llx", ull(hv - base), vs.c_str(),
+                ull(Field<u64>(Field<u64>(holder, 8), 0) - base));
+        }
+    }
     std::string out;
     u64 n = Field<u64>(holder, 0x18);
     for (int k = 0; n && k < 12; ++k, n = Field<u64>(n, 8)) {
@@ -6889,6 +6905,42 @@ struct UntargetedChr {
     bool readded_logged = false;
 };
 std::vector<UntargetedChr> g_untargeted;  // main thread only
+
+/// CL-2c1eef (amelia2078), host (the AI owner), main thread, every tick: a LIVING player chr whose target-bank entry
+/// still carries the dead mark gets it cleared. The enemies' perception (0x12AB4C0 -> the bank search 0x12ADC50 with
+/// mode 0) only sees bank entries whose [entry +0x18] +0x30 -> +0x18 bit 0 is clear; the game sets that bit when the
+/// chr dies (live: the host's own entry 0 -> 1 at its death). A member's copy re-created by a wipe's re-join came back
+/// with the bit still set (live amp: the guest's entry 0 on try 1, 1 on try 2 from its first frame), so no enemy
+/// perceived it: Vicar Amelia's second try fought the host while it lived (the host's own entry was clean) and
+/// attacked nobody once the host was dead (the 4-player playtest's frozen Amelia). Hits / ChangeTarget only add
+/// one-tick records that the list update 0x12B17C0 drops again when perception does not refresh them.
+/// BB_PARTY_LIVING_TARGET=0 off (A/B).
+void LivingTargetMarkTick(const GameSnapshot& s) {
+    static const bool on = !(std::getenv("BB_PARTY_LIVING_TARGET") && std::getenv("BB_PARTY_LIVING_TARGET")[0] == '0');
+    static std::set<u32> logged;
+    if (!on || Role() != RoleHost || !s.world_up || s.loading) return;
+    std::vector<u64> players;
+    if (s.player) players.push_back(s.player);
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c) players.push_back(c);
+    }
+    for (u64 c : players) {
+        if (ChrHp(c) <= 0) continue;
+        const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+        const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
+        if (!e30) continue;
+        const u8 b = Field<u8>(e30, 0x18);
+        if (!(b & 1)) continue;
+        const u8 nb = u8(b & ~1u);
+        SafeWrite(e30 + 0x18, &nb, 1);
+        const u32 h = Field<u32>(c, 8);
+        if (logged.insert(h).second)
+            Log("living target: chr %08x (HP %d) is alive but its target-bank entry still had the dead mark (+0x18 bit 0, "
+                "%02x): cleared, enemies perceive it again", h, ChrHp(c), unsigned(b));
+    }
+    if (players.empty()) logged.clear();
+}
 
 void DeadPlayerUntargetTick(const GameSnapshot& s, double now) {
     static const bool on = !(std::getenv("BB_PARTY_DEAD_UNTARGET") && std::getenv("BB_PARTY_DEAD_UNTARGET")[0] == '0');
@@ -12429,6 +12481,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     DeadPlayerUntargetTick(s, now);
+    LivingTargetMarkTick(s);
     BossStateTick(s, now);
     BossAttentionTick(s, now);
     HostRevivedTick(s);
