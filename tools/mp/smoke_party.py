@@ -574,10 +574,10 @@ def phase_s3(only):
         "host_die@1%m24_01",                                       # in the fight: the limbo
         "host_kill=2410810:hp@22%m24_01",                          # the guests' kill: the arena revive
         "host_press=0@8%m24_01!", "host_press=0x4000@2%m24_01!", "host_press=0@2%m24_01!",  # OK on the key's box
-    ] + _s3_stain() + _s3_enemy("0.6", 7) + [
+    ] + _s3_stain() + _s3_enemy("0.6", 5) + [
         "host_die@2%m24_01",                                       # 130 m from the lamp: lamp revive 2
         "host_press=0@14%m24_01!", "host_press=0@12%m24_01!",
-    ] + _s3_enemy("1.6", 7) + [  # flaky078: from 1.6 m the enemy first strikes ~11 s after the lock-on (c3 run c: HP 616 came right after the kill step)
+    ] + _s3_enemy("1.6", 5) + [  # flaky078: 5 waits (10 s): the first strike lands 8-11 s after the lock-on; 4 waits killed it first (e4 run 2), 7 let it kill the host (k run 1: HP 719 -> 261, dead, 133 m away)
         "host_lastlamp=2402950@1%m24_01", "host_die@2%m24_01",     # last lamp in the Cathedral Ward: a lone load
         "host_press=0@15%m24_00",                                  # its census (every 15 s), then the end
     ])
