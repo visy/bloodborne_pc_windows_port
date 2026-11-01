@@ -6671,6 +6671,37 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
         out += b;
     }
     Log("boss target dump %s: boss %08x:%s", tag, bh, out.empty() ? " (empty)" : out.c_str());
+    // amelia2078: every player chr (the local one and the members' copies) as the enemies' target search sees it:
+    // HP, team (+0x88), whether its entry (chr +0x3B0 -> +0x40 -> +8) is in the target bank *0x553B098, and the
+    // chr's +0x1E1 flags; once every 5 s
+    static double next_players = 0;
+    const double now = Now();
+    if (now < next_players) return;
+    next_players = now + 5.0;
+    const u64 bank = Slot(0x553b098);
+    std::vector<u64> v;
+    const u64 b = bank ? Field<u64>(bank, 8) : 0, e = bank ? Field<u64>(bank, 0x10) : 0;
+    const size_t cnt = b && e >= b ? size_t((e - b) / 8) : 0;
+    if (cnt && cnt <= 4096) {
+        v.assign(cnt, 0);
+        if (!SafeRead(b, v.data(), cnt * 8)) v.clear();
+    }
+    std::vector<u64> players;
+    if (const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60)) players.push_back(me);
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c) players.push_back(c);
+    }
+    std::string ps;
+    for (u64 c : players) {
+        const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+        char pb[128];
+        std::snprintf(pb, sizeof pb, " [chr %08x hp %d team %d bank %d f1e1 %08x]", Field<u32>(c, 8), ChrHp(c),
+                      Field<int>(c, 0x88), ent && std::find(v.begin(), v.end(), ent) != v.end() ? 1 : 0,
+                      Field<u32>(c, 0x1e1));
+        ps += pb;
+    }
+    Log("boss target dump %s: players (bank %zu entries):%s", tag, v.size(), ps.c_str());
 }
 
 /// The AI keeps a per-chr hate record (its target list entries of kind 1: flags 0x81 / 0x82, +0x20 type, +0x38
