@@ -451,3 +451,58 @@ class TestFailedEnrollFree(Base):
             self.assertEqual(lim.peek("k", 1, 10, now=100), 0)
         self.assertEqual(lim.hit("k", 1, 10, now=100), 0)
         self.assertGreater(lim.peek("k", 1, 10, now=101), 0)
+
+
+class TestStats(Base):
+    def tune(self):
+        return {"enroll_per_ip_day": 2, "enroll_global_day": 200}
+
+    def get(self, path):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        c = http.client.HTTPSConnection("127.0.0.1", self.port, context=ctx, timeout=20)
+        c.request("GET", path)
+        r = c.getresponse()
+        data = r.read()
+        c.close()
+        return r.status, json.loads(data)
+
+    def test_stats_localhost(self):
+        self.start()
+        self.enroll()
+        self.enroll()
+        _, csr = make_csr(self.td, "f")
+        self.assertEqual(self.post("/v1/enroll", {"csr": csr})[0], 429)
+        st, js = self.get("/v1/stats")
+        self.assertEqual(st, 200)
+        self.assertTrue(js["ok"])
+        self.assertEqual(js["installs"], 2)
+        self.assertEqual(js["issued_last_24h"], 2)
+        self.assertEqual(js["limits"], {"enroll_per_ip_day": 2, "enroll_global_day": 200})
+        self.assertEqual(js["enroll_global_used"], 2)
+        self.assertEqual(js["refused_24h"], {"enroll per address": 1})
+
+    def test_stats_non_local_is_404(self):
+        self.start()
+        sent = []
+        h = object.__new__(svc.Handler)
+        h.path = "/v1/stats"
+        h.send_json = lambda code, obj, extra=None: sent.append(code)
+        h.server = self.srv
+        for addr in ("203.0.113.9", "::ffff:127.0.0.1", "2001:db8::1"):
+            h.client_address = (addr, 1234)
+            h.do_GET()
+        h.client_address = ("::1", 1234)
+        h.do_GET()
+        h.client_address = ("127.0.0.1", 1234)
+        h.do_GET()
+        self.assertEqual(sent, [404, 404, 404, 200, 200])
+
+    def test_count_window(self):
+        lim = core.RateLimiter()
+        lim.hit("k", 10, 100, now=100)
+        lim.hit("k", 10, 100, now=150)
+        self.assertEqual(lim.count("k", 100, now=160), 2)
+        self.assertEqual(lim.count("k", 100, now=220), 1)
+        self.assertEqual(lim.count("none", 100, now=220), 0)

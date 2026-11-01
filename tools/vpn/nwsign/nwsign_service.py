@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""nwsign HTTPS service. POST /v1/enroll, POST /v1/renew, GET /v1/health.
+"""nwsign HTTPS service. POST /v1/enroll, POST /v1/renew, GET /v1/health,
+GET /v1/stats (loopback clients only: counts for the operator's reports).
 
 Privacy: logs nothing about clients. No client address is ever written to disk, to stdout or to a log
 (http.server's request log and error handler, which print the address, are overridden).
 """
-import json, os, socket, ssl, sys, threading, time
+import collections, json, os, socket, ssl, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -19,6 +20,8 @@ class Server(ThreadingHTTPServer):
         super().__init__(addr, handler)
         self.state = state
         self.limiter = RateLimiter()
+        self.refusals = collections.defaultdict(lambda: collections.deque(maxlen=20000))  # reason -> 429 times
+        self.refusals_lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(state.cfg["max_threads"])
         if ctx:
             self.socket = ctx.wrap_socket(self.socket, server_side=True, do_handshake_on_connect=False)
@@ -42,6 +45,24 @@ class Server(ThreadingHTTPServer):
 
     def handle_error(self, request, client_address):
         pass  # the default prints the client address
+
+    def note_refusal(self, why):
+        with self.refusals_lock:
+            self.refusals[why].append(time.time())
+
+    def refused_24h(self, now=None):
+        now = now or time.time()
+        with self.refusals_lock:
+            return {why: n for why, n in ((w, sum(1 for t in q if t > now - DAY)) for w, q in self.refusals.items()) if n}
+
+    def stats(self):
+        cfg = self.state.cfg
+        out = {"ok": True}
+        out.update(self.state.stats())
+        out["limits"] = {"enroll_per_ip_day": cfg["enroll_per_ip_day"], "enroll_global_day": cfg["enroll_global_day"]}
+        out["refused_24h"] = self.refused_24h()
+        out["enroll_global_used"] = self.limiter.count("global-enroll", DAY)
+        return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -85,12 +106,17 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def limited(self, wait):
+    def limited(self, wait, why):
+        # which limit answered (never the address): a lock-out report can be told apart from the journal
+        self.server.note_refusal(why)
+        print("nwsign: 429 %s, retry after %d min" % (why, (wait + 59) // 60), flush=True)
         self.send_json(429, {"error": "rate limited", "retry_after": wait}, {"Retry-After": str(wait)})
 
     def do_GET(self):
         if self.path == "/v1/health":
             self.send_json(200, {"ok": True})
+        elif self.path == "/v1/stats" and self.client_address[0] in ("127.0.0.1", "::1"):
+            self.send_json(200, self.server.stats())
         else:
             self.send_json(404, {"error": "not found"})
 
@@ -99,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.client_address[0]
         wait = lim.hit(lim.key("g", ip), cfg["general_per_ip_hour"], 3600)
         if wait:
-            return self.limited(wait)
+            return self.limited(wait, "general per address")
         if self.path not in ("/v1/enroll", "/v1/renew"):
             return self.send_json(404, {"error": "not found"})
         try:
@@ -119,9 +145,12 @@ class Handler(BaseHTTPRequestHandler):
                 # only a successful enrollment uses up a slot: a failed one (bad CSR, server error) left a player
                 # locked out for a day after three tries (2026-10-31, "Minutes left: 1436")
                 ekey = lim.key("e", ip)
-                wait = lim.peek(ekey, cfg["enroll_per_ip_day"], DAY) or lim.peek("global-enroll", cfg["enroll_global_day"], DAY)
+                wait = lim.peek(ekey, cfg["enroll_per_ip_day"], DAY)
                 if wait:
-                    return self.limited(wait)
+                    return self.limited(wait, "enroll per address")
+                wait = lim.peek("global-enroll", cfg["enroll_global_day"], DAY)
+                if wait:
+                    return self.limited(wait, "enroll global")
                 resp = s.enroll(req.get("csr"))
                 lim.hit(ekey, cfg["enroll_per_ip_day"], DAY)
                 lim.hit("global-enroll", cfg["enroll_global_day"], DAY)
@@ -130,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(iid, str):
                     wait = lim.hit(lim.key("r", ip) + iid, cfg["renew_per_install_day"], DAY)  # per caller too: an unsigned spam with a victim's id cannot use up its renewals
                     if wait:
-                        return self.limited(wait)
+                        return self.limited(wait, "renew per install")
                 resp = s.renew(iid, req.get("csr"), req.get("timestamp"), req.get("signature"), req.get("cert"))
         except CAError as e:
             code = e.status if e.status in (400, 401, 403, 404) else 500
