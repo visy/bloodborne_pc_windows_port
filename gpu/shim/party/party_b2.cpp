@@ -10781,7 +10781,7 @@ void ChaliceEmptyWorldTick(const GameSnapshot& s, double now) {
     coop::MemberRoster(0, &host_state, &host_map);
     const bool empty = Role() == RoleClient && s.world_up && !s.loading && !dsummon::MapKnown(s.map_id) &&
                        dsummon::ChaliceMap(host_map);
-    if (ChaliceMsgTest("stop") && Role() != RoleHost && dsummon::ChaliceMap(host_map) && g_empty_loads.load() < dsummon::kMaxEmptyLoads) {
+    if (ChaliceMsgTest("stop") && Role() != RoleHost && Role() != RoleClient && s.world_up && !s.loading && g_empty_loads.load() < dsummon::kMaxEmptyLoads) {
         g_empty_loads = dsummon::kMaxEmptyLoads;  // test aid: two empty loads, without making them
         ChaliceSummonStopped();                   // the notice at once (no summon needed)
         return;
