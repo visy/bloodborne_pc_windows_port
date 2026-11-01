@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 #include "common/types.h"
+#include "mouse_buttons.h"
 
 struct SDL_Window;
 
@@ -79,7 +80,7 @@ private:
     // Mouse & keyboard mode: relative mouse while the game has the input (UpdateMouseMode).
     std::mutex mouse_mutex;
     float mouse_dx{}, mouse_dy{};
-    u32 mouse_buttons{};
+    BbMouseButtons::Latch mouse_latch;
     int wheel_up{}, wheel_down{};
     bool relative_mouse{};
     /// SDL_GetTicks when the window last got the focus: the click that brought it to the front

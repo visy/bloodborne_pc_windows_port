@@ -1,6 +1,8 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
 #include "bbport_headless.h"
 #include <cctype>
+#include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +18,24 @@
 namespace Frontend {
 
 namespace {
+
+// BB_INPUT_LOG=1 (launcher: Advanced / Debug > Input log): mouse button changes and the repairs of
+// them, for reports of a button that sticks or is lost. Off by default.
+void InputLog(const char* fmt, ...) {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_INPUT_LOG");
+        return v && *v && std::strcmp(v, "0") != 0;
+    }();
+    if (!on) {
+        return;
+    }
+    char buf[160];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    std::printf("Input: log: %s (t=%llu ms)\n", buf, static_cast<unsigned long long>(SDL_GetTicks()));
+}
 
 // ReadMouse's bits: 0 left, 1 right, 2 middle, 3 X1, 4 X2.
 u32 MouseButtonBit(u8 button) {
@@ -362,7 +382,8 @@ bool WindowSDL::PollEvents() {
         // Mouse & keyboard mode: a release always ends the press, also when the menu takes it.
         if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
             std::scoped_lock lock{mouse_mutex};
-            mouse_buttons &= ~MouseButtonBit(event.button.button);
+            BbMouseButtons::Release(mouse_latch, MouseButtonBit(event.button.button));
+            InputLog("mouse up %d", event.button.button);
         }
         if (BbOverlay::HandleEvent(event)) {
             continue;
@@ -385,7 +406,8 @@ bool WindowSDL::PollEvents() {
                 // window or takes the mouse back (it is not captured yet) only takes the mouse; it
                 // is no attack or dodge. Its release clears nothing that was set.
             } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-                mouse_buttons |= MouseButtonBit(event.button.button);
+                BbMouseButtons::Press(mouse_latch, MouseButtonBit(event.button.button));
+                InputLog("mouse down %d", event.button.button);
             }
         }
         // The wheel (upstream 0.51, #52): notches for runtime_pad.c (d-pad up / down, quick items).
@@ -409,7 +431,8 @@ bool WindowSDL::PollEvents() {
             if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
                 std::scoped_lock lock{mouse_mutex};
                 mouse_dx = mouse_dy = 0.0f;
-                mouse_buttons = 0;
+                BbMouseButtons::Clear(mouse_latch);
+                InputLog("focus lost: buttons cleared");
                 wheel_up = wheel_down = 0;
             }
             break;
@@ -511,8 +534,20 @@ void WindowSDL::UpdateMouseMode() {
     if (!want) {
         std::scoped_lock lock{mouse_mutex};
         mouse_dx = mouse_dy = 0.0f;
-        mouse_buttons = 0;
+        if (mouse_latch.held || mouse_latch.tapped) {
+            InputLog("menu or no focus: buttons cleared (0x%x)", mouse_latch.held);
+        }
+        BbMouseButtons::Clear(mouse_latch);
         wheel_up = wheel_down = 0;
+    } else {
+        // A release can be lost when the capture changes hands (a menu, a loading screen, the
+        // Steam overlay): the game would see the button held (R1 for the left one) for ever.
+        std::scoped_lock lock{mouse_mutex};
+        const std::uint32_t os = SDL_GetMouseState(nullptr, nullptr); // bit n-1 = button n
+        const std::uint32_t stale = BbMouseButtons::Resync(mouse_latch, os);
+        if (stale) {
+            InputLog("stale mouse buttons 0x%x dropped (the OS has them up)", stale);
+        }
     }
     // The launcher's mouse & keyboard dialog may change the tuning while the game runs, and the
     // launcher's Button prompts choice (prompt_style) in any mode.
@@ -547,7 +582,7 @@ void WindowSDL::ReadMouse(float& dx, float& dy, u32& buttons, bool consume) {
     std::scoped_lock lock{mouse_mutex};
     dx = mouse_dx;
     dy = mouse_dy;
-    buttons = mouse_buttons;
+    buttons = BbMouseButtons::Read(mouse_latch, consume);
     if (consume) {
         mouse_dx = mouse_dy = 0.0f;
     }
