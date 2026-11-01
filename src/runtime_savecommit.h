@@ -3,7 +3,7 @@
  * file, flush the directory. A crash or kill at any point leaves the old file whole or the new
  * one whole (the leftover copy is removed at the next mount), never a mix.
  * The steps can take seconds on a slow or synced folder, so closing a save file hands them to
- * one background thread (BB_SAVE_COMMIT_ASYNC=0: inline). Whatever looks at that file by path
+ * one background thread when BB_SAVE_COMMIT_ASYNC=1 (default: inline, the old code in runtime_file.c). Whatever looks at that file by path
  * meanwhile calls runtime_savecommit_wait_file first; the process end calls _flush. */
 #ifndef RUNTIME_SAVECOMMIT_H
 #define RUNTIME_SAVECOMMIT_H
@@ -33,4 +33,6 @@ void runtime_savecommit_flush(void);
 int runtime_savecommit_pending(void);
 /* True when this temp path belongs to a queued or running commit. */
 int runtime_savecommit_owns_temp(const char *temp);
+/* BB_SAVE_COMMIT_ASYNC=1 (default off). */
+int runtime_savecommit_enabled(void);
 #endif

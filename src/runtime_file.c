@@ -443,18 +443,51 @@ static int open_for_commit(const char *path,const char *source,int flags,int mod
     *commit=c; *temp=t;
     return host;
 }
+static void sync_directory(const char *file) {
+#ifdef _WIN32
+    (void)file; return; /* the rename itself is MOVEFILE_WRITE_THROUGH (runtime_win_rename) */
+#endif
+    char dir[1024];
+    snprintf(dir,sizeof(dir),"%s",file);
+    char *slash=strrchr(dir,'/');
+    if (!slash) return;
+    *slash=0;
+    int d=open(dir,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    if (d>=0) { fsync(d); close(d); }
+}
 static int commit_file(const File *f) {
     if (!f->dirty) { close(f->host); unlink(f->temp); return 0; } /* opened for writing, not written */
-    static int configured;
-    if (!configured) {
-        runtime_savecommit_configure(&(SaveCommitOps){.fix=runtime_savepolicy_world_fix_file,.note=slow_io_note,.now=host_monotonic_ns});
-        configured=1;
+    if (runtime_savecommit_enabled()) {
+        static int configured;
+        if (!configured) {
+            runtime_savecommit_configure(&(SaveCommitOps){.fix=runtime_savepolicy_world_fix_file,.note=slow_io_note,.now=host_monotonic_ns});
+            configured=1;
+        }
+        /* BB_SAVE_COMMIT_ASYNC=1, in the background: the flush to disk and the rename can take seconds on a
+         * slow or synced folder. Looking at the file by path waits for them; the process end flushes them. */
+        char *temp=strdup(f->temp), *commit=strdup(f->commit);
+        if (!temp || !commit) { free(temp); free(commit); return runtime_savecommit_run(f->host,f->temp,f->commit); }
+        return runtime_savecommit_submit(f->host,temp,commit);
     }
-    /* In the background: the flush to disk and the rename can take seconds on a slow or synced folder.
-     * Looking at the file by path waits for them (wait_save_path); the process end flushes them. */
-    char *temp=strdup(f->temp), *commit=strdup(f->commit);
-    if (!temp || !commit) { free(temp); free(commit); return runtime_savecommit_run(f->host,f->temp,f->commit); }
-    return runtime_savecommit_submit(f->host,temp,commit);
+    uint64_t t0=host_monotonic_ns();
+    int e=fsync(f->host) ? errno : 0;
+    close(f->host);
+    uint64_t t1=host_monotonic_ns();
+    slow_io_note("commit: flush to disk",f->commit,t0,t1);
+    /* A party guest's character save written in the host's world keeps the own world's state. */
+    if (!e) runtime_savepolicy_world_fix_file(f->temp,f->commit);
+    uint64_t t2=host_monotonic_ns();
+    slow_io_note("commit: party world fix",f->commit,t1,t2);
+    if (!e && rename(f->temp,f->commit)) e=errno;
+    uint64_t t3=host_monotonic_ns();
+    slow_io_note("commit: rename",f->commit,t2,t3);
+    if (e) {
+        fprintf(stderr,"Runtime: save file %s not replaced (%s); the old one is kept\n",f->path,strerror(e));
+        unlink(f->temp);
+        return -e;
+    }
+    sync_directory(f->commit);
+    return 0;
 }
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
 static int64_t do_open(const char *guest,int flags,int mode) {

@@ -68,9 +68,28 @@ int runtime_savecommit_run(int host,const char *temp,const char *commit) {
     sync_directory(commit);
     return 0;
 }
-static int async_on(void) {
+int runtime_savecommit_enabled(void) {
     static int v=-1;
-    if (v<0) { const char *e=getenv("BB_SAVE_COMMIT_ASYNC"); v=!(e && e[0]=='0'); }
+    if (v<0) {
+        /* BB_SAVE_COMMIT_ASYNC=0/1 wins; else bbport.ini (BB_CONFIG) save_commit_async=1; default off. */
+        const char *e=getenv("BB_SAVE_COMMIT_ASYNC");
+        if (e && (e[0]=='0' || e[0]=='1')) v=e[0]=='1';
+        else {
+            v=0;
+            const char *path=getenv("BB_CONFIG");
+            FILE *f=path ? fopen(path,"r") : NULL;
+            char line[256];
+            while (f && fgets(line,sizeof line,f)) {
+                char *eq=strchr(line,'=');
+                if (!eq || line[0]=='#') continue;
+                *eq=0;
+                char *k=line; while (*k==' ' || *k=='\t') ++k;
+                char *ke=k+strlen(k); while (ke>k && (ke[-1]==' ' || ke[-1]=='\t')) *--ke=0;
+                if (!strcmp(k,"save_commit_async")) { const char *x=eq+1; while (*x==' ') ++x; v=(*x=='1'); }
+            }
+            if (f) fclose(f);
+        }
+    }
     return v;
 }
 static void *worker(void *arg) {
@@ -90,7 +109,7 @@ static void *worker(void *arg) {
     return NULL;
 }
 int runtime_savecommit_submit(int host,char *temp,char *commit) {
-    Job *j=async_on() ? malloc(sizeof(*j)) : NULL;
+    Job *j=runtime_savecommit_enabled() ? malloc(sizeof(*j)) : NULL;
     if (j) {
         *j=(Job){.host=host,.temp=temp,.commit=commit};
         pthread_mutex_lock(&lock);
