@@ -3904,7 +3904,7 @@ def prep_amp(root: Path):
 
 def phase_amp(only):
     m = "%m24_00"
-    fog = "%.1f:%.1f:1.3:60:cross" % AMP_FOG   # a stick walk to her fog, Cross on arrival
+    fog = "%.1f:%.1f" % AMP_FOG   # host_fog / guest_fog: walk until the fog prompt shows, Cross, held until through
     host = ",".join([
         "log_pos=2",
         # try 1 (first meeting: her intro)
@@ -3914,8 +3914,7 @@ def phase_amp(only):
         "host_die@8%s?member=bar" % m,                                  # once the guest is in her fight: the wipe follows
         # try 2 (after the wipe: no intro; her fog is up for the host too now: it walks to it and presses Cross)
         "host_move=%s:pin=3:ground@12%s" % (AMP_OUT_HOST, m),
-        "host_stick=%s@6%s?near=%s:3" % (fog, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
-        "host_press=0x4000@2%s!" % m,
+        "host_fog=%s@6%s?near=%s:3" % (fog, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
         "host_stick=%s@3%s" % (AMP_IN, m),
         "host_face=2400800@3%s" % m,
         "host_die@6%s?member=bar" % m,                                  # early: dead before half, spectates
@@ -3927,14 +3926,12 @@ def phase_amp(only):
         "log_pos=2", "hp_floor=40", "goal=2400800:50:40", "watch_text=fog/Fog",
         # try 1
         "guest_move=%s:pin=3:ground@10%s" % (AMP_OUT_GUEST, m),
-        "guest_stick=%s@3%s?host=bar" % (fog, m),                       # to the fog once the host's fight is on, Cross
-        "guest_press=0x4000@2%s!" % m,
+        "guest_fog=%s@3%s?host=bar" % (fog, m),                         # to the fog once the host's fight is on, Cross
     ] + fight_in + attack * 2 + [
         "guest_die@3%s?host=spec" % m,                                  # the host is down: the wipe
         # try 2
         "guest_move=%s:pin=3:ground@12%s" % (AMP_OUT_GUEST, m),
-        "guest_stick=%s@3%s?host=bar" % (fog, m),
-        "guest_press=0x4000@2%s!" % m,
+        "guest_fog=%s@3%s?host=bar" % (fog, m),
     ] + fight_in + attack * 90)
     env = ["BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1", "BB_PARTY_EVENT_SYNC_LOG=1"]
     if os.environ.get("BB_AMP_NET"):
@@ -3948,7 +3945,8 @@ def phase_amp(only):
         watch=["--watch", r"travel step \d+/\d+: guest_move=out@4",
                "--watch", r"travel step \d+/\d+: host_stick=hostin@3,9",
                "--watch", r"boss health bar shown=bar@1,4",
-               "--watch", r"text shows: .*[Ff]og=prompt@0.2",
+               "--watch", r"test: fog: the prompt shows=prompt@0.05",
+               "--watch", r"test: fog: (through|NOT)=fogdone@0.5",
                "--watch", r"went through boss fog=fog@1,4",
                "--watch", r"host death in a boss fight=limbo@2,10,25,40",
                "--watch", r"test: goal: entity=goal@1,15,30"],
@@ -4005,7 +4003,8 @@ def check_amp(v, L):
     if bar1 is None:
         return check_common(v, L, "amp")
     need(v, L, "amp try 1: her intro played (24000060)", 0, r"24000060", (out or 0), bar1 + 1)
-    fog1 = need(v, L, "amp try 1: the guest goes through her fog after the host's bar", 1, r"went through boss fog", bar1)
+    none_of(v, L, "amp: every fog walk got through (prompt, Cross, past the fog)", r"test: fog: NOT through", 0, 1e9, (0, 1))
+    fog1 = need(v, L, "amp try 1: the guest goes through her fog after the host's bar", 1, r"went through boss fog|test: fog: through the fog", bar1)
     need(v, L, "amp try 1: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", bar1 - 2)
     wipe = need(v, L, "amp try 1: the party wipes", 0, r"went down while the host was .*a wipe", bar1)
     if wipe is None:
@@ -4014,7 +4013,7 @@ def check_amp(v, L):
     if bar2 is None:
         return check_common(v, L, "amp")
     none_of(v, L, "amp try 2: no intro the second time", r"24000060", wipe, bar2 + 5, (0, 1))
-    fog2 = need(v, L, "amp try 2: the guest goes through her fog after the host's bar", 1, r"went through boss fog", bar2)
+    fog2 = need(v, L, "amp try 2: the guest goes through her fog after the host's bar", 1, r"went through boss fog|test: fog: through the fog", bar2)
     gbar = need(v, L, "amp try 2: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", bar2 - 2)
     lim = need(v, L, "amp try 2: the host dies early and spectates (limbo)", 0, r"host death in a boss fight", bar2)
     if lim is None:
