@@ -6914,11 +6914,12 @@ std::vector<UntargetedChr> g_untargeted;  // main thread only
 /// perceived it: Vicar Amelia's second try fought the host while it lived (the host's own entry was clean) and
 /// attacked nobody once the host was dead (the 4-player playtest's frozen Amelia). Hits / ChangeTarget only add
 /// one-tick records that the list update 0x12B17C0 drops again when perception does not refresh them.
-/// BB_PARTY_LIVING_TARGET=0 off (A/B).
+/// Any role (a guest's game runs the AI of the enemies it owns). BB_PARTY_LIVING_TARGET=0 off (A/B).
 void LivingTargetMarkTick(const GameSnapshot& s) {
     static const bool on = !(std::getenv("BB_PARTY_LIVING_TARGET") && std::getenv("BB_PARTY_LIVING_TARGET")[0] == '0');
     static std::set<u32> logged;
-    if (!on || Role() != RoleHost || !s.world_up || s.loading) return;
+    // any role: a guest's game runs the AI of the enemies it owns (party_enemyai) and keeps its own bank entries
+    if (!on || !SessionUp() || !s.world_up || s.loading) return;
     std::vector<u64> players;
     if (s.player) players.push_back(s.player);
     for (const TaskInfo& t : Tasks(false)) {
@@ -6926,7 +6927,9 @@ void LivingTargetMarkTick(const GameSnapshot& s) {
         if (c) players.push_back(c);
     }
     for (u64 c : players) {
-        if (ChrHp(c) <= 0) continue;
+        // truly alive only: HP above 0 (a dying chr is at 0), never this player while it spectates or lies in the
+        // host's limbo (the dead host stays untargeted)
+        if (ChrHp(c) <= 0 || (c == s.player && (g_spectating.load() || g_host_limbo.load()))) continue;
         const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
         const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
         if (!e30) continue;
