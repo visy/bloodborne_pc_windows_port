@@ -1203,16 +1203,23 @@ def check_lfw(v, L, key, tag):
             after = L.all(i, POS_RX.pattern, (r["t_arr"] or r["t_end"]) + 0.5, (r["t_arr"] or r["t_end"]) + 3.0)
             y2 = float(POS_RX.search(after[0][1]).group(2)) if after else None
             n = off = 0
+            bits = []
             for _t, line in L.all(i, POS_RX.pattern, r["t"] + 0.6, (arr or r["t"]) - 0.3):
                 m = POS_RX.search(line)
                 f = re.search(r" f ([0-9a-f]{10})", line)
                 if f and ((float(m.group(1)) - ax) ** 2 + (float(m.group(3)) - az) ** 2) ** 0.5 < 2.0:
                     n += 1
-                    off += 0 if int(f.group(1), 16) & RIDE_BIT else 1
+                    on = bool(int(f.group(1), 16) & RIDE_BIT)
+                    bits.append(on)
+                    off += 0 if on else 1
+            # one isolated off sample with on-car samples on both sides is the ride bit flickering as the car starts (lfwc 30 / 60 FPS, the
+            # host of a pair at the top end): not a fall, but kept visible in the evidence; several off samples, or one at either end, fail
+            flicker = off == 1 and 0 < bits.index(False) < len(bits) - 1
             v.step("%s %s: the %s rode along to the %s end, on the floor after" % (tag, name, role, arrive),
-                   y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and off == 0,
-                   "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it" %
-                   ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off))
+                   y is not None and spec["y_arr"][arrive](y) and y2 is not None and spec["y_arr"][arrive](y2) and n >= 3 and (off == 0 or flicker),
+                   "y %s at the arrival, %s shortly after the arrival, %d samples on the car, %d off it%s" %
+                   ("%.1f" % y if y is not None else "-", "%.1f" % y2 if y2 is not None else "-", n, off,
+                    " (ride bit flicker (1 sample))" if flicker else ""))
     need_far = 1.5 if tag.endswith("s") else 3.0  # sprinting walkers meet the other player's exit spot
     for k, (d, riders, end) in enumerate(plan):
         for role in ("host", "guest"):
