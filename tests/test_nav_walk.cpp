@@ -235,6 +235,12 @@ static void TestWaypointHints() {
     Sim sim{{3, 0, 3}, 0.4};
     CHECK(w.Start(&m, sim.pos, {{9, 0, 36}, {20, 0, 36}, {20, 0, 3}}, {false, false, false}, 1.0, 0) == PlanResult::Ok);
     CHECK(w.stats.path_len > 60);
+    // every route waypoint (known walkable) stays on the path: the shortcut never skips one
+    for (const V3& g : std::vector<V3>{{9, 0, 36}, {20, 0, 36}}) {
+        double best = 1e9;
+        for (const V3& p : w.path().Points()) best = std::min(best, Dist2(p, g));
+        CHECK(best < 0.5);
+    }
     const RunResult r = Run(w, sim, true);
     CHECK(r.done && r.warps == 0);
 }
