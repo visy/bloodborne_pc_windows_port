@@ -185,6 +185,9 @@ struct TravelStep {
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestFixture, // guest_fixture@S: the BB_PARTY_WORLDACT_TEST objects / pickups again (worldact::FixtureRearm)
         GuestStick, // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
+        // host_face=ENTITY|X:Z / guest_face=... (amelia2078): one short stick tap toward that chr (or point), as a
+        // player turns to an enemy before an attack; no warp. ENTITY becomes the target of the press / anim logs.
+        HostFace, GuestFace,
         HostStick,  // the same on the host
         HostRoute, GuestRoute, // a stick walk along waypoints X:Z[:R]/...: a real path through the level (B1)
         GuestHome,  // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
@@ -233,7 +236,28 @@ struct TravelStep {
     // "?obj=ENTITY:ANIM" at the end (liftfix): not before map object ENTITY shows animation ANIM and
     // it stopped (a lift car arrived: step out right at its arrival, as a player does); S counts from then
     std::int32_t wait_obj = 0, wait_obj_anim = -1;
+    // "?host=KIND" / "?member=KIND" at the end (amelia2078): not before the host's (another member's) VITALS say
+    // KIND: bar (its boss health bar is up: its fight is on), nobar, spec (spectating), dead, alive; S counts from then
+    // (the guests go through a boss fog only once the host's fight started, as players do)
+    std::uint8_t peer_who = 0;   // 0 none, 1 the host, 2 any other member
+    std::uint8_t peer_kind = 0;  // PeerKind
 };
+
+enum PeerKind : std::uint8_t { kPeerBar = 1, kPeerNoBar, kPeerSpec, kPeerDead, kPeerAlive };
+
+/// "?host=KIND" / "?member=KIND": that member's VITALS (fresh, under 3 s) show KIND.
+bool PeerIs(std::uint8_t who, std::uint8_t kind) {
+    std::lock_guard<std::mutex> lk(g_where_mu);
+    for (const b2::Where& w : g_where) {
+        if (w.slot == g_where_local || w.age_ms > 3000 || (who == 1 && w.slot != party::kHostSlot)) continue;
+        const bool bar = (w.flags & party::kVitalsBossBar) != 0, spec = (w.flags & party::kVitalsSpectating) != 0;
+        const bool alive = (w.flags & party::kVitalsAlive) != 0, valid = (w.flags & party::kVitalsValid) != 0;
+        if ((kind == kPeerBar && bar) || (kind == kPeerNoBar && !bar) || (kind == kPeerSpec && spec) ||
+            (kind == kPeerDead && valid && !alive) || (kind == kPeerAlive && alive))
+            return true;
+    }
+    return false;
+}
 
 // host_route / guest_route (B1): a waypoint counts as reached within this many m; still blocked after
 // this many side-step slides, the walker hops (chr warp) onto the waypoint when it is this close.
@@ -430,6 +454,16 @@ struct Test {
     Clock::time_point release_at{};  // a press step's buttons are released then
     bool pressing = false;
     std::uint32_t chr_target = 0;  // the last host_chr / guest_chr entity (press logs its HP)
+    Clock::time_point face_release{};  // host_face / guest_face: the stick tap ends then
+    int hp_floor = 0;      // hp_floor=PCT (amelia2078): own HP back to max under PCT % (every drop logged)
+    std::int32_t hp_last = -1;
+    std::uint32_t goal_entity = 0;  // goal=ENTITY:PCT:SECS: "test: goal reached" once ENTITY was SECS s under PCT % HP
+    int goal_pct = 50;
+    double goal_secs = 40;
+    Clock::time_point goal_under{}, goal_check{};
+    bool goal_done = false;
+    Clock::time_point peer_since{};  // the next step's "?host=" / "?member=" condition met (its clock)
+    std::size_t peer_step = ~std::size_t(0);
     Clock::time_point press_at{};  // the last host_press / guest_press tap (BB_PARTY_TARGET_ANIM)
     bool step_waiting = false;  // the next step waits (dead chr / a re-join running), logged once
     Clock::time_point left_at{};  // the last time this player went out of the party (host_rejoin / guest_rejoin)
@@ -1379,6 +1413,8 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
     case TravelStep::GuestStick: return "guest_stick";
+    case TravelStep::HostFace: return "host_face";
+    case TravelStep::GuestFace: return "guest_face";
     case TravelStep::HostStick: return "host_stick";
     case TravelStep::HostRoute: return "host_route";
     case TravelStep::GuestRoute: return "guest_route";
@@ -1943,10 +1979,76 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
 }
 
 bool MoveAsWalk(Test& tt, const GameSnapshot& s, const TravelStep& step, Clock::time_point now);
+void WritePadFile(const char* tokens);
+bool ReadCameraForward(float* fx, float* fz);
+
+/// A chr by its map entity id (0x13C97A0: bosses and NPCs too, which the enemy census may leave out); 0 if none.
+std::uint64_t ChrOfEntity(std::uint32_t entity) {
+    if (!entity) return 0;
+    return reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint64_t, std::uint64_t)>(Guest(0x13c97a0))(
+        std::int32_t(entity), 0, 0);
+}
+
+/// A chr's HP and max HP (its data module [+0x3B0] +0x20: +0xF8 / +0xFC); false if unreadable.
+bool ChrHpOf(std::uint64_t chr, std::int32_t* hp, std::int32_t* mhp) {
+    std::uint64_t cm = 0, dm = 0;
+    return chr && SafeGet(chr + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm && SafeGet(dm + 0xf8, hp) &&
+           SafeGet(dm + 0xfc, mhp);
+}
+
+/// hp_floor=PCT and goal=ENTITY:PCT:SECS (amelia2078 test aids), every tick of the chain:
+///  - hp_floor: every drop of the own HP is logged ("test: hp: own HP a -> b (-d)": a hit taken), and under PCT % of
+///    the max the HP goes back to the max, so a long boss fight measures her attacks without the test player dying.
+///  - goal: twice a second ENTITY's HP; once it is under PCT % "test: goal: ... under" and SECS s later (or at its
+///    death) "test: goal reached" (the smoke run ends on it: a phase-2 window measured, not a fixed press count).
+/// Also ends a host_face / guest_face stick tap.
+void TestAidTick(Test& t, Clock::time_point now) {
+    if (t.face_release != Clock::time_point{} && now >= t.face_release) {
+        t.face_release = {};
+        WritePadFile("");
+    }
+    if (t.hp_floor > 0) {
+        std::int32_t hp = -1, mhp = -1;
+        if (ChrHpOf(LocalPlayer(), &hp, &mhp) && mhp > 0) {
+            if (t.hp_last > 0 && hp >= 0 && hp < t.hp_last) {
+                Log("test: hp: own HP %d -> %d (-%d) of %d", t.hp_last, hp, t.hp_last - hp, mhp);
+            }
+            if (hp > 0 && hp * 100 < mhp * t.hp_floor) {
+                std::uint64_t cm = 0, dm = 0;
+                if (SafeGet(LocalPlayer() + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
+                    SafeWrite(dm + 0xf8, &mhp, 4);
+                    Log("test: hp floor: own HP %d under %d %% of %d: back to %d", hp, t.hp_floor, mhp, mhp);
+                    hp = mhp;
+                }
+            }
+            t.hp_last = hp;
+        }
+    }
+    if (t.goal_entity && !t.goal_done && now >= t.goal_check) {
+        t.goal_check = now + std::chrono::milliseconds(500);
+        std::int32_t hp = -1, mhp = -1;
+        const std::uint64_t chr = ChrOfEntity(t.goal_entity);
+        const bool have = ChrHpOf(chr, &hp, &mhp) && mhp > 0;
+        if (have && hp > 0 && hp * 100 < mhp * t.goal_pct && t.goal_under == Clock::time_point{}) {
+            t.goal_under = now;
+            Log("test: goal: entity %u under %d %% (HP %d/%d): %.0f s to measure", t.goal_entity, t.goal_pct, hp, mhp,
+                t.goal_secs);
+        }
+        if (have && hp <= 0 && t.goal_under != Clock::time_point{}) {
+            t.goal_done = true;
+            Log("test: goal reached: entity %u died (HP %d/%d)", t.goal_entity, hp, mhp);
+        } else if (t.goal_under != Clock::time_point{} && Seconds(t.goal_under, now) >= t.goal_secs) {
+            t.goal_done = true;
+            Log("test: goal reached: entity %u %.0f s under %d %% (HP %d/%d)", t.goal_entity, t.goal_secs, t.goal_pct, hp,
+                mhp);
+        }
+    }
+}
 
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
     TargetAnimTick(t, now);
+    TestAidTick(t, now);
     // BB_PARTY_TEST_GUARD=1 (test aid, smoke rt): invincible from each revive until the next die /
     // chr step (deathrules::TestGuard); set every tick (the revive and the stain warp reset it).
     static const bool guard_env = std::getenv("BB_PARTY_TEST_GUARD") && std::getenv("BB_PARTY_TEST_GUARD")[0] == '1';
@@ -2060,7 +2162,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
-                step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
+                step.kind == TravelStep::GuestFace || step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
                 step.kind == TravelStep::GuestLastLamp || step.kind == TravelStep::GuestLeave ||
                 step.kind == TravelStep::GuestRejoin || step.kind == TravelStep::GuestGather) == (role == PartyRole::Guest) || step.kind == TravelStep::OwnRule;
@@ -2221,6 +2323,22 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (!(t.next_step < t.steps.size() && t.steps[t.next_step].wait_near)) {
         t.near_since = {};
     }
+    // "?host=KIND" / "?member=KIND": the same, on another member's VITALS (its boss bar, spectate, death).
+    if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].peer_who &&
+        !(t.peer_since != Clock::time_point{} && t.peer_step == t.next_step)) {
+        const TravelStep& ps = t.steps[t.next_step];
+        if (!PeerIs(ps.peer_who, ps.peer_kind)) {
+            t.peer_since = {};
+            return;
+        }
+        t.peer_since = now;
+        t.peer_step = t.next_step;
+        static const char* const kinds[] = {"?", "bar", "nobar", "spec", "dead", "alive"};
+        Log("test: travel step %zu (%s): %s %s now; its delay counts from here", t.next_step + 1, TravelStepName(ps.kind),
+            ps.peer_who == 1 ? "the host" : "a member", kinds[ps.peer_kind < 6 ? ps.peer_kind : 0]);
+    } else if (!(t.next_step < t.steps.size() && t.steps[t.next_step].peer_who)) {
+        t.peer_since = {};
+    }
     // "?obj=ENTITY:ANIM": the same, on a map object's animation (stopped).
     if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj &&
         !(t.obj_since != Clock::time_point{} && t.obj_step == t.next_step)) {
@@ -2255,6 +2373,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
          next_kind == TravelStep::HostUse || next_kind == TravelStep::GuestUse || next_kind == TravelStep::GuestFixture ||
          next_kind == TravelStep::GuestStick || next_kind == TravelStep::HostStick ||
+         next_kind == TravelStep::HostFace || next_kind == TravelStep::GuestFace ||
          next_kind == TravelStep::HostRoute || next_kind == TravelStep::GuestRoute ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         const bool out = !steady && t.steps[t.next_step].out_ok && t.ran && t.world;
@@ -2275,6 +2394,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (t.coop_since > from) from = t.coop_since;
         if (t.flag_since > from) from = t.flag_since;
         if (t.near_since > from) from = t.near_since;
+        if (t.peer_since > from) from = t.peer_since;
         if (t.obj_since > from) from = t.obj_since;
         if (t.steps[t.next_step].after_scene) {
             // "~": waits for a cutscene that ended after the previous step, then S s after its end.
@@ -2717,6 +2837,45 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
             ok ? what.c_str() : "FAILED: not loaded");
+    } else if (step.kind == TravelStep::HostFace || step.kind == TravelStep::GuestFace) {
+        // A short stick tap toward the chr ENTITY (or the point X:Z): the player turns to it (and takes a small
+        // step), as a player does before an attack; the stick is camera-relative (ReadCameraForward). No warp.
+        float at[3] = {}, me[3] = {};
+        unsigned entity = 0;
+        float px = 0, pz = 0;
+        bool have = false;
+        if (step.args.find(':') != std::string::npos && std::sscanf(step.args.c_str(), "%f:%f", &px, &pz) == 2) {
+            at[0] = px, at[2] = pz;
+            have = true;
+        } else if (std::sscanf(step.args.c_str(), "%u", &entity) == 1 && entity) {
+            have = balance::ChrPosition(ChrOfEntity(entity), at);
+            t.chr_target = entity;
+        }
+        float fx = 0, fz = 1;
+        const std::uint64_t player = LocalPlayer();
+        if (have && player && balance::ChrPosition(player, me) && ReadCameraForward(&fx, &fz)) {
+            const double want = std::atan2(double(at[0] - me[0]), double(at[2] - me[2]));
+            double stick = want - std::atan2(double(fx), double(fz));
+            while (stick > M_PI) stick -= 2 * M_PI;
+            while (stick < -M_PI) stick += 2 * M_PI;
+            const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(stick)));
+            const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(stick)));
+            char tok[48];
+            std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
+            WritePadFile(tok);
+            t.face_release = now + std::chrono::milliseconds(140);
+            std::int32_t hp = -1, mhp = -1;
+            ChrHpOf(entity ? ChrOfEntity(entity) : 0, &hp, &mhp);
+            std::uint8_t lock = 0;
+            SafeGet(player + 0xf8, &lock);
+            Log("test: %s: %s at (%.1f, %.1f, %.1f), %.1f m: a stick tap toward it (world %.0f deg, stick %.0f deg); "
+                "target HP %d/%d, lock-on %d", TravelStepName(step.kind), step.args.c_str(), double(at[0]), double(at[1]),
+                double(at[2]), std::sqrt(double((at[0] - me[0]) * (at[0] - me[0]) + (at[2] - me[2]) * (at[2] - me[2]))),
+                want * 180 / M_PI, stick * 180 / M_PI, hp, mhp, int(lock));
+        } else {
+            Log("test: %s: %s not found (target %d, player %d)", TravelStepName(step.kind), step.args.c_str(), int(have),
+                int(player != 0));
+        }
     } else if (step.kind == TravelStep::HostRoute || step.kind == TravelStep::GuestRoute) {
         std::vector<std::array<float, 3>> route;
         if (ParseRouteArgs(step.args, &route)) {
@@ -4450,11 +4609,18 @@ void PartyDirector::ConfigureFromEnv() {
             bool wait_near = false;
             float near_pos[3] = {0, 0, 0}, near_r = 0;
             std::int32_t wait_obj = 0, wait_obj_anim = -1;
+            std::uint8_t peer_who = 0, peer_kind = 0;
             if (item.rfind("host_", 0) == 0 || item.rfind("guest_", 0) == 0) {
                 if (const std::size_t q = item.find('?'); q != std::string::npos) {
                     unsigned long f = 0;
                     int v = 1;
-                    if (item.compare(q + 1, 4, "obj=") == 0) {
+                    if (item.compare(q + 1, 5, "host=") == 0 || item.compare(q + 1, 7, "member=") == 0) {
+                        peer_who = item.compare(q + 1, 5, "host=") == 0 ? 1 : 2;
+                        const std::string k = item.substr(item.find('=', q) + 1);
+                        peer_kind = k == "bar" ? kPeerBar : k == "nobar" ? kPeerNoBar : k == "spec" ? kPeerSpec
+                                  : k == "dead" ? kPeerDead : k == "alive" ? kPeerAlive : 0;
+                        if (!peer_kind) peer_who = 0;
+                    } else if (item.compare(q + 1, 4, "obj=") == 0) {
                         if (std::sscanf(item.c_str() + q + 5, "%d:%d", &wait_obj, &wait_obj_anim) != 2 || wait_obj <= 0) {
                             wait_obj = 0;
                         }
@@ -4475,6 +4641,17 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.start = true;
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
+            } else if (item.rfind("hp_floor=", 0) == 0) {
+                st.test.hp_floor = std::clamp(std::atoi(item.c_str() + 9), 0, 95);
+            } else if (item.rfind("goal=", 0) == 0) {
+                unsigned e = 0;
+                int pct = 50;
+                double secs = 40;
+                if (std::sscanf(item.c_str() + 5, "%u:%d:%lf", &e, &pct, &secs) >= 1 && e) {
+                    st.test.goal_entity = e;
+                    st.test.goal_pct = std::clamp(pct, 1, 100);
+                    st.test.goal_secs = std::max(0.0, secs);
+                }
             } else if (item.rfind("goods=", 0) == 0) {
                 int id = 0, n = 0;
                 if (std::sscanf(item.c_str() + 6, "%d:%d", &id, &n) == 2 && id > 0 && n >= 0 && n <= 99) {
@@ -4831,6 +5008,8 @@ void PartyDirector::ConfigureFromEnv() {
                 step.wait_obj = wait_obj;
                 step.wait_obj_anim = wait_obj_anim;
                 step.wait_value = wait_value;
+                step.peer_who = peer_who;
+                step.peer_kind = peer_kind;
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
@@ -4840,6 +5019,7 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0 ||
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
                        item.rfind("guest_stick=", 0) == 0 || item.rfind("host_use=", 0) == 0 ||
+                       item.rfind("host_face=", 0) == 0 || item.rfind("guest_face=", 0) == 0 ||
                        item.rfind("host_stick=", 0) == 0 || item.rfind("host_route=", 0) == 0 ||
                        item.rfind("guest_route=", 0) == 0 || item.rfind("guest_fixture", 0) == 0 ||
                        item.rfind("guest_use=", 0) == 0) {
@@ -4857,6 +5037,8 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                             : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick
+                            : item.rfind("host_face=", 0) == 0     ? TravelStep::HostFace
+                            : item.rfind("guest_face=", 0) == 0    ? TravelStep::GuestFace
                             : item.rfind("host_stick=", 0) == 0    ? TravelStep::HostStick
                             : item.rfind("host_route=", 0) == 0    ? TravelStep::HostRoute
                             : item.rfind("guest_route=", 0) == 0   ? TravelStep::GuestRoute
@@ -4895,6 +5077,8 @@ void PartyDirector::ConfigureFromEnv() {
                 step.wait_obj = wait_obj;
                 step.wait_obj_anim = wait_obj_anim;
                 step.wait_value = wait_value;
+                step.peer_who = peer_who;
+                step.peer_kind = peer_kind;
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
@@ -5350,6 +5534,7 @@ void PartyDirector::Tick() {
                 w.has_pos = (vit[i].flags & party::kVitalsHasPos) != 0;
                 std::memcpy(w.pos, vit[i].pos, sizeof w.pos);
                 w.age_ms = vit[i].age_ms;
+                w.flags = vit[i].flags;
                 w.connected = false;
                 for (const party::RosterEntry& e : roster) {
                     if (e.slot == w.slot) {

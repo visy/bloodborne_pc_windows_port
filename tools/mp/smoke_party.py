@@ -3870,73 +3870,163 @@ def check_lw(v, L):
     check_common(v, L, "lw")
 
 
-# Phase amp (amelia078, 0.7.8, ~6 min, 2 players, group `amelia_phase`, 4-player playtest 2026-11-01): Vicar
-# Amelia (entity 2400800) did nothing after half health. Her heat-up event 12404807 (HostOnlyBossEvent) sends
-# the AI command 100 (transform) when her HP ratio is under 0.5 and waits for the AI's event message 100.
-# The host fights her, her HP is set to BB_AMP_HP % (default 45: past the heat-up), and she must keep acting on
-# the guest's screen (BB_PARTY_TARGET_ANIM animation changes). BB_AMP_DIE=1: the host dies right after (limbo).
-AMP_CLEAR = "12401800,12401802,12401803,12404800,12404801,12404802,9455,2400,2401,2402"
-AMP_ARENA = "57.7:35.7:322.6"   # region 2402805 (her first fight, MSB), her arena entrance
-AMP_UNTIL = [r"1:travel step (\d+)/\1: guest_press 0x0"]
+# Phase amp (amelia2078, 0.7.8, ~10 min, 2 players, group `amelia_phase`; CL-2c1eef, 4-player playtest on 0.7.7):
+# Vicar Amelia's SECOND try. Try 1 played her intro and wiped the party; on try 2 (no intro) everyone went through
+# the fog, her bar showed, the host died early and spectated, and she animated and took hits but barely moved and
+# never attacked the guests. The run plays it as players do, from a consistent save (fixture amelia_alive: she was
+# never killed, Grand Cathedral lamp not lit, last lamp the Cathedral Ward lamp 2402950; docs/party/test_saves.md):
+#  1. both start outside her fog (a warp OUTSIDE the arena only; nobody is ever put inside it);
+#  2. the host walks in (no fog for the host): try 1 plays her intro 24000060 and her fight starts on the host
+#     (bar); only then the guest walks to the fog and presses Cross ("?host=bar": the host's VITALS boss-bar bit);
+#  3. try 1: a few hits, then the host dies and the guest dies: the wipe (one load at the Cathedral Ward lamp);
+#  4. try 2: both outside the fog again, the host walks in (no intro now), the guest through the fog once the host's
+#     bar is up, the host dies early (spectates, no respawn) and the guest fights her: it faces her (a stick tap),
+#     locks on, re-faces every 3 R1 taps, its HP is put back under 40 % (hp_floor: every hit taken is logged);
+#  5. the run ends when she dies or 40 s after she went under half HP (goal=: "test: goal reached").
+# Checks over 40 s with the host spectating and 40 s under half HP, on every game: her bar, her animations (attacks
+# 3000-3999), the guest's HP drops (her hits), how far she walked, and her AI target / hate record on the host
+# (BB_PARTY_AI_LOG dumps). BB_AMP_NET=<BB_NET_SIM preset>, BB_AMP_ENV="A=1;B=2" (both games).
+AMP_FIXTURE = Path(r"E:\games\bbport\test_saves\amelia_alive\savedata")
+AMP_FOG = (51.5, 311.6)                  # her fog (object 2401800; MSB "SFX_光の壁_ボス前")
+AMP_OUT_HOST = "49.3:36.2:305.9:0.52"    # outside the fog, ~6 m out on the cathedral steps, facing it
+AMP_OUT_GUEST = "47.4:36.2:307.0:0.52"
+AMP_IN = "58.0:323.6:1.0:80"             # the host's walk in: region 2402805 (her first fight, intro)
+AMP_UNTIL = [r"test: goal reached|boss health bar: off \(a boss defeat"]
+
+
+def prep_amp(root: Path):
+    if not AMP_FIXTURE.is_dir():
+        sys.exit("amelia_phase: the fixture %s is missing (docs/party/test_saves.md)" % AMP_FIXTURE)
+    _cl_saves(root, AMP_FIXTURE, 0)
+    _cl_saves(root, AMP_FIXTURE, 1)
 
 
 def phase_amp(only):
-    hp = os.environ.get("BB_AMP_HP", "45")
-    early = os.environ.get("BB_AMP_DIE", "0") == "early"
-    die = os.environ.get("BB_AMP_DIE", "0") in ("1", "early")
-    host = ",".join(["god", "host_warp=2402951@8^1",
-                     "host_move=%s@15%%m24_00" % AMP_ARENA,                 # her fog / first fight
-                     "host_chr=2400800:3@12%m24_00"] +                       # beside her
-                    ["host_press=0x800@2%m24_00"] * 4 +                     # her first fight starts with a hit
-                    (["host_die@10%m24_00?12404800=1"] if early else []) +   # BB_AMP_DIE=early: dead first, the guest carries her on
-                    ["host_kill=2400800:hp%s@10%%m24_00?12404800=1" % hp] +  # in the fight (after the doping): under half, the heat-up
-                    (["host_die@6%m24_00"] if die and not early else []) +
-                    ["host_press=0x800@2%m24_00"] * 40)
-    g1 = ",".join(["god", "guest_move=%s@25%%m24_00" % AMP_ARENA,
-                   "guest_chr=2400800:3@3%m24_00"] +
-                  ["guest_press=0x800@1.5%m24_00"] * 70 + ["guest_press=0x0@2%m24_00"])
+    m = "%m24_00"
+    fog = "%.1f:%.1f:1.3:60:cross" % AMP_FOG
+    host = ",".join([
+        "log_pos=2",
+        # try 1 (first meeting: her intro)
+        "host_move=%s:pin=3:ground@8%s" % (AMP_OUT_HOST, m),
+        "host_stick=%s@6%s?near=%s:3" % (AMP_IN, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),   # in, once the guest is outside
+        "host_face=2400800@3%s~" % m,                                   # after her intro
+        "host_die@8%s?member=bar" % m,                                  # once the guest is in her fight: the wipe follows
+        # try 2 (after the wipe: no intro)
+        "host_move=%s:pin=3:ground@12%s" % (AMP_OUT_HOST, m),
+        "host_stick=%s@6%s?near=%s:3" % (AMP_IN, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
+        "host_face=2400800@3%s" % m,
+        "host_die@6%s?member=bar" % m,                                  # early: dead before half, spectates
+    ])
+    attack = ["guest_press=0x800@1.3%s" % m] * 3 + ["guest_face=2400800@0.5%s" % m, "guest_press=0x4:lock@0.5%s" % m]
+    fight_in = ["guest_face=2400800@3%s" % m, "guest_press=0x4@1%s" % m, "guest_press=0x4:lock@1%s" % m]
+    g1 = ",".join([
+        "log_pos=2", "hp_floor=40", "goal=2400800:50:40", "watch_text=fog/Fog",
+        # try 1
+        "guest_move=%s:pin=3:ground@10%s" % (AMP_OUT_GUEST, m),
+        "guest_stick=%s@3%s?host=bar" % (fog, m),                       # to the fog once the host's fight is on, Cross
+        "guest_press=0x4000@2%s!" % m,
+    ] + fight_in + attack * 2 + [
+        "guest_die@3%s?host=spec" % m,                                  # the host is down: the wipe
+        # try 2
+        "guest_move=%s:pin=3:ground@12%s" % (AMP_OUT_GUEST, m),
+        "guest_stick=%s@3%s?host=bar" % (fog, m),
+        "guest_press=0x4000@2%s!" % m,
+    ] + fight_in + attack * 90)
+    env = ["BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1", "BB_PARTY_EVENT_SYNC_LOG=1"]
+    if os.environ.get("BB_AMP_NET"):
+        env.append("BB_NET_SIM=" + os.environ["BB_AMP_NET"])
+    if os.environ.get("BB_AMP_ENV"):
+        env += os.environ["BB_AMP_ENV"].split(";")
     return dict(
-        name="amp", seconds=420, count=2, headless=0, pads=(0, 1), until_hold=4,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + AMP_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1",
-             "BB_PARTY_EVENT_SYNC_LOG=1"] + ["BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=12404807"] + (["BB_NET_SIM=" + os.environ["BB_AMP_NET"]] if os.environ.get("BB_AMP_NET") else []),
+        name="amp", seconds=1000, count=2, headless=0, pads=(0, 1), until_hold=3, prep=prep_amp, post=post_chalamp,
+        env=env,
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1],
+        watch=["--watch", r"travel step \d+/\d+: guest_move=out@4",
+               "--watch", r"travel step \d+/\d+: host_stick=hostin@3,9",
+               "--watch", r"boss health bar shown=bar@1,4",
+               "--watch", r"text shows: .*[Ff]og=prompt@0.2",
+               "--watch", r"went through boss fog=fog@1,4",
+               "--watch", r"host death in a boss fight=limbo@2,10,25,40",
+               "--watch", r"test: goal: entity=goal@1,15,30"],
         crash=[], until=AMP_UNTIL,
     )
 
 
+def _amp_anims(L, i, a, b):
+    """Her animation ids in order (each change once) on instance i between a and b."""
+    ids = []
+    for t, line in L.all(i, r"test: target anim: entity 2400800 animation -?\d+", a, b):
+        x = int(re.search(r"animation (-?\d+)", line).group(1))
+        if not ids or ids[-1][1] != x:
+            ids.append((t, x))
+    return ids
+
+
+def _amp_walked(L, i, a, b):
+    """How far she walked (m, x/z) on instance i between a and b: the target pos lines (once a second)."""
+    pts = [tuple(float(x) for x in re.search(r"at \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)", line).groups())
+           for _t, line in L.all(i, r"test: target pos: entity 2400800 at", a, b)]
+    return sum(((p[0] - q[0]) ** 2 + (p[2] - q[2]) ** 2) ** 0.5 for p, q in zip(pts, pts[1:])), len(pts)
+
+
+def _amp_window(v, L, tag, a, b):
+    """The 40 s checks of one window [a, b] (the host spectating / her phase 2)."""
+    for i in (0, 1):
+        off = L.find(i, r"boss health bar: (off|reset)", a, b)
+        v.step("amp %s inst%d: her bar stays up" % (tag, i), not off, off[1][:120] if off else "up")
+        ids = _amp_anims(L, i, a, b)
+        atk = [x for _t, x in ids if 3000 <= x < 4000]
+        v.step("amp %s inst%d: she acts (>= 8 animation changes, >= 3 attacks 3000-3999)" % (tag, i),
+               len(ids) >= 8 and len(atk) >= 3, "%d changes, %d attacks: %s" % (len(ids), len(atk), [x for _t, x in ids[:16]]))
+        walked, n = _amp_walked(L, i, a, b)
+        v.step("amp %s inst%d: she moves (>= 4 m walked)" % (tag, i), walked >= 4.0, "%.1f m over %d positions" % (walked, n))
+    hits = L.all(1, r"test: hp: own HP \d+ -> \d+", a, b)
+    v.step("amp %s: her hits land on the living guest (>= 2 HP drops)" % tag, len(hits) >= 2,
+           "%d drops: %s" % (len(hits), [re.search(r"\(-\d+\)", h).group(0) for _t, h in hits[:8]]))
+    # her AI on the host's game: the target dumps list a live hate record (kind 1, b40 1) of a chr; the living
+    # member's handle is the one the limbo / attention hands her
+    gh = None
+    for _t, line in L.all(0, r"(host limbo: boss \w+ targets the living member|boss attention: boss \w+ turns to player chr) [0-9a-f]+", a - 30, b):
+        gh = re.search(r"(?:living member|player chr) ([0-9a-f]+)", line).group(1)
+    dumps = L.all(0, r"boss target dump", a, b)
+    live = [d for _t, d in dumps if gh and re.search(r"kind 1 t20 \d+ t38 [\d.]+ t3c [\d.]+ b40 1 h %s" % gh, d)]
+    v.step("amp %s host: her hate record holds the living guest (AI dumps)" % tag, bool(live),
+           "guest chr %s: %d of %d dumps; last: %s" % (gh, len(live), len(dumps), (dumps[-1][1][-200:] if dumps else "none")))
+
+
 def check_amp(v, L):
     need(v, L, "amp join: 2 players", 0, r"cooperators 0 -> 1")
-    on = need(v, L, "amp Amelia's fight is on (bar)", 0, r"boss health bar shown: .*event 12404802")
-    if on is None:
-        return
-    low = need(v, L, "amp her HP is set under half on the host", 0, r"host_kill: entity 2400800 HP \d+ -> \d+", on)
-    if low is None:
-        return
-    start = low
-    if os.environ.get("BB_AMP_DIE", "0") in ("1", "early"):
-        lim = need(v, L, "amp the host dies in the fight: the limbo", 0, r"host death in a boss fight", on)
-        if lim is None:
-            return
-        start = max(lim, low)
-    # her heat-up event 12404807 runs to its end on the host (AI command 100 sent, the AI's message 100 back, command
-    # cleared: instruction [5]) and on the guest's copy
-    for i in (0, 1):
-        need(v, L, "amp inst%d: heat-up event 12404807 ran to its end (AI answered message 100)" % i, i,
-             r"EMEVD event 12404807 \[5\] 2004\[17\]", low - 1, low + 60)
-    # her animation changes on each screen (the host's AI drives her): each distinct id after the HP drop is an
-    # action; a boss that does nothing shows one id. The playtest: she stood idle after half health.
-    for i in (0, 1):
-        rows = L.all(i, r"test: target anim: entity 2400800 animation \d+", start + 3.0, start + 43.0)
-        ids = []
-        for t, line in rows:
-            a = int(re.search(r"animation (\d+)", line).group(1))
-            if not ids or ids[-1][1] != a:
-                ids.append((t, a))
-        span = (ids[-1][0] - ids[0][0]) if ids else 0.0
-        v.step("amp inst%d: she keeps acting past half health (>= 8 animation changes in 40 s)" % i,
-               len(ids) >= 8, "%d animation changes over %.0f s: %s" % (len(ids), span, [a for _, a in ids[:14]]))
+    out = need(v, L, "amp try 1: the guest starts outside her fog", 1, r"travel step \d+/\d+: guest_move")
+    bar1 = need(v, L, "amp try 1: her fight starts on the host (bar)", 0, r"boss health bar shown: .*entity 2400800", out or 0)
+    if bar1 is None:
+        return check_common(v, L, "amp")
+    need(v, L, "amp try 1: her intro played (24000060)", 0, r"24000060", (out or 0), bar1 + 1)
+    fog1 = need(v, L, "amp try 1: the guest goes through her fog after the host's bar", 1, r"went through boss fog", bar1)
+    need(v, L, "amp try 1: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", fog1 or bar1)
+    wipe = need(v, L, "amp try 1: the party wipes", 0, r"went down while the host was .*a wipe", bar1)
+    if wipe is None:
+        return check_common(v, L, "amp")
+    bar2 = need(v, L, "amp try 2: her fight starts on the host again (bar)", 0, r"boss health bar shown: .*entity 2400800", wipe)
+    if bar2 is None:
+        return check_common(v, L, "amp")
+    none_of(v, L, "amp try 2: no intro the second time", r"24000060", wipe, bar2 + 5, (0, 1))
+    fog2 = need(v, L, "amp try 2: the guest goes through her fog after the host's bar", 1, r"went through boss fog", bar2)
+    gbar = need(v, L, "amp try 2: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", fog2 or bar2)
+    lim = need(v, L, "amp try 2: the host dies early and spectates (limbo)", 0, r"host death in a boss fight", bar2)
+    if lim is None:
+        return check_common(v, L, "amp")
+    need(v, L, "amp try 2: the host spectates the guest", 0, r"spectating: following", lim)
+    end = L.find(0, r"boss health bar: off \(a boss defeat", lim)
+    end_t = end[0] if end else 1e9
+    none_of(v, L, "amp try 2: the host stays down until she dies (no respawn)", r"spectating ended", lim, end_t - 0.1, (0,))
+    _amp_window(v, L, "spectated", lim + 3.0, min(lim + 43.0, end_t))
+    under = L.find(1, r"test: goal: entity 2400800 under", lim)
+    if under:
+        _amp_window(v, L, "phase 2", under[0], min(under[0] + 40.0, end_t))
+    goal = L.find(1, r"test: goal reached", lim)
+    v.step("amp try 2: the goal (40 s under half or her death) is reached", bool(goal or end),
+           (goal or end)[1][:140] if (goal or end) else "neither")
     check_common(v, L, "amp")
-
 
 
 # Phase ba (enemyai, 0.7.6, ~4 min, 2 players, group `boss_ai`, C2 + player report boss_ai_host_dead): the
