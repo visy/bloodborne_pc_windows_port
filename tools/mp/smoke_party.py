@@ -3879,7 +3879,8 @@ def check_lw(v, L):
 #  2. the host walks in (no fog for the host): try 1 plays her intro 24000060 and her fight starts on the host
 #     (bar); only then the guest walks to the fog and presses Cross ("?host=bar": the host's VITALS boss-bar bit);
 #  3. try 1: a few hits, then the host dies and the guest dies: the wipe (one load at the Cathedral Ward lamp);
-#  4. try 2: both outside the fog again, the host walks in (no intro now), the guest through the fog once the host's
+#  4. try 2: both outside the fog again, the host walks in through her fog (Cross: after try 1 the fog is up for the
+#     host too; no intro now), the guest through the fog once the host's
 #     bar is up, the host dies early (spectates, no respawn) and the guest fights her: it faces her (a stick tap),
 #     locks on, re-faces every 3 R1 taps, its HP is put back under 40 % (hp_floor: every hit taken is logged);
 #  5. the run ends when she dies or 40 s after she went under half HP (goal=: "test: goal reached").
@@ -3903,7 +3904,7 @@ def prep_amp(root: Path):
 
 def phase_amp(only):
     m = "%m24_00"
-    fog = "%.1f:%.1f:1.3:60:cross" % AMP_FOG
+    fog = "%.1f:%.1f:1.3:60:cross" % AMP_FOG   # a stick walk to her fog, Cross on arrival
     host = ",".join([
         "log_pos=2",
         # try 1 (first meeting: her intro)
@@ -3911,14 +3912,17 @@ def phase_amp(only):
         "host_stick=%s@6%s?near=%s:3" % (AMP_IN, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),   # in, once the guest is outside
         "host_face=2400800@3%s~" % m,                                   # after her intro
         "host_die@8%s?member=bar" % m,                                  # once the guest is in her fight: the wipe follows
-        # try 2 (after the wipe: no intro)
+        # try 2 (after the wipe: no intro; her fog is up for the host too now: it walks to it and presses Cross)
         "host_move=%s:pin=3:ground@12%s" % (AMP_OUT_HOST, m),
-        "host_stick=%s@6%s?near=%s:3" % (AMP_IN, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
+        "host_stick=%s@6%s?near=%s:3" % (fog, m, AMP_OUT_GUEST.rsplit(":", 1)[0]),
+        "host_press=0x4000@2%s!" % m,
+        "host_stick=%s@3%s" % (AMP_IN, m),
         "host_face=2400800@3%s" % m,
         "host_die@6%s?member=bar" % m,                                  # early: dead before half, spectates
     ])
-    attack = ["guest_press=0x800@1.3%s" % m] * 3 + ["guest_face=2400800@0.5%s" % m, "guest_press=0x4:lock@0.5%s" % m]
-    fight_in = ["guest_face=2400800@3%s" % m, "guest_press=0x4@1%s" % m, "guest_press=0x4:lock@1%s" % m]
+    # R1 x3, then face her again and walk up to her (a stick toward her until within 2.5 m), lock on if it was lost
+    attack = ["guest_press=0x800@1.3%s" % m] * 3 + ["guest_face=2400800:2.5@0.5%s" % m, "guest_press=0x4:lock@0.5%s" % m]
+    fight_in = ["guest_face=2400800:2.5@3%s" % m, "guest_press=0x4@1%s" % m, "guest_press=0x4:lock@1%s" % m]
     g1 = ",".join([
         "log_pos=2", "hp_floor=40", "goal=2400800:50:40", "watch_text=fog/Fog",
         # try 1
@@ -4002,7 +4006,7 @@ def check_amp(v, L):
         return check_common(v, L, "amp")
     need(v, L, "amp try 1: her intro played (24000060)", 0, r"24000060", (out or 0), bar1 + 1)
     fog1 = need(v, L, "amp try 1: the guest goes through her fog after the host's bar", 1, r"went through boss fog", bar1)
-    need(v, L, "amp try 1: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", fog1 or bar1)
+    need(v, L, "amp try 1: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", bar1 - 2)
     wipe = need(v, L, "amp try 1: the party wipes", 0, r"went down while the host was .*a wipe", bar1)
     if wipe is None:
         return check_common(v, L, "amp")
@@ -4011,7 +4015,7 @@ def check_amp(v, L):
         return check_common(v, L, "amp")
     none_of(v, L, "amp try 2: no intro the second time", r"24000060", wipe, bar2 + 5, (0, 1))
     fog2 = need(v, L, "amp try 2: the guest goes through her fog after the host's bar", 1, r"went through boss fog", bar2)
-    gbar = need(v, L, "amp try 2: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", fog2 or bar2)
+    gbar = need(v, L, "amp try 2: her bar on the guest", 1, r"boss health bar shown: .*entity 2400800", bar2 - 2)
     lim = need(v, L, "amp try 2: the host dies early and spectates (limbo)", 0, r"host death in a boss fight", bar2)
     if lim is None:
         return check_common(v, L, "amp")
