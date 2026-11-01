@@ -6611,6 +6611,23 @@ void AppearanceTick(const GameSnapshot& s) {
 void BossLockEntry(u64 boss, u32 want);
 bool BossHateRecord(u64 boss, u64 chr);
 
+void Test1e5Tick() {
+    // amelia2078 experiment: the host's copies of members get chr +0x1E5 bit 0x10 (set on the copy during a first
+    // fight with her intro, missing on a copy re-created by a wipe's load)
+    static const bool on = std::getenv("BB_AMP_TEST_1E5") && std::getenv("BB_AMP_TEST_1E5")[0] == '1';
+    if (!on || Role() != RoleHost) return;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (!c) continue;
+        const u8 b = Field<u8>(c, 0x1e5);
+        if (!(b & 0x10)) {
+            const u8 nb = u8(b | 0x10);
+            SafeWrite(c + 0x1e5, &nb, 1);
+            Log("test 1e5: chr %08x +0x1E5 %02x -> %02x", Field<u32>(c, 8), unsigned(b), unsigned(nb));
+        }
+    }
+}
+
 void LimboBossTargetTick(double now) {
     static const bool on = !(std::getenv("BB_PARTY_LIMBO_RETARGET") && std::getenv("BB_PARTY_LIMBO_RETARGET")[0] == '0');
     // BB_PARTY_LIMBO_HATE=0: ChangeTarget alone, as 0.7.7 / early 0.7.8 (the A/B of CL-2c1eef)
@@ -12469,6 +12486,7 @@ void Tick(const GameSnapshot& s) {
     DeadPlayerUntargetTick(s, now);
     BossStateTick(s, now);
     BossAttentionTick(s, now);
+    Test1e5Tick();
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
