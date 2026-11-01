@@ -1930,6 +1930,7 @@ void DieForTest() {
 /// write index at +0xC0; the same ring as the player's), with its HP and the time since the last
 /// press tap, so hit reactions (staggers) can be counted per hit. `=keep`: its HP is put back to
 /// max whenever it falls below half (many hits on one enemy: an A/B with host_poise in one run).
+std::uint64_t ChrOfEntity(std::uint32_t entity);
 void TargetAnimTick(Test& t, Clock::time_point now) {
     static const char* mode = std::getenv("BB_PARTY_TARGET_ANIM");
     if (!mode || mode[0] == '0' || !mode[0] || !t.chr_target) return;
@@ -1944,6 +1945,7 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
         for (const auto& e : balance::LoadedEnemies()) {
             if (e.entity == entity) chr = e.chr;
         }
+        if (!chr) chr = ChrOfEntity(entity);  // a boss the census leaves out (a guest's copy)
         refresh = now + std::chrono::seconds(1);
     }
     std::uint64_t cm = 0, ta = 0, dm = 0;
