@@ -3934,6 +3934,11 @@ def phase_amp(only):
         "guest_fog=%s@3%s?host=bar" % (fog, m),
     ] + fight_in + attack * 90)
     env = ["BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1", "BB_PARTY_EVENT_SYNC_LOG=1"]
+    if os.environ.get("BB_AMP_TRY1") == "0":
+        # control: no try 1 in this session; her intro marked seen at the start (the re-fight path from a fresh load)
+        host = host.replace(host[host.index("host_move"):host.index("host_move", host.index("host_move") + 1)], "")
+        g1 = g1.replace(g1[g1.index("guest_move"):g1.index("guest_move", g1.index("guest_move") + 1)], "")
+        env.append("BB_PARTY_PROGRESS_TEST_SET=12401802,9301,72400400")
     if os.environ.get("BB_AMP_NET"):
         env.append("BB_NET_SIM=" + os.environ["BB_AMP_NET"])
     if os.environ.get("BB_AMP_ENV"):

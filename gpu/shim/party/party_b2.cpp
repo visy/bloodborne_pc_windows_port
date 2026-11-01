@@ -6608,8 +6608,13 @@ void AppearanceTick(const GameSnapshot& s) {
 /// path (0x1299CD0 -> 0x12A7640 -> 0x12AD1B0: a kind-4 target entry, battle state 3).
 /// BB_PARTY_LIMBO_RETARGET=0 turns it off (A/B). Live bl2: ChangeTarget accepted, the boss stayed
 /// at the guest (1.7-2.5 m); no A/B run without it yet.
+void BossLockEntry(u64 boss, u32 want);
+bool BossHateRecord(u64 boss, u64 chr);
+
 void LimboBossTargetTick(double now) {
     static const bool on = !(std::getenv("BB_PARTY_LIMBO_RETARGET") && std::getenv("BB_PARTY_LIMBO_RETARGET")[0] == '0');
+    // BB_PARTY_LIMBO_HATE=0: ChangeTarget alone, as 0.7.7 / early 0.7.8 (the A/B of CL-2c1eef)
+    static const bool hate_on = !(std::getenv("BB_PARTY_LIMBO_HATE") && std::getenv("BB_PARTY_LIMBO_HATE")[0] == '0');
     static double next = 0;
     if (now < next) return;
     next = now + 1.0;
@@ -6631,11 +6636,16 @@ void LimboBossTargetTick(double now) {
         }
         if (on && best) {
             const bool ok = reinterpret_cast<bool(BB_COOP_SYSV*)(u64, u64)>(Guest(0x1299cd0))(boss, best);
+            // CL-2c1eef (amelia2078): her goals follow the AI's per-chr hate record, which a member's copy only gets
+            // as "the attacker of a hit" on this game; after a wipe (Vicar Amelia's second try) the members' new
+            // copies never got one, so with the host down she turned and walked but attacked nobody. The living
+            // member handed over gets the record the game gives an attacker (0x12A9230), refreshed every second.
+            const bool rec = hate_on && BossHateRecord(boss, best);
             static u32 logged = ~0u;
             if (logged != (h ^ Field<u32>(best, 8))) {
                 logged = h ^ Field<u32>(best, 8);
-                Log("host limbo: boss %08x targets the living member %08x (ChangeTarget %s)", h, Field<u32>(best, 8),
-                    ok ? "ok" : "refused: no AI");
+                Log("host limbo: boss %08x targets the living member %08x (ChangeTarget %s, hate record %s)", h,
+                    Field<u32>(best, 8), ok ? "ok" : "refused: no AI", rec ? "set" : hate_on ? "NOT set" : "off");
             }
         }
     }
@@ -6727,6 +6737,28 @@ void BossLockEntry(u64 boss, u32 want) {
         SafeWrite(n + 0x40, &one, 1);
         Log("boss attention: the boss's hate record of %08x is set as for the attacker of a hit (10 s)", want);
     }
+}
+
+/// CL-2c1eef: the hate record of `chr` as the game makes it for the attacker of a hit: 0x12A9230(holder, attacker,
+/// hit) adds the kind-1 entry when there is none (0x12B2760) and sets +0x20 = 3, +0x38 = 10 s, +0x2C = 0, +0x40 = 1;
+/// it only reads +0x1B4 of the hit (a zeroed one: a plain hit). The holder is the AI's target list (boss vfunc +0x160
+/// -> +0xB0 -> +0x560, entries from +0x18). BossLockEntry only refreshes an entry that exists: a member's copy the
+/// boss never saw hit it (a copy re-created by a wipe's load) had none. True when the entry is there afterwards.
+bool BossHateRecord(u64 boss, u64 chr) {
+    u64 vt = 0, fn = 0;
+    if (!boss || !chr || !SafeGet(boss, &vt) || !vt || !SafeGet(vt + 0x160, &fn) || !fn) return false;
+    const u64 ai = reinterpret_cast<u64(BB_COOP_SYSV*)(u64)>(fn)(boss);
+    const u64 holder = ai ? Field<u64>(Field<u64>(ai, 0xb0), 0x560) : 0;
+    if (!holder || !Field<u64>(holder, 8)) return false;
+    alignas(16) static std::uint8_t hit[0x200];
+    std::memset(hit, 0, sizeof hit);
+    reinterpret_cast<u64(BB_COOP_SYSV*)(u64, u64, u64)>(Guest(0x12a9230))(holder, chr, reinterpret_cast<u64>(hit));
+    const u32 want = Field<u32>(chr, 8);
+    u64 n = Field<u64>(holder, 0x18);
+    for (int k = 0; n && k < 16; ++k, n = Field<u64>(n, 8)) {
+        if (Field<u32>(n, 0x28) == 1 && (Field<u8>(n, 2) & 0x7f) == 1 && Field<u32>(n, 0x50) == want) return true;
+    }
+    return false;
 }
 
 /// Any role, main thread: while a boss bar is up, one line every 10 s per boss with its position, its latest
