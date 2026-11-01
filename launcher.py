@@ -1790,6 +1790,8 @@ def settings_env(s: dict) -> dict:
     env["BB_NET_RXGAP_LOG"] = "1" if on("feat_net_rxgap_log", False) else "0"
     # Party arrival render log for black-world reports: did the 3D scene draw after a party travel
     env["BB_ARRIVAL_LOG"] = "1" if on("feat_arrival_log", False) else "0"
+    # Party frame cost log (BB_PARTY_PERF): per-zone cost of the party code, for freeze reports
+    env["BB_PARTY_PERF"] = "1" if on("feat_party_perf", False) else "0"
     # Party spectate camera log: camera resets and jumps while a dead player spectates a boss fight
     # Online-heap watch: which game parts hold the memory of the online code, every 20 s, and each failed request
     env["BB_HEAP_WATCH_LOG"] = "1" if on("feat_heap_watch_log", False) else "0"
@@ -3020,6 +3022,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_input_log = tk.BooleanVar(value=self.settings.get("feat_input_log", False))
         self.feat_net_rxgap_log = tk.BooleanVar(value=self.settings.get("feat_net_rxgap_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
+        self.feat_party_perf = tk.BooleanVar(value=self.settings.get("feat_party_perf", False))
         self.feat_heap_watch_log = tk.BooleanVar(value=self.settings.get("feat_heap_watch_log", False))
         self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
         self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
@@ -3514,6 +3517,10 @@ class BloodborneLauncher(tk.Tk):
                     "After each party travel or join load: whether the 3D world drew, where the camera is "
                     "and the video memory state, 3 s and 10 s after arriving. Two lines per arrival. "
                     "Default: off (BB_ARRIVAL_LOG).")
+        self._check(sec, "Party frame cost log (freezes in a party)", self.feat_party_perf,
+                    "For reports of freezes or stutter in a party: every 10 s, how long the party code took per "
+                    "frame (typical and worst), by part, plus any single step over 1 ms. Use with the frame "
+                    "stats of the game log. Default: off (BB_PARTY_PERF).")
         self._check(sec, "Online memory watch (crash)", self.feat_heap_watch_log,
                     "Every 20 s: which parts of the game hold the memory the online code uses (server "
                     "requests, the other players' character sync), and each request that fails. For reports of "
@@ -5571,6 +5578,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_input_log": self.feat_input_log.get(),
             "feat_net_rxgap_log": self.feat_net_rxgap_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),
+            "feat_party_perf": self.feat_party_perf.get(),
             "feat_heap_watch_log": self.feat_heap_watch_log.get(),
             "feat_spectate_log": self.feat_spectate_log.get(),
             "feat_hostdead_log": self.feat_hostdead_log.get(),
