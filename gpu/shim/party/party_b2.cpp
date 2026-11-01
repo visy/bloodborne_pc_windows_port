@@ -6608,85 +6608,8 @@ void AppearanceTick(const GameSnapshot& s) {
 /// path (0x1299CD0 -> 0x12A7640 -> 0x12AD1B0: a kind-4 target entry, battle state 3).
 /// BB_PARTY_LIMBO_RETARGET=0 turns it off (A/B). Live bl2: ChangeTarget accepted, the boss stayed
 /// at the guest (1.7-2.5 m); no A/B run without it yet.
-void BossLockEntry(u64 boss, u32 want);
-bool BossHateRecord(u64 boss, u64 chr);
-
-/// CL-2c1eef (amelia2078), any role, main thread: a boss fight is on here (its bar) but this player's chr never got
-/// the boss room entry notice (EMEVD 2009[6] "ボス部屋侵入通知": Lua event 4068 on SprjLuaEventMan, handler 0x17C5D90
-/// case 6; the chr's +0x1E5 bit 0x10 while it holds). Boss events give it only on paths a co-op session skips: Vicar
-/// Amelia's re-fight 12404802 jumps over its 2009[6] in multiplayer (1003[105]); only her first fight with the intro
-/// (12401802) gives it. Without it on any player (live amp: host and guest copies alike, after a wipe), the boss
-/// attacked the host while it lived and nobody once the host was dead (the 4-player playtest's frozen Amelia on her
-/// second try). The notice is raised here as 2009[6] does: once per fight, again 3 s later while the bit is missing
-/// (3 tries). BB_PARTY_BOSS_ROOM_NOTICE=0 off (A/B).
-void BossRoomNoticeTick(const GameSnapshot& s, double now) {
-    static const bool on = !(std::getenv("BB_PARTY_BOSS_ROOM_NOTICE") && std::getenv("BB_PARTY_BOSS_ROOM_NOTICE")[0] == '0');
-    {
-        // diagnostics: the own chr's +0x1E5 bit 0x10 (logged when it changes)
-        static int last = -1;
-        const int b = s.player && s.world_up && !s.loading ? (Field<u8>(s.player, 0x1e5) & 0x10) != 0 : -1;
-        if (b >= 0 && b != last) {
-            Log("boss room notice: own chr +0x1E5 bit 0x10 %d -> %d (boss bar %d)", last, b, int(BossFightActive()));
-            last = b;
-        }
-    }
-    {
-        // BB_AMP_TEST_1E5=1 (experiment): every tick, every player chr here (own and members' copies) gets +0x1E5 bit
-        // 0x10 while a boss bar is up (the game rewrites it every frame)
-        static const bool force = std::getenv("BB_AMP_TEST_1E5") && std::getenv("BB_AMP_TEST_1E5")[0] == '1';
-        static bool logged = false;
-        if (force && s.world_up && !s.loading && BossFightActive()) {
-            std::vector<u64> pl;
-            if (s.player) pl.push_back(s.player);
-            for (const TaskInfo& t : Tasks(false)) {
-                const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
-                if (c) pl.push_back(c);
-            }
-            for (u64 c : pl) {
-                const u8 nb = u8(Field<u8>(c, 0x1e5) | 0x10);
-                SafeWrite(c + 0x1e5, &nb, 1);
-            }
-            if (!logged) {
-                logged = true;
-                Log("test 1e5: +0x1E5 bit 0x10 forced on %zu player chr(s) every tick while a boss bar is up", pl.size());
-            }
-        }
-    }
-    static double next = 0;
-    static int tries = 0;
-    static bool fight = false;
-    if (!on || now < next) return;
-    next = now + 0.5;
-    const bool up = g_on.load() && SessionUp() && s.world_up && !s.loading && s.player && BossFightActive();
-    if (!up) {
-        fight = false;
-        tries = 0;
-        return;
-    }
-    if (!fight) {
-        fight = true;
-        tries = 0;
-        next = now + 1.0;  // the boss events' own 2009[6] first
-        return;
-    }
-    if (ChrHp(s.player) <= 0 || tries >= 1) return;
-    const u64 lem = Slot(0x553b0c8);
-    const u64 lua = lem ? Field<u64>(lem, 8) : 0;
-    const u64 gm = Slot(0x5556678);
-    const u64 lst = gm ? Field<u64>(gm, 0x16f8) : 0;
-    if (!lua) return;
-    ++tries;
-    // exactly what 2009[6] runs (0x17C5D90 case 6): the Lua event 4068 and 0x15BBC00 on GameMan +0x16F8
-    reinterpret_cast<void(BB_COOP_SYSV*)(u64, int, int)>(Guest(0x132e960))(lua, 0xfe4, 1);
-    if (lst) reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(Guest(0x15bbc00))(lst);
-    Log("boss room notice: the boss room entry notice (2009[6]: Lua event 4068, 0x15BBC00 %s) run for this fight",
-        lst ? "run" : "skipped: no list");
-}
-
 void LimboBossTargetTick(double now) {
     static const bool on = !(std::getenv("BB_PARTY_LIMBO_RETARGET") && std::getenv("BB_PARTY_LIMBO_RETARGET")[0] == '0');
-    // BB_PARTY_LIMBO_HATE=0: ChangeTarget alone, as 0.7.7 / early 0.7.8 (the A/B of CL-2c1eef)
-    static const bool hate_on = !(std::getenv("BB_PARTY_LIMBO_HATE") && std::getenv("BB_PARTY_LIMBO_HATE")[0] == '0');
     static double next = 0;
     if (now < next) return;
     next = now + 1.0;
@@ -6708,16 +6631,11 @@ void LimboBossTargetTick(double now) {
         }
         if (on && best) {
             const bool ok = reinterpret_cast<bool(BB_COOP_SYSV*)(u64, u64)>(Guest(0x1299cd0))(boss, best);
-            // CL-2c1eef (amelia2078): her goals follow the AI's per-chr hate record, which a member's copy only gets
-            // as "the attacker of a hit" on this game; after a wipe (Vicar Amelia's second try) the members' new
-            // copies never got one, so with the host down she turned and walked but attacked nobody. The living
-            // member handed over gets the record the game gives an attacker (0x12A9230), refreshed every second.
-            const bool rec = hate_on && BossHateRecord(boss, best);
             static u32 logged = ~0u;
             if (logged != (h ^ Field<u32>(best, 8))) {
                 logged = h ^ Field<u32>(best, 8);
-                Log("host limbo: boss %08x targets the living member %08x (ChangeTarget %s, hate record %s)", h,
-                    Field<u32>(best, 8), ok ? "ok" : "refused: no AI", rec ? "set" : hate_on ? "NOT set" : "off");
+                Log("host limbo: boss %08x targets the living member %08x (ChangeTarget %s)", h, Field<u32>(best, 8),
+                    ok ? "ok" : "refused: no AI");
             }
         }
     }
@@ -6778,16 +6696,18 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
     for (u64 c : players) {
         const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
         // the bank entry as the target search 0x12ADC50 filters it: vfunc +0x78 (valid), [3] +0x20 flags (bits 1 / 4
-        // exclude, bit 2 needs [3]+0x30 -> +0x18 bit 0), [3] +0x10 (must be 4), [3]+0x30 -> +0xD bit 0x10 (excludes)
+        // exclude, bit 2 needs [3]+0x30 -> +0x18 bit 0), [3] +0x10 (must be 4), [3]+0x30 -> +0xD bit 0x10 (excludes);
+        // +0x1E5 bit 0x10: set on every player from a boss intro (remo) on, absent on a re-fight (CL-2c1eef marker)
         int valid = -1;
         u64 evt = 0, efn = 0;
         if (ent && SafeGet(ent, &evt) && evt && SafeGet(evt + 0x78, &efn) && efn)
             valid = reinterpret_cast<bool(BB_COOP_SYSV*)(u64)>(efn)(ent) ? 1 : 0;
         const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
         char pb[256];
-        std::snprintf(pb, sizeof pb, " [chr %08x hp %d team %d bank %d f1e1 %08x entry valid %d f20 %02x k10 %d o0d %02x o18 %02x]",
+        std::snprintf(pb, sizeof pb, " [chr %08x hp %d team %d bank %d f1e1 %08x b1e5 %02x entry valid %d f20 %02x k10 %d o0d %02x o18 %02x]",
                       Field<u32>(c, 8), ChrHp(c), Field<int>(c, 0x88),
-                      ent && std::find(v.begin(), v.end(), ent) != v.end() ? 1 : 0, Field<u32>(c, 0x1e1), valid,
+                      ent && std::find(v.begin(), v.end(), ent) != v.end() ? 1 : 0, Field<u32>(c, 0x1e1),
+                      unsigned(Field<u8>(c, 0x1e5)), valid,
                       e3 ? unsigned(Field<u8>(e3, 0x20)) : 0xffu, e3 ? Field<int>(e3, 0x10) : -1,
                       e30 ? unsigned(Field<u8>(e30, 0xd)) : 0xffu, e30 ? unsigned(Field<u8>(e30, 0x18)) : 0xffu);
         ps += pb;
@@ -6818,36 +6738,6 @@ void BossLockEntry(u64 boss, u32 want) {
         SafeWrite(n + 0x40, &one, 1);
         Log("boss attention: the boss's hate record of %08x is set as for the attacker of a hit (10 s)", want);
     }
-}
-
-/// CL-2c1eef: the hate record of `chr` as the game makes it for the attacker of a hit: 0x12A9230(holder, attacker,
-/// hit) adds the kind-1 entry when there is none (0x12B2760) and sets +0x20 = 3, +0x38 = 10 s, +0x2C = 0, +0x40 = 1;
-/// it only reads +0x1B4 of the hit (a zeroed one: a plain hit). The holder is the AI's target list (boss vfunc +0x160
-/// -> +0xB0 -> +0x560, entries from +0x18). BossLockEntry only refreshes an entry that exists: a member's copy the
-/// boss never saw hit it (a copy re-created by a wipe's load) had none. True when the entry is there afterwards.
-bool BossHateRecord(u64 boss, u64 chr) {
-    u64 vt = 0, fn = 0;
-    if (!boss || !chr || !SafeGet(boss, &vt) || !vt || !SafeGet(vt + 0x160, &fn) || !fn) return false;
-    const u64 ai = reinterpret_cast<u64(BB_COOP_SYSV*)(u64)>(fn)(boss);
-    const u64 holder = ai ? Field<u64>(Field<u64>(ai, 0xb0), 0x560) : 0;
-    if (!holder || !Field<u64>(holder, 8)) return false;
-    alignas(16) static std::uint8_t hit[0x200];
-    std::memset(hit, 0, sizeof hit);
-    const u64 r = reinterpret_cast<u64(BB_COOP_SYSV*)(u64, u64, u64)>(Guest(0x12a9230))(holder, chr, reinterpret_cast<u64>(hit));
-    const u32 want = Field<u32>(chr, 8);
-    bool found = false;
-    u64 n = Field<u64>(holder, 0x18);
-    for (int k = 0; n && k < 16 && !found; ++k, n = Field<u64>(n, 8)) {
-        found = Field<u32>(n, 0x28) == 1 && (Field<u8>(n, 2) & 0x7f) == 1 && Field<u32>(n, 0x50) == want;
-    }
-    static u64 last_key = ~0ull;
-    const u64 key = (u64(want) << 32) ^ (r << 1) ^ u64(found);
-    if (key != last_key) {
-        last_key = key;
-        Log("boss hate record: %08x for chr %08x: 0x12A9230 returned %#llx, entry %s", Field<u32>(boss, 8), want, ull(r),
-            found ? "there" : "MISSING");
-    }
-    return found;
 }
 
 /// Any role, main thread: while a boss bar is up, one line every 10 s per boss with its position, its latest
@@ -12541,7 +12431,6 @@ void Tick(const GameSnapshot& s) {
     DeadPlayerUntargetTick(s, now);
     BossStateTick(s, now);
     BossAttentionTick(s, now);
-    BossRoomNoticeTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());

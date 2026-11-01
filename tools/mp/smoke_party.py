@@ -3886,7 +3886,9 @@ def check_lw(v, L):
 #  5. the run ends when she dies or 40 s after she went under half HP (goal=: "test: goal reached").
 # Checks over 40 s with the host spectating and 40 s under half HP, on every game: her bar, her animations (attacks
 # 3000-3999), the guest's HP drops (her hits), how far she walked, and her AI target / hate record on the host
-# (BB_PARTY_AI_LOG dumps). BB_AMP_NET=<BB_NET_SIM preset>, BB_AMP_ENV="A=1;B=2" (both games).
+# (BB_PARTY_AI_LOG dumps). BB_AMP_NET=<BB_NET_SIM preset>, BB_AMP_ENV="A=1;B=2" (both games), BB_AMP_HOST_AWAY=1 (try 2:
+# the host lives, hp_floor, back at the fog: the control), BB_AMP_TRY1=0 (no try 1; intro marked seen), BB_AMP_TRY2_PRE=STEP.
+# Status 2026-11-02: FAILS on master and on 0.7.7 (CL-2c1eef open): after the host's death on try 2 she attacks nobody.
 AMP_FIXTURE = Path(r"E:\games\bbport\test_saves\amelia_alive\savedata")
 AMP_FOG = (51.5, 311.6)                  # her fog (object 2401800; MSB "SFX_光の壁_ボス前")
 AMP_OUT_HOST = "49.3:36.2:305.9:0.52"    # outside the fog, ~6 m out on the cathedral steps, facing it
