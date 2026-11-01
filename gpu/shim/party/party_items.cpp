@@ -4105,8 +4105,20 @@ void GiftTick(double now) {
         g_gift_due.pop_front();
     }
     g_gift_last = now;
+    static const bool hide_on = !EnvOff("BB_PARTY_GIFT_HIDE");
+    // One award per lot per session (BB_PARTY_GIFT_HIDE=0 turns this and the hide off).
+    static std::set<std::int32_t> awarded;
+    if (hide_on && awarded.count(d.lot)) {
+        Log("gift from slot %d: lot %d was already awarded this session; nothing to give", d.slot, d.lot);
+        return;
+    }
     if (IsFlag(Ptr(kFlagMan), d.flag)) {
         Log("gift from slot %d: lot %d already in the host's world (flag %d set); nothing to give", d.slot, d.lot, d.flag);
+        if (hide_on) {
+            if (const std::uint32_t tf = TreasureFlagToHide(d.lot); tf && g_treasure_hider && g_treasure_hider(tf)) {
+                Log("gift from slot %d: lot %d's leftover treasure (flag %u) taken out", d.slot, d.lot, tf);
+            }
+        }
         return;
     }
     {
@@ -4123,6 +4135,14 @@ void GiftTick(double now) {
     // broadcasts it; the guest that talked holds the flag already (its mark) and skips it.
     reinterpret_cast<AwardFn>(Guest(kAwardLot))(mim, static_cast<u32>(d.lot), 1);
     Log("gift from slot %d: flag %d is now %d", d.slot, d.flag, IsFlag(Ptr(kFlagMan), d.flag) ? 1 : 0);
+    if (hide_on) {
+        awarded.insert(d.lot);
+        // The treasure still lying in the host's own world: taken out, else the host picks it up a second
+        // time (a duplicate key item and the "second item" warning).
+        if (const std::uint32_t tf = TreasureFlagToHide(d.lot); tf && g_treasure_hider && g_treasure_hider(tf)) {
+            Log("gift from slot %d: lot %d's treasure (flag %u) taken out of the host's world", d.slot, d.lot, tf);
+        }
+    }
 }
 
 } // namespace
