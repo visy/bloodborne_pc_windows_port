@@ -41,19 +41,33 @@ DEFAULT_ROOT = REPO.parent / "mptest"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", r"E:\games\bloodborne"))
 
 
+NAV_CACHE_VERSION = "2"   # 2: nav_m24 / nav_m27 hold both areas (the sj cave mouth); older caches get those two rebuilt
+
+
 def ensure_nav_cache(game):
     r"""The test walker's navmesh cache (tools/party/nav_cache.py), built once from the game's map files into
     E:\games\bbport\navcache (derived data, shared by every checkout). None when it cannot be built."""
     out = Path(os.environ.get("BB_NAV_CACHE_DIR", r"E:\games\bbport\navcache"))
-    if (out / "nav_m24.bin").exists():
+    stamp = out / "VERSION"
+    have = stamp.read_text().strip() if stamp.exists() else ""
+    if (out / "nav_m24.bin").exists() and have == NAV_CACHE_VERSION:
         return out
     dvd = Path(game) / "dvdroot_ps4"
     tool = Path(__file__).resolve().parents[1] / "party" / "nav_cache.py"
     if not (dvd / "map").is_dir() or not tool.exists():
-        return None
-    r = subprocess.run([sys.executable, "-I", str(tool), str(dvd), str(out)], capture_output=True, text=True)
+        return out if (out / "nav_m24.bin").exists() else None
+    areas = ["24", "27"] if (out / "nav_m24.bin").exists() else []   # a version bump: only what changed
+    r = subprocess.run([sys.executable, "-I", str(tool), str(dvd), str(out)] + areas, capture_output=True, text=True)
     print("[instances] navmesh cache: %s" % (r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-200:]), flush=True)
-    return out if (out / "nav_m24.bin").exists() else None
+    if (out / "nav_m24.bin").exists():
+        try:
+            stamp.write_text(NAV_CACHE_VERSION)
+        except OSError:
+            pass
+        return out
+    return None
+
+
 BASE_PORT = 47600  # default root; see base_port()
 
 

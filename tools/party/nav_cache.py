@@ -275,6 +275,12 @@ def write(path, maps, verts, faces, links):
     os.replace(tmp, path)  # atomic: parallel harness starts
 
 
+# Areas whose maps are walked across a seam: the file of each holds both, so a walk that starts on one side and
+# ends on the other (sj: the cave mouth m24_00 -> m27_00) plans over one connected mesh. The m24 side alone ends in a
+# dead-end neck at the seam; the passage itself runs on the m27 pieces.
+JOIN = {"24": ["27"], "27": ["24"]}
+
+
 def main():
     game, outdir, areas = sys.argv[1], Path(sys.argv[2]), sys.argv[3:]
     allmaps = sorted(p.name for p in (Path(game) / "map").iterdir()
@@ -283,7 +289,7 @@ def main():
         areas = sorted({m[1:3] for m in allmaps})
     outdir.mkdir(parents=True, exist_ok=True)
     for a in areas:
-        maps = [m for m in allmaps if m[1:3] == a]
+        maps = [m for m in allmaps if m[1:3] == a or m[1:3] in JOIN.get(a, ())]
         if not maps:
             continue
         offsets = {}
