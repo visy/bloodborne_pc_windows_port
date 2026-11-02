@@ -1431,6 +1431,7 @@ void SetFlags(const std::vector<u32>& flags, bool on) {
         return;
     }
     for (u32 f : flags) {
+        const progress::FlagCause cause("party story");
         reinterpret_cast<SetFlagFn>(Guest(kSetEventFlag))(man, f, on ? 1 : 0);
     }
 }
