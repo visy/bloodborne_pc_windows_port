@@ -332,3 +332,37 @@ class OverUdp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NameFilterTests(unittest.TestCase):
+    """The interim offensive-name filter: a masked name in the list, look-alike tricks resolved, and
+    ordinary Bloodborne names never masked."""
+
+    POSITIVE = ["Black ppl hunter", "B1ack p30ple hunt3r", "blackpplhunter", "\u0412l\u0430\u0441k \u0440\u0440l hunt\u0435r",
+                "\uff22\uff4c\uff41\uff43\uff4b \uff50\uff50\uff4c \uff48\uff55\uff4e\uff54\uff45\uff52",
+                "\U0001d401\U0001d425\U0001d41a\U0001d41c\U0001d424 \U0001d429\U0001d429\U0001d425 hunter",
+                "B\u200black p\u200dpl hunter", "\u24d1\u24db\u24d0\u24d2\u24da \u24df\u24df\u24db hunter",
+                "b\u0337l\u0337a\u0337c\u0337k\u0337 p\u0337p\u0337l\u0337 hunter", "\u202eretnuh lpp kcalb",
+                "Jews hunter", "blacks hunter", "muslim hater", "gas the jews", "Sieg Heil", "1488", "kkk member",
+                "N I G G E R", "n.i.g.g.a", "niiiigger", "Negro", "mexicans die"]
+    NEGATIVE = ["Black Hunter", "Beast Hunter", "Hunter of Hunters", "Gehrman", "Vileblood", "Scunthorpe",
+                "Classic Assassin", "Lobo Negro", "Niger", "Nigeria", "Snigger", "Chinese Hunter", "Gay Slayer",
+                "Jewel Hunter", "Blacksmith", "Black Knight", "Hunter 88", "Dyke Ave", "Killer Queen", "Kirkhammer",
+                "Lady Maria", "Eileen the Crow", "Executioner", "Dragonslayer", "\u0410\u0433\u0430\u0442\u0430", "\u592a\u90ce"]
+
+    def test_positive(self):
+        for n in self.POSITIVE:
+            self.assertTrue(nw.name_offensive(n), n)
+
+    def test_negative(self):
+        for n in self.NEGATIVE:
+            self.assertFalse(nw.name_offensive(n), n)
+
+    def test_listed_masked(self):
+        lob = nw.Lobby(reserve_server=False)
+        ann = nw.encode_announce("Black ppl hunter", 9307, 1, 3, "0.7.8", False)
+        lob.handle(ann, "10.8.0.5", 0.0)
+        rows = nw.parse_reply(lob.handle(nw.encode_list(0), "10.8.0.6", 1.0))
+        names = [r["name"] for r in rows[2]]
+        self.assertEqual(names, [nw.masked_name("Black ppl hunter")])
+        self.assertTrue(names[0].startswith("Hunter "))
