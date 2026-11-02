@@ -319,6 +319,7 @@ struct Test {
     int route_hops = 0;             // short chr warps onto the next waypoint (blocked after the side steps)
     int ap_slide = 0;               // side steps left in the current slide (sign = side)
     int ap_slides_here = 0;         // slides tried for the current waypoint
+    std::uint32_t nav_block = 0;    // the nav walker's own copy of the stage record (a seam holds its stall verdicts)
     std::uint32_t route_block = 0;  // the own chr's stage record (+0x3F8) last logged
     Clock::time_point route_started{};
     bool route_god = false;         // the route made the chr invincible (cleared at its end)
@@ -3204,12 +3205,12 @@ void WritePadFile(const char* tokens) {
 }
 
 // ---- Navmesh test walker (nav_walk.h) ----
-// BB_TEST_WALKER=nav turns the nav walker on (A/B); the default is the old pulse walker until the lift phases are proven. BB_NAV_CACHE = the directory of nav_mAA.bin files
+// The nav walker is the default (0.7.8, nav2078); BB_TEST_WALKER=old keeps the old pulse walker (A/B, or a phase it is worse on). BB_NAV_CACHE = the directory of nav_mAA.bin files
 // (tools/party/nav_cache.py; the harness builds it).
 bool NavWalkerWanted() {
     static const bool on = [] {
         const char* e = std::getenv("BB_TEST_WALKER");
-        return e && (std::strcmp(e, "nav") == 0 || std::strcmp(e, "1") == 0);  // opt-in for now (default old)
+        return !e || !(std::strcmp(e, "old") == 0 || std::strcmp(e, "0") == 0);  // default nav; BB_TEST_WALKER=old keeps the pulse walker
     }();
     return on;
 }
@@ -3279,6 +3280,7 @@ bool StickToward(const float at[3], double* stick_deg, float* dist) {
 void NavWalkInit(Test& t, const GameSnapshot& s, std::uint32_t area, const float pos[3], Clock::time_point now) {
     t.nav_init = true;
     t.nav_on = false;
+    t.nav_block = 0;
     if (!NavWalkerWanted()) return;
     const navwalk::NavMesh* mesh = NavMeshForArea(area);
     if (!mesh || mesh->Empty()) {
@@ -3380,12 +3382,12 @@ void NavWalkTick(Test& t, const GameSnapshot& s, std::uint32_t area, const float
     const double dt = std::clamp(Seconds(t.nav_last, now), 0.001, 0.25);
     t.nav_last = now;
     t.ap_at = now + std::chrono::milliseconds(35);
-    if (on_route && s.player) {
+    if (s.player) {
+        // a map seam: the stage record changes under the walker (the game holds the player while the next block streams in)
         std::uint32_t blk = 0;
-        if (SafeRead(s.player + 0x3f8, &blk, sizeof blk) && blk != t.route_block) {
-            Log("test: route: stage record %#x -> %#x at (%.1f, %.1f, %.1f), map 0x%08x", t.route_block, blk, double(pos[0]),
-                double(pos[1]), double(pos[2]), area);
-            t.route_block = blk;
+        if (SafeRead(s.player + 0x3f8, &blk, sizeof blk) && blk != t.nav_block) {
+            if (t.nav_block) t.nav.HoldStall(Seconds(t.nav_t0, now) + 10.0);
+            t.nav_block = blk;
         }
     }
     const navwalk::V3 here{pos[0], pos[1], pos[2]};
