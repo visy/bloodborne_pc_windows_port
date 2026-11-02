@@ -764,6 +764,8 @@ public:
     }
 
     WalkState state() const { return state_; }
+    /// No stall verdicts until `until` (walk clock): the player is held at a map seam.
+    void HoldStall(double until) { hold_until_ = std::max(hold_until_, until); }
     const PathFollower& path() const { return path_; }
     CamModel& cam() { return cam_; }
     double speed() const { return speed_; }
@@ -811,6 +813,9 @@ public:
         if (path_.Cross() > cfg.replan_cross) {
             if (!Replan(pos, o, now, "off the corridor")) return o;
         }
+        // a map seam (the director saw the stage record change): the game holds the player there while the next map block
+        // streams in; a player keeps the stick forward and waits, so no stall (and no back-up that undoes the crossing)
+        if (now < hold_until_ && state_ == WalkState::Walking) stall_.Reset(now, path_.Progress());
         const bool stalled = stall_.Update(now, path_.Progress());
         if (state_ == WalkState::Walking && stalled) {
             ++stats.stalls;
@@ -1048,6 +1053,7 @@ private:
     }
     bool stage_flag_ = false;
     double stage_progress_ = 0;
+    double hold_until_ = -1;
 };
 
 }  // namespace navwalk
