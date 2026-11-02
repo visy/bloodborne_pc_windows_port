@@ -84,7 +84,7 @@ EXTRA_POS = [
     "Burn Muslims", "Bomb Muslims", "Muslim Bomber", "Mexican Hater", "Jew Hater", "Jew Haters", "xXBlackPplHunterXx", "BLACK PPL HUNTER 69", "B.l.a.c.k P.p.l H.u.n.t.e.r",
     "Black_ppl_hunter", "black-ppl-hunter", "Black​ppl​hunter", "Ｂｌａｃｋ ｐｐｌ ｈｕｎｔｅｒ",
     "вlack ppl hunter", "Blаck peоpӏe hunter".replace("ӏ", "l"), "\U0001d401\U0001d425\U0001d41a\U0001d41c\U0001d424 ppl hunter",
-    "ⒷⓁⒶⒸⓀ ppl hunter", "Black ppl hunt3r", "Black ppl h u n t e r", "black p p l hunter", "Jews Gas Chamber",
+    "ⒷⓁⒶⒸⓀ ppl hunter", "Black ppl hunt3r", "Black ppl h u n t e r", "gypsies hunter", "i h8 blacks", "I h8 jews", "black p p l hunter", "Jews Gas Chamber",
 ]
 NEGATIVES = """Black Hunter|Beast Hunter|Hunter of Hunters|Gehrman|Vileblood|Scunthorpe|Classic Assassin|Gay Gascoigne|Niger|Hunter|Black Cat|Kill Bill
 White Hunter|The Old Hunter|Blood Hunter|Church Hunter|Cainhurst Knight|Choir Member|Executioner|Kin Hunter|Beast Slayer|Slayer of Beasts

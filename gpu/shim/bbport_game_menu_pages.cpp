@@ -400,7 +400,7 @@ void RefreshParty() {
         member_names[k] = m.name;
         member_kickable[k] = host && !m.local && m.slot != 0;
         both([&](bool r) {
-            std::string text = m.name;
+            std::string text = b.ShownName(m.name);
             if (m.slot == 0) text += L(r, " (host)", " (хост)");
             if (m.local) text += L(r, " (you)", " (вы)");
             return text;
@@ -1763,6 +1763,15 @@ void DefineAll() {
     own(&Values::party_glyph_list, "Chalice glyph list", "Список глифов чаши",
         "The Ritual Altar's glyph search lists the party's glyphs to pick from first. Off by default",
         "Поиск глифа у Алтаря ритуалов сначала показывает глифы группы. По умолчанию выкл.");
+
+    // ---- My party: Names (0.7.8, namefilter): hateful member names are shown masked on this PC. ON by default (safety),
+    // unlike other new party features; the real name stays the member's identity (party/name_filter.h). ----
+    AddPage("My party: Names", "Моя группа: имена",
+            "Yours: hateful player names are shown as Hunter and a short code (bbport)",
+            "Ваше: оскорбительные имена игроков показываются как Hunter и короткий код (bbport)");
+    own(&Values::party_hide_bad_names, "Hide offensive names", "Скрывать грубые имена",
+        "On: a hateful name shows as Hunter + a code on your screen (display only; others still see it)",
+        "Вкл.: оскорбительное имя показано как Hunter и код (только на вашем экране)");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

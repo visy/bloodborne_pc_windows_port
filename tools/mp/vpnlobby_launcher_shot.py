@@ -3,8 +3,8 @@
 
   python tools/mp/vpnlobby_launcher_shot.py --out DIR [--lobby-addr 127.0.0.1:PORT]
 
-Starts tools/vpn/lobby/nwlobby.py on loopback (test override), announces three synthetic hosts from 127.0.0.2-4
-(one of another version), opens the real launcher window (settings in a scratch folder, party_vpn_lobby=1 there),
+Starts tools/vpn/lobby/nwlobby.py on loopback (test override), announces four synthetic hosts from 127.0.0.2-5
+(one of another version, one with a hateful name that must show masked), opens the real launcher window (settings in a scratch folder, party_vpn_lobby=1 there),
 waits until its list shows them and saves a PNG of the Party tab. Prints the rows it sees (never an address).
 """
 import argparse
@@ -40,7 +40,9 @@ def main():
         time.sleep(1)
         for ip, name, slots, build in (("127.0.0.2", "Eileen", (1, 4), "0.7.7 (a1b2c3d)"),
                                        ("127.0.0.3", "Father_Gascoigne", (2, 3), "0.7.7 (a1b2c3d)"),
-                                       ("127.0.0.4", "Djura", (1, 4), "0.7.5 (9f8e7d6)")):
+                                       ("127.0.0.4", "Djura", (1, 4), "0.7.5 (9f8e7d6)"),
+                                       # a synthetic hateful name: the lobby lists it masked (name filter)
+                                       ("127.0.0.5", "Black ppl hunter", (1, 4), "0.7.7 (a1b2c3d)")):
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.bind((ip, 0))
             s.sendto(nw.encode_announce(name, 9307, slots[0], slots[1], build, True), ("127.0.0.1", a.port))
@@ -56,7 +58,7 @@ def main():
         end = time.time() + 25
         while time.time() < end:
             app.update()
-            if len(app.vpn_lobby_tree.get_children()) >= 3:
+            if len(app.vpn_lobby_tree.get_children()) >= 4:
                 break
             time.sleep(0.1)
         for _ in range(20):
@@ -66,6 +68,7 @@ def main():
         print("rows seen:", rows, flush=True)
         shown = " ".join(str(v) for r in rows for v in r) + app.vpn_lobby_info_var.get()
         assert "127." not in shown and "10.8." not in shown, "an address is visible in the list"
+        assert "Black" not in shown and "Hunter " in shown, "the hateful name must be listed masked"
         from PIL import ImageGrab
         app.lift()
         app.update()
@@ -87,7 +90,7 @@ def main():
         img.save(out / "launcher_vpn_lobby_list.png")
         print("saved", out / "launcher_vpn_lobby_list.png", img.size, flush=True)
         app.destroy()
-        return 0 if len(rows) == 3 else 1
+        return 0 if len(rows) == 4 else 1
     finally:
         lobby.terminate()
 

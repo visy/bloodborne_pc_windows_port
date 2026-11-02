@@ -7252,8 +7252,6 @@ faggit sx
 fagg tx
 fag t
 fags t
-dyke t
-dykes t
 tranny tx
 trannies tx
 shemale s
@@ -7537,6 +7535,7 @@ kurd W
 armenian W
 roma W
 gypsy S
+gypsies S
 immigrant W
 refugee W
 migrant W
@@ -7709,6 +7708,10 @@ vermin H
 subhuman H
 inferior A
 scum H
+h8 H
+h8r H
+h8rs H
+h8ing H
 )NF";
 static const char* const kNfLink = R"NF(# Filler words allowed inside a compound (killallblackppl) so the phrase tier can read it.
 of
