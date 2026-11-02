@@ -45,3 +45,8 @@ push_to_github.bat
 /docs/ISSUE_ACTION_PLAN_*.md
 # AMD FidelityFX DLLs (FSR 4.1.1 is built from the user's own): never in the repository
 *.dll
+
+# smoke/harness output when run with a relative --root
+/exe/
+/harness_pids.json
+/inst[0-9]*/
