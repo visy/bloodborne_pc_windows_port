@@ -3205,12 +3205,12 @@ void WritePadFile(const char* tokens) {
 }
 
 // ---- Navmesh test walker (nav_walk.h) ----
-// BB_TEST_WALKER=nav turns the nav walker on (A/B); the default is the old pulse walker until the lift phases are proven. BB_NAV_CACHE = the directory of nav_mAA.bin files
+// The nav walker is the default (0.7.8, nav2078); BB_TEST_WALKER=old keeps the old pulse walker (A/B, or a phase it is worse on). BB_NAV_CACHE = the directory of nav_mAA.bin files
 // (tools/party/nav_cache.py; the harness builds it).
 bool NavWalkerWanted() {
     static const bool on = [] {
         const char* e = std::getenv("BB_TEST_WALKER");
-        return e && (std::strcmp(e, "nav") == 0 || std::strcmp(e, "1") == 0);  // opt-in for now (default old)
+        return !e || !(std::strcmp(e, "old") == 0 || std::strcmp(e, "0") == 0);  // default nav; BB_TEST_WALKER=old keeps the pulse walker
     }();
     return on;
 }
