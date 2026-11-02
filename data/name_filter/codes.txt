@@ -1,0 +1,52 @@
+# CODES tier: hate codes and symbols.
+#   join TEXT         TEXT (letters/digits, no spaces) is inside the name with separators removed (leet applied)
+#   rawjoin TEXT      the same on the plain text (digits stay digits): numeric codes
+#   raw TOKEN         a whole word of the plain text (runs of one character cut to 3)
+#   ctx TOKEN | A B   the word TOKEN together with any one of the words A B ... (88 alone is a number)
+#   sym HEX           this Unicode character appears in the name
+#   sym2 HEX HEX      these two characters are adjacent
+# Decision: U+5350 (the right-facing swastika) is masked; U+534D (the Buddhist map symbol, in ordinary Japanese and
+# Chinese names) passes alone. Two sig runes in a row are masked.
+join heilhitler
+join sieghei
+join sieghail
+join sieghiel
+join zieghei
+join heilhit
+join hitlerwasright
+join hitlerdidnothingwrong
+join ww2wasright
+join wwiiwasright
+join whitepower
+join whitepride
+join whitesupremacy
+join whitelivesmatter
+join whitegenocide
+join racewar
+join rahowa
+join 14words
+join fourteenwords
+join gasthejews
+join gastheniggers
+join jewsdidit
+join thereisnoholocaust
+join blackslivesdontmatter
+join killallniggers
+join deathtojews
+join deathtoniggers
+join noblacks
+join nojews
+join nomuslims
+join nogays
+rawjoin 1488
+rawjoin 14/88
+raw 1488
+raw 8814
+raw 14w
+raw hh88
+ctx 88 | 14 1488 heil hh ss wp wpww hitler sieg whitepower nazi
+ctx 14 | 88 1488 words heil hh ss wp
+sym 5350
+sym2 16CB 16CB
+sym 1F5F6
+raw kkk
