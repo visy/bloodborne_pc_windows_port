@@ -84,8 +84,28 @@ def load_doctor():
     return mod
 
 
+def scrub_offensive_names(nd, paths, text):
+    """The report with every hateful party-member name (scripts/namefilter.py) replaced by its mask ("Hunter 3F2"), so a
+    name from a player's log is never echoed into Discord. Names are matched by the log's own parse; any failure leaves
+    the text as it was."""
+    try:
+        spec = importlib.util.spec_from_file_location("namefilter", SCRIPT.parent / "namefilter.py")
+        nf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nf)
+        names = set()
+        for p in paths:
+            lg = nd.parse(str(p))
+            names |= {lg.name} | set(lg.guests) | set(lg.pings)
+        for n in sorted((n for n in names if n), key=len, reverse=True):
+            if nf.name_offensive(n):
+                text = text.replace(n, nf.mask_text(n))
+    except Exception:  # noqa: BLE001
+        pass
+    return text
+
+
 def diagnose(paths, redact):
-    """Run net_doctor on local files; returns its text."""
+    """Run net_doctor on local files; returns its text (hateful names masked when names are shown)."""
     nd = load_doctor()
     args = (["--redactnames", "--redactips"] if redact else []) + [str(p) for p in paths]
     buf = io.StringIO()
@@ -94,7 +114,8 @@ def diagnose(paths, redact):
             nd.main(args)
         except SystemExit:
             pass
-    return buf.getvalue().strip() or "No output from the doctor."
+    out = buf.getvalue().strip() or "No output from the doctor."
+    return out if redact else scrub_offensive_names(nd, paths, out)
 
 
 def split_message(text, limit=DISCORD_LIMIT):

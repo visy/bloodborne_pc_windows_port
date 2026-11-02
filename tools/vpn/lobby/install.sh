@@ -18,10 +18,17 @@ for f in nwlobby.py nwlobby.service; do [ -f "$SRC/$f" ] || die "missing $SRC/$f
 command -v python3 >/dev/null || die "need python3"
 [ "$PORT" = 9310 ] || die "the unit, the launcher and the firewall text use 9310; edit them together to change it"
 python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$SRC/nwlobby.py" || die "nwlobby.py does not parse"
+# the name filter (masks offensive host names): scripts/namefilter.py + scripts/namefilter_data.py of the repo, either
+# copied next to this script or reached through the repo layout (tools/vpn/lobby -> scripts)
+NF=
+for d in "$SRC" "$SRC/../../../scripts"; do [ -f "$d/namefilter.py" ] && [ -f "$d/namefilter_data.py" ] && NF=$d && break; done
+[ -n "$NF" ] || die "missing namefilter.py / namefilter_data.py (copy them from the repo's scripts/ next to install.sh)"
 
 # ---- code ----------------------------------------------------------------------------------------
 install -d -m 755 -o root -g root "$APP"
 install -m 644 -o root -g root "$SRC/nwlobby.py" "$APP/nwlobby.py"
+install -m 644 -o root -g root "$NF/namefilter.py" "$APP/namefilter.py"
+install -m 644 -o root -g root "$NF/namefilter_data.py" "$APP/namefilter_data.py"
 
 # ---- firewall 1: the iptables-nft rules (persisted through the existing rules scripts) ------------
 # The Nightwatch rules already accept UDP 9310 from the tunnel (chain NW_VPN_IN); only add a rule when

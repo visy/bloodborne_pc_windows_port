@@ -1,0 +1,6 @@
+# ALLOW list: ordinary words and places that contain a strict term. FLAG w = this whole word is cleared; FLAG c = this
+# fragment is cleared wherever it occurs inside a word. Words are written plain; the normaliser is applied.
+# Built by running the dictionary over Bloodborne text, programme source and documentation vocabulary (tests report it).
+scunthorpe w
+penistone w
+snigger c
