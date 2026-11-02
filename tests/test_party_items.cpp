@@ -502,6 +502,86 @@ static void test_ledger_seed() {
 }
 
 
+// CL-55cea7: a stale party_summoned_gives.txt must not hand a new character another character's key items.
+static void test_sgive_owner() {
+    using O = SgiveOwner;
+    CHECK(SummonedGiveOwner(1, 0xabc, 1, 0xabc, true) == O::Replay);      // the same character
+    CHECK(SummonedGiveOwner(1, 0xabc, 1, 0xdef, true) == O::Drop);        // a new character in the same slot
+    CHECK(SummonedGiveOwner(1, 0xabc, 2, 0xdef, true) == O::KeepForOther);  // another slot, kept for it
+    CHECK(SummonedGiveOwner(-1, 0xabc, 1, 0xabc, true) == O::Drop);       // an older file: no slot
+    CHECK(SummonedGiveOwner(1, 0, 1, 0xabc, true) == O::Drop);            // an older file: no character id
+    CHECK(SummonedGiveOwner(1, 0xabc, -1, 0xabc, true) == O::Unsure);     // unreadable slot: not replayed
+    CHECK(SummonedGiveOwner(1, 0xabc, 1, 0, true) == O::Unsure);          // no id yet: not replayed
+    // BB_PARTY_SGIVE_OWNER=0: the old slot-only rule.
+    CHECK(SummonedGiveOwner(1, 0, 1, 0xdef, false) == O::Replay);
+    CHECK(SummonedGiveOwner(-1, 0, 3, 0, false) == O::Replay);
+    CHECK(SummonedGiveOwner(1, 0, 2, 0, false) == O::KeepForOther);
+    // The id bits live in the ledger range clear of every ledger lot and the other markers.
+    CHECK(kCharIdFirst + kCharIdBits == kCharIdValid);
+    CHECK(kCharIdFirst > kItemLedgerBase + 100);
+    CHECK(kSgiveRepaired != kEyeGateRepaired && kSgiveRepaired != kBadgeGatesRepaired);
+}
+
+// The source flags table against the ledger (a drift would remove legit items) and the repair decision.
+static void test_sgive_repair() {
+    const struct { std::int32_t goods, lot; } led[] = {{4000, 31000}, {4114, 50000010}, {4118, 50800000}, {4310, 39000}};
+    for (const auto& l : led) {
+        const std::int32_t idx = ItemLedgerIndex(l.lot);
+        CHECK(idx >= 0);
+        const std::vector<std::uint32_t> f = GoodsEarnedFlags(l.goods);
+        CHECK(std::find(f.begin(), f.end(), kItemLedgerBase + static_cast<std::uint32_t>(idx)) != f.end());
+    }
+    CHECK(GoodsEarnedFlags(4110) == std::vector<std::uint32_t>{52410290});  // Saw badge, lot 2410290
+    CHECK(GoodsEarnedFlags(4115) == std::vector<std::uint32_t>{52400480});  // Radiant Sword badge, lot 2400480
+    CHECK(GoodsEarnedFlags(9999).empty());
+    std::set<std::uint32_t> save;
+    std::set<std::int32_t> held;
+    auto is_set = [&](std::uint32_t id) { return save.count(id) != 0; };
+    auto holds = [&](std::int32_t g) { return held.count(g) ? 1 : 0; };
+    // Poisoned fresh character: stale badges + keys, their rows, no source flag at all.
+    held = {4110, 4111, 4112, 4116, 4117, 4104, 4000, 4012, 4310, 4311, 4200};
+    save = {12101000, 12101001, 12101002, 12101006, 12101007};
+    SgiveRepair r = SgivePoisonToRepair(is_set, holds, 0);
+    CHECK(r.complete && !r.done);
+    CHECK((r.remove == std::vector<std::int32_t>{4000, 4012, 4104, 4110, 4111, 4112, 4116, 4117, 4310}));
+    CHECK((r.clear == std::vector<std::uint32_t>{12101000, 12101001, 12101002, 12101006, 12101007}));
+    // Legit pickups stay (lot flag set), the rest of the same character goes.
+    save.insert(52410290);  // Saw badge picked up
+    save.insert(52400480);
+    held.insert(4115);      // Radiant Sword badge picked up (lot 2400480): legit, row open
+    save.insert(12101005);
+    r = SgivePoisonToRepair(is_set, holds, 0);
+    CHECK(std::find(r.remove.begin(), r.remove.end(), 4110) == r.remove.end());
+    CHECK(std::find(r.remove.begin(), r.remove.end(), 4115) == r.remove.end());
+    CHECK(std::find(r.clear.begin(), r.clear.end(), 12101000) == r.clear.end());
+    CHECK(std::find(r.clear.begin(), r.clear.end(), 12101005) == r.clear.end());
+    CHECK(std::find(r.remove.begin(), r.remove.end(), 4111) != r.remove.end());
+    // One stray non-badge item is kept (other explanations); a single unearned badge goes at once.
+    held = {4012};
+    save.clear();
+    r = SgivePoisonToRepair(is_set, holds, 0);
+    CHECK(r.remove.empty() && r.kept == std::vector<std::int32_t>{4012});
+    held = {4111};
+    save = {12101001};
+    r = SgivePoisonToRepair(is_set, holds, 0);
+    CHECK(r.remove == std::vector<std::int32_t>{4111} && r.clear == std::vector<std::uint32_t>{12101001});
+    // A row set while its badge is held nowhere is cleared as well (the old repair's marker may be set).
+    held.clear();
+    save = {12101003};
+    r = SgivePoisonToRepair(is_set, holds, 0);
+    CHECK(r.clear == std::vector<std::uint32_t>{12101003} && r.remove.empty());
+    // NG+: key items come from the cycle before, nothing removed (the badge row of a held badge stays).
+    held = {4110, 4111, 4112};
+    save = {12101000};
+    r = SgivePoisonToRepair(is_set, holds, 1);
+    CHECK(r.remove.empty() && r.clear.empty() && r.kept.size() == 3);
+    // Unreadable NG cycle / list: undecided; marker set: done.
+    CHECK(!SgivePoisonToRepair(is_set, holds, -1).complete);
+    CHECK(!SgivePoisonToRepair(is_set, [](std::int32_t) { return -1; }, 0).complete);
+    save = {kSgiveRepaired};
+    CHECK(SgivePoisonToRepair(is_set, holds, 0).done);
+}
+
 // 0.7.8 badge rows (playtest 2026-11-01): flag 12101000 + n is cleared only when badge 4110 + n is held nowhere;
 // a held badge keeps its row; an unreadable list clears nothing; once per save.
 static void test_badge_gate_repair() {
@@ -1595,6 +1675,8 @@ int main() {
     test_ledger_seed();
     test_shop_gate_repair();
     test_badge_gate_repair();
+    test_sgive_owner();
+    test_sgive_repair();
     test_eye_gate();
     test_deny();
     test_classify();
