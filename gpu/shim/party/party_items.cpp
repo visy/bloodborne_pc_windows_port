@@ -15,6 +15,7 @@
 #include "../../party_env.h"
 
 #include <algorithm>
+#include <random>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -1495,6 +1496,119 @@ bool SummonedGiveForSlot(int entry_slot, int current_slot) {
     return entry_slot < 0 || current_slot < 0 || entry_slot == current_slot;
 }
 
+SgiveOwner SummonedGiveOwner(int entry_slot, std::uint32_t entry_id, int cur_slot, std::uint32_t cur_id, bool enforce) {
+    if (!enforce) {
+        return SummonedGiveForSlot(entry_slot, cur_slot) ? SgiveOwner::Replay : SgiveOwner::KeepForOther;
+    }
+    if (entry_slot < 0 || entry_id == 0) {
+        return SgiveOwner::Drop;  // an older file: nobody can say whose it is
+    }
+    if (cur_slot < 0) {
+        return SgiveOwner::Unsure;
+    }
+    if (entry_slot != cur_slot) {
+        return SgiveOwner::KeepForOther;
+    }
+    if (cur_id == 0) {
+        return SgiveOwner::Unsure;
+    }
+    return entry_id == cur_id ? SgiveOwner::Replay : SgiveOwner::Drop;  // same slot, another character
+}
+
+std::vector<std::uint32_t> GoodsEarnedFlags(std::int32_t goods) {
+    // Lot pickup flags (50000000 + lot, or the lot's own), ledger bits (60009000 + index) with the awarding
+    // event of the flagless lots (kItemLedgerBase + idx; tests check them against the ledger table).
+    switch (goods) {
+    case 4000: return {60009025, 12411800};  // Oedon Tomb Key, lot 31000
+    case 4003: return {52410990};            // Cainhurst Summons
+    case 4012: return {53200720};            // Lecture Theatre Key
+    case 4013: return {53200810};            // Lunarium Key
+    case 4103: return {52411000};            // Blood Gem Workshop Tool
+    case 4104: return {52200360};            // Rune Workshop Tool
+    case 4110: return {52410290};            // Saw Hunter Badge
+    case 4111: return {50001900};            // Crow Hunter Badge
+    case 4112: return {50001700};            // Powder Keg Hunter Badge
+    case 4113: return {52100500, 52110030, 60009001, 12101800};  // Old Hunter Badge
+    case 4114: return {60009036, 12411700};  // Sword Hunter Badge, lot 50000010
+    case 4115: return {52400480};            // Radiant Sword Hunter Badge
+    case 4116: return {50001810};            // Wheel Hunter Badge
+    case 4117: return {50000205};            // Cainhurst Badge
+    case 4118: return {60009038, 12301700};  // Spark Hunter Badge, lot 50800000
+    case 4119: return {52420270, 52420280};  // Cosmic Eye Watcher Badge
+    case 4308: return {52500910};            // Unopened Summons
+    case 4310: return {60009028, 9076};      // Tonsil Stone, lot 39000
+    case 4312: return {6670};                // Old Hunter Bell
+    case 4907: return {52300070};            // Bloody Messenger Head Bandage
+    default: return {};
+    }
+}
+
+SgiveRepair SgivePoisonToRepair(const std::function<bool(std::uint32_t)>& is_set,
+                                const std::function<int(std::int32_t)>& held, int ng) {
+    SgiveRepair r;
+    if (is_set(kSgiveRepaired)) {
+        r.done = true;
+        return r;
+    }
+    if (ng < 0) {
+        r.complete = false;
+        return r;
+    }
+    std::vector<std::int32_t> unearned;
+    for (const std::int32_t goods : {4000, 4003, 4012, 4013, 4103, 4104, 4110, 4111, 4112, 4113, 4114, 4115, 4116,
+                                     4117, 4118, 4119, 4308, 4310, 4312, 4907}) {
+        const std::vector<std::uint32_t> src = GoodsEarnedFlags(goods);
+        if (src.empty()) {
+            continue;
+        }
+        bool earned = false;
+        for (const std::uint32_t f : src) {
+            earned = earned || is_set(f);
+        }
+        if (earned) {
+            continue;
+        }
+        const int h = held(goods);
+        if (h < 0) {
+            r.complete = false;
+            return r;
+        }
+        if (h > 0) {
+            unearned.push_back(goods);
+        }
+    }
+    // A later cycle keeps key items from the cycle before while its flags start over: not decided there.
+    if (ng > 0) {
+        r.kept = unearned;
+        return r;
+    }
+    // A hunter badge without its own source is taken at once (the owner's rule); other key items only when
+    // at least kSgiveMinUnearned items lack a source (one stray item has other explanations).
+    const bool many = static_cast<int>(unearned.size()) >= kSgiveMinUnearned;
+    for (const std::int32_t goods : unearned) {
+        const bool badge = goods >= kBadgeGoodsFirst && goods < kBadgeGoodsFirst + kBadgeGateCount;
+        (badge || many ? r.remove : r.kept).push_back(goods);
+    }
+    // Rows: every set row 12101000 + n whose badge is removed here or held nowhere.
+    for (std::int32_t n = 0; n < kBadgeGateCount; ++n) {
+        const std::uint32_t flag = static_cast<std::uint32_t>(kBadgeGateFirst + n);
+        if (!is_set(flag)) {
+            continue;
+        }
+        const std::int32_t goods = kBadgeGoodsFirst + n;
+        const bool removed = std::find(r.remove.begin(), r.remove.end(), goods) != r.remove.end();
+        const int h = removed ? 0 : held(goods);
+        if (h < 0) {
+            r.complete = false;
+            return r;
+        }
+        if (h == 0) {
+            r.clear.push_back(flag);
+        }
+    }
+    return r;
+}
+
 std::size_t GuestItems::Offer(const std::vector<ItemGrant>& items) {
     std::size_t taken = 0;
     for (const ItemGrant& g : items) {
@@ -2761,9 +2875,72 @@ struct SummonedGive {
     int count = 0;
     int expect = -1;  // held right after the give (or the last re-give)
     int slot = -1;    // save slot of the character it was given to (-1 unknown: an older file)
+    u32 cid = 0;      // that character's id (kCharIdValid bits in its save; 0: an older file)
 };
 std::mutex g_sgive_mu;
 std::vector<SummonedGive> g_sgives;
+bool SgiveOwnerOn() {
+    static const bool on = !EnvOff("BB_PARTY_SGIVE_OWNER");
+    return on;
+}
+
+/// The character's id in its own save (0: not written yet or not readable). `create`: write a random one when
+/// the save has none (main thread; load mode 0 writes the live store, a summoned load the own pool).
+u32 OwnCharId(bool create) {
+    const u64 man = Ptr(kFlagMan);
+    const int mode = LoadMode(man);
+    if (!man || (mode != 0 && mode != 1)) {
+        return 0;
+    }
+    auto read = [&](u32 id, bool* v) {
+        if (mode == 0) {
+            *v = IsFlag(man, id);
+            return true;
+        }
+        return progress::ReadFlagOwnSave(id, v);
+    };
+    auto write = [&](u32 id, bool on) {
+        if (mode == 0) {
+            SetFlag(man, id, on);
+            return true;
+        }
+        return progress::WriteFlagOwnSave(id, on);
+    };
+    bool valid = false;
+    if (!read(kCharIdValid, &valid)) {
+        return 0;
+    }
+    if (valid) {
+        u32 id = 0;
+        for (u32 b = 0; b < kCharIdBits; ++b) {
+            bool v = false;
+            if (!read(kCharIdFirst + b, &v)) {
+                return 0;
+            }
+            id |= (v ? 1u : 0u) << b;
+        }
+        return id;
+    }
+    if (!create) {
+        return 0;
+    }
+    static std::mt19937 rng{std::random_device{}()};
+    u32 id = 0;
+    while (id == 0) {
+        id = static_cast<u32>(rng()) & ((1u << kCharIdBits) - 1);
+    }
+    for (u32 b = 0; b < kCharIdBits; ++b) {
+        if (!write(kCharIdFirst + b, ((id >> b) & 1u) != 0)) {
+            return 0;
+        }
+    }
+    if (!write(kCharIdValid, true)) {
+        return 0;
+    }
+    Log("character id %05x written to the own save (flags %u..%u): goods given while summoned are kept for this "
+        "character only", id, kCharIdFirst, kCharIdValid);
+    return id;
+}
 bool g_sgives_loaded = false;
 
 std::filesystem::path SummonedGivesPath() {
@@ -2788,7 +2965,7 @@ void SaveSummonedGives() {
     {
         std::ofstream f(tmp, std::ios::trunc);
         for (const SummonedGive& g : g_sgives) {
-            f << g.bits << ' ' << g.id << ' ' << g.count << ' ' << g.expect << ' ' << g.slot << "\n";
+            f << g.bits << ' ' << g.id << ' ' << g.count << ' ' << g.expect << ' ' << g.slot << ' ' << g.cid << "\n";
         }
     }
     std::filesystem::rename(tmp, path, ec);
@@ -2802,6 +2979,7 @@ void LoadSummonedGives() {
     g_sgives_loaded = true;
     std::ifstream f(SummonedGivesPath());
     std::string line;
+    std::size_t no_identity = 0;
     while (std::getline(f, line)) {
         std::istringstream in(line);
         SummonedGive g;
@@ -2811,7 +2989,20 @@ void LoadSummonedGives() {
         if (!(in >> g.slot)) {
             g.slot = -1;  // a file from before the slot field
         }
+        if (!(in >> g.cid)) {
+            g.cid = 0;    // a file from before the character id
+        }
+        if (SgiveOwnerOn() && (g.slot < 0 || g.cid == 0)) {
+            ++no_identity;  // whose it is cannot be told: never replayed (CL-55cea7)
+            continue;
+        }
         g_sgives.push_back(g);
+    }
+    if (no_identity) {
+        Log("goods given while summoned: %zu entr%s from an older file without a character id dropped (they cannot be "
+            "tied to this character; BB_PARTY_SGIVE_OWNER=0 restores the old replay)", no_identity,
+            no_identity == 1 ? "y" : "ies");
+        SaveSummonedGives();
     }
     if (!g_sgives.empty()) {
         Log("goods given while summoned before the last exit: %zu kept for the check after the next load", g_sgives.size());
@@ -2823,16 +3014,22 @@ void NoteSummonedGive(u32 bits, u32 id, int count, int after) {
         return;
     }
     const int slot = party::flow::CurrentSaveSlot();
+    const u32 cid = SgiveOwnerOn() ? OwnCharId(true) : 0;
+    if (SgiveOwnerOn() && (slot < 0 || cid == 0)) {
+        Log("goods %u given while summoned: this character cannot be identified (slot %d, id %u); not kept for the "
+            "own world", id, slot, cid);
+        return;
+    }
     std::lock_guard<std::mutex> lk(g_sgive_mu);
     for (SummonedGive& g : g_sgives) {
-        if (g.bits == bits && g.id == id && g.slot == slot) {
+        if (g.bits == bits && g.id == id && g.slot == slot && g.cid == cid) {
             g.count += count;
             g.expect = after;
             SaveSummonedGives();
             return;
         }
     }
-    g_sgives.push_back({bits, id, count, after, slot});
+    g_sgives.push_back({bits, id, count, after, slot, cid});
     SaveSummonedGives();
 }
 
@@ -2867,6 +3064,8 @@ void SummonedGivesTick(const GameSnapshot& gs, int load_mode, double now) {
         return;
     }
     armed = false;
+    const bool enforce = SgiveOwnerOn();
+    const u32 cid_now = enforce && OwnWorld() == 1 ? OwnCharId(true) : 0;  // a fresh character gets its id here
     LoadSummonedGives();
     std::lock_guard<std::mutex> lk(g_sgive_mu);
     if (g_sgives.empty()) {
@@ -2875,10 +3074,29 @@ void SummonedGivesTick(const GameSnapshot& gs, int load_mode, double now) {
     std::string text;
     int regave = 0;
     const int slot_now = party::flow::CurrentSaveSlot();
+    const auto owner_of = [&](const SummonedGive& g) {
+        return SummonedGiveOwner(g.slot, g.cid, slot_now, cid_now, enforce);
+    };
+    {   // Entries of another character in this slot (a new character, or the old one's after a re-roll) are never
+        // replayed: drop them.
+        const std::size_t before = g_sgives.size();
+        g_sgives.erase(std::remove_if(g_sgives.begin(), g_sgives.end(),
+                                      [&](const SummonedGive& g) { return owner_of(g) == SgiveOwner::Drop; }),
+                       g_sgives.end());
+        if (g_sgives.size() != before) {
+            Log("goods given while summoned: %zu entr%s given to another character in save slot %d (or without a "
+                "character id) dropped: not this character's (id %05x)", before - g_sgives.size(),
+                before - g_sgives.size() == 1 ? "y" : "ies", slot_now, cid_now);
+            SaveSummonedGives();
+            if (g_sgives.empty()) {
+                return;
+            }
+        }
+    }
     std::size_t other = 0;
     for (SummonedGive& g : g_sgives) {
-        if (!SummonedGiveForSlot(g.slot, slot_now)) {
-            ++other;  // another character's (save slot g.slot): kept for it
+        if (owner_of(g) != SgiveOwner::Replay) {
+            ++other;  // another character's (save slot g.slot), or this one is not identifiable now: kept
             continue;
         }
         const int held = ItemCount(g.bits, g.id);
@@ -2931,7 +3149,7 @@ void SummonedGivesTick(const GameSnapshot& gs, int load_mode, double now) {
         Log("own world: %zu good(s) given while summoned are in the own save now; list cleared",
             g_sgives.size() - other);
         g_sgives.erase(std::remove_if(g_sgives.begin(), g_sgives.end(),
-                                      [slot_now](const SummonedGive& g) { return SummonedGiveForSlot(g.slot, slot_now); }),
+                                      [&](const SummonedGive& g) { return owner_of(g) == SgiveOwner::Replay; }),
                        g_sgives.end());
     }
     SaveSummonedGives();
@@ -2947,6 +3165,7 @@ struct OwedLot {
     std::int32_t lot = 0;
     int slot = -1;
     bool given = true;  // given while summoned (only a dropped copy is given again); false: deferred
+    u32 cid = 0;        // the character's id (SummonedGive::cid); 0: an older file
 };
 std::mutex g_owed_mu;
 std::vector<OwedLot> g_owed;
@@ -2956,6 +3175,8 @@ std::filesystem::path OwedLotsPath() {
     return SummonedGivesPath().parent_path() / "party_owed_lots.txt";
 }
 
+void SaveOwedLotsLocked();
+
 /// Caller holds g_owed_mu.
 void LoadOwedLotsLocked() {
     if (g_owed_loaded) {
@@ -2964,6 +3185,7 @@ void LoadOwedLotsLocked() {
     g_owed_loaded = true;
     std::ifstream f(OwedLotsPath());
     std::string line;
+    std::size_t dropped = 0;
     while (std::getline(f, line)) {
         std::istringstream in(line);
         OwedLot o;
@@ -2974,7 +3196,19 @@ void LoadOwedLotsLocked() {
         if (in >> given) {
             o.given = given != 0;
         }
+        if (!(in >> o.cid)) {
+            o.cid = 0;
+        }
+        if (SgiveOwnerOn() && (o.slot < 0 || o.cid == 0)) {
+            ++dropped;  // whose it is cannot be told: never given (CL-55cea7)
+            continue;
+        }
         g_owed.push_back(o);
+    }
+    if (dropped) {
+        Log("owed key items: %zu entr%s from an older file without a character id dropped", dropped,
+            dropped == 1 ? "y" : "ies");
+        SaveOwedLotsLocked();
     }
 }
 
@@ -2990,7 +3224,7 @@ void SaveOwedLotsLocked() {
     {
         std::ofstream f(tmp, std::ios::trunc);
         for (const OwedLot& o : g_owed) {
-            f << o.lot << ' ' << o.slot << ' ' << (o.given ? 1 : 0) << '\n';
+            f << o.lot << ' ' << o.slot << ' ' << (o.given ? 1 : 0) << ' ' << o.cid << '\n';
         }
     }
     std::filesystem::rename(tmp, path, ec);
@@ -2998,10 +3232,15 @@ void SaveOwedLotsLocked() {
 
 void NoteOwedLot(std::int32_t lot, bool given) {
     const int slot = party::flow::CurrentSaveSlot();
+    const u32 cid = SgiveOwnerOn() ? OwnCharId(true) : 0;
+    if (SgiveOwnerOn() && (slot < 0 || cid == 0)) {
+        Log("owed key item: lot %d: this character cannot be identified (slot %d, id %u); not kept", lot, slot, cid);
+        return;
+    }
     std::lock_guard<std::mutex> lk(g_owed_mu);
     LoadOwedLotsLocked();
     for (OwedLot& o : g_owed) {
-        if (o.lot == lot && o.slot == slot) {
+        if (o.lot == lot && o.slot == slot && o.cid == cid) {
             if (given && !o.given) {
                 o.given = true;
                 SaveOwedLotsLocked();
@@ -3010,7 +3249,7 @@ void NoteOwedLot(std::int32_t lot, bool given) {
         }
     }
     if (g_owed.size() < 64) {
-        g_owed.push_back({lot, slot, given});
+        g_owed.push_back({lot, slot, given, cid});
         SaveOwedLotsLocked();
         Log("owed key item: lot %d (%s) kept for this character's next own world (save slot %d)", lot,
             given ? "given while summoned" : "not given yet", slot);
@@ -3019,10 +3258,11 @@ void NoteOwedLot(std::int32_t lot, bool given) {
 
 void ForgetOwedLot(std::int32_t lot) {
     const int slot = party::flow::CurrentSaveSlot();
+    const u32 cid = SgiveOwnerOn() ? OwnCharId(false) : 0;
     std::lock_guard<std::mutex> lk(g_owed_mu);
     LoadOwedLotsLocked();
     const auto it = std::remove_if(g_owed.begin(), g_owed.end(), [&](const OwedLot& o) {
-        return o.lot == lot && SummonedGiveForSlot(o.slot, slot);
+        return o.lot == lot && SummonedGiveOwner(o.slot, o.cid, slot, cid, SgiveOwnerOn()) == SgiveOwner::Replay;
     });
     if (it != g_owed.end()) {
         g_owed.erase(it, g_owed.end());
@@ -3033,11 +3273,17 @@ void ForgetOwedLot(std::int32_t lot) {
 /// Own world (KeyCatchupTick): the lots owed to this save slot whose items are still missing.
 std::vector<OwedLot> TakeOwedLots() {
     const int slot = party::flow::CurrentSaveSlot();
+    const u32 cid = SgiveOwnerOn() ? OwnCharId(true) : 0;
     std::lock_guard<std::mutex> lk(g_owed_mu);
     LoadOwedLotsLocked();
     std::vector<OwedLot> lots;
     auto it = std::remove_if(g_owed.begin(), g_owed.end(), [&](const OwedLot& o) {
-        if (!SummonedGiveForSlot(o.slot, slot)) {
+        const SgiveOwner w = SummonedGiveOwner(o.slot, o.cid, slot, cid, SgiveOwnerOn());
+        if (w == SgiveOwner::Drop) {
+            Log("owed key item: lot %d dropped: given to another character in save slot %d", o.lot, o.slot);
+            return true;  // never given to this one
+        }
+        if (w != SgiveOwner::Replay) {
             return false;
         }
         lots.push_back(o);
@@ -4565,6 +4811,80 @@ void RepairEyeGateTick(const GameSnapshot& gs) {
     }
 }
 
+// Main thread, own world, world settled: once per save (marker kSgiveRepaired), a character the old replay of
+// party_summoned_gives.txt poisoned (CL-55cea7: another character's list was given to a new one) loses the key
+// items its own save never earned: a hunter badge without its source flag (lot pickup flag / ledger bit / quest
+// flag, GoodsEarnedFlags) and, with at least two such items, the other key items too, plus the shop rows
+// 12101000 + n of removed badges. An item whose source is unknown is kept. BB_PARTY_SGIVE_OWNER=0 switches it off.
+void RepairSgivePoisonTick(const GameSnapshot& gs) {
+    static double next = 0.0, up_since = 0.0;
+    static bool done = false, logged_wait = false;
+    if (!g_on.load() || !SgiveOwnerOn() || done) {
+        return;
+    }
+    const double now = Now();
+    const u64 man = Ptr(kFlagMan);
+    if (!man || LoadMode(man) != 0 || !gs.world_up || gs.loading || gs.map_id == 0xffffffffu || gs.player_rec == 0 ||
+        OwnWorld() != 1) {
+        up_since = 0.0;
+        return;
+    }
+    if (up_since == 0.0) {
+        up_since = now;
+    }
+    if (now - up_since < 9.0 || now < next) {
+        return;
+    }
+    next = now + 2.0;
+    auto is_set = [man](std::uint32_t id) { return IsFlag(man, id); };
+    const SgiveRepair r = SgivePoisonToRepair(is_set, GoodsHeldAnywhere, NgCycleLive());
+    if (r.done) {
+        done = true;
+        return;
+    }
+    if (!r.complete) {
+        if (!logged_wait) {
+            logged_wait = true;
+            Log("key item repair: the key items, the storage or the NG cycle are not readable yet, trying again");
+        }
+        return;
+    }
+    bool failed = false;
+    for (const std::int32_t goods : r.remove) {
+        const u32 id = static_cast<u32>(goods);
+        const int before = ItemStacks(0x40000000u, id);
+        const int inv = ItemCount(0x40000000u, id);
+        const bool ok = inv <= 0 || GiveItem(0x40000000u, id, -inv);
+        const int after = ItemStacks(0x40000000u, id);
+        const int box = StorageItemCount(0x40000000u, id);
+        Log("key item repair: goods %d removed: none of its vanilla source flags is set in this save (key stacks %d -> %d)%s%s",
+            goods, before, after, !ok ? " (GiveItemDirect unavailable)" : "",
+            box > 0 ? "; one more in the storage box, left there" : "");
+        failed = failed || !ok || after != 0;
+    }
+    if (failed) {
+        return;  // the flags stay as they are, the check runs again
+    }
+    for (const std::uint32_t f : r.clear) {
+        SetFlag(man, f, false);
+        Log("key item repair: badge row flag %u cleared (%s %d not held or not earned)", f,
+            BadgeName(kBadgeGoodsFirst + static_cast<std::int32_t>(f - kBadgeGateFirst)),
+            kBadgeGoodsFirst + static_cast<std::int32_t>(f - kBadgeGateFirst));
+    }
+    for (const std::int32_t goods : r.kept) {
+        Log("key item repair: goods %d held without a source flag but kept (%s)", goods,
+            NgCycleLive() > 0 ? "NG+" : "too few such items to call it a stale replay");
+    }
+    SetFlag(man, kSgiveRepaired);
+    done = true;
+    Log("key item repair: %zu key item%s removed, %zu badge row flag%s cleared, %zu kept; save marked (flag %u)",
+        r.remove.size(), r.remove.size() == 1 ? "" : "s", r.clear.size(), r.clear.size() == 1 ? "" : "s", r.kept.size(),
+        kSgiveRepaired);
+    if (!r.remove.empty() || !r.clear.empty()) {
+        RequestGameSave("key item repair");
+    }
+}
+
 // ---- the guest's shop gates while summoned (0.7.5) ----
 // The messenger shop lists the Uncanny / Lost weapons of ShopLineupParam rows gated by the event
 // flags 5500-5521 (docs/party/shop_gates.md). Their setter is common event 5500+slot, "the player
@@ -4710,6 +5030,7 @@ void ItemsTick() {
     RepairShopGatesTick(gs);
     RepairBadgeGatesTick(gs);
     RepairEyeGateTick(gs);
+    RepairSgivePoisonTick(gs);
     KeyGoodsWatchTick(gs, s.load_mode, Now());
     SummonedGivesTick(gs, s.load_mode, Now());
     KeyCatchupTick(gs, s.load_mode, Now());
