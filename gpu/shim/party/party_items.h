@@ -92,6 +92,17 @@ struct ShopGateRepair;
 /// nowhere, -1 unknown. Clears gate 12101000 + n when it is set and badge 4110 + n is held nowhere.
 ShopGateRepair BadgeGatesToRepair(const std::function<bool(std::uint32_t)>& is_set,
                                   const std::function<int(std::int32_t)>& held);
+/// The live badge guard (0.7.8, BB_PARTY_BADGE_GUARD=0 off): every few seconds, own world and summoned, a badge row
+/// 12101000 + n that reads open while badge 4110 + n is held nowhere is closed. The badge must be missing in
+/// `kBadgeGuardConfirm` checks in a row (a list that reads empty for one frame must not close a real owner's row).
+struct BadgeGuardState {
+    int missing[kBadgeGateCount] = {};
+};
+constexpr int kBadgeGuardConfirm = 2;
+/// One check: `open(n)` = row n reads open, `held(goods)` 1 held / 0 nowhere / -1 unknown. Returns the row flags
+/// to close now; the state counts the consecutive checks a row was open without its badge.
+std::vector<std::int32_t> BadgeGuardStep(BadgeGuardState& st, const std::function<bool(std::int32_t)>& open,
+                                         const std::function<int(std::int32_t)>& held);
 /// Eye repair: what to undo in a save that holds the Eye (or its sale flags) before its own DLC gate.
 struct EyeRepair {
     bool done = false;       ///< the save carries kEyeGateRepaired

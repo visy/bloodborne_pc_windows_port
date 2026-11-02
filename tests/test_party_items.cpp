@@ -626,6 +626,42 @@ static void test_badge_gate_repair() {
     CHECK(!PerPlayerItemGateEvent(12101001u) && !PerPlayerItemGateEvent(12101100u) && !PerPlayerItemGateEvent(12404000u));
 }
 
+// 0.7.8 live badge guard (playtest 2026-11-01: Tonitrus sold with no Spark Hunter Badge): an open row whose badge
+// is held nowhere is closed after two checks in a row; a held badge keeps its row; unknown never closes.
+static void test_badge_guard() {
+    std::set<std::int32_t> open_rows = {12101000, 12101008};
+    std::set<std::int32_t> held = {4110};  // Saw held, Spark Hunter Badge (4118) not
+    auto open = [&open_rows](std::int32_t f) { return open_rows.count(f) != 0; };
+    auto holds = [&held](std::int32_t g) { return held.count(g) ? 1 : 0; };
+    BadgeGuardState st;
+    CHECK(BadgeGuardStep(st, open, holds).empty());  // first sighting: wait
+    CHECK((BadgeGuardStep(st, open, holds) == std::vector<std::int32_t>{12101008}));  // confirmed: only the row w/o badge
+    CHECK(BadgeGuardStep(st, open, holds).empty());  // the counter restarted
+    // The row came back closed (the caller cleared it) and the badge arrives later: nothing.
+    open_rows = {12101000};
+    held.insert(4118);
+    CHECK(BadgeGuardStep(st, open, holds).empty() && BadgeGuardStep(st, open, holds).empty());
+    // A one-frame empty read between two good ones resets the count: a real owner's row is not closed.
+    open_rows = {12101008};
+    CHECK(BadgeGuardStep(st, open, [](std::int32_t) { return 0; }).empty());
+    CHECK(BadgeGuardStep(st, open, holds).empty());
+    CHECK(BadgeGuardStep(st, open, [](std::int32_t) { return 0; }).empty());
+    // Unreadable lists never close.
+    auto unknown = [](std::int32_t) { return -1; };
+    for (int i = 0; i < 5; ++i) {
+        CHECK(BadgeGuardStep(st, open, unknown).empty());
+    }
+    // All ten rows open, nothing held: all ten close on the second check, each exactly its own badge.
+    open_rows.clear();
+    for (std::int32_t f = 12101000; f <= 12101009; ++f) {
+        open_rows.insert(f);
+    }
+    held.clear();
+    BadgeGuardState st2;
+    BadgeGuardStep(st2, open, holds);
+    CHECK(BadgeGuardStep(st2, open, holds).size() == 10);
+}
+
 // 0.7.8 Eye of a Blood-drunk Hunter: the gate (night 9801 + DLC 6899) for the party's give, and the repair of
 // an NG0 save that holds it (or its flags) before the night and never entered the DLC.
 static void test_eye_gate() {
@@ -1675,6 +1711,7 @@ int main() {
     test_ledger_seed();
     test_shop_gate_repair();
     test_badge_gate_repair();
+    test_badge_guard();
     test_sgive_owner();
     test_sgive_repair();
     test_eye_gate();
