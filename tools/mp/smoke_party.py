@@ -3048,12 +3048,20 @@ def phase_yj(only):
     n = int(os.environ.get("YJ_GUESTS", "1"))
     net = os.environ.get("YJ_NET", "")
     ienv = ["0:BB_PARTY_TEST_START_LAMP=" + YJ_LAMP, "0:BB_PARTY_DIRECTOR_TEST=god"]
+    if os.environ.get("YJ_LIT", "1") != "0":  # the host's world has the lamp lit (the reported case): the arrival is a lamp warp
+        ienv.append("0:BB_PARTY_PROGRESS_TEST_SET=12807810,12807811,72800200")
     for g in range(1, n + 1):
         ienv += ["%d:BB_PARTY_DIRECTOR_TEST=god" % g, "%d:BB_PARTY_TITLE_JOIN=0" % g]
     env = ["BB_NET_SIM=" + net] if net else []
+    fix = os.environ.get("YJ_HOST_SAVE", "")  # e.g. blood_moon_yahargul: the host Continues in Yahar'gul after the Blood Moon
+    extra = {}
+    if fix:
+        ienv = [e for e in ienv if "START_LAMP" not in e]
+        extra = dict(prep=lambda root: _cl_saves(root, Path("E:/games/bbport/test_saves") / fix / "savedata"), post=post_chalamp)
     return dict(
-        name="yj", seconds=240 + 60 * n, count=1 + n, headless=0 if n == 1 else 1,
+        name="yj", seconds=240 + 60 * n, count=1 + n, headless=0 if n == 1 else 1, **extra,
         env=env, ienv=ienv, crash=[],
+        start_when=[r"%d/0:map - -> m28_00_00_00" % g for g in range(1, n + 1)],  # the guests start once the host stands in Yahar'gul
         until=YJ_UNTIL if n == 1 else YJ_UNTIL + [r"2:join: arrived \d+\.\d m from the host|2:no load within 60 s"], until_hold=15,
     )
 
@@ -3062,9 +3070,9 @@ def check_yj(v, L, d: Path):
     n = int(os.environ.get("YJ_GUESTS", "1"))
     for g in range(1, n + 1):
         a = need(v, L, "yj guest %d: the A5 cross-map join starts" % g, g, r"A5: cross-map join: client in m21_00_00_00, the host in m28")
-        w = need(v, L, "yj guest %d: the load into Yahar'gul ends (loading screen gone)" % g, g, r"Party: loading screen gone", a or 0,
+        w = need(v, L, "yj guest %d: the load into Yahar'gul ends (loading screen gone)" % g, g, r"loading screen gone", a or 0,
                  what="the guest sat on the loading screen (0.7.8 report)")
-        need(v, L, "yj guest %d: standing in the host's Yahar'gul" % g, g, r"Party: map - -> m28_00_00_00", w or 0)
+        need(v, L, "yj guest %d: standing in the host's Yahar'gul" % g, g, r"Party: .*map - -> m28_00_00_00", a or 0)
         none_of(v, L, "yj guest %d: no stuck warp" % g, r"no load within 60 s", insts=(g,))
     check_common(v, L, "yj")
 
