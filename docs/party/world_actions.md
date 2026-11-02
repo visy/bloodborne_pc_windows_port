@@ -970,6 +970,31 @@ times 0.4 s apart: the fall-through of the report, the guard shows live). Smoke 
 on the car's rest spot (it may start the ride before the guest arrives), `LD_WARP=1` warps the guest into the trigger instead of walking,
 `FW_ENV="BB_TEST_LIFT_DROP=2.0"` arms the aid.
 
+### 10.1.5 Live FPS clock vs the frame rate hooks, physics smoke (livefps078, 2026-11-03)
+
+Mrsuss60's live FPS clock (docs/LIVE_FPS.md) is on by default; control = `BB_LIVE_FPS=0` (the frame rate hooks). Groups `lift_down` (`lu`, no
+`BB_TEST_LIFT_DROP`), `lift_walk` (`lfw`, `lfwc`), `cainhurst_maid` (`md`), `fall` (`fl`); two games, passed/total rows:
+
+| rate | mode | lu | lfw | lfwc | md | fl |
+|---|---|---|---|---|---|---|
+| 30 | (live is not used at 30) | 8/8 | 39/39 (second try) | 39/39 | 8/8 | all pass |
+| 60 | live | 8/8 | 39/39 | 39/39 | 8/8 | 24/24 |
+| 60 | control | 8/8 | 39/39 | 39/39 | 8/8 | 24/24 |
+| 60/48 (guest capped at 48) | live | 8/8 | 39/39 | 39/39 | 8/8 | 24/24 |
+| 60/48 | control | 8/8 | 39/39 | 39/39 | 8/8 | 24/24 |
+| 120 | live | 8/8 | 39/39 | 39/39 | 8/8 | 24/24 |
+| 120 | control | 4/8 (GPU assert `vk_scheduler.cpp:1168` at +18 s, game 0: not physics) | 39/39 | 39/39 | 8/8 | 24/24 |
+
+* No guest fell through a descending car in any run, live or control, and no `dropped through` / rescue line appeared: the natural drop of
+  CL-eab030 (a real 48 steps a second under a 120 preset) is still not reproduced, so this run neither fixes nor refutes it. The rider guard
+  stays the net.
+* One `lfw` run at 30 (live not in use) lost a game to a device lost at submit (`vk_scheduler.cpp:1260`, the known rare CL-ab12f5, copied to
+  `agents\devlost_cl-ab12f5`); the retry passed. The control's `lu` at 120 had a similar GPU assert at `:1168`.
+* Measured rates (median game steps a second, two games on this PC): live 48.8 at 60 (game time 0.83 per real second), 48.8 / 32.1 at 60/48,
+  64-69 at 120; control 59.6 at 60, 59.9 / 32.1 at 60/48, 64 at 120. At a target of 60 the live clock runs slow under frame jitter (its slew
+  limit +12% / -15% a frame and the deadband lock make the step lag a long frame); the presenter limit at the target is what holds the rate
+  (without it the game ran 107 steps a second at a target of 60).
+
 ## 2026-10-25 (simonwipe): a guest's boss phase event no longer starts the host's scene
 
 Player report (Nightwatch 0.7.4 / 0.7.5): a party wipe at Ludwig (Hunter's Nightmare), then the Holy Blade scene

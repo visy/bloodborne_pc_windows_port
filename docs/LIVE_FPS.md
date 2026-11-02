@@ -62,4 +62,8 @@ the party layer already handles different rates (lift guard, ladder and fall rul
 
 ## Evidence
 
-(Filled in after the smoke runs: see the 0.7.8 CHANGES entry and `docs/party/world_actions.md` 10.1.5.)
+Physics smoke at 30 / 60 / 60/48 / 120, live vs `BB_LIVE_FPS=0`: all rows green with live on; docs/party/world_actions.md 10.1.5 has the
+table. The lift drop-through of CL-eab030 was not reproduced either way. Known cost: under frame jitter the live step lags (0.83 game
+seconds per real second at a target of 60 with two games on one PC; the hooks keep 1.0), a consequence of the slew limiter and the
+presenter-paced target. Unproven: the fallbacks (an eboot the patch does not fit), a party with live on one side only in a real session
+(the smoke ran live on both sides), the System menu target switch in game.
