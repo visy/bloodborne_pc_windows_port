@@ -260,6 +260,10 @@ public:
                 fg = Snap({goal.x, start.y, goal.z}, goal_snap, &g);
                 snap_g = fg < 0 ? 0 : Dist3({goal.x, start.y, goal.z}, g);
             }
+            if (fg < 0) {  // no floor near the start's height at that X:Z (a boss arena on another storey): any floor of the column
+                fg = FaceAt({goal.x, start.y, goal.z}, 400.0, &g.y);
+                snap_g = 0;
+            }
         }
         if (fg < 0) return PlanResult::GoalOff;
         std::vector<int> corridor;
