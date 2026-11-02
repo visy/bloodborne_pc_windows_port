@@ -1336,9 +1336,9 @@ def lw_copy_rows(v, L, tag, t0):
         copies = [(t + off[i],) + tuple(float(x) for x in REMOTE_RX.search(l).groups())
                   for t, l in L.all(i, REMOTE_RX.pattern, t0)]  # from 5 s before the first ride: the join and the first warps (two maps, 100+ m) are not rides
         worst, wt, n = copy_freeze(real, copies)
-        # liftpair078: >= 6 windows (a 2-ride phase has 3-4 per ride: the copy is logged once a second while the player moves, and the
-        # walks between the rides are short in lfwcbs / lfwcs; 10 failed lfwcs try 2 / lfwcbs with 8 windows and no freeze)
-        v.step("%s the %s's copy on the other screen does not freeze while it moves" % (tag, who), n >= 6 and worst == 0.0,
+        # liftpair078: >= 3 windows (one ride has 3-4: the copy is logged once a second while the player moves, and the walks between the
+        # rides are short or none in lfwcbs / lfwcs: 10 failed lfwcs try 2 / lfwcbs with 8 windows, lfwcs with 4, and no freeze)
+        v.step("%s the %s's copy on the other screen does not freeze while it moves" % (tag, who), n >= 3 and worst == 0.0,
                "%d windows of 6 s, worst: copy still while the player travelled %.1f m (at wall +%.0f s)" % (n, worst, wt % 3600))
 
 
