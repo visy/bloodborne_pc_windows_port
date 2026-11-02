@@ -29,11 +29,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import cpu_compat  # noqa: E402
+from eboot_file import eboot_path  # noqa: E402
 
 FORMAT = 1
 OUTPUTS = ('boot.bin', 'eboot.elf', 'entry.bin', 'analysis.json', 'boot-libc.bin', 'libc-link.json',
            'boot-linked.bin', 'link.json')
-SCRIPTS = ('boot_image.py', 'prepare.py', 'game_check.py', 'link_libc.py', 'link_modules.py',
+SCRIPTS = ('boot_image.py', 'prepare.py', 'game_check.py', 'eboot_file.py', 'link_libc.py', 'link_modules.py',
            'cpu_compat.py')
 # Data the scripts read into the image (link_modules.py: the red-zone store sites): a build that
 # changes only these must not reuse an image linked with the old ones.
@@ -75,7 +76,8 @@ def key(game: Path):
         'format': FORMAT,
         'platform': sys.platform,
         'game': str(game.resolve()).lower() if os.name == 'nt' else str(game.resolve()),
-        'eboot': _stat(game / 'eboot.bin'),
+        'eboot': _stat(eboot_path(game)),
+        'eboot_name': eboot_path(game).name,
         'param': _stat(game / 'sce_sys' / 'param.sfo'),
         'modules': _folder(game / 'sce_module'),
         'shaders': _folder(game / 'dvdroot_ps4' / 'shader'),

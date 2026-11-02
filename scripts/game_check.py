@@ -19,6 +19,8 @@ import sys
 import zlib
 from pathlib import Path
 
+from eboot_file import eboot_path, find_eboot
+
 # The retail releases (the list of content IDs from PR #117): Bloodborne, then the editions with
 # The Old Hunters. The executable decides in the end: SUPPORTED_IMAGE.
 SUPPORTED_TITLES = ('CUSA00900', 'CUSA00207', 'CUSA00208', 'CUSA00299', 'CUSA01363',  # US EU UK JP AS
@@ -34,9 +36,12 @@ CHECKED_FOLDER = 'dvdroot_ps4/shader'
 
 
 def image_sha256(game):
-    """The SHA-256 of eboot.bin's loaded image (its loadable segments at their addresses)."""
+    """The SHA-256 of the executable's loaded image (its loadable segments at their addresses).
+    eboot.bin (a SELF) and eboot.elf (the raw ELF of it) give the same hash, so the clean 1.09 check
+    needs no second constant: it hashes what is loaded, not the file."""
     from prepare import parse_self, span  # same directory
-    elf, header, ph, _segments, _missing = parse_self((Path(game) / 'eboot.bin').read_bytes())
+    path = eboot_path(game)
+    elf, header, ph, _segments, _missing = parse_self(path.read_bytes(), path.name)
     loads = [p for p in ph if p['type'] in (1, 0x61000010)]
     image = bytearray(max(p['vaddr'] + p['memsz'] for p in loads))
     for p in loads:
@@ -78,7 +83,7 @@ def broken_files(game, folder=CHECKED_FOLDER):
 def _pass_key(game):
     """Sizes and modification times of what the check reads (eboot.bin, param.sfo, the shaders)."""
     root = Path(game)
-    files = [root / 'eboot.bin', root / 'sce_sys/param.sfo'] + sorted((root / CHECKED_FOLDER).rglob('*.dcx'))
+    files = [eboot_path(root), root / 'sce_sys/param.sfo'] + sorted((root / CHECKED_FOLDER).rglob('*.dcx'))
     parts = [str(root.resolve())]
     for f in files:
         st = f.stat()
