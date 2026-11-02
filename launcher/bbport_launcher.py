@@ -30,6 +30,7 @@ PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the packag
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 from mods import discover as discover_mods, unrecognized as unrecognized_mods  # noqa: E402
 import game_check  # noqa: E402
+from eboot_file import find_eboot  # noqa: E402
 from patches import external_patches  # noqa: E402
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
@@ -810,7 +811,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         image hash reads ~90 MB)."""
         try:
             key = (str(path),) + tuple(
-                (f.stat().st_size, f.stat().st_mtime_ns) for f in (path / "eboot.bin", path / "sce_sys/param.sfo"))
+                (f.stat().st_size, f.stat().st_mtime_ns) for f in (find_eboot(path) or path / "eboot.bin", path / "sce_sys/param.sfo"))
         except OSError:
             key = (str(path),)
         if getattr(self, "_game_problem_key", None) != key:
@@ -820,7 +821,7 @@ class LauncherWindow(Adw.ApplicationWindow):
 
     def update_game_status(self):
         path = self.game_dir()
-        ok = bool(self.settings["game_dir"]) and (path / "eboot.bin").is_file()
+        ok = bool(self.settings["game_dir"]) and find_eboot(path) is not None
         self.game_row.set_subtitle(str(path) if self.settings["game_dir"] else tr("не выбрана"))
         # Other versions of the game start and then crash in its code (issues #7, #13, #14).
         problem = self.game_problem(path) if ok else None
@@ -1404,7 +1405,7 @@ class LauncherApp(Adw.Application):
 def play():
     """--play: the game with the saved settings, no window (Steam Deck game mode)."""
     settings = load_settings()
-    if not (Path(settings["game_dir"]).expanduser() / "eboot.bin").is_file():
+    if find_eboot(Path(settings["game_dir"]).expanduser()) is None:
         print("bbport: choose the game folder in the launcher first", file=sys.stderr)
         return 1
     os.chdir(PORT_DIR)

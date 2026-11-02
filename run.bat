@@ -96,7 +96,7 @@ REM An in-game restart or a crash can leave the old bbport.exe alive with gigaby
 REM VRAM. Give it a few seconds to exit, then terminate it (the guard never fails the launch).
 if exist scripts\bb_guard.py "%PYTHON%" scripts\bb_guard.py --exe-dir out --wait 10
 
-REM Game directory containing eboot.bin
+REM Game directory containing eboot.bin (or eboot.elf, a raw ELF dump; eboot.bin wins when both exist)
 set "EXTRA_ARGS="
 :arg_loop
 if "%~1"=="" goto arg_done
@@ -105,7 +105,17 @@ if exist "%~1\eboot.bin" (
     shift
     goto arg_loop
 )
-if "%~nx1"=="eboot.bin" if exist "%~1" (
+if exist "%~1\eboot.elf" (
+    set "BB_GAME_DIR=%~1"
+    shift
+    goto arg_loop
+)
+if /i "%~nx1"=="eboot.bin" if exist "%~1" (
+    set "BB_GAME_DIR=%~dp1"
+    shift
+    goto arg_loop
+)
+if /i "%~nx1"=="eboot.elf" if exist "%~1" (
     set "BB_GAME_DIR=%~dp1"
     shift
     goto arg_loop
@@ -121,7 +131,8 @@ REM Strip trailing backslash if present
 if "%game:~-1%"=="\" set "game=%game:~0,-1%"
 REM No ( ) block around a path: an unquoted ')' in it (Program Files (x86)) ends the block early.
 if exist "%game%\eboot.bin" goto found_eboot
-echo No eboot.bin in "%game%" ^(set BB_GAME_DIR or pass path to run.bat^). >&2
+if exist "%game%\eboot.elf" goto found_eboot
+echo No eboot.bin or eboot.elf in "%game%" ^(set BB_GAME_DIR or pass path to run.bat^). >&2
 exit /b 1
 :found_eboot
 

@@ -398,6 +398,8 @@ set_source_files_properties(../tests/test_taa_shader.cpp PROPERTIES
 target_link_libraries(taa-shader-test PRIVATE bbgpu)
 add_dependencies(taa-shader-test host_shaders)
 
+# eboot_image.h: a SELF eboot.bin and a raw-ELF eboot.elf give the same co-op identity image.
+add_executable(eboot-image-test EXCLUDE_FROM_ALL ../tests/test_eboot_image.cpp)
 add_executable(camera-motion-test EXCLUDE_FROM_ALL ../tests/test_camera_motion.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
 target_compile_options(camera-motion-test PRIVATE -fPIC)
