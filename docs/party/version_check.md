@@ -18,7 +18,7 @@ when a newer release is out (below), so players can update before they meet.
 |---|---|---|
 | PartyLink protocol (`kLinkProtocolVersion`) | compiled in | "different party protocol version ...: update the port" (Version REJECT, checked first) |
 | bbport build | `bbport_build_id()`: `"<VERSION> (<git describe --always --dirty>)"`, generated at build time by `gpu/cmake/bbport_build_id.cmake` (only that file recompiles after a commit) | "bbport build differs (host X, yours Y): install the same bbport release as the host" |
-| eboot.bin | sha256 of `<game>/eboot.bin` | "another game version or dump; the port needs 1.09" |
+| eboot.bin | sha256 of the loaded image of `<game>/eboot.bin` (or `eboot.elf`, a raw ELF; `eboot.bin` wins when both exist): the load segments at their addresses, as `scripts/game_check.py image_sha256`, so a SELF and a raw ELF of the same game give the same hash and those players can join each other (`gpu/shim/party/eboot_image.h`, `tests/test_eboot_image.cpp`). The log line `<file> image sha256 <prefix>` names the file used | "another game version or dump; the port needs 1.09" |
 | Game params | sha256 of `<game>/dvdroot_ps4/param/gameparam/gameparam.parambnd.dcx` | "game params differ ...: use the same game dump (1.09) as the host" |
 | Gameplay patches | `out/party_patch_hash.txt` (scripts/patches.py) | names only one side has: "turn on the same patches as the host (launcher Patches tab)" |
 | Gameplay mods | `out/party_mods.txt` (scripts/mods.py) | names: "enable the same mods as the host (launcher Mods tab)" |
