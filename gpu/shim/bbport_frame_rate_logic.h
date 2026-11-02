@@ -121,4 +121,69 @@ inline void Compute(Live& live, float dt, float cloth_override = -1.0f) {
     live.cloth_ratio = dt > 0.0f ? live.steady / dt : 1.0f;
 }
 
+// ---- Live clock (Mrsuss60/bloodborne_pc_windows_port a7cbfae6, 83a168ee; GPL-2.0-or-later) ----
+// An alternative to the hooks above: the "60 FPS++ (Deltatime)" patch (scripts/patches.py, patches/
+// Bloodborne.xml) makes the game's cloth, animation and platform subsystems read one measured frame
+// time from the pacer; the main loop's step block (0x2018e3d) is replaced by LiveClockTick, which sets
+// the pacer's target and that frame time: the measured one held to [1/240 s, 1/max_dt_hz], locked to
+// the target inside a 8% deadband, and slewed (+12% / -15% a frame). BB_LIVE_FPS / bbport.ini live_fps.
+
+/// The pacer's and the presenter's hard ceiling in live mode (the pacer's four frame time constants
+/// are 1/240 s). A target of 0 means "uncapped" = this.
+constexpr int LiveCeiling = 240;
+
+/// Live mode wanted? `live_fps` the setting (BB_LIVE_FPS wins over bbport.ini live_fps). BB_FPS=30
+/// (the game's own rate) and BB_FPS_PATCH=0 keep it off, as upstream's run.bat does.
+inline bool LiveWanted(const char* bb_fps, const char* bb_fps_patch, bool live_fps) {
+    auto off = [](const char* v) {
+        return v && (!std::strcmp(v, "0") || !std::strcmp(v, "off") || !std::strcmp(v, "false"));
+    };
+    if (!live_fps) return false;
+    if (bb_fps && !std::strcmp(bb_fps, "30")) return false;
+    return !off(bb_fps_patch);
+}
+
+/// A TargetRate() (30..MaxRate) as the live target: 0 (uncapped) from the ceiling up.
+inline int LiveTargetFromRate(int rate) {
+    return rate >= LiveCeiling ? 0 : std::clamp(rate, 30, LiveCeiling);
+}
+
+struct LiveClockState {
+    float smoothed = 0.0f;
+    int previous_target = -1;
+};
+
+/// The simulation step for a frame the pacer measured at `measured` s (upstream's bb_live_clock_tick
+/// after 83a168ee). `target_fps` 0 = uncapped, `max_dt_hz` the physics clamp (1/30 s by default).
+/// `interval` receives the pacer's frame time target.
+inline float LiveClockStep(LiveClockState& st, float measured, int target_fps, int max_dt_hz, float& interval) {
+    const float floor_dt = 1.0f / 240.0f;
+    const float target = target_fps > 0 ? 1.0f / float(target_fps) : floor_dt;
+    float max_dt = max_dt_hz > 0 ? 1.0f / float(max_dt_hz) : Frame30;
+    if (max_dt < target) max_dt = target;
+    interval = target;
+    float raw = std::isfinite(measured) && measured > 0.0f ? measured : target;
+    if (raw > max_dt) raw = max_dt;
+    if (raw < floor_dt) raw = floor_dt;
+    if (target_fps > 0) { // OS timer / vsync micro-jitter: inside +-8% of the target, exactly the target
+        const float band = target * 0.08f;
+        if (raw >= target - band && raw <= target + band) raw = target;
+    }
+    if (st.smoothed <= 0.0f) {
+        st.smoothed = target;
+        st.previous_target = target_fps;
+    } else {
+        if (st.previous_target != target_fps) { // a stall while the menu switched the target is no spike
+            st.previous_target = target_fps;
+            if (target_fps > 0 && raw > target && raw > st.smoothed) raw = target > st.smoothed ? target : st.smoothed;
+        }
+        if (raw > st.smoothed) {
+            st.smoothed += std::min(raw - st.smoothed, st.smoothed * 0.12f);
+        } else if (raw < st.smoothed) {
+            st.smoothed -= std::min(st.smoothed - raw, st.smoothed * 0.15f);
+        }
+    }
+    return std::clamp(st.smoothed, floor_dt, max_dt);
+}
+
 } // namespace BbFrameRate

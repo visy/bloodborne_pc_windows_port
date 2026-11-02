@@ -147,6 +147,14 @@ struct Values {
     /// buffers; volumetric_resolution.h; idea from a playtester): 0 game default, 1 = 2x the
     /// pixels, 2 = the scene's resolution (ini volumetric_res, BB_VOLUMETRIC_RES). Live.
     std::atomic<int> volumetric_res{0};
+    /// Live FPS clock (Mrsuss60's a7cbfae6; bbport_frame_rate_logic.h): the "60 FPS++ (Deltatime)" patch
+    /// and a measured-frame-time hook instead of the frame rate hooks / FPS++ patches. live_fps is
+    /// read at start (ini live_fps, BB_LIVE_FPS wins); target_fps (30..239, 0 = uncapped) changes live
+    /// (ini target_fps; the launcher's BB_FPS / BB_FPS_LIMIT set it at start); max_dt_hz is the
+    /// physics step's upper clamp (1/30 s). On by default (owner decision, 0.7.8).
+    std::atomic<bool> live_fps{true};
+    std::atomic<int> target_fps{60};
+    std::atomic<int> max_dt_hz{30};
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
