@@ -51,6 +51,93 @@ class Discovery(unittest.TestCase):
         plain = self.L.discovery_rows([dict(P(packet(flags=0)), ip="192.168.1.6")], [], "0.7.5")
         self.assertEqual(plain[0]["password"], "no")
 
+    def test_host_options(self):
+        """0.7.8: the announcement carries the host-owned options (flags bits 2-5 + bit 6); a guest's launcher
+        starts with them. Mirrors gpu/shim/party/party_options.cpp."""
+        L = self.L
+        P = L.parse_discovery_packet
+        self.assertIsNone(P(packet())["opts"])                     # an old host: unknown
+        e = P(packet(maxp=4, flags=0x40 | 8 | 16))                  # headstones + talk on, lamps + drop roll off
+        self.assertEqual(e["opts"], {"lamps": False, "headstones": True, "talk": True, "droproll": False})
+        self.assertEqual(L.discovery_adopt_env(e), {"BB_PARTY_MAX": "4", "BB_PARTY_GUEST_LAMPS": "0",
+                                                    "BB_PARTY_HEADSTONES": "1", "BB_PARTY_GUEST_TALK": "1",
+                                                    "BB_PARTY_SHARED_DROP_ROLL": "0"})
+        self.assertEqual(L.discovery_adopt_env(P(packet(maxp=3))), {"BB_PARTY_MAX": "3"})  # max only
+        for bad in (4, 8, 16, 32, 0x80, 0x80 | 0x40):               # option bits alone, bit 7
+            self.assertIsNone(P(packet(flags=bad)))
+        row = L.discovery_rows([dict(e, ip="26.1.2.3")], [], "0.7.5")[0]
+        self.assertEqual(row["adopt"]["BB_PARTY_MAX"], "4")
+        lobby = L.lobby_rows([{"ip": "10.8.0.4", "port": 9307, "password": False, "own": False, "players": 1,
+                               "max": 4, "name": "Hunter", "build": "0.7.8"}], "0.7.8")[0]
+        self.assertEqual(lobby["adopt"], {"BB_PARTY_MAX": "4"})
+
+    def test_party_adopt_file(self):
+        L = self.L
+        text = ("# comment\nBB_PARTY_MAX=4\nBB_PARTY_HEADSTONES=1\nBB_PARTY_GUEST_TALK=2\nBB_PARTY_MAX=9\n"
+                "BB_PARTY=host\nBB_PARTY_CODE=evil\nBB_PARTY_GUEST_LAMPS = 0 \njunk\n")
+        self.assertEqual(L.parse_party_adopt(text), {"BB_PARTY_MAX": "4", "BB_PARTY_HEADSTONES": "1",
+                                                     "BB_PARTY_GUEST_LAMPS": "0"})
+        self.assertEqual(L.parse_party_adopt(""), {})
+        self.assertEqual(L.adopt_summary({"BB_PARTY_MAX": "4", "BB_PARTY_HEADSTONES": "1"},
+                                         {"BB_PARTY_MAX": "3", "BB_PARTY_HEADSTONES": "0"}),
+                         "Max players 4 (yours 3), Headstones on (yours off)")
+        self.assertEqual(L.adopt_summary({"BB_PARTY_MAX": "3"}, {"BB_PARTY_MAX": "3"}), "")
+
+    def test_apply_host_options(self):
+        """A join takes the announced options, else the refused join's file (read once, then removed); a host
+        and a stale file are left alone; the saved settings are not touched."""
+        import os
+        import tempfile
+        from pathlib import Path
+        L = self.L
+
+        class Fake:
+            _adopt_env = {}
+
+            def __init__(self, mode):
+                self.mode = mode
+                self.lines = []
+
+            def party_mode(self):
+                return self.mode
+
+            def log(self, m):
+                self.lines.append(m)
+        cls = [v for v in vars(L).values() if isinstance(v, type) and hasattr(v, "apply_host_options")]
+        apply = cls[0].apply_host_options
+        with tempfile.TemporaryDirectory() as d:
+            old = os.environ.get("BB_USER_DIR")
+            os.environ["BB_USER_DIR"] = d
+            try:
+                f = Path(d) / "party_adopt.txt"
+                f.write_text("BB_PARTY_MAX=4\nBB_PARTY_HEADSTONES=1\n", encoding="utf-8")
+                env = {"BB_PARTY": "join", "BB_PARTY_MAX": "3", "BB_PARTY_HEADSTONES": "0"}
+                g = Fake("host")
+                apply(g, env)                                   # hosting: untouched, file kept
+                self.assertEqual((env["BB_PARTY_MAX"], f.exists()), ("3", True))
+                g = Fake("join")
+                apply(g, env)
+                self.assertEqual((env["BB_PARTY_MAX"], env["BB_PARTY_HEADSTONES"], f.exists()), ("4", "1", False))
+                self.assertIn("Max players 4 (yours 3), Headstones on (yours off)", g.lines[0])
+                # the announced options win over (and also remove) a file
+                f.write_text("BB_PARTY_MAX=2\n", encoding="utf-8")
+                env = {"BB_PARTY": "join", "BB_PARTY_MAX": "3"}
+                g = Fake("join")
+                g._adopt_env = {"BB_PARTY_MAX": "4"}
+                apply(g, env)
+                self.assertEqual((env["BB_PARTY_MAX"], f.exists()), ("4", False))
+                # a stale file is ignored (and removed)
+                f.write_text("BB_PARTY_MAX=4\n", encoding="utf-8")
+                os.utime(f, (1, 1))
+                env = {"BB_PARTY": "join", "BB_PARTY_MAX": "3"}
+                apply(Fake("join"), env)
+                self.assertEqual((env["BB_PARTY_MAX"], f.exists()), ("3", False))
+            finally:
+                if old is None:
+                    os.environ.pop("BB_USER_DIR", None)
+                else:
+                    os.environ["BB_USER_DIR"] = old
+
     def test_open_party_checkbox_rule(self):
         A = self.L.party_open_available
         self.assertTrue(A("host", ""))

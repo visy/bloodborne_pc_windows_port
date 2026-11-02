@@ -41,7 +41,8 @@ story progress, key items, rewards and cutscenes are carried over into each play
 - The **same gameplay patches and gameplay mods** on every PC. Graphics, FPS, resolution and
   other cosmetic patches and texture / sound mods do not matter; anything that changes gameplay
   must be the same, or joining is refused (the message says which patch or mod differs).
-- The **same Max players** setting on every PC (Party tab).
+- **Max players** and the host's other start-time options (Guest lamps, Headstones, Guest services, Shared enemy
+  drop roll) are the host's: a player who joins takes the host's values (see *Joining takes the host's options* below).
 - The Old Hunters DLC on all PCs or on none (the port turns it on automatically when the game
   files contain it, so this normally matches).
 
@@ -119,7 +120,7 @@ already left the clinic is never touched.
 2. Paste the host's code into **Party code** (the **Paste** button takes it from the clipboard).
    On a VPN or LAN you can also pick the host from the **Parties found** list and press **Join
    selected** (see [party discovery](#ports-upnp-firewall-vpn)).
-3. Set **Max players** (and the **Password**, if the host uses one) to the same values as the host.
+3. Set the **Password**, if the host uses one. **Max players** is the host's: you take it when you join.
 4. Start the game **after the host's game is running**. Once connected, the game confirms
    **Continue** on the title screen by itself (with an empty party save, create a character).
 5. Play the prologue in your own world (see below). Once you are ready, the host's game brings
@@ -292,6 +293,20 @@ broadcasts: with Tailscale up, its online friends are listed from the `tailscale
 is installed) as "maybe hosting". Hosting without a password over Radmin VPN or Hamachi shows a
 warning in the launcher, because strangers can be in those networks. Switch it off with *Party
 discovery* (launcher, or *System > My party: Look & notices*).
+
+### Joining takes the host's options
+
+Max players, Guest lamps, Headstones, Guest services and the Shared enemy drop roll belong to the host (some are
+read when the game starts, so they cannot change while it runs). Since 0.7.8 a guest does not have to match them:
+
+- **Join selected** in *Parties found* starts the game with the host's values: the discovery announcement carries
+  them. The launcher log says which of yours it replaced ("Joining with the host's options for this start"). Your
+  saved settings are not changed; hosting later uses your own again.
+- A party code, a typed address or the in-game join does not know the host's options before the game runs. Max
+  players is taken from the host as soon as you connect (no restart). If another option differs, the host refuses
+  the join and your party status says, in plain words, what differs and to restart; the game keeps the host's
+  values (`user\party_adopt.txt`) and the launcher's next join starts with them (read once, ignored after 2 days).
+- The Nightwatch VPN lobby list tells only the slots, so only Max players is copied there.
 
 ### Nightwatch VPN games
 
@@ -553,8 +568,7 @@ settings. The environment variables behind each option are listed in
 
 **Max players 4** (host + 3 guests) is experimental: the game was made for at most 3 players.
 The party patches the game to allow a third helper and to scale boss HP for it. **Every player
-must set Max players to 4**, the host and everyone joining; a different value is refused with
-*"party rules differ"*. With 4 players there is no free slot for an invader. Players have run 3 and
+must set Max players to 4**; a player who joins takes the host's value by itself (set it on the host only). With 4 players there is no free slot for an invader. Players have run 3 and
 4 player parties and sent reports, which were fixed; expect more rough edges than with 2 or 3.
 
 ## Troubleshooting
@@ -576,7 +590,8 @@ needs *Join party* (restart).
 | *version mismatch with the host: eboot.bin differs* | Another game version or dump | Everyone needs the 1.09 `eboot.bin`. |
 | *... gameplay patches differ (host only: X; yours only: Y)* | Different XML patches that change gameplay | Enable the same patches (Game tab, *All XML Patches...*). Cosmetic patches do not count. |
 | *... gameplay mods differ* | Different mods in `mods\` | Use the same gameplay mods, or turn mods off on all PCs. |
-| *... party rules differ (host max 4 players ...; yours max 3 ...)* | Different *Max players* | Set the same Max players everywhere. |
+| *... party rules differ (host max 4 players ...; yours max 3 ...)* | Different 4-player rule switches (`BB_PARTY_FOURP*`); *Max players* alone never refuses since 0.7.8 | Remove the `BB_PARTY_FOURP*` switches, or match the host's. |
+| *party options differ (Headstones: host on, you off) ... restart to join* | A start-time option differs and your game is already running | Restart the game: the launcher starts it with the host's options for that join (your saved settings stay). |
 | *set ... like the host* | A start-time rule differs from the host's | Open the named rule in Party rules / launcher and match the host. |
 | *different party protocol version ...: update the port* | Different builds of the port | Everyone updates to the same build. |
 | *this host has no password: join with its party code* | You entered a plain `address:port` and the host has no password | Use the host's party code (or LAN code on a VPN), or ask the host to set a password. |
