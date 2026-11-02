@@ -2378,6 +2378,19 @@ void ShareNotice(const ItemGrant& g, const char* how) {
     Log("notice \"%s\" (lot %d, %s): %s", text.c_str(), g.lot, how, queued ? "queued" : "dropped (same item just shown, or the queue is full)");
 }
 
+std::string PartyItemName(std::uint32_t category, std::int32_t id) {
+    return GameItemName(category, id);
+}
+
+void PartyDropNotice(const std::string& text) {
+    if (!party::status::Enabled() || !BbSettings::Get().party_item_notices.load()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(g_notice_mu);
+    const bool queued = g_notices.Push(text, Now());
+    Log("notice \"%s\" (far shared drop): %s", text.c_str(), queued ? "queued" : "dropped (same text just shown, or the queue is full)");
+}
+
 namespace {
 
 void NoticeTick() {

@@ -331,6 +331,10 @@ struct KillAwardRow {
 /// 0.7.7: queue the notice "<item>: shared with the party" for a shared grant given on this game / queued for the party
 /// by the host (nothing for catch-up lists, per-player lots, or with party_item_notices off). Game build only.
 void ShareNotice(const ItemGrant& g, const char* how);
+/// The game's name of an item (its own language); empty when the lookup is not up yet or there is none.
+std::string PartyItemName(std::uint32_t category, std::int32_t id);
+/// A far shared drop paid straight into the inventory (party_droproll): the party notice corner, `text` as is.
+void PartyDropNotice(const std::string& text);
 std::vector<KillAwardRow> KillAwardRows();
 std::uint32_t KillAwardEntity(std::int32_t lot);  ///< 0: not a kill award
 /// A shared key treasure given to a member who stands in the host's world (summoned guest): the item
