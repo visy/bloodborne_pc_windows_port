@@ -25,6 +25,12 @@ std::uint64_t Steps();
 /// The pacer's frame rate target from now on (30..MaxRate; diagnostics: the frame-rate sweep,
 /// bbport_frame_sweep.cpp). False when the hooks are off.
 bool SetTargetRate(int rate);
+/// Live clock (Mrsuss60's a7cbfae6): the presenter's frame limit while live mode is requested (0 when it
+/// is not; the target, 240 for uncapped; 60 when the eboot did not take the hook: the patch's static
+/// rate). Read every present loop, so the menu's target changes it at once.
+unsigned LivePresenterLimit();
+/// The live clock hook is installed and steps the game.
+bool LiveActive();
 /// The last step's dt (s; 0 when the hooks are off).
 float LastDt();
 } // namespace BbFrameRate

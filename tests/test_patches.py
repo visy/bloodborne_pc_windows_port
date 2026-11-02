@@ -361,7 +361,7 @@ class PartyVersionCheckTests(unittest.TestCase):
             struct.pack_into('<IIQQQQQQ', elf, 0x40, 1, 5, 0x100, 0, 0, 0, 0x6000000, 0x1000)
             (out / 'eboot.elf').write_bytes(bytes(elf))
             env = {**os.environ, 'BB_PARTY': 'host', 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1',
-                   'BB_FRAME_HOOKS': '0'}  # the FPS++ patches: uncap and 60 differ in the file
+                   'BB_FRAME_HOOKS': '0', 'BB_LIVE_FPS': '0'}  # the FPS++ patches: uncap and 60 differ in the file
 
             def run(fps, extra=''):
                 subprocess.run([sys.executable, str(ROOT / 'scripts/patches.py'), '--out', str(out), '--fps', fps,
@@ -452,7 +452,7 @@ class FrameRateHookTests(unittest.TestCase):
                 (out / 'patches').mkdir()
                 (out / 'patches' / 'mine.xml').write_text(external, encoding='utf-8')
                 args += ['--patches-dir', str(out / 'patches')]
-            env = {**os.environ, 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1', **env_extra}
+            env = {**os.environ, 'BB_INTEL_TONEMAP_FIX': '0', 'BB_SKIP_NETWORK_CHOICE': '1', 'BB_LIVE_FPS': '0', **env_extra}
             env.pop('BB_PARTY', None)
             env.pop('BB_FPS_PATCH', None)
             r = subprocess.run(args, check=True, env=env, capture_output=True, text=True)
@@ -518,7 +518,10 @@ class PartyWinsTest(unittest.TestCase):
 class PartyOverlapTest(unittest.TestCase):
     """The shipped optional patches never write bytes the party patches write (the party's checks skip a site whose bytes
     another patch changed). Known, intended pair: the two copies of the network-choice skip."""
-    ALLOWED = {frozenset(('Party: Skip Online/Offline Choice (Online)', 'Skip Online/Offline Choice'))}
+    # The Deltatime base (Mrsuss60's, like Lantern's 60 FPS++) writes 60.0 into the four floats "Party: Fast rejoin" sets to
+    # 10.0; in a party the party patches win on those bytes (patches.py party_wins, with a WARNING).
+    ALLOWED = {frozenset(('Party: Skip Online/Offline Choice (Online)', 'Skip Online/Offline Choice')),
+               frozenset(('Party: Fast rejoin', '60 FPS++ (Deltatime)'))}
 
     def test_party_patches_overlap_nothing(self):
         by_name = {}
@@ -537,6 +540,46 @@ class PartyOverlapTest(unittest.TestCase):
                 if any(a[0] < b[1] and b[0] < a[1] for a in by_name[p] for b in rs):
                     bad.append((p, o))
         self.assertEqual(bad, [])
+
+
+class LiveFpsTests(unittest.TestCase):
+    """Live FPS clock (Mrsuss60's a7cbfae6; gpu/shim/bbport_frame_rate.cpp LiveClockTick)."""
+
+    def test_when_the_live_clock_is_wanted(self):
+        w = patches.live_fps_wanted
+        self.assertTrue(w('uncap', {}, {}))                                    # on by default (owner decision)
+        self.assertFalse(w('uncap', {}, {'live_fps': '0'}))                    # the menu / launcher turned it off
+        self.assertFalse(w('uncap', {'BB_LIVE_FPS': '0'}, {}))
+        self.assertTrue(w('uncap', {'BB_LIVE_FPS': '1'}, {}))
+        self.assertTrue(w('60', {}, {'live_fps': '1'}))                        # bbport.ini (the game's menu)
+        self.assertFalse(w('60', {'BB_LIVE_FPS': '0'}, {'live_fps': '1'}))     # the environment wins
+        self.assertTrue(w('90', {'BB_LIVE_FPS': '1'}, {'live_fps': '0'}))
+        self.assertFalse(w('30', {'BB_LIVE_FPS': '1'}, {}))                    # the game's own rate
+        self.assertFalse(w('uncap', {'BB_LIVE_FPS': '1', 'BB_FPS_PATCH': '0'}, {}))
+        self.assertFalse(w('', {'BB_LIVE_FPS': '1'}, {}))
+
+    def test_live_is_neither_hooks_nor_fps_plus_plus(self):
+        self.assertFalse(patches.frame_hooks('live', {}))
+        self.assertEqual(patches.preset_patches('live', {}), ['60 FPS++ (Deltatime)'])
+        self.assertEqual(patches.preset_patches('live', {'BB_FPS_PATCH': '0'}), [])
+
+    def test_the_base_patch_is_cosmetic_and_present(self):
+        self.assertTrue(patches.patch_is_cosmetic('60 FPS++ (Deltatime)'))  # no party version refusal
+        root = ET.parse(ROOT / 'patches' / 'Bloodborne.xml').getroot()
+        metas = {m.get('Name'): m for m in root.iter('Metadata') if m.get('AppVer') == '01.09'}
+        self.assertIn('60 FPS++ (Deltatime)', metas)
+        writes = dict(patches.metadata_writes(metas['60 FPS++ (Deltatime)']))
+        # The block the live clock hook replaces, and the pacer's 1/240 s constant (83a168ee).
+        self.assertEqual(writes[0x2018e3d][:8].hex(), 'f30f108364020000')
+        self.assertEqual(len(writes[0x2018e3d]), 46)
+        self.assertEqual(writes[0x2034840].hex(), '41c74424188988883b')
+
+    def test_conflicting_patches_are_the_fps_ones(self):
+        for name in ('60 FPS++', '90 FPS++', 'Uncap FPS++', 'Sprint Fix (High FPS)', 'Performance Patch (perf increase)',
+                     '60FPS (no deltatime)'):
+            self.assertIn(name, patches.LIVE_FPS_CONFLICTS)
+        self.assertNotIn('60 FPS++ (Deltatime)', patches.LIVE_FPS_CONFLICTS)
+        self.assertNotIn('Skip Intro', patches.LIVE_FPS_CONFLICTS)
 
 
 if __name__ == '__main__':

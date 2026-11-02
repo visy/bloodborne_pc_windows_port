@@ -107,6 +107,9 @@ Values& DefaultSettings() {
     return *v;
 }
 
+constexpr int LiveTargets[] = {30, 60, 90, 120, 144, 0}; // 0 = uncapped (the live clock's 240 ceiling)
+constexpr int LiveTargetCount = int(sizeof(LiveTargets) / sizeof(LiveTargets[0]));
+
 int AddField(Field f) {
     fields.push_back(std::move(f));
     return int(fields.size() - 1);
@@ -912,6 +915,30 @@ void DefineAll() {
            "After a restart. Lower latency on NVIDIA GPUs; Boost keeps clocks up",
            "После перезапуска. Меньше задержка на NVIDIA; Boost держит частоты",
            {off, on, AddText("On + Boost", "Вкл + Boost")}, Kind::List);
+
+    // ---- Live FPS (Mrsuss60's live FPS patching, a7cbfae6): the clock on/off after a restart, the target live. ----
+    AddPage("Live FPS", "Живой FPS", "In-game frame clock and delta time patching, switchable without a restart (bbport)",
+            "Часы кадра и дельта-время в игре, переключаются без перезапуска (bbport)");
+    AddRow(Flag(&Values::live_fps), "Live FPS clock", "Живой FPS",
+           "After a restart. Replaces the frame rate hooks and the FPS++ patches; on by default (Mrsuss60)",
+           "После перезапуска. Заменяет перехваты и патчи FPS++; по умолчанию вкл (Mrsuss60)", toggle, Kind::Toggle);
+    AddRow(Setting(
+               Kind::List,
+               [](const Values& v) {
+                   const int t = v.target_fps.load();
+                   int index = 0;
+                   for (int i = 0; i < LiveTargetCount; ++i) {
+                       if (LiveTargets[i] == t) index = i;
+                   }
+                   return index;
+               },
+               [](int i) { BbSettings::Get().target_fps = LiveTargets[std::clamp(i, 0, LiveTargetCount - 1)]; }),
+           "Target frame rate", "Целевой FPS",
+           "Used while the Live FPS clock runs; takes effect at once (below the target the game slows down as before)",
+           "Работает при включённом живом FPS; действует сразу (ниже цели игра замедляется как раньше)",
+           {AddText("30", "30"), AddText("60", "60"), AddText("90", "90"), AddText("120", "120"), AddText("144", "144"),
+            AddText("Uncapped (240)", "Без лимита (240)")},
+           Kind::List);
 
     // ---- HDR output (bbport_hdr.h, I4): on/off after a restart, the curve live. ----
     AddPage("HDR", "HDR", "HDR10 output: peak brightness, paper white, highlights, calibration (bbport)",
