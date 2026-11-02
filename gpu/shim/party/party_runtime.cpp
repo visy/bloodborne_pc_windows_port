@@ -3,6 +3,7 @@
 // and the network library (A1/A2) inside the game process.
 #include "party_runtime.h"
 #include "party_async_io.h"
+#include "party_display_name.h"
 #include "party_chalice.h"
 #include "party_gestures.h"
 
@@ -2904,6 +2905,7 @@ void startup_main() {
     if (cfg.password.empty()) cfg.password = flow::RuntimePassword();  // the party flow's (party.json)
     cfg.port = s.party_port;  // the network library's (validated) value
     cfg.name = s.online_id;
+    bbname::InstallGameFilter();  // hateful member names are shown masked (party_hide_bad_names)
     if (!valid_member_name(cfg.name)) {
         set_error("invalid party name " + cfg.name);
         plog("invalid party name '%s'", cfg.name.c_str());

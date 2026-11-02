@@ -30,4 +30,8 @@ inline std::string Scrub(const std::string& text) {
     return f && !text.empty() ? f(text) : text;
 }
 
+// Installs the game's filter (party_names_game.cpp: the shared matcher behind party_hide_bad_names). Called once when a
+// party starts; an explicit call because the file would otherwise be dropped from the static library at link time.
+void InstallGameFilter();
+
 }  // namespace bbname

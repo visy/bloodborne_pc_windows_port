@@ -53,6 +53,8 @@ std::string ScrubText(const std::string& text) {
     return out;
 }
 
-const bool g_registered = (bbname::Register(&DisplayName, &ScrubText), true);
-
 }  // namespace
+
+namespace bbname {
+void InstallGameFilter() { Register(&DisplayName, &ScrubText); }
+}  // namespace bbname
