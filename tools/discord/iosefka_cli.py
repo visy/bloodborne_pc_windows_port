@@ -226,8 +226,9 @@ def _changelist_news(c, since, who):
 
 
 def _pending(c):
-    """Bugs Iosefka filed that wait for a triage pass (tag triage=pending), oldest first."""
-    return sorted(c.bugs(tag="triage=pending"), key=lambda b: b["created"])
+    """Bugs that wait for a triage pass, oldest first: tag triage=pending, or status still `new` whatever
+    the automatic triage tag says (network / crash / perf / gameplay only mean Iosefka replied)."""
+    return sorted(c.triage_queue(), key=lambda b: b["created"])
 
 
 def _query(c, a):

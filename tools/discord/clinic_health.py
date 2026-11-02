@@ -277,7 +277,7 @@ class Health:
 
     def queues(self):
         c = self.clinic
-        return {"triage": len(c.bugs(tag="triage=pending")),
+        return {"triage": len(c.triage_queue()),
                 "unsure": len(c.bugs(tag="unsure", exclude_status=CLOSED)), "uploads": queue_size(c)}
 
     def job_status(self):

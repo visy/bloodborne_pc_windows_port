@@ -219,7 +219,7 @@ Tag vocabulary (normalised 2026-10-28; use these values so filters work; a list 
 | role | `host`, `guest`, `solo` (list if several) |
 | severity | `major`, `minor` |
 | plan | changelist/plan item name it belongs to (`enemyai`, `chalicefollow`, ...) |
-| triage | `pending` (Iosefka filed it, waits for a Claude pass), `done` |
+| triage | `pending` (Iosefka filed it, waits for a Claude pass), `network` / `crash` / `perf` / `gameplay` (Iosefka's own reply kind, still waits while status is `new`), `done` |
 | local_cases, nd, source | links to local player_logs cases, ND analysis refs, `source=local` for imported cases |
 
 Changelist items use the same `component`, `area` and `feature` values.
@@ -228,7 +228,8 @@ Example queries: `list --open --tag area=hunters-nightmare`, `list --tag nw_vers
 
 ### triage-queue, title, move
 
-- `ssh iosefka triage-queue`: bugs with tag `triage=pending` (oldest first) and the `auto-link` notes added
+- `ssh iosefka triage-queue`: bugs with tag `triage=pending` or still at status `new` (any automatic
+  triage tag except `done`; oldest first) and the `auto-link` notes added
   since your last queue check (messages Iosefka attached by a weaker rule: same session, 24 h follow-up).
   Clear a bug after the pass with `tag NW-x triage=done`. Tag `unsure` lists what she could not settle:
   network-or-bug, which-bug, no-log, unreadable-file, no-text.
