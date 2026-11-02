@@ -227,14 +227,34 @@ _NET_RX = re.compile(r"\b(join|joining|connect|connection|summon|can't see|cant 
                      r"firewall|vpn|port|nat|hamachi|radmin|zerotier)\b", re.I)
 _BUG_RX = re.compile(r"\b(bug|crash|broken|glitch|stuck|softlock)\w*\b", re.I)
 _NET_KEYS = ("net.", "nat.", "join.", "firewall.")
+# gameplay words: a report about these is not a connection question even when it says "connect" or "port"
+_GAME_RX = re.compile(r"\b(fall|falls|fell|falling|floor|lift|elevator|ladder|boss|npc|item|items|lamp|"
+                      r"weapon|enemy|enemies|animation|invisible|clip|clipping|respawn|quest|save|visual|"
+                      r"texture|camera|hud|menu)\b", re.I)
+_CRASH_RX = re.compile(r"\b(crash|crashes|crashed|crashing|freeze|freezes|froze|frozen|hang|hangs|black screen|"
+                       r"closes by itself|stops working)\b", re.I)
+_PERF_RX = re.compile(r"\b(fps|framerate|frame rate|stutter\w*|lag|laggy|slow|performance|low fps|"
+                      r"memory leak|ram)\b", re.I)
 
 
 def classify(text: str, verdict_keys: set[str]) -> str:
     if any(k.startswith(_NET_KEYS) for k in verdict_keys):
         return "network"
     text = (text or "").replace("’", "'")
-    if _NET_RX.search(text) and not _BUG_RX.search(text):
+    if _NET_RX.search(text) and not _BUG_RX.search(text) and not _GAME_RX.search(text):
         return "network"
+    return "bug"
+
+
+def bug_kind(text: str) -> str:
+    """What a non-network report is about, for the triage tag: crash, perf, gameplay, or bug (cannot tell)."""
+    text = (text or "").replace("’", "'")
+    if _CRASH_RX.search(text):
+        return "crash"
+    if _PERF_RX.search(text):
+        return "perf"
+    if _GAME_RX.search(text) or _BUG_RX.search(text):
+        return "gameplay"
     return "bug"
 
 

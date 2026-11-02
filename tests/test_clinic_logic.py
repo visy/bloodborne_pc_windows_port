@@ -144,3 +144,12 @@ def test_archive_relevant():
     assert cl.ARCHIVE_CAP_BYTES == 100 * 1024 * 1024
     assert cl.has_saves([{"filename": "userdata0000"}]) and not cl.has_saves([{"filename": "a.png"}])
     assert not cl.has_saves([{"filename": "big.zip", "skip": "big"}])
+
+
+def test_bug_kind_and_gameplay_beats_net_words():
+    assert cl.bug_kind("guest falls through the lift floor") == "gameplay"
+    assert cl.bug_kind("the game crashed") == "crash"
+    assert cl.bug_kind("stutter and low fps") == "perf"
+    assert cl.bug_kind("hello") == "bug"
+    assert cl.classify("guest falls through the lift after the connection came back", set()) == "bug"
+    assert cl.classify("cannot join, firewall?", set()) == "network"
