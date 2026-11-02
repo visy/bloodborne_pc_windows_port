@@ -6573,6 +6573,15 @@ def prep_sgp(root: Path):
         sys.exit("sgp: the fixture %s is missing (docs/party/test_saves.md)" % SGP_FIXTURE)
     _cl_saves(root, SGP_FIXTURE, 1)
     user = root / "inst1" / "user"
+    # A save last written as a summoned guest carries the phantom mark (chr type 1): the own world of such a save
+    # does not load. The test copy has it cleared (the launcher's save editor does the same: repair_phantom_mark).
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from saveedit.model import SaveModel
+    for f in (user / "savedata").rglob("userdata0000"):
+        m = SaveModel(f.read_bytes())
+        if m.phantom_mark:
+            m.repair_phantom_mark()
+            f.write_bytes(m.to_bytes())
     goods = 0x40000000
     lines = ["%d 4009 1 1" % goods,                      # an older file: no slot, no id
              "%d 4014 1 1 0" % goods,                    # a file with the slot only
