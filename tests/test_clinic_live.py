@@ -113,6 +113,28 @@ def test_network_post_gets_redacted_advice(tmp_path):
     assert c.bug(c.message(1)["bug_id"])["tags"]["triage"] == "network"
 
 
+def test_gameplay_post_gets_no_network_advice(tmp_path):
+    # the words are about a lift, net_doctor finds nothing: no network advice
+    c, ctx = make(tmp_path, diag=OK_DIAG)
+    ch = F.Channel(100, "help")
+    m = post(ch, content="guest falls through the lift floor")
+    run(bot.dispatch_message(m, ctx))
+    text = ch.sent[0].content
+    bug = c.message(1)["bug_id"]
+    assert "what you tried" not in text and "Connections can be stubborn" not in text
+    assert c.bug(bug)["tags"]["triage"] == "gameplay"
+    assert not any("network question" in n["text"] for n in c.notes(bug))
+
+
+def test_crash_and_perf_tags(tmp_path):
+    for words, tag in (("the game crashed on the boss", "crash"), ("low fps in the hunters dream", "perf")):
+        (tmp_path / tag).mkdir()
+        c, ctx = make(tmp_path / tag, diag=OK_DIAG)
+        ch = F.Channel(100, "help")
+        run(bot.dispatch_message(post(ch, content=words), ctx))
+        assert c.bug(c.message(1)["bug_id"])["tags"]["triage"] == tag
+
+
 def test_skipped_places_are_left_alone(tmp_path):
     c, ctx = make(tmp_path)
     for name in ("staff-chat", "development", "moderator-only"):
