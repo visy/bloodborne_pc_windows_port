@@ -193,7 +193,8 @@ One host and two guests, from nothing to playing together. Do the steps in this 
 
 1. Open the **Party** tab and choose *Mode* = **Join a party**. Each player needs a **different name**.
 2. Paste the host's code into **Party code** (the **Paste** button does it). A ✓ under it means the code is valid.
-3. Same **Max players** (3) and the same **Password** as the host.
+3. The same **Password** as the host. **Max players** is the host's: you take it when you join (use *Join selected*
+   in *Parties found* and the game also starts with the host's other party options).
 4. Click **Launch Bloodborne** **after** the host's game is already running.
 5. Play the start of the game (the prologue) in your own world. After that the host's game summons you
    automatically. Short of time? The host can turn on *Skip the prologue* (*System > Party rules:

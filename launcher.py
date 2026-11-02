@@ -772,7 +772,9 @@ def parse_discovery_packet(data: bytes):
     None for anything that is not exactly a version 1 announcement (untrusted input: strict)."""
     if not isinstance(data, (bytes, bytearray)) or not 17 <= len(data) <= DISCOVERY_MAX_PACKET:
         return None
-    if data[0] != 0xFA or data[1] != 0x41 or data[2] != 1 or data[3] & ~3:
+    if data[0] != 0xFA or data[1] != 0x41 or data[2] != 1 or data[3] & ~0x7F:
+        return None
+    if data[3] & 0x3C and not data[3] & 0x40:  # option bits only with the "options present" bit
         return None
     port = (data[8] << 8) | data[9]
     players, maxp = data[12], data[13]
@@ -796,7 +798,66 @@ def parse_discovery_packet(data: bytes):
         return None
     return {"id": int.from_bytes(data[4:8], "big"), "port": port, "level": (data[10] << 8) | data[11],
             "players": players, "max": maxp, "password": bool(data[3] & 1), "open": bool(data[3] & 2),
+            "opts": ({"lamps": bool(data[3] & 4), "headstones": bool(data[3] & 8), "talk": bool(data[3] & 16),
+                      "droproll": bool(data[3] & 32)} if data[3] & 0x40 else None),
             "build": strings[0], "name": strings[1], "area": strings[2]}
+
+
+# 0.7.8: the options the host owns (Max players and the hook-deciding party options): a guest starts with the
+# host's for that launch instead of being refused at the handshake. Mirrors gpu/shim/party/party_options.cpp.
+PARTY_ADOPT_KEYS = {"BB_PARTY_MAX": ("2", "3", "4", "5"), "BB_PARTY_GUEST_LAMPS": ("0", "1"),
+                    "BB_PARTY_HEADSTONES": ("0", "1"), "BB_PARTY_GUEST_TALK": ("0", "1"),
+                    "BB_PARTY_SHARED_DROP_ROLL": ("0", "1")}
+PARTY_ADOPT_LABELS = {"BB_PARTY_MAX": "Max players", "BB_PARTY_GUEST_LAMPS": "Guest lamps",
+                      "BB_PARTY_HEADSTONES": "Headstones", "BB_PARTY_GUEST_TALK": "Guest services",
+                      "BB_PARTY_SHARED_DROP_ROLL": "Shared enemy drop roll"}
+PARTY_ADOPT_MAX_AGE_S = 2 * 86400
+
+
+def discovery_adopt_env(entry: dict) -> dict:
+    """The host's options of a heard announcement as BB_PARTY_* values for this launch (only what it tells)."""
+    env = {}
+    try:
+        if 2 <= int(entry.get("max", 0)) <= 5:
+            env["BB_PARTY_MAX"] = str(int(entry["max"]))
+    except (TypeError, ValueError):
+        pass
+    opts = entry.get("opts")
+    if isinstance(opts, dict):
+        for key, name in (("BB_PARTY_GUEST_LAMPS", "lamps"), ("BB_PARTY_HEADSTONES", "headstones"),
+                          ("BB_PARTY_GUEST_TALK", "talk"), ("BB_PARTY_SHARED_DROP_ROLL", "droproll")):
+            env[key] = "1" if opts.get(name) else "0"
+    return env
+
+
+def parse_party_adopt(text: str) -> dict:
+    """party_adopt.txt (written by the game after a refused join): 'BB_PARTY_X=value' lines, only the known
+    keys with their allowed values (untrusted input)."""
+    out = {}
+    for ln in (text or "").splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#") or "=" not in ln:
+            continue
+        key, _, val = ln.partition("=")
+        if val.strip() in PARTY_ADOPT_KEYS.get(key.strip(), ()):
+            out[key.strip()] = val.strip()
+    return out
+
+
+def adopt_summary(adopt: dict, base: dict) -> str:
+    """'Max players 4 (yours 3), Headstones on (yours off)' for the keys that change something; '' when none."""
+    def word(v):
+        return "on" if v == "1" else "off"
+    parts = []
+    for key, val in adopt.items():
+        mine = base.get(key)
+        if mine == val:
+            continue
+        if key == "BB_PARTY_MAX":
+            parts.append(f"Max players {val}" + (f" (yours {mine})" if mine else ""))
+        else:
+            parts.append(f"{PARTY_ADOPT_LABELS[key]} {word(val)}" + (f" (yours {word(mine)})" if mine in ("0", "1") else ""))
+    return ", ".join(parts)
 
 
 def discovery_build_matches(host_build: str, my_version: str) -> bool:
@@ -940,7 +1001,8 @@ def discovery_rows(found: list, peers: list, my_version: str) -> list:
                      "players": f"{e['players']}/{e['max']}", "area": e["area"] or "-",
                      "password": "yes" if e["password"] else ("open" if e.get("open") else "no"), "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
-                     "ok": discovery_build_matches(e["build"], my_version), "kind": "announce"})
+                     "ok": discovery_build_matches(e["build"], my_version), "kind": "announce",
+                     "adopt": discovery_adopt_env(e)})
     for p in peers:
         if p["ip"] in seen_ips or not p["online"]:
             continue
@@ -1088,7 +1150,8 @@ def lobby_rows(entries: list, my_version: str) -> list:
         rows.append({"iid": f"vpn/{i}", "name": e["name"], "players": f"{e['players']}/{e['max']}",
                      "password": "yes" if e["password"] else "open", "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
-                     "ok": discovery_build_matches(e["build"], my_version)})
+                     "ok": discovery_build_matches(e["build"], my_version),
+                     "adopt": discovery_adopt_env({"max": e["max"]})})  # the lobby tells only the slots
     return rows
 
 
@@ -3114,6 +3177,7 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_info_var = tk.StringVar(value="")
         self._vpn_lobby_busy = False
         self._vpn_join_addr = ""
+        self._adopt_env = {}
         self._vpn_join_needs_password = True
         # 0.7.8 open party (bbport.ini party_open, off by default): a host without a password also takes plain-address joins
         self.party_open = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_open", False))
@@ -3775,9 +3839,10 @@ class BloodborneLauncher(tk.Tk):
             "The name the others see for you: 1-16 letters, digits, _ or -. It is also your online ID "
             "in the game. Default: your Windows user name (BB_PARTY_NAME).", width=18)
         max_tip = ("Most players in the party, you included: 2, 3 (the game's normal co-op limit) or 4 "
-                   "(experimental: the game was not made for 4 players, expect issues). Everyone - the "
-                   "host and every player who joins - must pick the same value: a different value is "
-                   "refused when joining ('party rules differ'). Default: 3 (BB_PARTY_MAX).")
+                   "(experimental: the game was not made for 4 players, expect issues). The host's value "
+                   "applies to the whole party: a player who joins uses the host's, whatever this says "
+                   "(the Join list starts the game with it; your own setting is only used when you host). "
+                   "Default: 3 (BB_PARTY_MAX).")
         self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var, PARTY_MAX_CHOICES,
                                            max_tip, width=6)
         auto_cb = self._check(sec, "Automatic summoning", self.party_auto,
@@ -4508,6 +4573,7 @@ class BloodborneLauncher(tk.Tk):
             if not password:
                 return
         before = (self.party_mode_var.get(), self.party_password_var.get(), self.party_code_var.get())
+        self._adopt_env = dict(row.get("adopt") or {})  # the lobby's slots (Max players), this launch only
         self._vpn_join_addr = row["address"]       # for the launch only; not shown, not saved
         self._vpn_join_needs_password = bool(row["password_set"])
         self.party_mode_var.set(PARTY_MODES[2][0])
@@ -4517,6 +4583,7 @@ class BloodborneLauncher(tk.Tk):
             self.update_party_state()
             self.launch_game()
         finally:
+            self._adopt_env = {}
             self._vpn_join_addr = ""
             self._vpn_join_needs_password = True
             self.party_mode_var.set(before[0])
@@ -4625,7 +4692,11 @@ class BloodborneLauncher(tk.Tk):
         self.party_code_var.set(row["address"])
         self.party_password_var.set(password)
         self.on_party_change()
-        self.launch_game()
+        self._adopt_env = dict(row.get("adopt") or {})  # the host's announced options, this launch only
+        try:
+            self.launch_game()
+        finally:
+            self._adopt_env = {}
 
     def on_vpn_adapters(self, adapters: list):
         self.vpn_adapters = adapters
@@ -6045,6 +6116,31 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[PATCHES] WARNING: '{name}' writes the same game bytes as {', '.join(party)}. In a party the party "
                      f"patch wins on those bytes; if joining or the Chalice Dungeons misbehave, turn '{name}' off on every PC.")
 
+    def apply_host_options(self, env: dict):
+        """0.7.8: a join starts with the host's Max players / Guest lamps / Headstones / Guest services / Shared
+        drop roll: the ones its announcement told (this launch only), else the ones a refused join left in
+        user\\party_adopt.txt (read once). Your saved settings are not changed."""
+        if self.party_mode() != "join" or not env.get("BB_PARTY"):
+            return
+        adopt = dict(self._adopt_env or {})
+        path = party_user_dir() / "party_adopt.txt"
+        if not adopt:
+            try:
+                if path.is_file() and datetime.now().timestamp() - path.stat().st_mtime <= PARTY_ADOPT_MAX_AGE_S:
+                    adopt = parse_party_adopt(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                adopt = {}
+        if adopt:
+            changed = adopt_summary(adopt, env)
+            for key, val in adopt.items():
+                env[key] = val
+            self.log("[PARTY] Joining with the host's options for this start: "
+                     + (changed if changed else "same as yours") + " (your saved settings stay as they are).")
+        try:
+            path.unlink()  # read once
+        except OSError:
+            pass
+
     def launch_game(self, warper: bool = False):
         if self.proc is not None:
             return
@@ -6111,6 +6207,8 @@ class BloodborneLauncher(tk.Tk):
             else:
                 env[key] = value
         env["BB_GAME_DIR"] = str(game_dir)
+        if not warper:
+            self.apply_host_options(env)
         if self._vpn_join_addr and self.party_mode() == "join":
             env["BB_PARTY_CODE"] = self._vpn_join_addr  # a Nightwatch VPN lobby game: the address stays out of the UI
         if warper:
