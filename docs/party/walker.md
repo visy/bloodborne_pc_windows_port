@@ -5,7 +5,7 @@ The smoke harness walks the players with the real left stick (`BB_PAD_FILE`). Th
 walls. The nav walker (`gpu/shim/party/nav_walk.h`, hooked into `party_director.cpp`) plans on the game's own navmesh
 and steers like a player.
 
-Switches: `BB_TEST_WALKER=nav|old` (default old for now; nav is opt-in until lfw/lfwc and lift boarding are proven), `BB_NAV_CACHE` (set by `tools/mp/instances.py`),
+Switches: `BB_TEST_WALKER=nav|old` (default nav since nav2078, 0.7.8; `old` keeps the pulse walker), `BB_NAV_CACHE` (set by `tools/mp/instances.py`),
 `BB_TEST_MOVE_WALK=1` (see below). `BB_TEST_WALK_SPRINT=1` still holds Circle.
 
 ## 1. Where the AI's path data is (RE, with confidence)
@@ -97,12 +97,16 @@ steers, all walks arrive. The block is the same one (the rows are unit vectors, 
 camera still swinging after the warp that put the player there. Unproven; a longer walk with the raw yaw logged each
 second would settle it.
 
-## 5. Lift phases (0.7.8, post lift fix on master b28827b3) - nav is NOT the default
+## 5. Default switch (nav2078, 0.7.8)
 
-60 FPS, one run each: old walker lfwf PASS 39/39 (26 walks, 0 hops, 3 side steps on inst1 + 2), lfwcf FAIL 37/39 (one route stopped,
-the non-riding guest walked 2.0 m of 3.0 m); nav walker lfw 39/39 once and 31/34, 21/29, 21/29 in three other runs, lfwf 37/39,
-lfwcf 29/34. Failures are (1) a hairpin of the recorded route at (-116.6, -58.7, -20.7) where the player stands pressed
-against something the mesh does not know (1-2 counted warps per walk), (2) stick steps onto the car ("blocked near the goal":
-the trigger spot is off the mesh and the car moves), (3) islands: the Cathedral pocket routes cross ladders and gates (now the
-old walker takes over on "no route"; BB_TEST_NAV_STRICT=1 fails at the start). The camera model (matrix yaw plus learned
-residual) is not the cause. Until (1) and (2) are solved the default stays old.
+Nav is the default; `BB_TEST_WALKER=old` keeps the pulse walker. First-try pass per phase (one run each, 30 fps, same build,
+`tools/mp/smoke_party.py --phase X` with and without `BB_TEST_WALKER=old`): fl, fd, fdj, cd, mk, cpa, cae, cao, caw, cab, caq, br, rj, eh, cis, s3,
+lfw all pass first try with both walkers (lfw: nav 39/39 in one run); s3 old needed 3 tries (nav 1). sj: old 0/3 first try, nav
+before the fix 1/3, nav after 3/3 with no warp.
+
+sj fixes: (1) the m24 navmesh ends in a dead-end neck at the cave mouth seam; the passage continues on the m27 pieces, so the
+cache files of m24 and m27 now hold both areas (`JOIN` in nav_cache.py; `NAV_CACHE_VERSION` in instances.py rebuilds the two files once);
+the walker used to press into the doorframe corner and the old recovery (back up, roll, warp) undid the crossing. (2) A stage record change
+(the seam) holds the stall verdict for 10 s: the game freezes the walker for ~7 s while the next block streams in, a player keeps the stick forward.
+(3) An X:Z goal with no floor near the player's height takes any floor of that column (amp: the boss floor is 45 m above the
+guest's respawn), so the walk is planned instead of falling back to the old walker.
