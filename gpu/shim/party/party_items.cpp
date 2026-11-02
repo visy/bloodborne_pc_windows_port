@@ -313,6 +313,22 @@ ShopGateRepair BadgeGatesToRepair(const std::function<bool(std::uint32_t)>& is_s
     return r;
 }
 
+std::vector<std::int32_t> BadgeGuardStep(BadgeGuardState& st, const std::function<bool(std::int32_t)>& open,
+                                         const std::function<int(std::int32_t)>& held) {
+    std::vector<std::int32_t> close;
+    for (std::int32_t n = 0; n < kBadgeGateCount; ++n) {
+        if (!open(kBadgeGateFirst + n) || held(kBadgeGoodsFirst + n) != 0) {
+            st.missing[n] = 0;  // closed, held, or a list not readable: nothing to decide
+            continue;
+        }
+        if (++st.missing[n] >= kBadgeGuardConfirm) {
+            st.missing[n] = 0;
+            close.push_back(kBadgeGateFirst + n);
+        }
+    }
+    return close;
+}
+
 EyeRepair EyeToRepair(const std::function<bool(std::uint32_t)>& is_set, int ng, int eye_held) {
     EyeRepair r;
     if (is_set(kEyeGateRepaired)) {
@@ -1826,6 +1842,7 @@ bool IsFlag(u64 man, std::int64_t id) {
 
 void SetFlag(u64 man, std::int64_t id, bool on = true) {
     if (man && id >= 0) {
+        const progress::FlagCause cause("party items");
         reinterpret_cast<SetFlagFn>(Guest(kSetFlag))(man, static_cast<u32>(id), on ? 1 : 0);
     }
 }
@@ -4743,6 +4760,70 @@ void RepairBadgeGatesTick(const GameSnapshot& gs) {
     }
 }
 
+// Main thread, 0.7.8 (BB_PARTY_BADGE_GUARD=0 off): the live guard of the badge rows. The playtest of 2026-11-01
+// sold Tonitrus (row 12101008) to players who never held the Spark Hunter Badge and no log shows who set the
+// flag. Every 3 s, in the own world (load mode 0) and while summoned (load mode 1: the overlay the guest's shop
+// reads AND its own save's pool), a row 12101000 + n that is open while badge 4110 + n is in neither key section
+// nor the storage box (twice in a row) is closed, with one log line that names the latest writers the hooks saw
+// (progress::BadgeRowWriters). The Eye sale flags have their own repair and are left alone.
+void BadgeGuardTick(const GameSnapshot& gs, int load_mode, double now) {
+    static double next = 0.0, up_since = 0.0;
+    static BadgeGuardState st;
+    static int lines = 0;
+    static const bool off = std::getenv("BB_PARTY_BADGE_GUARD") && std::string(std::getenv("BB_PARTY_BADGE_GUARD")) == "0";
+    if (!g_on.load() || off) {
+        return;
+    }
+    const u64 man = Ptr(kFlagMan);
+    const bool summoned = load_mode == 1;
+    if (!man || (load_mode != 0 && !summoned) || !gs.world_up || gs.loading || gs.map_id == 0xffffffffu ||
+        gs.player_rec == 0) {
+        up_since = 0.0;
+        st = BadgeGuardState();
+        return;
+    }
+    if (up_since == 0.0) {
+        up_since = now;
+    }
+    if (now - up_since < 8.0 || now < next) {
+        return;
+    }
+    next = now + 3.0;
+    // What the player's shop reads: the visible tree (own world: the live store; summoned: the host-world overlay);
+    // summoned also the own pool, which ShopGateTick copies back into the overlay.
+    auto own_open = [&](std::int32_t f) {
+        bool v = false;
+        return summoned && progress::ReadFlagOwnSave(static_cast<u32>(f), &v) && v;
+    };
+    auto open = [&](std::int32_t f) { return IsFlag(man, f) || own_open(f); };
+    const std::vector<std::int32_t> close = BadgeGuardStep(st, open, GoodsHeldAnywhere);
+    for (const std::int32_t f : close) {
+        const std::int32_t goods = kBadgeGoodsFirst + (f - kBadgeGateFirst);
+        const std::string who = progress::BadgeRowWriters(static_cast<u32>(f));
+        const bool pool = own_open(f);
+        if (IsFlag(man, f)) {
+            progress::FlagCause cause("badge guard");
+            if (summoned) {
+                progress::WriteFlagVisible(static_cast<u32>(f), false);
+            } else {
+                SetFlag(man, f, false);
+            }
+        }
+        if (pool) {
+            progress::FlagCause cause("badge guard");
+            progress::WriteFlagOwnSave(static_cast<u32>(f), false);
+        }
+        if (lines < 60) {
+            ++lines;
+            Log("badge row %d was open without badge %d: closed (was set by: %s) [%s, %s]", f, goods,
+                who.c_str(), BadgeName(goods), summoned ? "summoned, overlay and own save" : "own world");
+        }
+    }
+    if (!close.empty() && !summoned) {
+        RequestGameSave("badge guard");
+    }
+}
+
 // Main thread, own world, world settled: once per save (marker kEyeGateRepaired), an NG0 save that holds the
 // Eye of a Blood-drunk Hunter (or its pickup / sale flags) without night 9801 and never entered the DLC loses
 // them: the vanilla Messenger gives and sells the Eye only at night (m21 12101028 / 12101100), so the party
@@ -5029,6 +5110,7 @@ void ItemsTick() {
     ChaliceCaseFlagLogTick(gs, s.load_mode, Now());
     RepairShopGatesTick(gs);
     RepairBadgeGatesTick(gs);
+    BadgeGuardTick(gs, s.load_mode, Now());
     RepairEyeGateTick(gs);
     RepairSgivePoisonTick(gs);
     KeyGoodsWatchTick(gs, s.load_mode, Now());
