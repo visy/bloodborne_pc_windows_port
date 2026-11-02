@@ -23,6 +23,7 @@
 #include "bbport_settings.h"
 #include "../../src/pad_bindings.h"
 #include "party/party_hud.h"
+#include "party/party_display_name.h"
 #include "party/party_splitscreen_rules.h"
 #include "party/party_balance_rules.h"
 #include "party/party_gather.h"
@@ -1769,7 +1770,7 @@ void PartyTab() {
     }
     for (const ps::Member& m : b.members) {
         char who[96];
-        std::snprintf(who, sizeof(who), "%s%s%s", m.name.c_str(), m.slot == 0 ? T("  (host)", "  (хост)") : "",
+        std::snprintf(who, sizeof(who), "%s%s%s", b.ShownName(m.name).c_str(), m.slot == 0 ? T("  (host)", "  (хост)") : "",
                       m.local ? T("  (you)", "  (вы)") : "");
         const char* where = !m.connected  ? T("Connection lost, slot kept", "Связь потеряна, место сохранено")
                             : m.slot == 0 ? T("Host's world", "Мир хоста")
@@ -1833,7 +1834,7 @@ void PartyTab() {
             }
             char id[48], label[96];
             std::snprintf(id, sizeof(id), "party_kick_%d", m.slot);
-            std::snprintf(label, sizeof(label), T("Kick %s", "Исключить %s"), m.name.c_str());
+            std::snprintf(label, sizeof(label), T("Kick %s", "Исключить %s"), b.ShownName(m.name).c_str());
             const bool armed = now < party_ui.kick_confirm_until && party_ui.kick_confirm == m.name;
             if (ActionRow(id, label, armed ? T("Press again to kick", "Нажмите ещё раз") : nullptr,
                           T("Sends this hunter back to their own world and frees the slot.",
@@ -2791,7 +2792,7 @@ void PartyHud() {
         float mc[3];
         party::hud::MemberColour(c.slot, mc);  // the same colour as the member's tag (and I2's pings)
         ImGui::TextColored(here ? ImVec4(mc[0], mc[1], mc[2], 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
-                           c.name);
+                           bbname::Display(c.name).c_str());
         const float name_h = ImGui::GetItemRectSize().y, name_w = ImGui::GetItemRectSize().x;
         ImGui::PopFont();
         float right_edge = row.x + width;
@@ -2989,20 +2990,21 @@ void PartyHud() {
         const float alpha = std::clamp((80.0f - d) / 30.0f, 0.0f, 1.0f) * 0.95f * cover;
         // Name, with the level ("Lv 42") or the deaths ("3 deaths, rot 2") after it.
         char label[96];
+        const std::string shown_name = bbname::Display(c.name);
         const bool ru = BbSettings::MenuText("en", "ru")[0] == 'r';
         if (overhead == 2 && c.level > 0) {
-            if (ru) std::snprintf(label, sizeof label, "%s  ур. %d", c.name, c.level);
-            else std::snprintf(label, sizeof label, "%s  Lv %d", c.name, c.level);
+            if (ru) std::snprintf(label, sizeof label, "%s  ур. %d", shown_name.c_str(), c.level);
+            else std::snprintf(label, sizeof label, "%s  Lv %d", shown_name.c_str(), c.level);
         } else if (overhead == 4 && c.rot > 0) {
-            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d, гниль %d", c.name, c.deaths, c.rot);
-            else std::snprintf(label, sizeof label, "%s  deaths %d, rot %d", c.name, c.deaths, c.rot);
+            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d, гниль %d", shown_name.c_str(), c.deaths, c.rot);
+            else std::snprintf(label, sizeof label, "%s  deaths %d, rot %d", shown_name.c_str(), c.deaths, c.rot);
         } else if (overhead == 5 && c.ping_ms > 0) {
-            std::snprintf(label, sizeof label, ru ? "%s  %u мс" : "%s  %u ms", c.name, c.ping_ms);
+            std::snprintf(label, sizeof label, ru ? "%s  %u мс" : "%s  %u ms", shown_name.c_str(), c.ping_ms);
         } else if (overhead == 4) {
-            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d", c.name, c.deaths);
-            else std::snprintf(label, sizeof label, "%s  deaths %d", c.name, c.deaths);
+            if (ru) std::snprintf(label, sizeof label, "%s  смертей %d", shown_name.c_str(), c.deaths);
+            else std::snprintf(label, sizeof label, "%s  deaths %d", shown_name.c_str(), c.deaths);
         } else {
-            std::snprintf(label, sizeof label, "%s", c.name);
+            std::snprintf(label, sizeof label, "%s", shown_name.c_str());
         }
         // Laid out as the game's phantom plate (party_hud.h LayoutPlate: measured live; the game's
         // own plate is off in party mode, party_hud_game.cpp): the bar's top on the anchor with

@@ -220,6 +220,9 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password.
   While connected to the Nightwatch VPN the game uses its tunnel address for all party traffic by itself (no
   *party_vpn* setting needed).
+  Hateful player names (slurs, hate codes, hostile phrases about groups of people) are shown as *Hunter* and a short
+  code, in the games lists, the party list, the name tags and the notices (*Hide offensive names*, **on** by default:
+  launcher Party tab, or *System > My party: Names*). The Nightwatch VPN lobby does the same for everyone.
   A host with **no password** can be joined by plain address, with no party code, by players on its own LAN or VPN
   (*Open party*, off by default: launcher Party tab checkbox, or *System > Party access*). Anyone on that network can
   join, so use it only on networks you trust; a listed game marked *open* in the lists is joined without any password.

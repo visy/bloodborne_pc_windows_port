@@ -702,6 +702,12 @@ add_executable(party-split-notice-test EXCLUDE_FROM_ALL ../tests/test_party_spli
 target_compile_options(party-split-notice-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-split-notice-test PRIVATE shim)
 set_target_properties(party-split-notice-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Offensive-name filter (party/name_filter.cpp), shared vectors with scripts/namefilter.py.
+# ninja -C out/gpu name-filter-test && out/gpu/name-filter-test tests/name_filter_vectors.txt
+add_executable(name-filter-test EXCLUDE_FROM_ALL ../tests/test_name_filter.cpp shim/party/name_filter.cpp)
+target_compile_options(name-filter-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(name-filter-test PRIVATE shim)
+set_target_properties(name-filter-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Lifts in a party: the table and the decisions (party_lift_rules.h). ninja -C out/gpu party-lift-rules-test
 add_executable(party-lift-rules-test EXCLUDE_FROM_ALL ../tests/test_party_lift_rules.cpp)
 target_compile_options(party-lift-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
