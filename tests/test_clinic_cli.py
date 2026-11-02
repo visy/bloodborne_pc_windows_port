@@ -324,3 +324,16 @@ def test_vpn_maint_cli(tmp_path):
     assert run(db, "visy", "vpn-maint", "cancel", "1")[0] == 0
     rc, out = run(db, "visy", "vpn-maint", "list")
     assert rc == 0 and b'"cancelled"' in out
+
+
+def test_triage_queue_lists_new_bugs_whatever_the_auto_tag(tmp_path):
+    db, a, b, _ = seed(tmp_path)
+    c = cs.Clinic(db)
+    n = c.new_bug("Auto answered", "thread", 1, 13, tags={"triage": "network"})       # status new
+    g = c.new_bug("Gameplay answered", "thread", 1, 14, tags={"triage": "gameplay"})  # status new
+    d = c.new_bug("Done one", "thread", 1, 15, tags={"triage": "network"})
+    c.update_bug(d, status="open")                                                     # handled: not queued
+    p = c.new_bug("Pending open", "thread", 1, 16, tags={"triage": "pending"})
+    c.update_bug(p, status="open")
+    ids = {x["id"] for x in js(db, "vlad", "triage-queue")["bugs"]}
+    assert {n, g, p} <= ids and d not in ids

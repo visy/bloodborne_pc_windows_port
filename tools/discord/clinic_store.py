@@ -370,6 +370,15 @@ class Clinic:
             out.append(b)
         return out
 
+    def triage_queue(self):
+        """Bugs waiting for a Claude triage pass: triage=pending, or status `new` with any auto triage tag but done
+        (a bot reply tags the bug network / crash / perf / gameplay but does not triage it)."""
+        seen = {b["id"]: b for b in self.bugs(tag="triage=pending")}
+        for b in self.bugs(status="new"):
+            if str(b["tags"].get("triage", "")).lower() != "done":  # `tag triage=done` clears it by hand
+                seen.setdefault(b["id"], b)
+        return list(seen.values())
+
     def counts(self, bug_id):
         """How many messages, logs, images and video stills a bug holds."""
         msgs = self.messages_for_bug(bug_id)
