@@ -20,7 +20,9 @@ import struct
 import sys
 from prepare import parse_self, span, unpack
 from link_libc import encode_id
-from cpu_compat import atomic_output, patch_image, patch_libc
+from cpu_compat import atomic_output, patch_image, patch_libc, COUNT_SPAN_MODULE_SHA256
+from eboot_file import eboot_path, reviewed_source_sha256
+import game_check
 
 DEFAULT_MODULES = ('libc.prx', 'libSceFios2.prx')
 FS_LOAD = bytes.fromhex('64488b042500000000')  # mov rax, fs:[0]
@@ -79,7 +81,8 @@ def module(path):
             relocations.append((target, info & 0xffffffff, info >> 32, addend))
     return dict(elf=elf, header=header, ph=ph, tags=tags, symbols=symbols, relocs=relocations,
                 identity=identity, libraries=libraries, modules=modules,
-                sha256=hashlib.sha256(source).hexdigest(), missing=missing)
+                sha256=hashlib.sha256(source).hexdigest(), missing=missing,
+                raw_elf=source[:4] == bytes((0x7f, 0x45, 0x4c, 0x46)))
 
 
 def patch_fs_loads(image, ph, base):
@@ -169,7 +172,8 @@ def protect_image(image, segments, untranslated, relocs, path=RED_ZONE_SITES):
 
 
 def link(game, out, module_names=DEFAULT_MODULES):
-    main = module(game / 'eboot.bin')
+    main = module(eboot_path(game))
+    main['sha256'] = reviewed_source_sha256(main, game_check.SUPPORTED_IMAGE, COUNT_SPAN_MODULE_SHA256)
     raw = (out / 'boot.bin').read_bytes()
     magic, size, entry, ns, nr, ni, flags = unpack('<8s6Q', raw, 0)
     if magic != b'BBPROBE2':

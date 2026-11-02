@@ -32,6 +32,7 @@
 #include "party_ping.h"
 #include "party_droproll.h"
 #include "party_options.h"
+#include "eboot_image.h"
 #include "party_log_game.h"
 #include "coop_hooks.h"
 #include "game_state.h"
@@ -280,8 +281,10 @@ std::string user_dir() {
     return data_dir() + "/user";
 }
 
-// The game's eboot.bin: app0 (bbnet_configure) or BB_GAME_DIR. Zeros (with a warning) when it
-// cannot be read: then only players who also could not read theirs match.
+// The game's executable, eboot.bin (preferred) or eboot.elf: app0 (bbnet_configure) or
+// BB_GAME_DIR. The hash is of the loaded image (eboot_image.h), so the same game gives the same
+// identity whichever file holds it (a SELF eboot.bin or a raw ELF eboot.elf). Zeros (with a
+// warning) when it cannot be read: then only players who also could not read theirs match.
 std::array<std::uint8_t, 32> eboot_hash() {
     std::array<std::uint8_t, 32> h{};
     std::string dir = bbnet::settings().app0;
@@ -291,12 +294,17 @@ std::array<std::uint8_t, 32> eboot_hash() {
         return h;
     }
     const auto t0 = Clock::now();
-    const fs::path p = fs::path(dir) / "eboot.bin";
-    if (!sha256_file(p, &h)) {
+    fs::path p = fs::path(dir) / "eboot.bin";
+    std::error_code ec;
+    if (!fs::is_regular_file(p, ec) && fs::is_regular_file(fs::path(dir) / "eboot.elf", ec))
+        p = fs::path(dir) / "eboot.elf";
+    Sha256 sha;
+    if (!bbparty::eboot_image_stream(p.string(), [&](const void* d, std::size_t n) { sha.update(d, n); })) {
         plog("warning: cannot read %s for the game version check", p.string().c_str());
         return h;
     }
-    plog("eboot.bin sha256 %s... (%.0f ms)", hex_prefix(h).c_str(),
+    h = sha.finish();
+    plog("%s image sha256 %s... (%.0f ms)", p.filename().string().c_str(), hex_prefix(h).c_str(),
          std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
     return h;
 }
