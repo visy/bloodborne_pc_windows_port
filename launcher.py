@@ -645,12 +645,23 @@ def decode_line(raw: bytes) -> str:
         return raw.decode(locale.getpreferredencoding(False), errors="replace")
 
 
+EBOOT_NAMES = ("eboot.bin", "eboot.elf")  # scripts/eboot_file.py: eboot.bin first
+
+
+def find_eboot(game_dir):
+    """The executable file in a game folder: eboot.bin, else eboot.elf (a raw ELF dump), else None."""
+    for name in EBOOT_NAMES:
+        if (Path(game_dir) / name).is_file():
+            return Path(game_dir) / name
+    return None
+
+
 def resolve_game_dir(target: str):
-    """Return the game folder for an eboot.bin path or a folder path, else None."""
+    """Return the game folder for an eboot.bin / eboot.elf path or a folder path, else None."""
     p = Path(target.strip().strip('"'))
-    if p.is_file() and p.name.lower() == "eboot.bin":
+    if p.is_file() and p.name.lower() in EBOOT_NAMES:
         return p.parent
-    if p.is_dir() and (p / "eboot.bin").is_file():
+    if p.is_dir() and find_eboot(p) is not None:
         return p
     return None
 
@@ -3013,7 +3024,7 @@ class BloodborneLauncher(tk.Tk):
         # eboot.bin selection
         card = ttk.Frame(main, style="Card.TFrame", padding=12)
         card.pack(fill="x", pady=(0, 8))
-        ttk.Label(card, text="Game Executable (eboot.bin):", style="Card.TLabel",
+        ttk.Label(card, text="Game Executable (eboot.bin or eboot.elf):", style="Card.TLabel",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 5))
 
         select_frame = ttk.Frame(card, style="Card.TFrame")
@@ -3022,8 +3033,8 @@ class BloodborneLauncher(tk.Tk):
         initial_path = self.settings.get("eboot", "")
         if not initial_path or not Path(initial_path).exists():
             initial_path = ""
-            if (DEFAULT_GAME / "eboot.bin").exists():
-                initial_path = str(DEFAULT_GAME / "eboot.bin")
+            if find_eboot(DEFAULT_GAME) is not None:
+                initial_path = str(find_eboot(DEFAULT_GAME))
             elif DEFAULT_GAME.exists():
                 initial_path = str(DEFAULT_GAME)
 
@@ -3033,7 +3044,7 @@ class BloodborneLauncher(tk.Tk):
         browse_btn = ttk.Button(select_frame, text="Browse...", style="Secondary.TButton",
                                 command=self.browse_eboot)
         browse_btn.pack(side="right")
-        eboot_tip = ("The game's eboot.bin, or the folder that contains it: Bloodborne (any retail region) with "
+        eboot_tip = ("The game's eboot.bin (or eboot.elf), or the folder that contains it: Bloodborne (any retail region) with "
                      "update 1.09 merged. The folder is passed to run.bat as BB_GAME_DIR.")
         Tooltip(eboot_entry, eboot_tip)
         Tooltip(browse_btn, "Pick the game's eboot.bin. " + eboot_tip.split(": ", 1)[1])
@@ -5936,8 +5947,8 @@ class BloodborneLauncher(tk.Tk):
         current = resolve_game_dir(self.eboot_var.get()) if self.eboot_var.get().strip() else None
         start = current or (DEFAULT_GAME if DEFAULT_GAME.exists() else Path("D:/"))
         chosen = filedialog.askopenfilename(
-            title="Select Bloodborne eboot.bin",
-            filetypes=[("PS4 Executable (*.bin)", "*.bin"), ("All files", "*.*")],
+            title="Select Bloodborne eboot.bin or eboot.elf",
+            filetypes=[("PS4 Executable (eboot.bin, eboot.elf)", "*.bin *.elf"), ("All files", "*.*")],
             initialdir=str(start),
         )
         if chosen:
@@ -5950,14 +5961,14 @@ class BloodborneLauncher(tk.Tk):
         details = []
 
         # 1. Game directory and eboot.bin
-        eboot_path = game_dir / "eboot.bin"
-        if not eboot_path.is_file():
-            return False, f"Missing eboot.bin in game directory:\n{game_dir}\n\nPlease ensure your dumped game folder contains eboot.bin.", details
+        eboot_path = find_eboot(game_dir)
+        if eboot_path is None:
+            return False, f"Missing eboot.bin in game directory:\n{game_dir}\n\nPlease ensure your dumped game folder contains eboot.bin (or eboot.elf).", details
         eboot_size = eboot_path.stat().st_size
         if eboot_size == 0:
-            return False, f"eboot.bin is empty (0 bytes) in:\n{eboot_path}", details
+            return False, f"{eboot_path.name} is empty (0 bytes) in:\n{eboot_path}", details
         eboot_mb = eboot_size / (1024 * 1024)
-        details.append(f"[OK] Game executable: eboot.bin ({eboot_mb:.1f} MiB)")
+        details.append(f"[OK] Game executable: {eboot_path.name} ({eboot_mb:.1f} MiB)")
 
         # 1b. Game Title & Version verification (any retail release, 1.09)
         try:
@@ -6062,7 +6073,7 @@ class BloodborneLauncher(tk.Tk):
 
         game_dir = resolve_game_dir(target)
         if game_dir is None:
-            messagebox.showerror("Invalid Path", f"Could not find eboot.bin in:\n{target}")
+            messagebox.showerror("Invalid Path", f"Could not find eboot.bin or eboot.elf in:\n{target}")
             return
 
         self.log("--- Running Pre-Launch Verification Check ---")
@@ -6188,7 +6199,7 @@ class BloodborneLauncher(tk.Tk):
 
         game_dir = resolve_game_dir(target)
         if game_dir is None:
-            messagebox.showerror("Invalid Path", f"Could not find eboot.bin in:\n{target}")
+            messagebox.showerror("Invalid Path", f"Could not find eboot.bin or eboot.elf in:\n{target}")
             return
 
         party_problems = [] if warper else self.party_problems()
