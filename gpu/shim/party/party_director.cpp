@@ -185,6 +185,13 @@ struct TravelStep {
         HostUse, GuestUse, // use goods ID as the item does (test aid): its behaviour's SpEffect on the own chr
         GuestFixture, // guest_fixture@S: the BB_PARTY_WORLDACT_TEST objects / pickups again (worldact::FixtureRearm)
         GuestStick, // walk by the left stick (the approach driver) to X:Z[:R[:STEPS]]: a real walk, no warp
+        // host_face=ENTITY|X:Z / guest_face=... (amelia2078): one short stick tap toward that chr (or point), as a
+        // player turns to an enemy before an attack; no warp. ENTITY becomes the target of the press / anim logs.
+        HostFace, GuestFace,
+        // host_fog=X:Z / guest_fog=X:Z (amelia2078): walk by the stick toward a boss fog at (X, Z) until its prompt
+        // ("... Fog") shows, press Cross, and hold the chain until the player is through it (past the fog point) with
+        // a boss bar up; up to 3 tries, then "NOT through"
+        HostFog, GuestFog,
         HostStick,  // the same on the host
         HostRoute, GuestRoute, // a stick walk along waypoints X:Z[:R]/...: a real path through the level (B1)
         GuestHome,  // the guest's own leave (LeaveGameSession: home, the link stays; its bell rings again)
@@ -233,7 +240,28 @@ struct TravelStep {
     // "?obj=ENTITY:ANIM" at the end (liftfix): not before map object ENTITY shows animation ANIM and
     // it stopped (a lift car arrived: step out right at its arrival, as a player does); S counts from then
     std::int32_t wait_obj = 0, wait_obj_anim = -1;
+    // "?host=KIND" / "?member=KIND" at the end (amelia2078): not before the host's (another member's) VITALS say
+    // KIND: bar (its boss health bar is up: its fight is on), nobar, spec (spectating), dead, alive; S counts from then
+    // (the guests go through a boss fog only once the host's fight started, as players do)
+    std::uint8_t peer_who = 0;   // 0 none, 1 the host, 2 any other member
+    std::uint8_t peer_kind = 0;  // PeerKind
 };
+
+enum PeerKind : std::uint8_t { kPeerBar = 1, kPeerNoBar, kPeerSpec, kPeerDead, kPeerAlive };
+
+/// "?host=KIND" / "?member=KIND": that member's VITALS (fresh, under 3 s) show KIND.
+bool PeerIs(std::uint8_t who, std::uint8_t kind) {
+    std::lock_guard<std::mutex> lk(g_where_mu);
+    for (const b2::Where& w : g_where) {
+        if (w.slot == g_where_local || w.age_ms > 3000 || (who == 1 && w.slot != party::kHostSlot)) continue;
+        const bool bar = (w.flags & party::kVitalsBossBar) != 0, spec = (w.flags & party::kVitalsSpectating) != 0;
+        const bool alive = (w.flags & party::kVitalsAlive) != 0, valid = (w.flags & party::kVitalsValid) != 0;
+        if ((kind == kPeerBar && bar) || (kind == kPeerNoBar && !bar) || (kind == kPeerSpec && spec) ||
+            (kind == kPeerDead && valid && !alive) || (kind == kPeerAlive && alive))
+            return true;
+    }
+    return false;
+}
 
 // host_route / guest_route (B1): a waypoint counts as reached within this many m; still blocked after
 // this many side-step slides, the walker hops (chr warp) onto the waypoint when it is this close.
@@ -430,6 +458,24 @@ struct Test {
     Clock::time_point release_at{};  // a press step's buttons are released then
     bool pressing = false;
     std::uint32_t chr_target = 0;  // the last host_chr / guest_chr entity (press logs its HP)
+    Clock::time_point face_release{};  // host_face / guest_face: the stick tap ends then
+    std::uint32_t face_entity = 0;     // ENTITY:R: the stick stays toward it until it is within face_r m (or the release)
+    float face_r = 0;
+    bool fog_on = false;   // host_fog / guest_fog running
+    int fog_phase = 0, fog_tries = 0;
+    float fog_x = 0, fog_z = 0, fog_dir[2] = {0, 1};
+    Clock::time_point fog_t{};
+    std::int64_t fog_from_ms = 0;
+    int hp_floor = 0;      // hp_floor=PCT (amelia2078): own HP back to max under PCT % (every drop logged)
+    std::int32_t hp_last = -1, hp_max_last = -1;
+    std::uint32_t goal_entity = 0;  // goal=ENTITY:PCT:SECS: "test: goal reached" once ENTITY was SECS s under PCT % HP
+    int goal_pct = 50;
+    double goal_secs = 40;
+    Clock::time_point goal_under{}, goal_check{};
+    bool goal_done = false;
+    bool goal_god = false;  // goal=...:god: this player turns invincible once ENTITY is under PCT % (its window measured)
+    Clock::time_point peer_since{};  // the next step's "?host=" / "?member=" condition met (its clock)
+    std::size_t peer_step = ~std::size_t(0);
     Clock::time_point press_at{};  // the last host_press / guest_press tap (BB_PARTY_TARGET_ANIM)
     bool step_waiting = false;  // the next step waits (dead chr / a re-join running), logged once
     Clock::time_point left_at{};  // the last time this player went out of the party (host_rejoin / guest_rejoin)
@@ -1379,6 +1425,10 @@ const char* TravelStepName(TravelStep::Kind k) {
     case TravelStep::HostSkipRemo: return "host_skipremo";
     case TravelStep::GuestSkipRemo: return "guest_skipremo";
     case TravelStep::GuestStick: return "guest_stick";
+    case TravelStep::HostFace: return "host_face";
+    case TravelStep::HostFog: return "host_fog";
+    case TravelStep::GuestFog: return "guest_fog";
+    case TravelStep::GuestFace: return "guest_face";
     case TravelStep::HostStick: return "host_stick";
     case TravelStep::HostRoute: return "host_route";
     case TravelStep::GuestRoute: return "guest_route";
@@ -1881,6 +1931,7 @@ void DieForTest() {
 /// write index at +0xC0; the same ring as the player's), with its HP and the time since the last
 /// press tap, so hit reactions (staggers) can be counted per hit. `=keep`: its HP is put back to
 /// max whenever it falls below half (many hits on one enemy: an A/B with host_poise in one run).
+std::uint64_t ChrOfEntity(std::uint32_t entity);
 void TargetAnimTick(Test& t, Clock::time_point now) {
     static const char* mode = std::getenv("BB_PARTY_TARGET_ANIM");
     if (!mode || mode[0] == '0' || !mode[0] || !t.chr_target) return;
@@ -1895,6 +1946,7 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
         for (const auto& e : balance::LoadedEnemies()) {
             if (e.entity == entity) chr = e.chr;
         }
+        if (!chr) chr = ChrOfEntity(entity);  // a boss the census leaves out (a guest's copy)
         refresh = now + std::chrono::seconds(1);
     }
     std::uint64_t cm = 0, ta = 0, dm = 0;
@@ -1931,6 +1983,13 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
             std::int32_t anim = 0;
             SafeGet(ta + 0x20 + std::uint64_t(k) * 0x10, &anim);
             const double since = t.press_at == Clock::time_point{} ? -1.0 : Seconds(t.press_at, now);
+            // the same id again within 1 s is not logged (a boss whose ring took animation 0 every frame flooded
+            // the log at 30 lines a second, amelia2078)
+            static std::int32_t last_anim = -1;
+            static Clock::time_point last_anim_at{};
+            if (anim == last_anim && Seconds(last_anim_at, now) < 1.0) continue;
+            last_anim = anim;
+            last_anim_at = now;
             Log("test: target anim: entity %u animation %d (HP %d/%d, %.2f s = %d frame(s) at 30 fps after the last press)",
                 entity, anim, hp, mhp, since, since < 0 ? -1 : int(since * 30.0 + 0.5));
         }
@@ -1943,10 +2002,162 @@ void TargetAnimTick(Test& t, Clock::time_point now) {
 }
 
 bool MoveAsWalk(Test& tt, const GameSnapshot& s, const TravelStep& step, Clock::time_point now);
+void WritePadFile(const char* tokens);
+bool ReadCameraForward(float* fx, float* fz);
+
+/// A chr by its map entity id (0x13C97A0: bosses and NPCs too, which the enemy census may leave out); 0 if none.
+std::uint64_t ChrOfEntity(std::uint32_t entity) {
+    if (!entity) return 0;
+    return reinterpret_cast<std::uint64_t(BB_COOP_SYSV*)(std::int32_t, std::uint64_t, std::uint64_t)>(Guest(0x13c97a0))(
+        std::int32_t(entity), 0, 0);
+}
+
+/// A chr's HP and max HP (its data module [+0x3B0] +0x20: +0xF8 / +0xFC); false if unreadable.
+bool ChrHpOf(std::uint64_t chr, std::int32_t* hp, std::int32_t* mhp) {
+    std::uint64_t cm = 0, dm = 0;
+    return chr && SafeGet(chr + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm && SafeGet(dm + 0xf8, hp) &&
+           SafeGet(dm + 0xfc, mhp);
+}
+
+/// hp_floor=PCT and goal=ENTITY:PCT:SECS (amelia2078 test aids), every tick of the chain:
+///  - hp_floor: every drop of the own HP is logged ("test: hp: own HP a -> b (-d)": a hit taken), and under PCT % of
+///    the max the HP goes back to the max, so a long boss fight measures her attacks without the test player dying.
+///  - goal: twice a second ENTITY's HP; once it is under PCT % "test: goal: ... under" and SECS s later (or at its
+///    death) "test: goal reached" (the smoke run ends on it: a phase-2 window measured, not a fixed press count).
+/// Starts the closed-loop stick walker (the guest_stick driver: it learns the stick's world direction from the
+/// player's own movement, the camera model alone walked the wrong way) toward (x, z), within r m, `steps` at most.
+void StartStickWalk(Test& t, float x, float z, float r, int steps, Clock::time_point now) {
+    t.route.clear();
+    t.approach = true;
+    t.approach_done = false;
+    t.ap_x = x;
+    t.ap_z = z;
+    t.ap_r = r;
+    t.ap_max = steps;
+    t.ap_button = 0;
+    t.ap_steps = 0;
+    t.ap_still = 0;
+    t.ap_slide = 0;
+    t.ap_slides_here = 0;
+    t.ap_phase = 0;
+    t.ap_at = now;
+    t.ap_ref[0] = t.ap_ref[1] = 1e9f;
+    t.ap_ref_at = now;
+    t.nav_init = t.nav_on = false;
+}
+
+/// Also steers / ends a host_face / guest_face stick tap (ENTITY:R: walks toward the chr until within R m).
+bool StickToward(const float at[3], double* stick_deg, float* dist);
+void TestAidTick(Test& t, Clock::time_point now) {
+    if (t.face_release != Clock::time_point{}) {
+        float at[3] = {};
+        if (t.face_entity && t.face_r > 0 && balance::ChrPosition(ChrOfEntity(t.face_entity), at)) {
+            t.ap_x = at[0];  // the walker's goal follows her
+            t.ap_z = at[2];
+            if (t.approach_done) {
+                Log("test: face: the walk to entity %u ended (within %.1f m or stopped)", t.face_entity, double(t.face_r));
+                t.face_release = now;
+            }
+        }
+        if (now >= t.face_release) {
+            if (t.face_entity && t.approach && !t.approach_done) t.approach_done = true;
+            t.face_release = {};
+            t.face_entity = 0;
+            WritePadFile("");
+        }
+    }
+    if (t.fog_on) {
+        float me[3] = {};
+        const std::uint64_t player = LocalPlayer();
+        const std::int64_t now_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+        if (player && balance::ChrPosition(player, me)) {
+            // how far past the fog point along the walk's direction
+            const float past = (me[0] - t.fog_x) * t.fog_dir[0] + (me[2] - t.fog_z) * t.fog_dir[1];
+            if (t.fog_phase == 0) {
+                const std::int64_t seen = BbGameMenu::TextSeenMs("Fog");
+                if (seen > t.fog_from_ms && now_ms - seen < 500) {
+                    t.approach_done = true;  // the walk stops at the prompt
+                    WritePadFile("");
+                    runtime_pad_director_press(0x4000);
+                    t.press_at = now;
+                    t.pressing = true;
+                    t.release_at = now + std::chrono::milliseconds(150);
+                    t.fog_phase = 1;
+                    t.fog_t = now;
+                    Log("test: fog: the prompt shows at (%.2f, %.2f), %.2f m before the fog point: Cross (try %d)",
+                        double(me[0]), double(me[2]), double(-past), t.fog_tries + 1);
+                } else if (Seconds(t.fog_t, now) > 25.0 || (t.approach_done && Seconds(t.fog_t, now) > 2.0)) {
+                    t.approach_done = true;
+                    WritePadFile("");
+                    t.fog_on = false;
+                    Log("test: fog: NOT through: no fog prompt (walk over or 25 s) (at (%.2f, %.2f), %.2f m before the fog point)",
+                        double(me[0]), double(me[2]), double(-past));
+                }
+            } else if (past > 0.3f && b2::BossBarLine(nullptr)) {
+                t.fog_on = false;
+                Log("test: fog: through the fog at (%.2f, %.2f), %.2f m past it, boss bar up", double(me[0]), double(me[2]),
+                    double(past));
+            } else if (Seconds(t.fog_t, now) > 5.0) {
+                if (++t.fog_tries >= 3) {
+                    t.fog_on = false;
+                    Log("test: fog: NOT through after 3 tries (at (%.2f, %.2f), %.2f m past the fog point, bar %d)",
+                        double(me[0]), double(me[2]), double(past), int(b2::BossBarLine(nullptr)));
+                } else {
+                    t.fog_phase = 0;
+                    t.fog_t = now;
+                    t.fog_from_ms = now_ms;
+                    StartStickWalk(t, t.fog_x + 3 * t.fog_dir[0], t.fog_z + 3 * t.fog_dir[1], 0.3f, 40, now);
+                    Log("test: fog: not through 5 s after the Cross (%.2f m past, bar %d): walking on (try %d)",
+                        double(past), int(b2::BossBarLine(nullptr)), t.fog_tries + 1);
+                }
+            }
+        }
+    }
+    if (t.hp_floor > 0) {
+        std::int32_t hp = -1, mhp = -1;
+        if (ChrHpOf(LocalPlayer(), &hp, &mhp) && mhp > 0) {
+            if (t.hp_last > 0 && hp >= 0 && hp < t.hp_last && mhp == t.hp_max_last) {  // a hit (not a max HP change)
+                Log("test: hp: own HP %d -> %d (-%d) of %d", t.hp_last, hp, t.hp_last - hp, mhp);
+            }
+            if (hp > 0 && hp * 100 < mhp * t.hp_floor) {
+                std::uint64_t cm = 0, dm = 0;
+                if (SafeGet(LocalPlayer() + 0x3b0, &cm) && cm && SafeGet(cm + 0x20, &dm) && dm) {
+                    SafeWrite(dm + 0xf8, &mhp, 4);
+                    Log("test: hp floor: own HP %d under %d %% of %d: back to %d", hp, t.hp_floor, mhp, mhp);
+                    hp = mhp;
+                }
+            }
+            t.hp_last = hp;
+            t.hp_max_last = mhp;
+        }
+    }
+    if (t.goal_entity && !t.goal_done && now >= t.goal_check) {
+        t.goal_check = now + std::chrono::milliseconds(500);
+        std::int32_t hp = -1, mhp = -1;
+        const std::uint64_t chr = ChrOfEntity(t.goal_entity);
+        const bool have = ChrHpOf(chr, &hp, &mhp) && mhp > 0;
+        if (have && hp > 0 && hp * 100 < mhp * t.goal_pct && t.goal_under == Clock::time_point{}) {
+            t.goal_under = now;
+            Log("test: goal: entity %u under %d %% (HP %d/%d): %.0f s to measure%s", t.goal_entity, t.goal_pct, hp, mhp,
+                t.goal_secs, t.goal_god ? "; this player invincible from now" : "");
+            if (t.goal_god) t.god = true;
+        }
+        if (have && hp <= 0 && t.goal_under != Clock::time_point{}) {
+            t.goal_done = true;
+            Log("test: goal reached: entity %u died (HP %d/%d)", t.goal_entity, hp, mhp);
+        } else if (t.goal_under != Clock::time_point{} && Seconds(t.goal_under, now) >= t.goal_secs) {
+            t.goal_done = true;
+            Log("test: goal reached: entity %u %.0f s under %d %% (HP %d/%d)", t.goal_entity, t.goal_secs, t.goal_pct, hp,
+                mhp);
+        }
+    }
+}
 
 void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::time_point now) {
     Test& t = st.test;
     TargetAnimTick(t, now);
+    TestAidTick(t, now);
     // BB_PARTY_TEST_GUARD=1 (test aid, smoke rt): invincible from each revive until the next die /
     // chr step (deathrules::TestGuard); set every tick (the revive and the stain warp reset it).
     static const bool guard_env = std::getenv("BB_PARTY_TEST_GUARD") && std::getenv("BB_PARTY_TEST_GUARD")[0] == '1';
@@ -2060,7 +2271,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
                 step.kind == TravelStep::GuestLamp || step.kind == TravelStep::GuestSkipRemo || step.kind == TravelStep::GuestOutage || step.kind == TravelStep::GuestKill ||
                 step.kind == TravelStep::GuestObj || step.kind == TravelStep::GuestChr ||
                 step.kind == TravelStep::GuestStick || step.kind == TravelStep::GuestUse ||
-                step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
+                step.kind == TravelStep::GuestFace || step.kind == TravelStep::GuestFog || step.kind == TravelStep::GuestRoute || step.kind == TravelStep::GuestFixture ||
                 step.kind == TravelStep::GuestHome || step.kind == TravelStep::GuestFlag ||
                 step.kind == TravelStep::GuestLastLamp || step.kind == TravelStep::GuestLeave ||
                 step.kind == TravelStep::GuestRejoin || step.kind == TravelStep::GuestGather) == (role == PartyRole::Guest) || step.kind == TravelStep::OwnRule;
@@ -2088,6 +2299,12 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!scene) {
             t.scene_end_at = now;
         }
+    }
+    // A host_face / guest_face walk toward its chr (ENTITY:R) holds the chain the same way.
+    if (t.ran && (((t.last_kind == TravelStep::HostFace || t.last_kind == TravelStep::GuestFace) && t.face_entity) ||
+                  ((t.last_kind == TravelStep::HostFog || t.last_kind == TravelStep::GuestFog) && t.fog_on))) {
+        t.step_at = now;
+        return;
     }
     // A guest_stick walk holds the chain: the next step's delay counts from the end of the walk.
     if (t.ran &&
@@ -2221,6 +2438,22 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
     } else if (!(t.next_step < t.steps.size() && t.steps[t.next_step].wait_near)) {
         t.near_since = {};
     }
+    // "?host=KIND" / "?member=KIND": the same, on another member's VITALS (its boss bar, spectate, death).
+    if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].peer_who &&
+        !(t.peer_since != Clock::time_point{} && t.peer_step == t.next_step)) {
+        const TravelStep& ps = t.steps[t.next_step];
+        if (!PeerIs(ps.peer_who, ps.peer_kind)) {
+            t.peer_since = {};
+            return;
+        }
+        t.peer_since = now;
+        t.peer_step = t.next_step;
+        static const char* const kinds[] = {"?", "bar", "nobar", "spec", "dead", "alive"};
+        Log("test: travel step %zu (%s): %s %s now; its delay counts from here", t.next_step + 1, TravelStepName(ps.kind),
+            ps.peer_who == 1 ? "the host" : "a member", kinds[ps.peer_kind < 6 ? ps.peer_kind : 0]);
+    } else if (!(t.next_step < t.steps.size() && t.steps[t.next_step].peer_who)) {
+        t.peer_since = {};
+    }
     // "?obj=ENTITY:ANIM": the same, on a map object's animation (stopped).
     if (!cond_skip && t.next_step < t.steps.size() && t.steps[t.next_step].wait_obj &&
         !(t.obj_since != Clock::time_point{} && t.obj_step == t.next_step)) {
@@ -2255,6 +2488,8 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
          next_kind == TravelStep::GuestObj || next_kind == TravelStep::HostChr || next_kind == TravelStep::GuestChr ||
          next_kind == TravelStep::HostUse || next_kind == TravelStep::GuestUse || next_kind == TravelStep::GuestFixture ||
          next_kind == TravelStep::GuestStick || next_kind == TravelStep::HostStick ||
+         next_kind == TravelStep::HostFace || next_kind == TravelStep::GuestFace ||
+         next_kind == TravelStep::HostFog || next_kind == TravelStep::GuestFog ||
          next_kind == TravelStep::HostRoute || next_kind == TravelStep::GuestRoute ||
          next_kind == TravelStep::HostMark || next_kind == TravelStep::GuestMark || !t.steps[t.next_step].map.empty())) {
         const bool out = !steady && t.steps[t.next_step].out_ok && t.ran && t.world;
@@ -2275,6 +2510,7 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (t.coop_since > from) from = t.coop_since;
         if (t.flag_since > from) from = t.flag_since;
         if (t.near_since > from) from = t.near_since;
+        if (t.peer_since > from) from = t.peer_since;
         if (t.obj_since > from) from = t.obj_since;
         if (t.steps[t.next_step].after_scene) {
             // "~": waits for a cutscene that ended after the previous step, then S s after its end.
@@ -2717,6 +2953,63 @@ void RunTravelSteps(State& st, const GameSnapshot& s, PartyRole role, Clock::tim
         if (!obj) t.chr_target = ok ? std::uint32_t(entity) : 0u;
         Log("test: %s %d (%.1f m, %.0f deg): %s", TravelStepName(step.kind), entity, double(dist), double(angle),
             ok ? what.c_str() : "FAILED: not loaded");
+    } else if (step.kind == TravelStep::HostFog || step.kind == TravelStep::GuestFog) {
+        float me[3] = {};
+        const std::uint64_t player = LocalPlayer();
+        if (std::sscanf(step.args.c_str(), "%f:%f", &t.fog_x, &t.fog_z) == 2 && player && balance::ChrPosition(player, me)) {
+            const float dx = t.fog_x - me[0], dz = t.fog_z - me[2], d = std::sqrt(dx * dx + dz * dz);
+            t.fog_dir[0] = d > 0.01f ? dx / d : 0.f;
+            t.fog_dir[1] = d > 0.01f ? dz / d : 1.f;
+            t.fog_on = true;
+            t.fog_phase = 0;
+            t.fog_tries = 0;
+            t.fog_t = now;
+            t.fog_from_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+            StartStickWalk(t, t.fog_x + 3 * t.fog_dir[0], t.fog_z + 3 * t.fog_dir[1], 0.3f, 40, now);
+            Log("test: %s: walk to the fog at (%.1f, %.1f) from (%.1f, %.1f), %.1f m, until its prompt shows",
+                TravelStepName(step.kind), double(t.fog_x), double(t.fog_z), double(me[0]), double(me[2]), double(d));
+        } else {
+            Log("test: %s: not X:Z (or no player)", TravelStepName(step.kind));
+        }
+    } else if (step.kind == TravelStep::HostFace || step.kind == TravelStep::GuestFace) {
+        // A short stick tap toward the chr ENTITY (or the point X:Z): the player turns to it (and takes a small
+        // step), as a player does before an attack; the stick is camera-relative (ReadCameraForward). No warp.
+        float at[3] = {}, me[3] = {};
+        unsigned entity = 0;
+        float px = 0, pz = 0;
+        bool have = false;
+        float near_r = 0;
+        if (std::strtoul(step.args.c_str(), nullptr, 10) < 1000000) {  // X:Z (an entity id has 7+ digits)
+            have = std::sscanf(step.args.c_str(), "%f:%f", &px, &pz) == 2;
+            at[0] = px, at[2] = pz;
+        } else if (std::sscanf(step.args.c_str(), "%u:%f", &entity, &near_r) >= 1 && entity) {
+            have = balance::ChrPosition(ChrOfEntity(entity), at);
+            t.chr_target = entity;
+        }
+        const std::uint64_t player = LocalPlayer();
+        double stick_deg = 0;
+        float dist = 0;
+        if (have && player && balance::ChrPosition(player, me) && StickToward(at, &stick_deg, &dist)) {
+            const double want = std::atan2(double(at[0] - me[0]), double(at[2] - me[2]));
+            const double stick = stick_deg * M_PI / 180;
+            // ENTITY:R and farther than R: the stick stays toward it (re-aimed every tick) until within R m, 5 s at most
+            const bool walk = near_r > 0 && dist > near_r;
+            t.face_entity = walk ? entity : 0;
+            t.face_r = near_r;
+            t.face_release = now + std::chrono::milliseconds(walk ? 6000 : 140);
+            if (walk) StartStickWalk(t, at[0], at[2], near_r, 10, now);
+            std::int32_t hp = -1, mhp = -1;
+            ChrHpOf(entity ? ChrOfEntity(entity) : 0, &hp, &mhp);
+            std::uint8_t lock = 0;
+            SafeGet(player + 0xf8, &lock);
+            Log("test: %s: %s at (%.1f, %.1f, %.1f), %.1f m: a stick tap toward it (world %.0f deg, stick %.0f deg); "
+                "target HP %d/%d, lock-on %d", TravelStepName(step.kind), step.args.c_str(), double(at[0]), double(at[1]),
+                double(at[2]), std::sqrt(double((at[0] - me[0]) * (at[0] - me[0]) + (at[2] - me[2]) * (at[2] - me[2]))),
+                want * 180 / M_PI, stick * 180 / M_PI, hp, mhp, int(lock));
+        } else {
+            Log("test: %s: %s not found (target %d, player %d)", TravelStepName(step.kind), step.args.c_str(), int(have),
+                int(player != 0));
+        }
     } else if (step.kind == TravelStep::HostRoute || step.kind == TravelStep::GuestRoute) {
         std::vector<std::array<float, 3>> route;
         if (ParseRouteArgs(step.args, &route)) {
@@ -2957,6 +3250,26 @@ bool ReadCameraForward(float* fx, float* fz) {
     if (!std::isfinite(row[0]) || !std::isfinite(row[2]) || std::fabs(row[1]) > 0.95f) return false;
     *fx = row[0];
     *fz = row[2];
+    return true;
+}
+
+/// Writes the left stick toward the world point `at` (camera-relative, as a player steers); its stick angle and the
+/// distance (x/z) out. False when the player or the camera is not readable.
+bool StickToward(const float at[3], double* stick_deg, float* dist) {
+    float me[3] = {}, fx = 0, fz = 1;
+    const std::uint64_t player = LocalPlayer();
+    if (!player || !balance::ChrPosition(player, me) || !ReadCameraForward(&fx, &fz)) return false;
+    const double want = std::atan2(double(at[0] - me[0]), double(at[2] - me[2]));
+    double stick = want - std::atan2(double(fx), double(fz));
+    while (stick > M_PI) stick -= 2 * M_PI;
+    while (stick < -M_PI) stick += 2 * M_PI;
+    const int lx = 128 + static_cast<int>(std::lround(127 * std::sin(stick)));
+    const int ly = 128 - static_cast<int>(std::lround(127 * std::cos(stick)));
+    char tok[48];
+    std::snprintf(tok, sizeof tok, "lx=%d ly=%d", std::clamp(lx, 0, 255), std::clamp(ly, 0, 255));
+    WritePadFile(tok);
+    *stick_deg = stick * 180 / M_PI;
+    *dist = float(std::sqrt(double((at[0] - me[0]) * (at[0] - me[0]) + (at[2] - me[2]) * (at[2] - me[2]))));
     return true;
 }
 
@@ -4193,7 +4506,10 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
                            // player off it (the altar prompt flashed for 1 s and the Cross found nothing).
                            const std::int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                                            Clock::now().time_since_epoch()).count();
-                           if (t.ap_taps == 0 && seen > 0 && now_ms - seen <= 6000) {
+                           // flaky2078: only a prompt that shows NOW counts (the text is looked up every frame it is up): the
+                           // final side steps of the walk (jitter) can lose a prompt that showed 1-6 s ago, and the
+                           // seq's first Cross then found nothing (cao STUCK at step 5).
+                           if (t.ap_taps == 0 && seen > 0 && now_ms - seen <= 600) {
                                Log("test: approach: '%s' already shows at the arrival (no tap)", t.ap_prompt.c_str());
                                t.ap_prompt_seen = true;
                                return false;
@@ -4450,11 +4766,18 @@ void PartyDirector::ConfigureFromEnv() {
             bool wait_near = false;
             float near_pos[3] = {0, 0, 0}, near_r = 0;
             std::int32_t wait_obj = 0, wait_obj_anim = -1;
+            std::uint8_t peer_who = 0, peer_kind = 0;
             if (item.rfind("host_", 0) == 0 || item.rfind("guest_", 0) == 0) {
                 if (const std::size_t q = item.find('?'); q != std::string::npos) {
                     unsigned long f = 0;
                     int v = 1;
-                    if (item.compare(q + 1, 4, "obj=") == 0) {
+                    if (item.compare(q + 1, 5, "host=") == 0 || item.compare(q + 1, 7, "member=") == 0) {
+                        peer_who = item.compare(q + 1, 5, "host=") == 0 ? 1 : 2;
+                        const std::string k = item.substr(item.find('=', q) + 1);
+                        peer_kind = k == "bar" ? kPeerBar : k == "nobar" ? kPeerNoBar : k == "spec" ? kPeerSpec
+                                  : k == "dead" ? kPeerDead : k == "alive" ? kPeerAlive : 0;
+                        if (!peer_kind) peer_who = 0;
+                    } else if (item.compare(q + 1, 4, "obj=") == 0) {
                         if (std::sscanf(item.c_str() + q + 5, "%d:%d", &wait_obj, &wait_obj_anim) != 2 || wait_obj <= 0) {
                             wait_obj = 0;
                         }
@@ -4475,6 +4798,18 @@ void PartyDirector::ConfigureFromEnv() {
                 st.test.start = true;
             } else if (item.rfind("award_lot=", 0) == 0) {
                 st.test.award_lot = std::atoi(item.c_str() + 10);
+            } else if (item.rfind("hp_floor=", 0) == 0) {
+                st.test.hp_floor = std::clamp(std::atoi(item.c_str() + 9), 0, 100);
+            } else if (item.rfind("goal=", 0) == 0) {
+                unsigned e = 0;
+                int pct = 50;
+                double secs = 40;
+                if (std::sscanf(item.c_str() + 5, "%u:%d:%lf", &e, &pct, &secs) >= 1 && e) {
+                    st.test.goal_god = item.find(":god") != std::string::npos;
+                    st.test.goal_entity = e;
+                    st.test.goal_pct = std::clamp(pct, 1, 100);
+                    st.test.goal_secs = std::max(0.0, secs);
+                }
             } else if (item.rfind("goods=", 0) == 0) {
                 int id = 0, n = 0;
                 if (std::sscanf(item.c_str() + 6, "%d:%d", &id, &n) == 2 && id > 0 && n >= 0 && n <= 99) {
@@ -4831,6 +5166,8 @@ void PartyDirector::ConfigureFromEnv() {
                 step.wait_obj = wait_obj;
                 step.wait_obj_anim = wait_obj_anim;
                 step.wait_value = wait_value;
+                step.peer_who = peer_who;
+                step.peer_kind = peer_kind;
                 st.test.steps.push_back(step);
             } else if (item.rfind("host_mark", 0) == 0 || item.rfind("guest_mark", 0) == 0 ||
                        item.rfind("host_stage=", 0) == 0 || item.rfind("host_walk=", 0) == 0 ||
@@ -4840,6 +5177,8 @@ void PartyDirector::ConfigureFromEnv() {
                        item.rfind("host_chr=", 0) == 0 || item.rfind("guest_chr=", 0) == 0 ||
                        item.rfind("host_skipremo", 0) == 0 || item.rfind("guest_skipremo", 0) == 0 ||
                        item.rfind("guest_stick=", 0) == 0 || item.rfind("host_use=", 0) == 0 ||
+                       item.rfind("host_face=", 0) == 0 || item.rfind("guest_face=", 0) == 0 ||
+                       item.rfind("host_fog=", 0) == 0 || item.rfind("guest_fog=", 0) == 0 ||
                        item.rfind("host_stick=", 0) == 0 || item.rfind("host_route=", 0) == 0 ||
                        item.rfind("guest_route=", 0) == 0 || item.rfind("guest_fixture", 0) == 0 ||
                        item.rfind("guest_use=", 0) == 0) {
@@ -4857,6 +5196,10 @@ void PartyDirector::ConfigureFromEnv() {
                             : item.rfind("host_skipremo", 0) == 0  ? TravelStep::HostSkipRemo
                             : item.rfind("guest_skipremo", 0) == 0 ? TravelStep::GuestSkipRemo
                             : item.rfind("guest_stick=", 0) == 0   ? TravelStep::GuestStick
+                            : item.rfind("host_face=", 0) == 0     ? TravelStep::HostFace
+                            : item.rfind("host_fog=", 0) == 0      ? TravelStep::HostFog
+                            : item.rfind("guest_fog=", 0) == 0     ? TravelStep::GuestFog
+                            : item.rfind("guest_face=", 0) == 0    ? TravelStep::GuestFace
                             : item.rfind("host_stick=", 0) == 0    ? TravelStep::HostStick
                             : item.rfind("host_route=", 0) == 0    ? TravelStep::HostRoute
                             : item.rfind("guest_route=", 0) == 0   ? TravelStep::GuestRoute
@@ -4895,6 +5238,8 @@ void PartyDirector::ConfigureFromEnv() {
                 step.wait_obj = wait_obj;
                 step.wait_obj_anim = wait_obj_anim;
                 step.wait_value = wait_value;
+                step.peer_who = peer_who;
+                step.peer_kind = peer_kind;
                 st.test.steps.push_back(step);
             } else if (!item.empty()) {
                 Log("BB_PARTY_DIRECTOR_TEST: '%s' is not log_state, start, grant_bells, drop_bells, award_lot=N, set_flag=N[:N], insight=N, "
@@ -5350,6 +5695,7 @@ void PartyDirector::Tick() {
                 w.has_pos = (vit[i].flags & party::kVitalsHasPos) != 0;
                 std::memcpy(w.pos, vit[i].pos, sizeof w.pos);
                 w.age_ms = vit[i].age_ms;
+                w.flags = vit[i].flags;
                 w.connected = false;
                 for (const party::RosterEntry& e : roster) {
                     if (e.slot == w.slot) {
