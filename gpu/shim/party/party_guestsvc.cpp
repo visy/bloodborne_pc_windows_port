@@ -87,6 +87,10 @@ bool GuestServiceTalkAllowed(std::uint32_t talk, const std::string& extra) {
     return false;
 }
 
+bool MemoryAltarUsable(bool flag_set, int tool_count) {
+    return flag_set || tool_count > 0;
+}
+
 bool GehrmanLastEvent(bool f1028, bool f1029, bool f1030) {
     return f1028 || (f1029 && !f1030);
 }
@@ -398,6 +402,13 @@ std::atomic<int> g_lamp_requests_made{0}; // guest: lamp warps turned into reque
 std::atomic<bool> g_gate{false};
 // Gehrman's ordinary talk for a guest (the tick: the gate is open and his last event is not up).
 std::atomic<bool> g_gehrman_talk{false};
+// The Memory Altar (t210699) for a guest: the Rune Workshop Tool is held (shared with the party when the host picks
+// it up). BB_PARTY_ALTAR_GATE=0 keeps the old always-open altar.
+std::atomic<bool> g_altar_ok{true};
+bool AltarGateOn() {
+    static const bool on = !(std::getenv("BB_PARTY_ALTAR_GATE") && std::getenv("BB_PARTY_ALTAR_GATE")[0] == '0');
+    return on;
+}
 std::atomic<std::uint32_t> g_overrides{0};
 // Talk environments seen asking while the gate was open (discovery log, tick side).
 constexpr int kEnvSlots = 32;
@@ -504,6 +515,9 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     const bool gehrman = talk == kGehrmanTalk && g_gehrman_talk.load(std::memory_order_relaxed);
     if (!headstone && !gehrman && !GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
+    }
+    if (talk == kMemoryAltarTalk && AltarGateOn() && !g_altar_ok.load(std::memory_order_relaxed)) {
+        return value;  // the party has not unlocked the altar yet: the vanilla client wait
     }
     g_overrides.fetch_add(1, std::memory_order_relaxed);
     return 0;
@@ -633,7 +647,8 @@ void LogEnv(std::uint64_t env) {
     std::uint32_t talk = 0;
     SafeGet(env + 0x10, &talk);
     Log("talk script t%u (environment %p) asks IsClientPlayer: %s; ids:%s; head:%s", talk, reinterpret_cast<void*>(env),
-        GuestServiceTalkAllowed(talk, g.extra) || (talk == kGehrmanTalk && g_gehrman_talk.load()) ? "allowed" : "kept vanilla",
+        (GuestServiceTalkAllowed(talk, g.extra) && !(talk == kMemoryAltarTalk && AltarGateOn() && !g_altar_ok.load())) ||
+                (talk == kGehrmanTalk && g_gehrman_talk.load()) ? "allowed" : "kept vanilla",
         found.empty() ? " none" : found.c_str(),
         hex.c_str());
 }
@@ -2956,6 +2971,17 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
         } else {
             Log("closed (role %s, map %s%s)", SessionRoleName(s.session_role), MapName(s.map_id).c_str(),
                 s.loading ? ", loading" : "");
+        }
+    }
+    {
+        bool flag = false;
+        const bool known = progress::ReadFlagOwnSave(kAltarUnlockFlag, &flag);
+        const int tool = GoodsCount(kRuneWorkshopTool);
+        const bool ok = !open || !AltarGateOn() || MemoryAltarUsable(known && flag, tool);
+        if (ok != g_altar_ok.exchange(ok, std::memory_order_relaxed) && open) {
+            Log("Memory Altar (t210699): %s (Rune Workshop Tool unlock flag %u %s, tool held %d)",
+                ok ? "a guest may use it" : "kept vanilla for a guest: the party has not unlocked it",
+                kAltarUnlockFlag, known ? (flag ? "set" : "clear") : "unreadable", tool);
         }
     }
     {

@@ -234,6 +234,16 @@ next IsClientPlayer answer is 1 again and machine 1 goes back to the client wait
 stay never_sync and out of world actions. t210306 (the boss Gehrman's death lines, no menu) stays
 vanilla. Log: `Gehrman (t210305): a guest may talk to him (his ordinary lines) (flags ...)`.
 
+0.7.8 (CL-f572a3): his ordinary-talk flags 72100120-72100129 and 72100133-72100135 are shared progress. They sat inside
+the "talk state" shape (7AAB01xx, `TalkStateFlag`) that the host-world mirror leaves out, so a guest always met his first
+lines until it had talked to him itself. `GehrmanLineFlag` now carves them out of the mirror mask (host to guest by the
+mirror, guest to host by `LocalChanges`, which uses the same mask); 72100130 / 72100131 stay never_sync. Kill switch
+`BB_PARTY_GEHRMAN_SYNC=0`. Smoke `gag`.
+
+Memory Altar (CL-ee41ff): t210699 is guest-usable only while the guest's own save has the Rune Workshop Tool unlocked
+(flag 52200360) or holds goods 4104 (the host's pickup is a shared key treasure, so it reaches the party). The decision is
+logged as `Memory Altar (t210699): ...`; `BB_PARTY_ALTAR_GATE=0` = always open.
+
 ## 3. Lamps and headstones (implemented, opt-in `BB_PARTY_GUEST_LAMPS=1` until run live)
 
 Bloodborne's world lamps only go to the Hunter's Dream (resting = the load into the Dream refills
