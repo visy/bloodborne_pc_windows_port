@@ -1890,6 +1890,23 @@ void GuestNoticeTick(const GameSnapshot& g, double now) {
     Log("guest: story notice %u opened (try %d)", n.message, opens);
 }
 
+void NoteHostGaolScene() {
+    if (!g_story_on.load() || Role() != PartyRole::Host) {
+        return;
+    }
+    // A later Snatcher grab (9423 on, common 9422 ended): the host does not replay the waking scene, but a
+    // guest that never saw it (its own seen set / 9423) plays it once as its replay in the cell.
+    StoryIntent s;
+    s.kind = StoryKind::Cutscene;
+    s.id = 28000010;
+    s.mode = 0;
+    s.instr = 1;
+    s.event_id = 9422;
+    s.flags = StoryFlagsForRemo(s.id);
+    s.seq = NextSeq();
+    PushHost(s);
+}
+
 bool PopHostStory(StoryIntent* out) {
     std::lock_guard<std::mutex> lk(g_host_mu);
     return g_host_queue.Pop(out);

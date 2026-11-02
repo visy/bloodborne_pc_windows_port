@@ -12216,6 +12216,7 @@ void NoteOwnAppearanceChanged() {
 /// on the host's arrival and for every guest (party_story).
 void KidnapHostTick(const GameSnapshot& s, double now) {
     static bool active = false;
+    static bool direct = false;  // 9423 on: no 9420, the respawn record is written directly
     static double started = 0;
     static int slot = -1;
     if (Role() != RoleHost) {
@@ -12231,7 +12232,25 @@ void KidnapHostTick(const GameSnapshot& s, double now) {
     if (active) {
         if (s.loading || !s.world_up) {
             active = false;  // a load came first (the host's own death, a travel)
+            direct = false;
             Log("kidnap: a load came before the party's travel to the Gaol; dropped");
+            return;
+        }
+        if (direct) {
+            // Common 9421 ended with 9423: the respawn record (GSM +0x1528, what 2003[23] writes) is set here.
+            active = false;
+            direct = false;
+            const u64 gsm = Slot(kSlotGsm);
+            const u32 gaol = kidnap::kGaolReturnPoint;
+            if (!gsm || !SafeWrite(gsm + 0x1528, &gaol, 4)) {
+                Log("kidnap: the respawn record could not be written; no travel");
+                return;
+            }
+            Log("kidnap: a later grab (9423 on): the respawn record is the Gaol (%u) by direct write; the party's travel "
+                "there (slot %d follows once its death is taken)", gaol, slot);
+            party::status::SetLastEvent("A Snatcher took a guest: the party goes to the Hypogean Gaol");
+            RunLampWarpPartyNotRest(kidnap::kGaolReturnPoint, "the Snatcher's kidnap of a guest (a later grab)");
+            NoteHostGaolScene();
             return;
         }
         const u32 record = Field<u32>(Slot(kSlotGsm), 0x1528);
@@ -12266,12 +12285,21 @@ void KidnapHostTick(const GameSnapshot& s, double now) {
     v.members = MemberTaskCount();
     v.busy = g_host_down.load() || (s.player && ChrHp(s.player) <= 0) || BossFightActive();
     v.woke = woke;
+    static const bool gaol_always = !EnvOff("BB_PARTY_GAOL_ALWAYS");
+    v.gaol_always = gaol_always;
     v.host_map = s.map_id;
     v.guest_map = r.map;
     v.age_s = now - r.at;
     const kidnap::HostPlan plan = kidnap::PlanHost(v);
     Log("kidnap: slot %d was grabbed by a Snatcher (event %d, %s; host in %s, 9423 %d): %s", r.slot, r.event_id,
         MapName(r.map).c_str(), MapName(s.map_id).c_str(), woke ? 1 : 0, kidnap::HostPlanName(plan));
+    if (plan == kidnap::HostPlan::Direct) {
+        active = true;
+        direct = true;
+        started = now;
+        slot = r.slot;
+        return;
+    }
     if (plan != kidnap::HostPlan::Start) {
         return;
     }
@@ -12280,6 +12308,7 @@ void KidnapHostTick(const GameSnapshot& s, double now) {
         return;
     }
     active = true;
+    direct = false;
     started = now;
     slot = r.slot;
 }
