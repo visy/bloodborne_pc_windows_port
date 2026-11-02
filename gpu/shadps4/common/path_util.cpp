@@ -212,6 +212,10 @@ std::optional<fs::path> FindGameByID(const fs::path& dir, const std::string& gam
             if (auto eboot_path = root / "eboot.bin"; fs::exists(eboot_path)) {
                 return eboot_path;
             }
+            // bbport: a raw ELF dump (eboot.elf) counts too; eboot.bin wins when both exist.
+            if (auto eboot_path = root / "eboot.elf"; fs::exists(eboot_path)) {
+                return eboot_path;
+            }
             return std::nullopt;
         }
         // bbport: packed (ZArchive) game images are not supported by the port.
