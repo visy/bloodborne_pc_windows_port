@@ -374,12 +374,17 @@ async def _reply_text(ctx, message, bug, infos):
                     print(f"diagnose failed: {e}", flush=True)
         keys = verdict_keys(diag)
     kind = clinic_logic.classify(message.content or "", keys) if infos else "bug"
-    if infos and clinic_logic.classify_unsure(message.content or "", keys):
+    unsure = bool(infos) and clinic_logic.classify_unsure(message.content or "", keys)
+    if unsure:
         clinic.add_unsure(bug, ["network-or-bug"])
     if kind == "network":
         clinic.update_bug(bug, tags={"triage": "network"})
         clinic.add_note(bug, "iosefka", "triage", "network question: advice given, logs archived")
         return voice.network_help(diag)
+    tri = clinic_logic.bug_kind(message.content or "")
+    if tri != "bug" and not unsure:  # a short acknowledgement, no network advice; "bug" (cannot tell) stays triage=pending
+        clinic.update_bug(bug, tags={"triage": tri})
+        clinic.add_note(bug, "iosefka", "triage", f"{tri} report: acknowledged, no network advice")
     bug_infos = cd.log_infos(clinic, [{"kind": "log", "sha256": f["sha256"], "filename": f["filename"]}
                                       for f in logs], ctx.log_info_fn, ctx.tmp_root) if ctx.log_info_fn else infos
     what = clinic_logic.holds([a for m in clinic.messages_for_bug(bug) for a in m["attachments"]])
