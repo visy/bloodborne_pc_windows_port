@@ -1081,7 +1081,11 @@ def lfw_chains(spec, slow=False):
                     s.append("%s_route=%s@1%%%s" % (role, tail, m))
             if spec.get("door"):
                 dx, dz = spec["door"][end]
-                s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
+                # liftpair078: not for the first rider of a pair: the side-spot warp below is the way in, and this stick walk's last-resort
+                # "roll" (7.7 m/s) carried the host into the trigger cylinder before the guest was there: the ride started alone and
+                # the side warp 8 s later put the host on the open top spot (lfwc c5 try 1, ride 4: fall 48 m)
+                if not (riders == "both" and role == "host"):
+                    s.append("%s_stick=%.2f:%.2f:0.5:20@0.2%%%s" % (role, dx, dz, m))
                 if spec.get("dismiss"):
                     s.append("%s_press=0x4000@0.5%%%s" % (role, m))  # OK on an item box before the last 2 m (flaky078)
             if riders == "both" and role == "host":
@@ -1093,12 +1097,12 @@ def lfw_chains(spec, slow=False):
                 # No stick step can be that exact, so the first rider's last 2 m (door -> side spot) is the game's own in-world warp
                 # to the verified spot beside the trigger (as the exit warps at the arrival); the walk-in route up to the door is
                 # still walked, and the second rider still walks into the trigger.
-                s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s" % (role, sx, sy, sz, m))
-                if slow:
-                    # flaky3078: the slow-build car is not there yet: the floor guard holds the warped host on its last standing spot
-                    # (1.2 m from the side spot, outside the guest's "near" 0.9 m): the guest never started, the host waited 240 s
-                    # (lfwcbs). Once the build delay (16 s) is over the same warp again puts it beside the trigger.
-                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@%d%%%s" % (role, sx, sy, sz, 20, m))
+                # liftpair078: the slow-build car is not there yet when the host arrives: the floor guard holds a warped host on its last
+                # standing spot (1.2 m from the side spot, outside the guest's "near" 0.9 m: the guest never started, lfwcbs). A second warp
+                # 20 s after the first (flaky3078) fixed that but fired again when the guest was quick (ride 2: the guest arrives in
+                # 14 s from the top landing): the ride had started and the host was put on the open top spot, 214 s: fall 48 m. One warp
+                # only, after the build delay (16 s, counted from the host being within 22 m of the car: it has walked there before).
+                s.append("%s_move=%.2f:%.2f:%.2f:0:native@%s%%%s" % (role, sx, sy, sz, "18" if slow else "0.5", m))
             else:
                 tx, ty, tz = spec["trig"][end]
                 cond = "?near=%s:0.9" % _p(*spec["side"][end]) if second else ""
@@ -1129,7 +1133,11 @@ def lfw_chains(spec, slow=False):
                     for _ in range(2):
                         s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s" % (role, tx, tz, "0.45", m))
                 else:
-                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@0.5%%%s%s" % (role, tx, ty, tz, m, cond))
+                    # liftpair078: the second rider of a slow-build pair steps in 8 s later: its own car is built 16 s after IT is within 22 m
+                    # (the host's side warp starts its walk, 40 s of walking, 13 s of them near the car): a warp into the trigger before the
+                    # build starts the ride without the rider (the guest's exit step then fired at once off the unbuilt car's stale
+                    # end animation: lfwcbs ride 1, the guest stayed at the bottom)
+                    s.append("%s_move=%.2f:%.2f:%.2f:0:native@%s%%%s%s" % (role, tx, ty, tz, "8" if (slow and second) else "0.5", m, cond))
             # out at the arrival: walk off the car once the car shows its arrival animation
             ox, oy, oz = spec["out_g" if second else "out_h"][other]
             if os.environ.get("BB_LFW_EXIT") == "walk":
@@ -1324,7 +1332,9 @@ def lw_copy_rows(v, L, tag, t0):
         copies = [(t + off[i],) + tuple(float(x) for x in REMOTE_RX.search(l).groups())
                   for t, l in L.all(i, REMOTE_RX.pattern, t0)]  # from 5 s before the first ride: the join and the first warps (two maps, 100+ m) are not rides
         worst, wt, n = copy_freeze(real, copies)
-        v.step("%s the %s's copy on the other screen does not freeze while it moves" % (tag, who), n >= 10 and worst == 0.0,
+        # liftpair078: >= 6 windows (a 2-ride phase has 3-4 per ride: the copy is logged once a second while the player moves, and the
+        # walks between the rides are short in lfwcbs / lfwcs; 10 failed lfwcs try 2 / lfwcbs with 8 windows and no freeze)
+        v.step("%s the %s's copy on the other screen does not freeze while it moves" % (tag, who), n >= 6 and worst == 0.0,
                "%d windows of 6 s, worst: copy still while the player travelled %.1f m (at wall +%.0f s)" % (n, worst, wt % 3600))
 
 
