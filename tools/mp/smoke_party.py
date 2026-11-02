@@ -1056,7 +1056,11 @@ def lfw_chains(spec, slow=False):
                 _tx, _ty, _tz = spec["trig"][end]
                 _head, _bar, _last = route.rpartition("|")
                 _wp = [w for w in _last.split("/") if w]
-                while len(_wp) > (3 if slow and not second else 2) and math.dist((float(_wp[-1].split(":")[0]), float(_wp[-1].split(":")[2])), (_tx, _tz)) <= 0.8:
+                # liftpair078: the Cathedral slow phases stop the long walk 2.6 m short: the walker ends a route within 2 m of its last waypoint and
+                # the run's momentum carries the chr another 1-2 m (lfwcs r2 ride 2: the host slid through the cylinder at 4 m/s, the
+                # ride started alone, and the side warp 8 s later put it on the open top spot: fall 48 m); the short tail walk goes the rest
+                _trim = 2.6 if (slow and spec["map"] == "m24_0") else 0.8
+                while len(_wp) > (3 if slow and not second else 2) and math.dist((float(_wp[-1].split(":")[0]), float(_wp[-1].split(":")[2])), (_tx, _tz)) <= _trim:
                     _wp.pop()
                 route = _head + _bar + "/".join(_wp)
             legs = route.split("|")  # a leg ends at a ladder's foot: Cross climbs it, the next leg starts at the top
@@ -1131,7 +1135,10 @@ def lfw_chains(spec, slow=False):
                     # the car). The walker's way in waits at the guard's hold until the car is there.
                     s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s%s" % (role, tx, tz, "0.45", m, cond))
                     for _ in range(2):
-                        s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s" % (role, tx, tz, "0.45", m))
+                        # liftpair078: the two repeats (a walk the unbuilt-car guard held) accept 0.9 m: after a walk that arrived (<= 0.45 m)
+                        # the ride is running and the chr has slid on a little; a repeat that walked on a rising car (the navmesh ends under it:
+                        # the old walker) took the rider off the platform (lfwcs c5 ride 1: guest to y -70)
+                        s.append("%s_stick=%.2f:%.2f:%s:30@0.2%%%s" % (role, tx, tz, "0.9", m))
                 else:
                     # liftpair078: the second rider of a slow-build pair steps in 8 s later: its own car is built 16 s after IT is within 22 m
                     # (the host's side warp starts its walk, 40 s of walking, 13 s of them near the car): a warp into the trigger before the
