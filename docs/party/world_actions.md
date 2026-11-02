@@ -773,6 +773,16 @@ to its end. `lfw` and `lfwc` are in the default smoke list; `lfws` / `lfwcs` run
 * **Still open (harness): `lfwcbs` is NOT green 3/3.** The top pocket's walk-in with two riders stalls (see the table); the next
   step is a host far start that is certain to land on the pocket floor (walk it live and record it, no navmesh points), and a
   rerun of `lfws` / `lfwcs` with the 0.45 m / waypoint-tail changes (not rerun: the 14-launch cap).
+* **liftpair078 (0.7.8): `lfwcbs` / `lfwcs` / `lfwc` failures were the harness, not the lift (no game change).** Evidence: the host's
+  "fall" in `lfwcbs` ride 2 was a second, 20 s-late side warp (flaky3078's repeat for the unbuilt-car guard) that ran 6 s into the ride
+  and put the carried host on the open top spot; the same stale-warp shape came from a stray early ride (the nav walker's door step or a
+  route's run-on carried a rider through the trigger cylinder 3-8 s before the planned warps, `lfwcs` ride 2, `lfwc` ride 1 / 4). Ride 1
+  "guest not carried" in `lfwcbs`: the guest warped into the trigger 3 s before its own car was built (the 16 s build delay counts from
+  the guest being within 22 m, not from the host), so its exit step fired at once off the unbuilt car's stale end animation. The
+  Cathedral phases now: one host side warp after the build (18 s), the trigger entered by a warp after the build (second rider 8 s,
+  lone rider 18 s), no door walk, long routes stop 2.6 m short of the trigger. The "copy does not freeze" row needs 3 windows (it
+  failed on short lone-rider phases with no freeze). A walk-in by stick onto a RISING car is itself unreliable (the navmesh ends under
+  the car: the old walker wanders off the platform), so no step walks while a ride runs.
 * NOT proven: the Central Yharnam BOTTOM end and Cathedral Ward's bottom end from over 150 m (see above: no walkable start);
   a far walk with the slow aids (far + unbuilt); a true 120+ steps/s; the car's build on a really slow disk (the aid delays the
   request, not the IO); a player report retest.
