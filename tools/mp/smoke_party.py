@@ -6721,8 +6721,11 @@ def check_sgb3(v, L):
     need(v, L, "sgb3 fixture: the host's row 12101009 set by the game's SetEventFlag", 0, r"test: set_flag 12101009: 0 -> 1")
     if SGB3_OFF:
         none_of(v, L, "sgb3 CONTROL (guard off): no row closed", r"Party items: badge row \d+ was open")
-        bad = L.find(0, r"test: flags.*12101008=0", 20.0)
-        v.step("sgb3 CONTROL: the host's 12101008 stays open", not bad, bad[1][:160] if bad else "stays 1")
+        setat = L.find(0, r"test: set in the own save .*12101008:\d->1")
+        up = L.find(0, r"test: flags.*12101008=1", setat[0] if setat else 0.0)
+        bad = L.find(0, r"test: flags.*12101008=0", up[0] if up else 1e9)
+        v.step("sgb3 CONTROL: the host's 12101008 is open and stays open", up and not bad,
+               bad[1][:160] if bad else ("stays 1" if up else "never read 1"))
         check_common(v, L, "sgb3")
         return
     own = need(v, L, "sgb3 host (own world): 12101008 closed, badge 4118 named, attribution given", 0,
