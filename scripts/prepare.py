@@ -15,6 +15,7 @@ import struct
 import sys
 
 import game_check
+from eboot_file import find_eboot
 
 
 def span(data, offset, size):
@@ -157,15 +158,19 @@ class GameCheckError(Exception):
 
 
 def prepare(game, out):
-    eboot = game / 'eboot.bin'
-    if not eboot.is_file():
-        raise FileNotFoundError(f"eboot.bin not found at {eboot}: pick the game folder that contains eboot.bin")
+    eboot = find_eboot(game)
+    if eboot is None:
+        raise FileNotFoundError(f"eboot.bin (or eboot.elf) not found in {game}: pick the game folder that contains eboot.bin")
+    if (game / 'eboot.bin').is_file() and (game / 'eboot.elf').is_file():
+        print(f"prepare: {game} has eboot.bin and eboot.elf; using eboot.bin", flush=True)
+    elif eboot.name == 'eboot.elf':
+        print(f"prepare: using {eboot} (no eboot.bin in the game folder)", flush=True)
     source = eboot.read_bytes()
     if not source:
-        raise ValueError(f"eboot.bin at {eboot} is empty (0 bytes): re-copy or re-extract the game dump")
+        raise ValueError(f"{eboot.name} at {eboot} is empty (0 bytes): re-copy or re-extract the game dump")
     if len(source) < 32:
-        raise ValueError(f"eboot.bin at {eboot} is truncated ({len(source)} bytes): re-copy or re-extract the game dump")
-    elf, header, ph, segments, missing = parse_self(source)
+        raise ValueError(f"{eboot.name} at {eboot} is truncated ({len(source)} bytes): re-copy or re-extract the game dump")
+    elf, header, ph, segments, missing = parse_self(source, eboot.name)
     loads = [p for p in ph if p['type'] in (1, 0x61000010)]
     def mapped(addr, size=8):
         return any(p['vaddr'] <= addr and addr + size <= p['vaddr'] + p['memsz'] for p in loads)

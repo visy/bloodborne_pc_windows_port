@@ -91,7 +91,7 @@ class EbootValidationTests(unittest.TestCase):
             prepare(game, Path(tmp) / 'out')
 
     def test_missing_eboot(self):
-        with self.assertRaisesRegex(FileNotFoundError, 'eboot.bin not found'):
+        with self.assertRaisesRegex(FileNotFoundError, r'eboot\.bin \(or eboot\.elf\) not found'):
             self.run_prepare(None)
 
     def test_empty_eboot(self):
