@@ -10,7 +10,9 @@ from pathlib import Path
 import struct
 import sys
 from prepare import parse_self, span, unpack
-from cpu_compat import atomic_output, patch_libc
+from cpu_compat import atomic_output, patch_libc, COUNT_SPAN_MODULE_SHA256
+from eboot_file import eboot_path, reviewed_source_sha256
+import game_check
 
 
 def encode_id(value):
@@ -70,11 +72,13 @@ def module(path):
             relocations.append((target, info & 0xffffffff, info >> 32, addend))
     return dict(elf=elf, header=header, ph=ph, tags=tags, symbols=symbols,
                 relocs=relocations, identity=identity, libraries=libraries, modules=modules,
-                sha256=hashlib.sha256(source).hexdigest(), missing=missing)
+                sha256=hashlib.sha256(source).hexdigest(), missing=missing,
+                raw_elf=source[:4] == bytes((0x7f, 0x45, 0x4c, 0x46)))
 
 
 def link(game, out):
-    main = module(game/'eboot.bin')
+    main = module(eboot_path(game))
+    main['sha256'] = reviewed_source_sha256(main, game_check.SUPPORTED_IMAGE, COUNT_SPAN_MODULE_SHA256)
     libc = module(game/'sce_module/libc.prx')
     cpu_compat = patch_libc(libc)
     raw = (out/'boot.bin').read_bytes()
