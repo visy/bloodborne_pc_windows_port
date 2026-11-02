@@ -895,6 +895,52 @@ of acceleration against the chr's ground check is the suspect). The smoke accept
 on-car samples on both sides and prints it as `ride bit flicker (1 sample)`; several off samples, or one at either end of the
 ride, or a rider ending off or below the car still fail. If the flicker rate rises, or ever shows two samples, look at the car start.
 
+### 10.1.4 A guest falls through a descending car (liftfall078, 2026-11-02, player report NW-e118458; smoke group `lift_down`)
+
+**The report.** A guest (Nightwatch build of 0.7.7, FPS preset 120 with DLSS frame generation: the game itself ran at 45-52 steps a
+second, the host at 60) rode the Upper Cathedral Ward lift 2421250 (top y 49.6, bottom 4.4) down seven times out of seven and the
+Yahar'gul lift 2801400 (top -63.4, bottom -98) down two times out of four: 8-20 m into the descent the ride bit went off, the chr was 1.0-1.3 m
+under the car, the rider guard put it back three times and gave up, the chr fell 45-56 m and died. Ascents were fine, the host's own rides
+too. Read from the log:
+
+* `lift ride: riding an object ... nearest car ... not playing` is NOT the cause. That line (the Nightwatch build's diagnostic) is written
+  at the boarding, before the ride starts: the car plays nothing yet. It never says the car does not play during the ride (the guard's
+  put-backs only run while a car plays within reach).
+* **Three put-backs in three frames.** The three `dropped through` lines carry the same chr height (40.0, 40.0, 39.8) and the guessed car
+  heights 41.3, 41.1, 40.8: the game's in-world warp (`0x154B110`) had not reached the chr's physics yet, so the guard saw the same chr
+  below its guess on the next two frames and spent all three put-backs at once. The guard then stopped (`kRiderMaxPuts`).
+* **A put-back onto a car that keeps going down does not hold by itself.** The warp keeps the chr's fall state, the car is going 7-8 m/s
+  and the chr has to land on it again; one put-back right at the guessed floor, with an estimate that runs behind a speeding-up car, lands the
+  chr in or under the floor. Under the car the chr falls through the shaft beside the car and past the bottom landing (-20.9, the pit).
+* `riding a moving object (a lift's car) ..., 10.1 m/s down: no fall` was logged while the chr was in free fall: `LocalRiding` called a
+  chr without the ride bit "on a moving car" whenever any car played within 4 m, and only refused it at a drop of 16 m/s.
+* In a local run the car's "measured" height (`LiftCarHeight`, the hit object's `+0xac`) read 0.0 for this car in the first seconds (and
+  the placement 49.4 later): a reading far from the rider made `RiderTickMeasured` return idle for the whole ride, i.e. no guard at all.
+
+**Not reproduced without help.** Rides of 2421250 from the top in the party smoke (phase `lu`: the guest walked from the landing into
+the car's trigger, the host on the car beside it) at 30, 60, 90, 120, 60/30, 60/45 and one frame-generation rate: the ride bit stayed on all
+the way, no drop. What makes the game drop the rider at a real 48 steps a second under the 120 preset is still unproven (the doc's 10.1.1 suspects the frame-rate corrections;
+the carry code has no dt term, 10.1.2). So this fix is the net, not the root: it keeps a rider that the game drops alive and on the car.
+
+**The fix (`BB_PARTY_LIFT_RESCUE=0` restores the 0.7.7 guard):**
+
+1. *Spaced rescue put-backs* (`liftrules::RiderTick(.., rescue=true)`): at most one put-back per `kRiderPutGap` (0.6 s) so the warp is applied and
+   the chr has a moment on the floor before the game sets its ride bit; the put-back lands the chr `kRiderDropIn` (0.8 m) OVER the guessed
+   floor (the estimate runs behind a car that is still speeding up, a chr placed over the floor lands on it, one placed in it falls through);
+   `kRiderRescuePuts` (4) put-backs a rescue; the rescue ends and its counters restart once the game carries the chr again
+   (`kRiderPinBitOn` = 3 samples with the bit).
+2. *No silent give-up* (`RiderStep::giveup`): after the last put-back, a chr that is still not carried is put on solid ground
+   (`b2::LocalSafeLanding`): the game's last safe ground spot when it is within 25 m, else the spot the chr last stood still on before the ride
+   (the landing; `LiftRiderTick` keeps it). The old guard stopped and left the chr to the fall recovery (6 s, 40 m, 16 m/s: a lift shaft kills sooner).
+3. *A height that is not near the rider is no height*: a ride whose first sample is more than 3 m from the measured car height goes on as the speed
+   guess (`RiderTrack::no_height`) instead of an idle guard.
+4. *Falling is not riding* (`deathrules::kNoBitRideRate`, 5 m/s): a chr without the ride bit that dropped 5 m/s or more between two scans is falling
+   beside the car, not riding it (`LocalRiding` in party_b2.cpp), so the fall accounting and the recovery nets see it.
+
+**Proof tools.** Test aid `BB_TEST_LIFT_DROP=S` (once per car ride, S s into it the local chr is set 1.6 m under the car and its ride bit reads
+off for 0.5 s: the real fall-through of the report, the guard shows live). Smoke phases `lu` (2421250, group `lift_down`), `ly` (2801400); `LD_BOTH=1` puts the host on
+the car beside the guest, `LD_WARP=1` warps the guest into the trigger instead of walking, `FW_ENV="BB_TEST_LIFT_DROP=2.0"` arms the aid.
+
 ## 2026-10-25 (simonwipe): a guest's boss phase event no longer starts the host's scene
 
 Player report (Nightwatch 0.7.4 / 0.7.5): a party wipe at Ludwig (Hunter's Nightmare), then the Holy Blade scene
