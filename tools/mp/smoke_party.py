@@ -3178,7 +3178,7 @@ def check_vm(v, L, d: Path):
              r"host-owned options differ; kept the host's for the launcher's next join \(party_adopt\.txt\): .*headstones=1")
         need(v, L, "vm refuse: the explanation is in the party status", 1, r"restart to join - the launcher uses the host's for your next join")
         none_of(v, L, "vm refuse: no internal hook names in the refusal", r"party patches differ", insts=(0, 1))
-        none_of(v, L, "vm refuse: the host's options prefix is not shown", r"\[host options:", insts=(0, 1))
+        none_of(v, L, "vm refuse: the host's options prefix is not shown to the guest", r"\[host options:", insts=(1,))
         none_of(v, L, "vm refuse: the guest did not join", r"join: arrived \d+\.\d m from the host", insts=(1,))
     else:
         need(v, L, "vm follow: the guest with progress / story off joins the host", 1, r"join: arrived \d+\.\d m from the host")
