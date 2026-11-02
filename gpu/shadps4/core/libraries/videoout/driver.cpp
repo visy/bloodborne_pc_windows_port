@@ -983,8 +983,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // bbport: with a frame limit or the uncapped presets a queued flip is presented as soon as
     // it arrives and its slot allows (no limit: at once), between vblanks, instead of on the
     // next vblank tick.
-    const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
-    const bool live_limit = BbFrameRate::LivePresenterLimit() != 0;
+    bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
 
     // bbport: fast loading (bbport_fast_loading.h; idea from droogie/bbhost): while a loading screen
     // is up, flips are made at once and vblank ticks come every 2 ms, so the loaders step as fast
@@ -994,9 +993,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     while (!token.stop_requested()) {
         timer.Start();
         const bool fast = bbport::fastload::Tick();
-        if (live_limit) {
-            const u32 limit = BbFrameRate::LivePresenterLimit();
+        // The live clock is installed after this thread starts: ask every iteration (0 = live mode off).
+        if (const u32 limit = BbFrameRate::LivePresenterLimit()) {
             if (limit != frame_limit) {
+                immediate_flips = true;
                 frame_limit = limit;
                 frame_period = std::chrono::nanoseconds(1000000000 / frame_limit);
                 slack = frame_period / 16;

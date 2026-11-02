@@ -763,9 +763,9 @@ void Install(unsigned char* image, std::uint64_t size) {
         StubWritable(true);
         const bool ok = InstallLive();
         if (ok) {
-            // The effects' step in whole 1/60 s from the live step (bbhost 6f735f4, as for the hooks).
-            const bool sfx = sfx_step && HookSfxStep(true);
-            std::printf("Live clock: effects step in whole 1/60 s %s\n", sfx ? "(from the live step)" : "NOT installed");
+            // The effects' step: the Deltatime patch redirects SprjSfx::Update's load (0x1f77d4e) to the live
+            // global step itself, so the hooks' whole-1/60-s step (HookSfxStep) is not installed in live mode.
+            std::printf("Live clock: effects step from the patch's global step (no 1/60 s quantising)\n");
         }
         StubWritable(false);
         if (ok) {
@@ -855,6 +855,8 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
 unsigned LivePresenterLimit() {
     if (!live_requested.load(std::memory_order_relaxed)) return 0;
     if (!live_supported.load(std::memory_order_relaxed)) return 60; // the patch's static rate
+    // The presenter is the live limiter, as upstream (the pacer's interval alone does not hold the target:
+    // measured 107 steps a second at a target of 60 without it).
     const int target = BbSettings::Get().target_fps.load(std::memory_order_relaxed);
     return target <= 0 ? unsigned(LiveCeiling) : unsigned(std::clamp(target, 30, LiveCeiling));
 }
