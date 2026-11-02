@@ -30,7 +30,10 @@ PATCHES_XML = APP_DIR / "patches" / "Bloodborne.xml"
 DEFAULT_GAME = Path(os.environ.get("BB_GAME_DIR", "../CUSA03173"))
 
 WINDOW_MODE_CHOICES = ["Windowed", "Borderless", "Fullscreen"]
-FPS_CHOICES = ["uncap", "60", "90", "30"]
+FPS_CHOICES = ["uncap", "60", "90", "120", "144", "30"]
+# BB_FPS values the FPS patches know; any other target is the uncapped preset with BB_FPS_LIMIT (as the
+# test harness does for 120): the hooks and the live clock pace to it.
+FPS_PRESET_VALUES = ("uncap", "60", "90", "30")
 RES_CHOICES = ["From in-game menu", "1280x720", "1920x1080", "2560x1440", "3840x2160"]
 # Earlier name of RES_CHOICES[0] in saved settings
 LEGACY_RES_DEFAULT = "Default (1080p)"
@@ -1835,7 +1838,13 @@ def settings_env(s: dict) -> dict:
     game_dir = resolve_game_dir(s.get("eboot", "")) if s.get("eboot") else None
     if game_dir is not None:
         env["BB_GAME_DIR"] = str(game_dir)
-    env["BB_FPS"] = s.get("fps", "uncap")
+    fps_choice = str(s.get("fps", "uncap"))
+    if fps_choice in FPS_PRESET_VALUES or not fps_choice.isdigit():
+        env["BB_FPS"] = fps_choice
+        env["BB_FPS_LIMIT"] = None
+    else:
+        env["BB_FPS"] = "uncap"
+        env["BB_FPS_LIMIT"] = fps_choice
     env["BB_MODS_ENABLED"] = "1" if on("mods") else "0"
     env["BB_DREAM_MIRROR"] = None if on("dream_mirror") else "0"
     env["BB_LAMP_TRAVEL"] = None if on("lamp_travel") else "0"
@@ -2170,6 +2179,8 @@ INI_FLAG_SETTINGS = [
     ("feat_gpl", "gpl", False, "BB_GPL"),
     ("feat_compile_indicator", "compile_indicator", True, "BB_COMPILE_INDICATOR"),
     ("feat_save_commit_async", "save_commit_async", False, "BB_SAVE_COMMIT_ASYNC"),
+    # Live FPS clock (Mrsuss60's live FPS patching, a7cbfae6): replaces the frame rate hooks / FPS++ patches.
+    ("feat_live_fps", "live_fps", True, "BB_LIVE_FPS"),
 ]
 # Every BB_* variable the launcher no longer sets because its setting lives in bbport.ini.
 GAME_SETTING_ENVS = ["BB_UPSCALER", "BB_VOLUMETRIC_RES"] + [env for *_, env in INI_FLAG_SETTINGS]
@@ -3134,6 +3145,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_gpl = self.ini_flag_vars["gpl"]
         self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
         self.feat_save_commit_async = self.ini_flag_vars["save_commit_async"]
+        self.feat_live_fps = self.ini_flag_vars["live_fps"]
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
         self.feat_hud = self.ini_flag_vars["show_hud"]
         self.feat_mouse_keyboard = self.ini_flag_vars["mk_enabled"]
@@ -3298,11 +3310,20 @@ class BloodborneLauncher(tk.Tk):
 
         sec = self._section(tab, 1, "Frame rate")
         self._combo(sec, "Frame rate target:", self.fps_var, FPS_CHOICES,
-                    "Target frame rate: uncap, 60, 90, or 30 (the game's native rate). Above 30 needs the "
+                    "Target frame rate: uncap, 60, 90, 120, 144, or 30 (the game's native rate). Above 30 needs the "
                     "FPS patch. Default: uncap (BB_FPS).", width=10)
         self._check(sec, "FPS patch (Uncap / 60 / 90)", self.feat_fps_patch,
                     "Lets the game run above 30 FPS at the chosen target, with physics and movement "
                     "speeds kept correct. Off = the game stays at 30 FPS. Default: on (BB_FPS_PATCH).")
+        self._check(sec, "Live FPS clock", self.feat_live_fps,
+                    "Mrsuss60's live FPS patching: an in-engine clock and a measured delta time instead of "
+                    "the frame rate hooks and the FPS++ patches; the target above (60 / 90 / 120 / 144 / uncap) "
+                    "can also be changed in the game's System menu (Live FPS) without a restart. While it is on "
+                    "the FPS++ patches, Sprint Fix and the Performance Patch are left out (they write the "
+                    "same timers), and the hooks setting below does not apply. Needs the 1.09 eboot, "
+                    "otherwise the game keeps a static 60 FPS. Not used at 30. Party: each player may use "
+                    "any frame rate. Default: on (bbport.ini live_fps, BB_LIVE_FPS).",
+                    command=self.on_live_fps_toggle)
         self._check(sec, "Frame rate by game hooks", self.feat_frame_hooks,
                     "On: the frame rate is freed by hooks in the game's code (deadinside's 0.6-pre1): every "
                     "frame-tied timer, damping and speed follows the real frame time (no sprint dropping to "
@@ -3447,10 +3468,11 @@ class BloodborneLauncher(tk.Tk):
         # 3. Performance & Shaders
         tab = self._tab("Performance & Shaders")
         sec = self._section(tab, 0, "Performance")
-        self._check(sec, "Performance Patch (Kyo)", self.feat_perf_patch,
+        self.perf_patch_check = self._check(sec, "Performance Patch (Kyo)", self.feat_perf_patch,
                     "Game patch by Kyo: changes some of the game's debug parameters for better performance; "
                     "may slightly affect some visuals. Same as the 'Performance Patch (perf increase)' XML patch.",
                     command=self.on_quick_patch_toggle)
+        self.update_live_fps_locks()
         self._check(sec, "GPU draw prep workers", self.feat_draw_prep,
                     "Prepares draw calls on parallel worker threads to take load off the GPU thread. "
                     "Default: on (BB_PREP_WORKERS).")
@@ -4230,6 +4252,7 @@ class BloodborneLauncher(tk.Tk):
         self.update_upscaler_state()
         for _, key, default, _ in INI_FLAG_SETTINGS:
             self.ini_flag_vars[key].set(ini_flag_value(ini, key, default))
+        self.update_live_fps_locks()
         self.volumetric_var.set(volumetric_label(ini))
         self.enabled_patches = ({n for n in self.enabled_patches
                                  if n not in EFFECT_PATCHES and n not in MODEL_LOD_PATCHES}
@@ -4258,6 +4281,31 @@ class BloodborneLauncher(tk.Tk):
             self.party_vpn_lobby.set(ini_flag_value(ini, "party_vpn_lobby", False))
         if hasattr(self, "party_open_cb"):
             self.party_open.set(ini_flag_value(ini, "party_open", False))
+
+    def on_live_fps_toggle(self):
+        """Live FPS clock: written at once (bbport.ini live_fps); the patches it replaces are locked out."""
+        try:
+            update_ini(bbport_ini_path(), {"live_fps": "1" if self.feat_live_fps.get() else "0"})
+        except OSError as ex:
+            self.log(f"[GRAPHICS] Could not save the Live FPS setting to bbport.ini: {ex}")
+        self.update_live_fps_locks()
+
+    def update_live_fps_locks(self):
+        """With Live FPS on, the Performance Patch (it writes the live clock's timers) is greyed out and
+        off, like the FPS++ presets in the backend (scripts/patches.py LIVE_FPS_CONFLICTS)."""
+        live = bool(self.feat_live_fps.get())
+        perf = getattr(self, "perf_patch_check", None)
+        if live and "Performance Patch (perf increase)" in self.enabled_patches:
+            self.enabled_patches.discard("Performance Patch (perf increase)")
+            self.feat_perf_patch.set(False)
+            msg = ("[LIVE FPS] Live FPS is on: the Performance Patch writes the same timers and is turned off "
+                   "(turn Live FPS off in Graphics > Frame rate to use it again).")
+            try:
+                self.log(msg)
+            except Exception:
+                print(msg)
+        if perf is not None:
+            perf.configure(state="disabled" if live else "normal")
 
     def save_frame_generation(self):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""

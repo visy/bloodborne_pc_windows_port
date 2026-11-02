@@ -346,6 +346,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         // paths, and many objects past their nearest detail distance (10-15 m) were then not drawn
         // at all, so Central Yharnam's corpses popped in close and vanished again further away.
         v.model_lod = std::clamp(i, 0, 1);
+    } else if (key == "live_fps") {
+        v.live_fps = i != 0;
+    } else if (key == "target_fps") {
+        v.target_fps = (value == "uncap" || i == 0) ? 0 : std::clamp(i, 30, 239);
+    } else if (key == "max_dt_hz") {
+        v.max_dt_hz = std::clamp(i, 10, 240);
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {
@@ -458,6 +464,7 @@ void Load() {
         {"BB_HDR_PAPER_WHITE", "hdr_paper_white"},  {"BB_HDR_STRENGTH", "hdr_strength"},
         {"BB_HDR_SATURATION", "hdr_saturation"},   {"BB_PARTY_OVERHEAD", "party_overhead"},
         {"BB_VOLUMETRIC_RES", "volumetric_res"},
+        {"BB_LIVE_FPS", "live_fps"},               {"BB_MAX_DT_HZ", "max_dt_hz"},
     };
     for (const auto& [env, key] : env_keys) {
         if (const char* value = std::getenv(env)) {
@@ -831,6 +838,10 @@ void Save() {
     put("volumetric_res", std::to_string(v.volumetric_res.load()));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));
+    // Read by patches.py at start (live_fps), by the clock hook (target_fps, live).
+    put("live_fps", flag(v.live_fps));
+    put("target_fps", v.target_fps.load() <= 0 ? "uncap" : std::to_string(v.target_fps.load()));
+    put("max_dt_hz", std::to_string(v.max_dt_hz.load()));
     // Read by run.sh at start.
     put("live_resolution", v.live_resolution < 0 ? "auto" : flag(v.live_resolution != 0));
     if (v.menu_x >= 0.0f && v.menu_y >= 0.0f) {

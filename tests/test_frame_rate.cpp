@@ -168,6 +168,45 @@ int main() {
         assert(std::fabs(sum - real) < 1.0 / 60.0 + 1e-3);
     }
 
+
+    // Live clock (Mrsuss60 a7cbfae6 / 83a168ee): when it is wanted.
+    assert(!LiveWanted("uncap", nullptr, false));
+    assert(LiveWanted("uncap", nullptr, true));
+    assert(LiveWanted("60", nullptr, true));
+    assert(!LiveWanted("30", nullptr, true));        // the game's own rate
+    assert(!LiveWanted("uncap", "0", true));         // FPS patch off
+    assert(LiveTargetFromRate(60) == 60 && LiveTargetFromRate(144) == 144);
+    assert(LiveTargetFromRate(MaxRate) == 0 && LiveTargetFromRate(240) == 0 && LiveTargetFromRate(10) == 30);
+
+    // Live clock step: steady frames at the target give exactly the target; a frame time within 8%
+    // is locked; a spike is slewed (+12% a frame) and clamped to 1/30 s; a faster frame slews down.
+    {
+        LiveClockState st;
+        float interval = 0;
+        const float t60 = 1.0f / 60;
+        assert(Near(LiveClockStep(st, t60 * 1.05f, 60, 30, interval), t60, 1e-6f) && Near(interval, t60, 1e-6f));
+        const float spike = LiveClockStep(st, 0.5f, 60, 30, interval);  // a 500 ms stall
+        assert(Near(spike, t60 * 1.12f, 1e-6f));
+        float dt = spike;
+        for (int i = 0; i < 30; ++i) dt = LiveClockStep(st, 0.5f, 60, 30, interval);
+        assert(Near(dt, Frame30, 1e-6f));                                  // never above 1/30 s
+        for (int i = 0; i < 60; ++i) dt = LiveClockStep(st, t60, 60, 30, interval);
+        assert(Near(dt, t60, 1e-6f));                                      // back to the target
+        // Invalid measurements count as the target; uncapped paces at the 240 FPS ceiling.
+        LiveClockState st2;
+        assert(Near(LiveClockStep(st2, NAN, 120, 30, interval), 1.0f / 120, 1e-6f));
+        LiveClockState st3;
+        assert(Near(LiveClockStep(st3, 0.0f, 0, 30, interval), 1.0f / 240, 1e-6f) && Near(interval, 1.0f / 240, 1e-6f));
+        // A target above the physics clamp (max_dt_hz 120 < 60?): the step is at least the target.
+        LiveClockState st4;
+        assert(Near(LiveClockStep(st4, 0.2f, 30, 240, interval), 1.0f / 30, 1e-6f));
+        // Switching the target in the menu: the stall of the switch does not become a spike.
+        LiveClockState st5;
+        LiveClockStep(st5, 1.0f / 60, 60, 30, interval);
+        const float after = LiveClockStep(st5, 0.05f, 120, 30, interval);
+        assert(after <= 1.0f / 60 * 1.12f + 1e-6f);
+    }
+
     // The layout the game's code reads.
     static_assert(offsetof(Live, decay95) % 16 == 0, "decay95 is read as one vector");
     static_assert(alignof(Live) == 64);
