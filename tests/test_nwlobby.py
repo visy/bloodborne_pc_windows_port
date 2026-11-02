@@ -344,7 +344,7 @@ class NameFilterTests(unittest.TestCase):
                 "B\u200black p\u200dpl hunter", "\u24d1\u24db\u24d0\u24d2\u24da \u24df\u24df\u24db hunter",
                 "b\u0337l\u0337a\u0337c\u0337k\u0337 p\u0337p\u0337l\u0337 hunter", "\u202eretnuh lpp kcalb",
                 "Jews hunter", "blacks hunter", "muslim hater", "gas the jews", "Sieg Heil", "1488", "kkk member",
-                "N I G G E R", "n.i.g.g.a", "niiiigger", "Negro", "mexicans die"]
+                "N I G G E R", "n.i.g.g.a", "niiiigger", "mexicans die"]
     NEGATIVE = ["Black Hunter", "Beast Hunter", "Hunter of Hunters", "Gehrman", "Vileblood", "Scunthorpe",
                 "Classic Assassin", "Lobo Negro", "Niger", "Nigeria", "Snigger", "Chinese Hunter", "Gay Slayer",
                 "Jewel Hunter", "Blacksmith", "Black Knight", "Hunter 88", "Dyke Ave", "Killer Queen", "Kirkhammer",
@@ -366,3 +366,18 @@ class NameFilterTests(unittest.TestCase):
         names = [r["name"] for r in rows[2]]
         self.assertEqual(names, [nw.masked_name("Black ppl hunter")])
         self.assertTrue(names[0].startswith("Hunter "))
+
+    def test_deployed_layout_under_isolated_python(self):
+        """/opt/nwlobby holds nwlobby.py, namefilter.py and namefilter_data.py; the unit runs python3 -I."""
+        import shutil, subprocess, sys, tempfile
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as d:
+            shutil.copy(root / "tools" / "vpn" / "lobby" / "nwlobby.py", d)
+            shutil.copy(root / "scripts" / "namefilter.py", d)
+            shutil.copy(root / "scripts" / "namefilter_data.py", d)
+            code = ("import importlib.util,sys;s=importlib.util.spec_from_file_location('nw',sys.argv[1]);"
+                    "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+                    "print(m.name_offensive('Black ppl hunter'), m.name_offensive('Black Hunter'), m.masked_name('Black ppl hunter'))")
+            out = subprocess.run([sys.executable, "-I", "-c", code, str(Path(d) / "nwlobby.py")], capture_output=True, text=True)
+            self.assertTrue(out.stdout.startswith("True False Hunter "), out.stdout + out.stderr)

@@ -143,3 +143,42 @@ def test_python_and_cpp_agree(flt):
     got = r.stdout.split("\n")[:len(names)]
     diff = [(ascii(n), flt.reason(n) or "-", g) for n, g in zip(names, got) if (flt.reason(n) or "-") != g]
     assert not diff, diff[:10]
+
+
+def _launcher():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bb_launcher_namefilter", ROOT / "launcher.py")
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as ex:  # no tkinter here
+        pytest.skip(f"launcher.py not importable here: {ex}")
+    return mod
+
+
+def test_launcher_masks_rows_unless_turned_off():
+    L = _launcher()
+    bad = "Black ppl hunter"
+    entry = {"ip": "10.8.0.5", "port": 9307, "name": bad, "players": 1, "max": 3, "password": True, "own": False, "build": "0.7.8"}
+    rows = L.lobby_rows([entry], "0.7.8")
+    assert rows[0]["name"].startswith("Hunter ") and bad not in rows[0]["name"]
+    assert L.lobby_rows([entry], "0.7.8", hide_bad_names=False)[0]["name"] == bad
+    assert L.shown_party_name("Gehrman") == "Gehrman"
+
+
+def test_iosefka_report_scrubs_member_names():
+    sys.path.insert(0, str(ROOT / "tools" / "discord"))
+    import netdoctor_bot as bot
+
+    class Log:
+        name = "Black ppl hunter"
+        guests = {"Gehrman"}
+        pings = {}
+
+    class Nd:
+        @staticmethod
+        def parse(_path):
+            return Log
+
+    out = bot.scrub_offensive_names(Nd, ["x.log"], "host Black ppl hunter met Gehrman")
+    assert "Black" not in out and "Gehrman" in out and "Hunter " in out

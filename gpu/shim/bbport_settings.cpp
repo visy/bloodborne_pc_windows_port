@@ -236,6 +236,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_toasts = i != 0;
     } else if (key == "party_hud") {
         v.party_hud = i != 0;
+    } else if (key == "party_hide_bad_names") {
+        v.party_hide_bad_names = i != 0;
     } else if (key == "party_discovery") {
         v.party_discovery = i != 0;
     } else if (key == "party_vpn_lobby") {
@@ -442,7 +444,7 @@ void Load() {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
         {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
         {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
-        {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"},
+        {"BB_PARTY_HIDE_BAD_NAMES", "party_hide_bad_names"}, {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"},
         {"BB_PARTY_SPLITSCREEN", "party_splitscreen"}, {"BB_PARTY_STAY", "party_stay"}, {"BB_PARTY_MESSAGES", "party_messages"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
@@ -775,6 +777,7 @@ void Save() {
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
+    put("party_hide_bad_names", flag(v.party_hide_bad_names));
     put("party_discovery", flag(v.party_discovery));
     put("party_vpn_lobby", flag(v.party_vpn_lobby));
     put("party_open", flag(v.party_open));

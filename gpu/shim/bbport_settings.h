@@ -170,6 +170,10 @@ struct Values {
     /// Party mode: the party HUD, companions' names / health / whereabouts in the bottom left
     /// corner (party_hud.h; ini party_hud). Never shown solo. Live.
     std::atomic<bool> party_hud{true};
+    /// Hateful member names (slurs, hate codes; party/name_filter.h) are shown as "Hunter 3F2" on this PC: the party
+    /// list, name tags, notices. Display only: the party itself still sees the real name. ini party_hide_bad_names,
+    /// env BB_PARTY_HIDE_BAD_NAMES. Live. ON by default (safety), unlike other new party features.
+    std::atomic<bool> party_hide_bad_names{true};
     /// Party mode: guests may use world lamps and Dream headstones too; their use moves the whole
     /// party, host-led (ini party_guest_lamps; env BB_PARTY_GUEST_LAMPS overrides). On restart.
     std::atomic<bool> party_guest_lamps{true};

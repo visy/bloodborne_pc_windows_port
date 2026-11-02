@@ -197,6 +197,8 @@ PARTY_INI_FLAGS = [
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
+    # 0.7.8: hateful member names shown masked on this PC; ON by default (safety)
+    ("party_hide_bad_names", True),
     ("party_item_notices", True),
     # 0.7.7 (CL-2eec68): splitscreen mode, off by default (System > My party: Splitscreen)
     ("party_splitscreen", False),
@@ -435,6 +437,13 @@ MY_PARTY_TAB = [
          "(your own dungeons, the guests' dungeons and the shipped patches/chalice_glyphs.json), then the code "
          "keyboard: typing a code still works. Pick one and the whole party enters that dungeon together. "
          "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > My party: Chalice)."),
+    ]),
+    (1, 1, "Names", [
+        ("check", "party_hide_bad_names", "Hide offensive names",
+         "Hateful names (slurs, hate codes, hostile phrases about groups of people) are shown as Hunter and a short "
+         "code on your screen: in the party list, the games found and the party notices. Only how you see them; the "
+         "Nightwatch VPN lobby does the same for everyone. Your own setting. Default: on, unlike most new party "
+         "features, for safety (bbport.ini party_hide_bad_names; in the game: System > My party: Names)."),
     ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
@@ -985,7 +994,28 @@ def tailscale_peers() -> list:
         return []
 
 
-def discovery_rows(found: list, peers: list, my_version: str) -> list:
+def name_filter_module():
+    """scripts\namefilter.py (shared with the game, the VPN lobby and Iosefka); None when it cannot be loaded."""
+    try:
+        scripts_dir = str(APP_DIR / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import namefilter
+        return namefilter if namefilter.default_filter() else None
+    except Exception:  # noqa: BLE001 - never stop the launcher over a word list
+        return None
+
+
+def shown_party_name(name: str, hide: bool = True) -> str:
+    """The name to display for another player: masked ("Hunter 3F2") when it is hateful and `hide` is on
+    (bbport.ini party_hide_bad_names, on by default)."""
+    if not hide or not name:
+        return name
+    nf = name_filter_module()
+    return nf.masked_name(name) if nf else name
+
+
+def discovery_rows(found: list, peers: list, my_version: str, hide_bad_names: bool = True) -> list:
     """The Join list's rows: [{'iid', 'name', 'level', 'players', 'area', 'password', 'build', 'address',
     'ok', 'kind'}]. A host of another bbport version is not ok (greyed out); a Tailscale peer
     (kind 'tailscale') is only 'maybe hosting': no details, joined at the default port."""
@@ -997,7 +1027,8 @@ def discovery_rows(found: list, peers: list, my_version: str) -> list:
         if e["id"] in seen_ids:  # one game announcing on several adapters: listed once
             continue
         seen_ids.add(e["id"])
-        rows.append({"iid": f"{e['ip']}/{e['id']}", "name": e["name"], "level": str(e["level"] or "?"),
+        rows.append({"iid": f"{e['ip']}/{e['id']}", "name": shown_party_name(e["name"], hide_bad_names),
+                     "level": str(e["level"] or "?"),
                      "players": f"{e['players']}/{e['max']}", "area": e["area"] or "-",
                      "password": "yes" if e["password"] else ("open" if e.get("open") else "no"), "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
@@ -1006,7 +1037,7 @@ def discovery_rows(found: list, peers: list, my_version: str) -> list:
     for p in peers:
         if p["ip"] in seen_ips or not p["online"]:
             continue
-        rows.append({"iid": f"ts/{p['ip']}", "name": p["name"], "level": "?", "players": "?", "area": "Tailscale",
+        rows.append({"iid": f"ts/{p['ip']}", "name": shown_party_name(p["name"], hide_bad_names), "level": "?", "players": "?", "area": "Tailscale",
                      "password": "?", "build": "?", "address": host_address_text(p["ip"], PARTY_DEFAULT_PORT),
                      "password_set": None, "ok": True, "kind": "tailscale"})
     return rows
@@ -1140,14 +1171,14 @@ def lobby_fetch(target, bind_ip: str = "", timeout: float = 1.0):
     return entries
 
 
-def lobby_rows(entries: list, my_version: str) -> list:
+def lobby_rows(entries: list, my_version: str, hide_bad_names: bool = True) -> list:
     """The lobby list's rows: [{'iid', 'name', 'players', 'password', 'build', 'address', 'ok'}]. Your own game
     is left out. 'address' is for joining only; the UI never shows it."""
     rows = []
     for i, e in enumerate(sorted(entries or [], key=lambda e: (e["name"].lower(), e["ip"]))):
         if e["own"]:
             continue
-        rows.append({"iid": f"vpn/{i}", "name": e["name"], "players": f"{e['players']}/{e['max']}",
+        rows.append({"iid": f"vpn/{i}", "name": shown_party_name(e["name"], hide_bad_names), "players": f"{e['players']}/{e['max']}",
                      "password": "yes" if e["password"] else "open", "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
                      "ok": discovery_build_matches(e["build"], my_version),
@@ -3148,6 +3179,7 @@ class BloodborneLauncher(tk.Tk):
             value=ini_flag(bbport_ini_path(), "party_guests_bring_lamps", False))
         # 0.7.3: join/leave notices and guests using lamps (game settings, also in the game's menus)
         self.party_toasts = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_toasts"))
+        self.party_hide_bad_names = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hide_bad_names", True))
         self.party_conn_warnings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_conn_warnings"))
         self.party_item_notices = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_item_notices"))
         self.party_splitscreen = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_splitscreen", False))
@@ -4525,7 +4557,7 @@ class BloodborneLauncher(tk.Tk):
                 self._lobby_clock = getattr(self, "_lobby_clock", 0) + 1
                 if self._lobby_clock % int(LOBBY_POLL_S) == 1:
                     self.refresh_vpn_lobby()
-                rows = lobby_rows(self.vpn_lobby_entries or [], PORT_VERSION)
+                rows = lobby_rows(self.vpn_lobby_entries or [], PORT_VERSION, self.party_hide_bad_names.get())
             else:
                 rows = []
             self.show_vpn_lobby_rows(rows, on)
@@ -4637,7 +4669,7 @@ class BloodborneLauncher(tk.Tk):
                 if self._peer_clock % 15 == 1:
                     self.refresh_tailscale_peers()
                 rows = discovery_rows(self.discovery_book.snapshot(time.monotonic()), self.discovery_peers,
-                                      PORT_VERSION)
+                                      PORT_VERSION, self.party_hide_bad_names.get())
             else:
                 rows = []
             self.show_discovery_rows(rows)
