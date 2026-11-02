@@ -175,6 +175,16 @@ if "%BB_AUTO_RENDER_RES%"=="1" (
 if "%BB_FPS%"=="" set "BB_FPS=uncap"
 set "fps=%BB_FPS%"
 
+REM Live FPS clock (Mrsuss60's live FPS patching): BB_LIVE_FPS from the launcher, else live_fps from
+REM bbport.ini (the in-game menu). The same value goes to patches.py and the game, so the patch set and
+REM the hook agree. On by default; the game's own 30 FPS never uses it. On by default.
+if "%BB_LIVE_FPS%"=="" if exist "%BB_CONFIG%" for /f "usebackq tokens=1,2 delims== " %%a in ("%BB_CONFIG%") do (
+    if "%%a"=="live_fps" set "BB_LIVE_FPS=%%b"
+)
+if "%BB_LIVE_FPS%"=="" set "BB_LIVE_FPS=1"
+if "%fps%"=="30" set "BB_LIVE_FPS=0"
+if "%BB_FPS_PATCH%"=="0" set "BB_LIVE_FPS=0"
+
 REM The scaled sizes go through a file, like mods.py above: read with for /f ('"%PYTHON%" ...
 REM "%BB_CONFIG%"') the command lost its quotes and printed nothing, so an output other than
 REM 1080p never got its startup patch (or its direct memory) and always ran live.
@@ -271,6 +281,9 @@ if "%BB_GPU_WRITE_TWINS%"=="" set "BB_GPU_WRITE_TWINS=1"
 if "%BB_GPU_WRITE_TWINS_MAX%"=="" set "BB_GPU_WRITE_TWINS_MAX=65536"
 
 REM Frame rate: uncap = delta-time patch, vblank 480 Hz (frames shown at once); 60/90 fixed.
+REM Live FPS (BB_LIVE_FPS=1, or live_fps in bbport.ini; not at BB_FPS=30): the live clock paces the game
+REM and the presenter, so the vblank runs at the uncapped rate whatever the target.
+if "%BB_VBLANK_HZ%"=="" if "%BB_LIVE_FPS%"=="1" if not "%fps%"=="30" set "BB_VBLANK_HZ=480"
 if "%BB_VBLANK_HZ%"=="" (
     if "%fps%"=="uncap" (
         set "BB_VBLANK_HZ=480"

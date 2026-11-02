@@ -23,7 +23,28 @@ EBOOT_BASE=0x400000
 # Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
 # half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
+             # Live FPS (Mrsuss60/bloodborne_pc_windows_port a7cbfae6): a measured-delta-time base; the
+             # live clock hook (gpu/shim/bbport_frame_rate.cpp, LiveClockTick) then sets the pacer's target
+             # and the frame time at run time (30..240 FPS or uncapped, switchable in the game's menu).
+             'live':['60 FPS++ (Deltatime)'],
              'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
+# Patches that write the same timers / frame constants as the live clock's base: dropped with it on
+# (Mrsuss60's LIVE_FPS_CONFLICTS; the launcher greys them out).
+LIVE_FPS_CONFLICTS={'30 FPS++','60FPS (no deltatime)','60 FPS++','90 FPS++','Uncap FPS++','Sprint Fix (High FPS)',
+                    'Performance Patch (perf increase)'}
+LIVE_EXTERNAL_CONFLICTS=('fps++','no deltatime','performance patch')
+
+
+def live_fps_wanted(fps, env=os.environ, settings=None):
+    """Is the live clock on for this run? BB_LIVE_FPS wins over bbport.ini live_fps; never at the
+    game's own 30 FPS or with the FPS patch off. Must agree with LiveWanted in bbport_frame_rate_logic.h."""
+    off=lambda v: str(v).strip().lower() in ('','0','off','false','no')
+    if not fps or fps=='30' or env.get('BB_FPS_PATCH') in ('0','off','false'):
+        return False
+    value=env.get('BB_LIVE_FPS')
+    if value is None or value=='':
+        value=(settings or {}).get('live_fps','1')  # on by default (must match BbSettings live_fps)
+    return not off(value)
 # Above 30 FPS the frame rate is done by hooks in the game's code (gpu/shim/bbport_frame_rate.cpp,
 # deadinside's 0.6-pre1): no FPS++ patches. BB_FRAME_HOOKS=0 keeps the patches (the fallback and
 # comparisons). The default must match HooksDefault in gpu/shim/bbport_frame_rate_logic.h.
@@ -33,7 +54,7 @@ FRAME_HOOKS_DEFAULT=True
 def frame_hooks(fps, env=os.environ):
     """Does the GPU library run this frame rate by hooks (bbport_frame_rate_logic.h HooksWanted)?"""
     off=lambda v: v in ('0','off','false')
-    if not fps or fps=='30' or off(env.get('BB_FPS_PATCH')):
+    if not fps or fps in ('30','live') or off(env.get('BB_FPS_PATCH')):
         return False
     value=env.get('BB_FRAME_HOOKS','')
     return not off(value) if value else FRAME_HOOKS_DEFAULT
@@ -228,7 +249,7 @@ def party_patches(env=os.environ):
 # too, unless their XML marks them Party="cosmetic").
 COSMETIC_PATCHES={
     # Frame rate (the 30 FPS rule's speed fixes go with them).
-    '30 FPS++','60 FPS++','90 FPS++','Uncap FPS++','Sprint Fix (High FPS)',
+    '30 FPS++','60 FPS++','90 FPS++','Uncap FPS++','Sprint Fix (High FPS)','60 FPS++ (Deltatime)',
     # Resolution / render size / memory for it.
     'Optimal 1080p','Increased Graphics Heap Sizes',
     # Effects and level of detail.
@@ -685,7 +706,22 @@ def main():
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
         return
-    if frame_hooks(a.fps):
+    if a.fps!='live' and live_fps_wanted(a.fps,os.environ,read_settings(a.settings)):
+        base=FPS_PRESETS['live'][0]
+        try:
+            base_ok=originals_match(a.xml,base,a.app_version,(a.out/'eboot.elf').read_bytes())
+        except OSError:
+            base_ok=False
+        if base_ok:
+            a.fps='live'
+        else:
+            # An executable the Deltatime base does not fit: the usual frame rate (hooks / FPS++ patches),
+            # and the game finds the step block unpatched and does not install the live clock either.
+            print(f'Patches: Live FPS is on but "{base}" does not fit this eboot: falling back to the normal '
+                  f'{a.fps} frame rate patches (Live FPS off for this start)')
+    if a.fps=='live':
+        print('Patches: Live FPS clock on (the "60 FPS++ (Deltatime)" base; the frame rate hooks and the FPS++ patches are off)')
+    elif frame_hooks(a.fps):
         print(f'Patches: frame rate {a.fps} by hooks in the game code (BB_FRAME_HOOKS=0: the FPS++ patches)',file=sys.stderr)
     fps_patches = preset_patches(a.fps)
     raw_names = fps_patches + [n.strip() for n in a.extra.split(';') if n.strip()]
@@ -709,6 +745,14 @@ def main():
         if n not in names:
             names.append(n)
     names = validate_patch_requirements(names,a.game_dir)
+    if a.fps=='live':
+        # The live clock's base owns the frame-tied timers: an FPS++ preset or the performance patch on
+        # top would write the same bytes (the launcher locks them out, this is the backend's check).
+        base=set(FPS_PRESETS['live'])
+        dropped=[n for n in names if n in LIVE_FPS_CONFLICTS and n not in base]
+        if dropped:
+            print(f'Patches: Live FPS is on: these patches write the same timers and are locked out (not applied): {dropped}')
+            names=[n for n in names if n not in dropped]
     if frame_hooks(a.fps):
         # A built-in FPS patch (an FPS++ preset in BB_PATCHES, "60FPS (no deltatime)") or another
         # patch of the hooks' bytes: left out (the hooks check the game's bytes they rewrite).
@@ -763,6 +807,12 @@ def main():
             for key in dropped:
                 print(f'Patches: external {key} is off in party mode (BB_PARTY)',file=sys.stderr)
             selected=[x for x in selected if x[0] not in dropped]
+        if a.fps=='live':
+            kept=[x for x in selected if not any(c in str(x[2].get('Name','')).lower() or c in str(x[0]).lower()
+                                                 for c in LIVE_EXTERNAL_CONFLICTS)]
+            for x in selected:
+                if x not in kept: print(f'Patches: Live FPS is on: external patch {x[0]} writes the same timers and is locked out (not applied)')
+            selected=kept
         if frame_hooks(a.fps):
             selected=without_frame_hook_conflicts(selected,lambda x: metadata_writes(x[2]),lambda x: f'external {x[0]}')
         applied=[]

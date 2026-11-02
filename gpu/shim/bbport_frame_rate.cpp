@@ -26,6 +26,7 @@
 #include "bbport_frame_rate.h"
 #include "bbport_frame_rate_logic.h"
 #include "bbport_guest_code.h"
+#include "bbport_settings.h"
 #include "party/game_state.h"
 #include "party/seamless_rules.h"
 
@@ -302,7 +303,7 @@ void StubWritable(bool writable) {
 /// holds `expected`.
 bool Detour(u64 site, const u8* expected, std::size_t length, const Emitter& e) {
     u8* code = reinterpret_cast<u8*>(image_base + site);
-    if (length < 5 || length > 16 || std::memcmp(code, expected, length) != 0 || e.overflow ||
+    if (length < 5 || length > 64 || std::memcmp(code, expected, length) != 0 || e.overflow ||
         stub_used + e.size > StubPageSize) {
         return false;
     }
@@ -312,7 +313,7 @@ bool Detour(u64 site, const u8* expected, std::size_t length, const Emitter& e) 
     std::memcpy(stub, e.code.data(), e.size);
     stub_used += (e.size + 15) & ~std::size_t(15);
     const std::int32_t rel32 = std::int32_t(rel);
-    u8 jump[16];
+    u8 jump[64];
     jump[0] = 0xe9;
     std::memcpy(jump + 1, &rel32, 4);
     for (std::size_t i = 5; i < length; ++i) jump[i] = 0xcc;
@@ -647,6 +648,95 @@ void LogThread(double period) {
         }
     }).detach();
 }
+// ---- Live clock (Mrsuss60/bloodborne_pc_windows_port a7cbfae6, 83a168ee; GPL-2.0-or-later) ----
+// The "60 FPS++ (Deltatime)" patch (patches/Bloodborne.xml, applied by scripts/patches.py) leaves the
+// main loop's step block at 0x2018e3d in a known form and makes the cloth, animation and platform
+// code read the pacer's measured frame time ([pacer + 0x264]) and a guest-global step (image +
+// 0x535A908). LiveClockTick replaces that block: it sets the pacer's frame time target and the
+// measured time from the target rate (LiveClockStep: deadband, slew, clamp) and returns the step.
+// Upstream installed it from probe.c with a 25-byte stub; here it is a detour with the registers
+// kept, like HookStep. Live mode and the hooks above never run together (Install picks one).
+std::atomic<bool> live_requested{false};
+std::atomic<bool> live_supported{false};
+LiveClockState live_state;
+bool live_deltatime_cave = false;
+std::atomic<int> live_logged_target{-1};
+
+/// The block at 0x2018e3d as the patch leaves it (46 bytes up to 0x2018e6b): movss xmm0,[rbx+0x264];
+/// maxss xmm0,[rbx+0x18]; minss xmm0,[1/30]; movss [rbp-0x38],xmm0; movss [0x535A908],xmm0; lea rax;
+/// 5 nops. Anything else (another eboot, a patch of the same code): not installed.
+constexpr u8 LiveBlock[46] = {0xf3, 0x0f, 0x10, 0x83, 0x64, 0x02, 0x00, 0x00, 0xf3, 0x0f, 0x5f, 0x43, 0x18, 0xf3, 0x0f, 0x5d,
+                              0x05, 0x12, 0xd5, 0x90, 0x02, 0xf3, 0x0f, 0x11, 0x45, 0xc8, 0xf3, 0x0f, 0x11, 0x05, 0xa9, 0x1a,
+                              0x34, 0x03, 0x48, 0x8d, 0x05, 0xaa, 0x76, 0x52, 0x03, 0x90, 0x90, 0x90, 0x90, 0x90};
+constexpr u8 LiveResume[5] = {0x48, 0x8d, 0x75, 0xc0, 0xe8}; // 0x2018e6b: lea rsi,[rbp-0x40]; call
+constexpr u64 LiveBlockSite = 0x2018e3d, LiveGlobalDt = 0x535a908, LiveCave = 0x5090000;
+
+/// The main loop's step (rdi: the pacer; rsi: where the step goes, [rbp - 0x38]).
+void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
+    const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
+    auto& s = BbSettings::Get();
+    const int target = s.target_fps.load(std::memory_order_relaxed);
+    float interval = Frame30;
+    const float dt = LiveClockStep(live_state, measured, target, s.max_dt_hz.load(std::memory_order_relaxed), interval);
+    *reinterpret_cast<float*>(pacer + 0x18) = interval;
+    // All of the patch's code caves sample the pacer's measured time: they get the filtered one.
+    *reinterpret_cast<float*>(pacer + 0x264) = dt;
+    if (live_deltatime_cave) *reinterpret_cast<float*>(image_base + LiveGlobalDt) = dt;
+    *out = dt;
+    live->dt = dt;
+    live->steady = dt;
+    game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
+    steps.fetch_add(1, std::memory_order_relaxed);
+    if (live_logged_target.exchange(target, std::memory_order_relaxed) != target) {
+        std::printf("Live clock: target %d FPS%s, step %.5f s (max 1/%d s)\n", target > 0 ? target : LiveCeiling,
+                    target > 0 ? "" : " (uncapped)", double(dt), s.max_dt_hz.load(std::memory_order_relaxed));
+    }
+}
+
+/// Live mode: the eboot checked, the step block replaced, the pacer's four frame time constants
+/// (1/60 s in the patch's mode setup, 0x2034845 ...) lowered to 1/240 s so 90 / 120 / uncapped can
+/// exceed 60 FPS. True when the live clock runs; false leaves the patch's static 60 FPS.
+bool InstallLive() {
+    if (image_size <= 0x2035000 ||
+        std::memcmp(reinterpret_cast<const u8*>(image_base) + LiveBlockSite, LiveBlock, sizeof(LiveBlock)) != 0 ||
+        std::memcmp(reinterpret_cast<const u8*>(image_base) + 0x2018e6b, LiveResume, sizeof(LiveResume)) != 0) {
+        std::printf("Live clock: incompatible eboot signature (the \"60 FPS++ (Deltatime)\" patch is not applied or "
+                    "the code differs): static 60 FPS\n");
+        return false;
+    }
+    Emitter e;
+    e.Bytes({0x9c}); // pushfq
+    e.SaveVolatile();
+    e.SaveXmm();
+    e.Bytes({0x48, 0x89, 0xdf});       // mov rdi, rbx (the pacer)
+    e.Bytes({0x48, 0x8d, 0x75, 0xc8}); // lea rsi, [rbp - 0x38]
+    e.CallAbs(reinterpret_cast<const void*>(&LiveClockTick));
+    e.RestoreXmm();
+    e.RestoreVolatile();
+    e.Bytes({0x9d}); // popfq
+    e.JmpAbs(image_base + 0x2018e6b);
+    if (!Detour(LiveBlockSite, LiveBlock, sizeof(LiveBlock), e)) {
+        std::printf("Live clock: the step block could not be replaced: static 60 FPS\n");
+        return false;
+    }
+    // The pacer's frame time target in its four mode setups: mov dword [r12 + 0x18], 1/60 (the patch).
+    constexpr std::uint32_t Was = 0x3c888889, Now = 0x3b888889; // 1/60 s, 1/240 s
+    const u64 sites[] = {0x2034845, 0x203485f, 0x2034883, 0x20348b8};
+    int lowered = 0;
+    for (const u64 site : sites) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, reinterpret_cast<const void*>(image_base + site), 4);
+        if (value == Now || (value == Was && WriteCode(reinterpret_cast<u8*>(image_base + site), &Now, 4))) ++lowered;
+    }
+    static const u8 cave[7] = {0x48, 0x8b, 0x05, 0xf1, 0x04, 0x4b, 0x00};
+    live_deltatime_cave = image_size > LiveCave + 7 &&
+                          std::memcmp(reinterpret_cast<const u8*>(image_base) + LiveCave, cave, sizeof(cave)) == 0;
+    std::printf("Live clock: hook installed at image+%#llx, pacer ceiling 240 FPS (%d of 4 constants), deltatime cave %s, "
+                "target %d FPS\n",
+                (unsigned long long)LiveBlockSite, lowered, live_deltatime_cave ? "yes" : "NO",
+                BbSettings::Get().target_fps.load());
+    return true;
+}
 } // namespace
 
 namespace {
@@ -664,6 +754,34 @@ void Install(unsigned char* image, std::uint64_t size) {
     live = new (data) Live{};
     sfx_step = reinterpret_cast<float*>(data + sizeof(Live)); // a float of its own after Live
     *sfx_step = Frame30;
+    if (LiveWanted(fps, std::getenv("BB_FPS_PATCH"), BbSettings::Get().live_fps.load())) {
+        live_requested = true;
+        // The launcher's target (BB_FPS / BB_FPS_LIMIT) is the starting one; the menu changes it live.
+        if (fps && *fps) {
+            BbSettings::Get().target_fps = LiveTargetFromRate(TargetRate(fps, std::getenv("BB_FPS_LIMIT")));
+        }
+        StubWritable(true);
+        const bool ok = InstallLive();
+        if (ok) {
+            // The effects' step: the Deltatime patch redirects SprjSfx::Update's load (0x1f77d4e) to the live
+            // global step itself, so the hooks' whole-1/60-s step (HookSfxStep) is not installed in live mode.
+            std::printf("Live clock: effects step from the patch's global step (no 1/60 s quantising)\n");
+        }
+        StubWritable(false);
+        if (ok) {
+            live_supported = true;
+            unlocked = true;
+            if (const char* log = std::getenv("BB_FRAME_RATE_LOG"); log && std::atof(log) > 0) {
+                LogThread(std::atof(log));
+            }
+            std::fflush(stdout);
+            return;
+        }
+        // Not this eboot / not the patch's bytes: the usual frame rate (hooks or FPS++ patches) below, so a
+        // default-on live clock never leaves a start at 30 FPS. The presenter's limit is the normal one.
+        live_requested = false;
+        std::printf("Live clock: not installed, falling back to the usual frame rate\n");
+    }
     if (!HooksWanted(fps, std::getenv("BB_FPS_PATCH"), std::getenv("BB_FRAME_HOOKS"))) {
         const char* hooks = std::getenv("BB_FRAME_HOOKS");
         std::printf("Frame rate: hooks off (BB_FRAME_HOOKS=%s): the FPS++ patches (BB_FPS=%s)\n",
@@ -734,6 +852,19 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     StartSweep(); // BB_FRAME_SWEEP (diagnostics, bbport_frame_sweep.cpp; with the patches too)
 }
 
+unsigned LivePresenterLimit() {
+    if (!live_requested.load(std::memory_order_relaxed)) return 0;
+    if (!live_supported.load(std::memory_order_relaxed)) return 60; // the patch's static rate
+    // The presenter is the live limiter, as upstream (the pacer's interval alone does not hold the target:
+    // measured 107 steps a second at a target of 60 without it).
+    const int target = BbSettings::Get().target_fps.load(std::memory_order_relaxed);
+    return target <= 0 ? unsigned(LiveCeiling) : unsigned(std::clamp(target, 30, LiveCeiling));
+}
+
+bool LiveActive() {
+    return live_supported.load(std::memory_order_relaxed);
+}
+
 bool Unlocked() {
     return unlocked.load(std::memory_order_relaxed);
 }
@@ -748,6 +879,10 @@ std::uint64_t Steps() {
 
 bool SetTargetRate(int rate) {
     if (!Unlocked() || !live) return false;
+    if (live_supported.load(std::memory_order_relaxed)) { // live clock: the setting the clock reads
+        BbSettings::Get().target_fps = LiveTargetFromRate(std::clamp(rate, 30, MaxRate));
+        return true;
+    }
     // One aligned float: the pacer stub reads it once a frame.
     reinterpret_cast<std::atomic<float>*>(&live->shortest)->store(1.0f / float(std::clamp(rate, 30, MaxRate)),
                                                                  std::memory_order_relaxed);
