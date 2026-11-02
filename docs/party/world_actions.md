@@ -917,10 +917,28 @@ too. Read from the log:
 * In a local run the car's "measured" height (`LiftCarHeight`, the hit object's `+0xac`) read 0.0 for this car in the first seconds (and
   the placement 49.4 later): a reading far from the rider made `RiderTickMeasured` return idle for the whole ride, i.e. no guard at all.
 
-**Not reproduced without help.** Rides of 2421250 from the top in the party smoke (phase `lu`: the guest walked from the landing into
-the car's trigger, the host on the car beside it) at 30, 60, 90, 120, 60/30, 60/45 and one frame-generation rate: the ride bit stayed on all
-the way, no drop. What makes the game drop the rider at a real 48 steps a second under the 120 preset is still unproven (the doc's 10.1.1 suspects the frame-rate corrections;
-the carry code has no dt term, 10.1.2). So this fix is the net, not the root: it keeps a rider that the game drops alive and on the car.
+**Not reproduced without help.** Rides of 2421250 from the top in the party smoke (phase `lu`: the guest warped to the landing, walked by the
+stick into the car's trigger, the host placed on the car's rest spot) at 30, 60, 90, 60/30 and 60/45 (the guest's own game ran 30-32
+steps a second there: this machine does not reach 45 with two games) and under `BB_NET_SIM=dsl` at 60/45: the ride bit stayed on all
+the way, no drop, no put-back. Earlier loopback runs of the same ride at 120 (uncapped limit 120, 64 steps a second) and 120 with FSR frame
+generation did the same. What makes the game drop the rider at a real 48 steps a second under the report's 120 preset with DLSS frame generation
+is still unproven (10.1.1 suspects the frame-rate corrections; the carry code has no dt term, 10.1.2). So this fix is the net, not the
+root: it keeps a rider the game drops alive and on the car.
+
+**The test aid shows the report's outcome.** `BB_TEST_LIFT_DROP=2.0` (below) with the old guard (`BB_PARTY_LIFT_RESCUE=0`): the guest is set
+under the car 2 s into the ride and falls to y -20.9, the report's shaft floor (god mode: alive; no put-back at all in that build: the measured
+height read 0.0 for this car). With the rescue: one put-back 0.03 s later, 2.6 m over the car's floor, the ride bit back within 0.3 s, the
+guest at the bottom (4.4) on the car. `BB_TEST_LIFT_DROP=2.0:8` (eight drops 0.4 s apart: a rescue that cannot hold): four put-backs 0.6 s apart,
+then `landed safely` on the game's last safe ground spot (80.5, 49.6, 364.7), the guest alive at the top landing.
+
+| smoke phase `lu` (host + guest, fresh test save) | 30 | 60 | 90 | 60/30 | 60/45 | dsl |
+|---|---|---|---|---|---|---|
+| walk-in ride down, no aid (8 steps) | pass | pass | pass | pass | pass | pass (60/45) |
+| walk-in ride down, aid `2.0` (10 steps) | pass | pass | pass | pass | pass | pass (60) |
+| aid `2.0:8` (give-up and safe landing) | | | | | pass (60/45) | |
+
+Yahar'gul's lift 2801400 is not in the smoke: it starts at the bottom (the first ride goes up, 12800610 0 -> 1), the Gaol's top landing is not
+known and a warp into its trigger at the top did not start a ride. Phase `lu` is the one proof; the guard is the same code for every car.
 
 **The fix (`BB_PARTY_LIFT_RESCUE=0` restores the 0.7.7 guard):**
 
@@ -937,9 +955,10 @@ the carry code has no dt term, 10.1.2). So this fix is the net, not the root: it
 4. *Falling is not riding* (`deathrules::kNoBitRideRate`, 5 m/s): a chr without the ride bit that dropped 5 m/s or more between two scans is falling
    beside the car, not riding it (`LocalRiding` in party_b2.cpp), so the fall accounting and the recovery nets see it.
 
-**Proof tools.** Test aid `BB_TEST_LIFT_DROP=S` (once per car ride, S s into it the local chr is set 1.6 m under the car and its ride bit reads
-off for 0.5 s: the real fall-through of the report, the guard shows live). Smoke phases `lu` (2421250, group `lift_down`), `ly` (2801400); `LD_BOTH=1` puts the host on
-the car beside the guest, `LD_WARP=1` warps the guest into the trigger instead of walking, `FW_ENV="BB_TEST_LIFT_DROP=2.0"` arms the aid.
+**Proof tools.** Test aid `BB_TEST_LIFT_DROP=S[:N]` (S s into a ride the local chr is set 1.6 m under the car and its ride bit reads off for 0.5 s, N
+times 0.4 s apart: the fall-through of the report, the guard shows live). Smoke phase `lu` (2421250, group `lift_down`, also in `--only physics`); `LD_BOTH=1` puts the host
+on the car's rest spot (it may start the ride before the guest arrives), `LD_WARP=1` warps the guest into the trigger instead of walking,
+`FW_ENV="BB_TEST_LIFT_DROP=2.0"` arms the aid.
 
 ## 2026-10-25 (simonwipe): a guest's boss phase event no longer starts the host's scene
 
