@@ -1060,7 +1060,8 @@ def lfw_chains(spec, slow=False):
                 # the run's momentum carries the chr another 1-2 m (lfwcs r2 ride 2: the host slid through the cylinder at 4 m/s, the
                 # ride started alone, and the side warp 8 s later put it on the open top spot: fall 48 m); the short tail walk goes the rest
                 _trim = 2.6 if (slow and spec["map"] == "m24_0") else 0.8
-                while len(_wp) > (3 if slow and not second else 2) and math.dist((float(_wp[-1].split(":")[0]), float(_wp[-1].split(":")[2])), (_tx, _tz)) <= _trim:
+                _minwp = 1 if (slow and spec["map"] == "m24_0") else (3 if slow and not second else 2)  # liftpair078: lfwcs top route has 3 waypoints, the last 1.3 m from the trigger
+                while len(_wp) > _minwp and math.dist((float(_wp[-1].split(":")[0]), float(_wp[-1].split(":")[2])), (_tx, _tz)) <= _trim:
                     _wp.pop()
                 route = _head + _bar + "/".join(_wp)
             legs = route.split("|")  # a leg ends at a ladder's foot: Cross climbs it, the next leg starts at the top
