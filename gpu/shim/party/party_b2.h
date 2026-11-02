@@ -126,6 +126,7 @@ struct Where {
     bool has_pos = false;
     float pos[3] = {0, 0, 0};
     std::uint32_t age_ms = 0;
+    std::uint8_t flags = 0;  ///< its VITALS flags (party::kVitals*: alive, spectating, boss bar)
 };
 /// Main thread (the director, every tick, before Tick).
 void SetWhere(const std::vector<Where>& members);

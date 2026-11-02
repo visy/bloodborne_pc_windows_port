@@ -6653,6 +6653,22 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
         Log("boss target dump %s: boss %08x: no target holder", tag, bh);
         return;
     }
+    {
+        // once: the holder's vtable and its first slots as image offsets (static RE of the list's update / prune)
+        static bool vt_logged = false;
+        if (!vt_logged) {
+            vt_logged = true;
+            const u64 base = Guest(0), hv = Field<u64>(holder, 0);
+            std::string vs;
+            for (int k = 0; hv && k < 16; ++k) {
+                char vb[32];
+                std::snprintf(vb, sizeof vb, " +%x=%llx", k * 8, ull(Field<u64>(hv, u64(k) * 8) - base));
+                vs += vb;
+            }
+            Log("boss target dump: holder vtable %llx:%s; owner (+8) vtable %llx", ull(hv - base), vs.c_str(),
+                ull(Field<u64>(Field<u64>(holder, 8), 0) - base));
+        }
+    }
     std::string out;
     u64 n = Field<u64>(holder, 0x18);
     for (int k = 0; n && k < 12; ++k, n = Field<u64>(n, 8)) {
@@ -6671,6 +6687,48 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
         out += b;
     }
     Log("boss target dump %s: boss %08x:%s", tag, bh, out.empty() ? " (empty)" : out.c_str());
+    // amelia2078: every player chr (the local one and the members' copies) as the enemies' target search sees it:
+    // HP, team (+0x88), whether its entry (chr +0x3B0 -> +0x40 -> +8) is in the target bank *0x553B098, and the
+    // chr's +0x1E1 flags; once every 5 s
+    static double next_players = 0;
+    const double now = Now();
+    if (now < next_players) return;
+    next_players = now + 2.0;
+    const u64 bank = Slot(0x553b098);
+    std::vector<u64> v;
+    const u64 b = bank ? Field<u64>(bank, 8) : 0, e = bank ? Field<u64>(bank, 0x10) : 0;
+    const size_t cnt = b && e >= b ? size_t((e - b) / 8) : 0;
+    if (cnt && cnt <= 4096) {
+        v.assign(cnt, 0);
+        if (!SafeRead(b, v.data(), cnt * 8)) v.clear();
+    }
+    std::vector<u64> players;
+    if (const u64 me = Field<u64>(Slot(kSlotWorldChrMan), 0x60)) players.push_back(me);
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c) players.push_back(c);
+    }
+    std::string ps;
+    for (u64 c : players) {
+        const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+        // the bank entry as the target search 0x12ADC50 filters it: vfunc +0x78 (valid), [3] +0x20 flags (bits 1 / 4
+        // exclude, bit 2 needs [3]+0x30 -> +0x18 bit 0), [3] +0x10 (must be 4), [3]+0x30 -> +0xD bit 0x10 (excludes);
+        // +0x1E5 bit 0x10: set on every player from a boss intro (remo) on, absent on a re-fight (CL-2c1eef marker)
+        int valid = -1;
+        u64 evt = 0, efn = 0;
+        if (ent && SafeGet(ent, &evt) && evt && SafeGet(evt + 0x78, &efn) && efn)
+            valid = reinterpret_cast<bool(BB_COOP_SYSV*)(u64)>(efn)(ent) ? 1 : 0;
+        const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
+        char pb[256];
+        std::snprintf(pb, sizeof pb, " [chr %08x hp %d team %d bank %d f1e1 %08x b1e5 %02x entry valid %d f20 %02x k10 %d o0d %02x o18 %02x]",
+                      Field<u32>(c, 8), ChrHp(c), Field<int>(c, 0x88),
+                      ent && std::find(v.begin(), v.end(), ent) != v.end() ? 1 : 0, Field<u32>(c, 0x1e1),
+                      unsigned(Field<u8>(c, 0x1e5)), valid,
+                      e3 ? unsigned(Field<u8>(e3, 0x20)) : 0xffu, e3 ? Field<int>(e3, 0x10) : -1,
+                      e30 ? unsigned(Field<u8>(e30, 0xd)) : 0xffu, e30 ? unsigned(Field<u8>(e30, 0x18)) : 0xffu);
+        ps += pb;
+    }
+    Log("boss target dump %s: players (bank %zu entries):%s", tag, v.size(), ps.c_str());
 }
 
 /// The AI keeps a per-chr hate record (its target list entries of kind 1: flags 0x81 / 0x82, +0x20 type, +0x38
@@ -6847,6 +6905,45 @@ struct UntargetedChr {
     bool readded_logged = false;
 };
 std::vector<UntargetedChr> g_untargeted;  // main thread only
+
+/// CL-2c1eef (amelia2078), host (the AI owner), main thread, every tick: a LIVING player chr whose target-bank entry
+/// still carries the dead mark gets it cleared. The enemies' perception (0x12AB4C0 -> the bank search 0x12ADC50 with
+/// mode 0) only sees bank entries whose [entry +0x18] +0x30 -> +0x18 bit 0 is clear; the game sets that bit when the
+/// chr dies (live: the host's own entry 0 -> 1 at its death). A member's copy re-created by a wipe's re-join came back
+/// with the bit still set (live amp: the guest's entry 0 on try 1, 1 on try 2 from its first frame), so no enemy
+/// perceived it: Vicar Amelia's second try fought the host while it lived (the host's own entry was clean) and
+/// attacked nobody once the host was dead (the 4-player playtest's frozen Amelia). Hits / ChangeTarget only add
+/// one-tick records that the list update 0x12B17C0 drops again when perception does not refresh them.
+/// Any role (a guest's game runs the AI of the enemies it owns). BB_PARTY_LIVING_TARGET=0 off (A/B).
+void LivingTargetMarkTick(const GameSnapshot& s) {
+    static const bool on = !(std::getenv("BB_PARTY_LIVING_TARGET") && std::getenv("BB_PARTY_LIVING_TARGET")[0] == '0');
+    static std::set<u32> logged;
+    // any role: a guest's game runs the AI of the enemies it owns (party_enemyai) and keeps its own bank entries
+    if (!on || !SessionUp() || !s.world_up || s.loading) return;
+    std::vector<u64> players;
+    if (s.player) players.push_back(s.player);
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c) players.push_back(c);
+    }
+    for (u64 c : players) {
+        // truly alive only: HP above 0 (a dying chr is at 0), never this player while it spectates or lies in the
+        // host's limbo (the dead host stays untargeted)
+        if (ChrHp(c) <= 0 || (c == s.player && (g_spectating.load() || g_host_limbo.load()))) continue;
+        const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+        const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
+        if (!e30) continue;
+        const u8 b = Field<u8>(e30, 0x18);
+        if (!(b & 1)) continue;
+        const u8 nb = u8(b & ~1u);
+        SafeWrite(e30 + 0x18, &nb, 1);
+        const u32 h = Field<u32>(c, 8);
+        if (logged.insert(h).second)
+            Log("living target: chr %08x (HP %d) is alive but its target-bank entry still had the dead mark (+0x18 bit 0, "
+                "%02x): cleared, enemies perceive it again", h, ChrHp(c), unsigned(b));
+    }
+    if (players.empty()) logged.clear();
+}
 
 void DeadPlayerUntargetTick(const GameSnapshot& s, double now) {
     static const bool on = !(std::getenv("BB_PARTY_DEAD_UNTARGET") && std::getenv("BB_PARTY_DEAD_UNTARGET")[0] == '0');
@@ -12387,6 +12484,7 @@ void Tick(const GameSnapshot& s) {
     LampSpotTick(s);
     HostDownTick(s, now);
     DeadPlayerUntargetTick(s, now);
+    LivingTargetMarkTick(s);
     BossStateTick(s, now);
     BossAttentionTick(s, now);
     HostRevivedTick(s);

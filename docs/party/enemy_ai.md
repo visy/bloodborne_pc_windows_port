@@ -169,3 +169,23 @@ boss; a passive guest has none, so at some spots the boss never turned to it (Ch
 all, no hits). `BossLockEntry` (party_b2.cpp) now sets the same record on the chr BossAttentionTick hands the boss to. Proof: smoke `hg`
 with `BB_HG_GUESTAT=-42.1:-40.76:77.3` (the former dead spot): 0 hits in 140 s before, 6 hits after (2/2 runs); guest-first `hg` 8/8 runs
 with the guest's HP falling; `bg` (Laurence) and `bv`, `bw`, `s3`, `s1` green.
+
+## A guest stays "dead" for the enemies after a wipe (0.7.8, amelia2078, CL-2c1eef, Vicar Amelia's second try)
+
+4-player playtest: Amelia's first try (intro) wiped the party; on the second try the host died early and she animated and
+walked but never attacked the guests. Smoke `amp` (group `amelia_phase`, fixture `amelia_alive`) reproduces it with two players
+on master and on 0.7.7: after the host's death on try 2, 0 attacks and 0 guest HP drops; on try 1, and on try 2 with the host
+alive, she attacks everyone.
+
+How the enemies see players (static RE, confirmed live): the perception tick 0x12AB4C0 (holder vtable 0x531B9F0 slot +0x18 ->
+0x12A85C0) searches the target bank with 0x12ADC50 in mode 0, which takes only bank entries whose `[entry +0x18] +0x30 -> +0x18`
+bit 0 is clear; the sighted ones are (re)marked in the AI's target list (0x12B2760: flags | 0x80), and the list update 0x12B17C0
+removes every entry that was not re-marked that tick (0x12B2490). A hit (0x12A9230) or an event ChangeTarget (0x12AD1B0) only
+marks for one tick: without perception such a record is gone again within 0.5 s (live: the limbo's hate record write).
+
+The bit is the dead mark: the host's own entry goes 0 -> 1 at its death. A member's copy re-created by the wipe's re-join came
+back with it still set (live: the guest's entry 0 on try 1, 1 on try 2 from its first frame), so no enemy perceived the guest: a
+boss fought the host while it lived and nobody once the host was down. `LivingTargetMarkTick` (party_b2.cpp, any role, every
+tick) clears the mark on every living player chr (HP > 0, not the spectating / limbo local player), logged once per chr
+(`living target: chr ... still had the dead mark`). `BB_PARTY_LIVING_TARGET=0` turns it off. Not the cause (A/B): the dead
+untarget, the limbo ChangeTarget, the boss room notice 2009[6], the intro's player chr +0x1E5 bit 0x10 (a remo marker only).
