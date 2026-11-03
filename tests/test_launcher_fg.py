@@ -38,10 +38,13 @@ class FrameGenerationChoice(unittest.TestCase):
         self.assertEqual(self.L.frame_generation_label({"frame_generation": "3", "fg_backend": "dlss"}), "DLSS FG 3x")
 
     def test_reflex(self):
-        self.assertEqual(self.L.reflex_label({}), "Off")
+        self.assertEqual(self.L.reflex_label({}), "Auto")
+        self.assertEqual(self.L.reflex_label({"reflex": "off"}), "Off")
+        self.assertEqual(self.L.anti_lag_label({}), "Auto")
+        self.assertEqual(self.L.anti_lag_label({"anti_lag": "on"}), "On")
         self.assertEqual(self.L.reflex_label({"reflex": "boost"}), "On + Boost")
         self.assertEqual(self.L.reflex_label({"reflex": "1"}), "On")
-        self.assertEqual(self.L.reflex_label({"reflex": "nonsense"}), "Off")
+        self.assertEqual(self.L.reflex_label({"reflex": "nonsense"}), "Auto")
 
     def test_saved_keys_keep_the_rest(self):
         with tempfile.TemporaryDirectory() as tmp:

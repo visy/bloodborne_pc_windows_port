@@ -3,6 +3,10 @@
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
 #include "bbport_frame_rate.h"
+#include "bbport_latency.h"
+#include "bbport_fast_loading.h"
+#include "core/libraries/videoout/video_out.h"
+#include "video_core/renderer_vulkan/vk_antilag.h"
 #include "bbport_stability.h"
 #include "party/party_director.h"
 #include "party/lamp_travel.h"
@@ -341,6 +345,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
         }
         g_window_cv.notify_all();
         while (window->PollEvents()) {
+            BbLatency::NotePump();
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
@@ -550,8 +555,34 @@ u32 ConsumeWithOverlaysScreenshotRequests() { return 0; }
 ScreenshotRequests ConsumeScreenshotRequests() { return {}; }
 } // namespace VideoCore
 
+// Low-latency frame pacing (bbport.ini ll_pacing): once per submitted flip, before the game reads the pad for the
+// next frame, wait until at most BB_LL_DEPTH (default 0) frames are still on their way to the display, counting the
+// flips waiting for their slot and the ones the presenter thread is working on (at most
+// BB_LL_TIMEOUT_MS, default 40, so a stalled presenter never stalls the game for long). The game's pad read is
+// the start of its frame: reading later means the frame is simulated from fresher input.
+static void LowLatencyGate() {
+    static std::atomic<std::uint64_t> gated_at{~0ull};
+    if (!BbSettings::Get().ll_pacing.load(std::memory_order_relaxed)) return;
+    const std::uint64_t submitted = Libraries::VideoOut::FlipsSubmitted();
+    if (gated_at.exchange(submitted, std::memory_order_relaxed) == submitted) return;
+    if (bbport::fastload::Active()) return; // loading screens run flat out
+    static const int depth = [] { const char* e = std::getenv("BB_LL_DEPTH"); return e ? std::atoi(e) : 0; }();
+    static const int timeout_ms = [] { const char* e = std::getenv("BB_LL_TIMEOUT_MS"); return e ? std::atoi(e) : 40; }();
+    Libraries::VideoOut::WaitFlipQueue(depth, unsigned(timeout_ms) * 1000u);
+}
+
 extern "C" void bbgpu_reflex_pre_input_sample(void) {
+    LowLatencyGate();
     Vulkan::Reflex::PreInputSample();
+    Vulkan::AntiLag::OnInput(); // AMD Anti-Lag 2: the INPUT stage once per simulation frame (no-op without it)
+}
+
+extern "C" void bbgpu_latency_pad_read(void) {
+    BbLatency::NotePadRead();
+}
+
+extern "C" int bbgpu_pad_fresh(void) {
+    return BbSettings::Get().pad_fresh.load() ? 1 : 0;
 }
 
 extern "C" void bbgpu_reflex_on_input_sampled(void) {

@@ -143,6 +143,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         if (v.fg_backend == FgFsr && v.frame_generation > 2) v.frame_generation = 2;
     } else if (key == "reflex") {
         v.reflex = ParseReflex(value.c_str());
+    } else if (key == "anti_lag") {
+        v.anti_lag = ParseAntiLag(value.c_str());
+    } else if (key == "vrr") {
+        v.vrr = i != 0;
+    } else if (key == "pad_fresh") {
+        v.pad_fresh = i != 0;
+    } else if (key == "ll_pacing") {
+        v.ll_pacing = i != 0;
     } else if (key == "key_ramp") {
         v.key_ramp = i != 0;
     } else if (key == "prompt_style") {
@@ -400,7 +408,11 @@ void Load() {
     auto& v = Get();
     v.frame_generation = 0; // off unless bbport.ini or the environment chooses it
     v.fg_backend = FgDlss;
-    v.reflex = ReflexOff;
+    v.reflex = ReflexAuto;
+    v.anti_lag = AntiLagAuto;
+    v.vrr = false;
+    v.pad_fresh = true;
+    v.ll_pacing = true;
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
@@ -464,7 +476,7 @@ void Load() {
     }
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
-        {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"}, {"BB_KEY_RAMP", "key_ramp"},
+        {"BB_REFLEX", "reflex"},  {"BB_ANTI_LAG", "anti_lag"}, {"BB_VRR", "vrr"}, {"BB_PAD_FRESH", "pad_fresh"}, {"BB_LL_PACING", "ll_pacing"},                  {"BB_PROMPT_STYLE", "prompt_style"}, {"BB_KEY_RAMP", "key_ramp"},
         {"BB_TEXTURE_QUALITY", "texture_quality"},
         {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
         {"BB_PARTY_HIDE_BAD_NAMES", "party_hide_bad_names"}, {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"},
@@ -551,6 +563,8 @@ void Load() {
     v.startup_frame_generation = v.frame_generation;
     v.startup_fg_backend = v.fg_backend;
     v.startup_reflex = v.reflex;
+    v.startup_anti_lag = v.anti_lag;
+    v.startup_vrr = v.vrr;
     v.startup_hdr = v.hdr;
     if (const char* pattern = std::getenv("BB_HDR_PATTERN")) v.hdr_calibration = pattern[0] == '1';
 }
@@ -563,7 +577,16 @@ float HdrPeakNits() {
 }
 
 const char* ReflexModeName(int mode) {
-    return mode == ReflexBoost ? "boost" : mode == ReflexOn ? "on" : "off";
+    return mode == ReflexBoost ? "boost" : mode == ReflexOn ? "on" : mode == ReflexAuto ? "auto" : "off";
+}
+
+const char* AntiLagModeName(int mode) {
+    return mode == AntiLagOn ? "on" : mode == AntiLagAuto ? "auto" : "off";
+}
+
+int ParseAntiLag(const char* value) {
+    const std::string_view text{value ? value : ""};
+    return text == "on" || text == "1" ? AntiLagOn : text == "off" || text == "0" ? AntiLagOff : AntiLagAuto;
 }
 
 const char* PromptStyleName(int style) {
@@ -588,7 +611,8 @@ int ParsePromptStyle(const char* value) {
 int ParseReflex(const char* value) {
     const std::string_view text{value ? value : ""};
     return text == "boost" || text == "2" ? ReflexBoost : text == "on" || text == "1" ? ReflexOn
-                                                                                       : ReflexOff;
+           : text == "off" || text == "0"                                                 ? ReflexOff
+                                                                                          : ReflexAuto;
 }
 
 const char* FgBackendName(int backend) {
@@ -666,7 +690,8 @@ bool RestartNeeded() {
                    s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl ||
                    s.frame_generation != s.startup_frame_generation ||
                    (s.frame_generation >= 2 && s.fg_backend != s.startup_fg_backend) ||
-                   s.reflex != s.startup_reflex || s.hdr != s.startup_hdr ||
+                   s.reflex != s.startup_reflex || s.anti_lag != s.startup_anti_lag || s.vrr != s.startup_vrr ||
+                   s.hdr != s.startup_hdr ||
                    ResolutionNeedsRestart();
     for (int e = 0; e < EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
@@ -767,6 +792,10 @@ void Save() {
     put("frame_generation", FrameGenName(v.frame_generation));
     put("fg_backend", FgBackendName(v.fg_backend));
     put("reflex", ReflexModeName(v.reflex));
+    put("anti_lag", AntiLagModeName(v.anti_lag));
+    put("vrr", flag(v.vrr));
+    put("pad_fresh", flag(v.pad_fresh));
+    put("ll_pacing", flag(v.ll_pacing));
     put("preset", std::to_string(v.preset.load()));
     put("sharpen", flag(v.sharpen));
     put("sharpness", fixed(v.sharpness, 2));
@@ -925,7 +954,7 @@ void ReloadMouseTuning() {
     // the other keys are the menu's (a full re-read would undo its unsaved changes).
     static constexpr const char* tuning[] = {"mk_sens_x", "mk_sens_y", "mk_invert_x", "mk_invert_y",
                                              "mk_deadzone", "mk_smoothing", "mk_wheel",
-                                             "mk_direct_camera", "prompt_style", "key_ramp"};
+                                             "mk_direct_camera", "prompt_style", "key_ramp", "pad_fresh", "ll_pacing"};
     auto& v = Get();
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];

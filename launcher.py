@@ -2046,8 +2046,11 @@ FRAME_GENERATION_CHOICES = [
 ]
 
 
-# NVIDIA Reflex (same PR): bbport.ini reflex, Off by default. (label, value)
-REFLEX_CHOICES = [("Off", "off"), ("On", "on"), ("On + Boost", "boost")]
+# NVIDIA Reflex (same PR): bbport.ini reflex. Auto (default since 0.7.8) = on for an NVIDIA GPU whose driver has
+# the extension, off elsewhere. (label, value)
+REFLEX_CHOICES = [("Auto", "auto"), ("Off", "off"), ("On", "on"), ("On + Boost", "boost")]
+# AMD Anti-Lag 2 (VK_AMD_anti_lag, 0.7.8): bbport.ini anti_lag, Auto = on for an AMD GPU whose driver has it.
+ANTI_LAG_CHOICES = [("Auto", "auto"), ("Off", "off"), ("On", "on")]
 
 
 # Button prompts (from deadinside28/bloodborne_pc 72e5c8ce): bbport.ini prompt_style, a game setting
@@ -2074,9 +2077,15 @@ def texture_quality_label(ini: dict) -> str:
 
 
 def reflex_label(ini: dict) -> str:
-    value = str(ini.get("reflex", "off")).lower()
-    value = {"1": "on", "2": "boost"}.get(value, value)
+    value = str(ini.get("reflex", "auto")).lower()
+    value = {"0": "off", "1": "on", "2": "boost"}.get(value, value)
     return next((label for label, v in REFLEX_CHOICES if v == value), REFLEX_CHOICES[0][0])
+
+
+def anti_lag_label(ini: dict) -> str:
+    value = str(ini.get("anti_lag", "auto")).lower()
+    value = {"0": "off", "1": "on"}.get(value, value)
+    return next((label for label, v in ANTI_LAG_CHOICES if v == value), ANTI_LAG_CHOICES[0][0])
 
 
 # Native HDR output (docs/party/ERSC_PARITY.md I4): game settings in bbport.ini (hdr,
@@ -2230,6 +2239,10 @@ INI_FLAG_SETTINGS = [
     ("feat_live_fps", "live_fps", True, "BB_LIVE_FPS"),
     # Keyboard movement ramp (Mrsuss60 94388d59): WASD ease in / out like an analog stick; live in game.
     ("feat_key_ramp", "key_ramp", True, "BB_KEY_RAMP"),
+    # 0.7.8 (CL-7ae614): variable refresh rate (G-Sync / FreeSync) off by default, fresh gamepad read on.
+    ("feat_vrr", "vrr", False, "BB_VRR"),
+    ("feat_pad_fresh", "pad_fresh", True, "BB_PAD_FRESH"),
+    ("feat_ll_pacing", "ll_pacing", True, "BB_LL_PACING"),
     # 0.7.8 (CL-916488): the in-game map (Hunter's Atlas by MikeTat1988), OFF by default; needs the map data
     # made from the game's own files (Prepare the map, scripts/map_prepare.py).
     ("feat_map", "map_enabled", False, "BB_MAP"),
@@ -3205,6 +3218,9 @@ class BloodborneLauncher(tk.Tk):
         self.feat_hud = self.ini_flag_vars["show_hud"]
         self.feat_mouse_keyboard = self.ini_flag_vars["mk_enabled"]
         self.feat_key_ramp = self.ini_flag_vars["key_ramp"]
+        self.feat_vrr = self.ini_flag_vars["vrr"]
+        self.feat_pad_fresh = self.ini_flag_vars["pad_fresh"]
+        self.feat_ll_pacing = self.ini_flag_vars["ll_pacing"]
         self.feat_map = self.ini_flag_vars["map_enabled"]
         self.feat_auto_hud = self.ini_flag_vars["auto_hide_hud"]
         self.map_status_var = tk.StringVar(value="")
@@ -3224,6 +3240,7 @@ class BloodborneLauncher(tk.Tk):
         # option: read from and written to bbport.ini directly.
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
         self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
+        self.anti_lag_var = tk.StringVar(value=anti_lag_label(read_ini(bbport_ini_path())))
         self.prompt_style_var = tk.StringVar(value=prompt_style_label(read_ini(bbport_ini_path())))
         self.texture_quality_var = tk.StringVar(value=texture_quality_label(read_ini(bbport_ini_path())))
         # HDR output: game settings too (bbport.ini hdr / hdr_peak_nits / hdr_paper_white).
@@ -3492,11 +3509,37 @@ class BloodborneLauncher(tk.Tk):
         fg_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
         reflex_tip = ("NVIDIA's low-latency mode (VK_NV_low_latency2): the driver paces the game so "
                       "frames queue less; Boost also keeps the GPU clocks up. NVIDIA GPUs with a "
-                      "current driver; elsewhere it stays off. A game setting (bbport.ini reflex, also "
-                      "in the in-game menu), used at the next start. Default: Off.")
+                      "current driver; elsewhere it stays off. Auto turns it on for an NVIDIA GPU whose driver "
+                      "has it. A game setting (bbport.ini reflex, also in the in-game menu), used at the next "
+                      "start. Default: Auto.")
         reflex_combo = self._combo(sec, "NVIDIA Reflex:", self.reflex_var, [c[0] for c in REFLEX_CHOICES],
                                    reflex_tip, width=14)
         reflex_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        anti_lag_tip = ("AMD's low-latency mode (VK_AMD_anti_lag, Anti-Lag 2): the driver paces the CPU so the "
+                        "game reads input as late as the GPU allows. AMD GPUs with a current driver. Auto turns "
+                        "it on for an AMD GPU whose driver has it. A game setting (bbport.ini anti_lag, also in "
+                        "the in-game menu: System > Latency), used at the next start. Default: Auto.")
+        anti_lag_combo = self._combo(sec, "AMD Anti-Lag 2:", self.anti_lag_var, [c[0] for c in ANTI_LAG_CHOICES],
+                                     anti_lag_tip, width=14)
+        anti_lag_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        self._check(sec, "Variable refresh rate (G-Sync / FreeSync)", self.feat_vrr,
+                    "For a G-Sync or FreeSync display: presents are not synced to vblank, so the display refreshes "
+                    "when a frame arrives, and the frame rate is held just under the display's refresh "
+                    "(60 -> 59, 120 -> 116, 144 -> 138) so nothing tears at the top. With Live FPS the target "
+                    "above that runs at the cap. Off by default: a game cannot tell whether VRR is on. A game "
+                    "setting (bbport.ini vrr, also System > Latency), used at the next start.",
+                    command=lambda: self.save_game_settings("vrr"))
+        self._check(sec, "Low-latency frame pacing", self.feat_ll_pacing,
+                    "The game starts a frame only when at most one finished frame is still waiting for the "
+                    "display. Without it frames pile up (up to 3 frames, 48 ms at 60 FPS) and the controls "
+                    "feel late. Frame rate and game speed are unchanged. A game setting (bbport.ini "
+                    "ll_pacing, also System > Latency), live. Default: on.",
+                    command=lambda: self.save_game_settings("ll_pacing"))
+        self._check(sec, "Fresh gamepad read", self.feat_pad_fresh,
+                    "The gamepad is read from the device at the moment the game asks for it instead of up to "
+                    "2 ms earlier. A game setting (bbport.ini pad_fresh, also System > Latency), live. "
+                    "Default: on.",
+                    command=lambda: self.save_game_settings("pad_fresh"))
         texture_combo = self._combo(
             sec, "Texture quality:", self.texture_quality_var, [c[0] for c in TEXTURE_QUALITY_CHOICES],
             "Loads big block-compressed textures (512x512 and up, with 3+ mip levels) without their largest "
@@ -4369,6 +4412,7 @@ class BloodborneLauncher(tk.Tk):
         self.sync_quick_patch_vars()
         self.frame_generation_var.set(frame_generation_label(ini))
         self.reflex_var.set(reflex_label(ini))
+        self.anti_lag_var.set(anti_lag_label(ini))
         self.prompt_style_var.set(prompt_style_label(ini))
         self.texture_quality_var.set(texture_quality_label(ini))
         if hasattr(self, "party_vpn_combo"):
@@ -4421,7 +4465,8 @@ class BloodborneLauncher(tk.Tk):
         """The Frame generation choice: bbport.ini frame_generation / fg_backend (next start)."""
         try:
             values = frame_generation_ini(self.frame_generation_var.get())
-            values["reflex"] = dict(REFLEX_CHOICES).get(self.reflex_var.get(), "off")
+            values["reflex"] = dict(REFLEX_CHOICES).get(self.reflex_var.get(), "auto")
+            values["anti_lag"] = dict(ANTI_LAG_CHOICES).get(self.anti_lag_var.get(), "auto")
             update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")

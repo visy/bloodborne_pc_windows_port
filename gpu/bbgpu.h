@@ -63,6 +63,10 @@ void bbgpu_gather_request(const char *source);
  * simulation samples pad input (driver frame pacing) and right after. No-ops unless Reflex runs. */
 void bbgpu_reflex_pre_input_sample(void);
 void bbgpu_reflex_on_input_sampled(void);
+/* Input latency probe (BB_LATENCY_LOG=1, gpu/shim/bbport_latency.h): the pad is being read now (before any fresh update).
+ * bbgpu_pad_fresh: 1 when the pad should be read again from the device at that moment (bbport.ini pad_fresh). */
+void bbgpu_latency_pad_read(void);
+int bbgpu_pad_fresh(void);
 /* Mouse & keyboard controls (scheme from Mrsuss60/bloodborne_pc_windows_port): the mouse state
  * gathered by the window thread and the menu's look tuning. Mouse motion (pixels, relative mode)
  * accumulates until a call with consume_motion set takes it. buttons: bit 0 left, 1 right,

@@ -676,7 +676,8 @@ constexpr u64 LiveBlockSite = 0x2018e3d, LiveGlobalDt = 0x535a908, LiveCave = 0x
 void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
     auto& s = BbSettings::Get();
-    const int target = s.target_fps.load(std::memory_order_relaxed);
+    // vrr: a target at or above the display's refresh runs just under it (0 = uncapped goes to the cap too).
+    const int target = int(ApplyVrrCap(unsigned(std::max(0, s.target_fps.load(std::memory_order_relaxed)))));
     float interval = Frame30;
     const float dt = LiveClockStep(live_state, measured, target, s.max_dt_hz.load(std::memory_order_relaxed), interval);
     *reinterpret_cast<float*>(pacer + 0x18) = interval;
@@ -869,6 +870,24 @@ unsigned LivePresenterLimit() {
     if (live_pacer_ok) return unsigned(LiveCeiling);
     const int target = BbSettings::Get().target_fps.load(std::memory_order_relaxed);
     return target <= 0 ? unsigned(LiveCeiling) : unsigned(std::clamp(target, 30, LiveCeiling));
+}
+
+namespace {
+std::atomic<float> display_refresh_hz{0.0f};
+}
+
+void SetDisplayRefresh(float hz) {
+    display_refresh_hz.store(hz, std::memory_order_relaxed);
+}
+
+unsigned VrrCap() {
+    if (!BbSettings::Get().startup_vrr) return 0;
+    return unsigned(VrrFrameCap(display_refresh_hz.load(std::memory_order_relaxed)));
+}
+
+unsigned ApplyVrrCap(unsigned limit) {
+    const unsigned cap = VrrCap();
+    return cap && (limit == 0 || limit > cap) ? cap : limit;
 }
 
 bool LiveActive() {

@@ -20,6 +20,8 @@
 #include "bbport_toggles.h"
 #include "bbport_fast_loading.h"
 #include "bbport_frame_rate.h"
+#include "bbport_latency.h"
+#include "video_core/renderer_vulkan/vk_reflex.h"
 #include "bbport_compile_progress.h"
 #include "bbport_heap_sites.h"
 #include "bbport_wait_trace.h"
@@ -98,6 +100,7 @@ void VideoOutDriver::RunPresenter(std::function<void()> work, bool if_idle) {
         if (if_idle && (swap_busy || !swap_queue.empty())) {
             return; // a redraw of the last frame is pointless while frames are queued
         }
+        swap_inflight.fetch_add(1, std::memory_order_acq_rel);
         swap_queue.push_back(std::move(work));
     }
     swap_cv.notify_one();
@@ -118,6 +121,11 @@ void VideoOutDriver::SwapThread(std::stop_token token) {
             swap_busy = true;
         }
         work();
+        swap_inflight.fetch_sub(1, std::memory_order_acq_rel);
+        {
+            std::scoped_lock port_lock{main_port.port_mutex}; // no wakeup lost against WaitFlipQueue's predicate
+        }
+        main_port.flip_cv.notify_all();
     }
 }
 
@@ -844,6 +852,7 @@ void VideoOutDriver::Flip(const Request& req) {
         }
         --flip_status.flip_pending_num;
     }
+    port->flip_cv.notify_all();
 
     // Trigger flip events for the port.
     for (auto event : port->flip_events) {
@@ -923,6 +932,8 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
     }
     // bbport: Reflex's identity of the flip as the guest asked for it (CPU latency diagnostics).
     frame->content_frame_id = content_frame_id;
+    frame->flip_ns = BbLatency::NowNs();
+    frame->input_read_ns = BbLatency::LastReadNs(); // BB_LATENCY_LOG: the pad read this frame was simulated from
 
     {
         std::scoped_lock lock{mutex};
@@ -958,7 +969,13 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // Live clock (BbFrameRate::LivePresenterLimit): while live mode is on the limit is the live target and
     // is read again every iteration (the menu changes it without a restart); 0 = live mode off.
     const u32 startup_frame_limit = EmulatorSettings.GetFrameLimit();
-    u32 frame_limit = BbFrameRate::LivePresenterLimit() ? BbFrameRate::LivePresenterLimit() : startup_frame_limit;
+    // Variable refresh rate (bbport.ini vrr): the limit never exceeds just under the display's refresh.
+    const auto limit_wanted = [&] {
+        const u32 live = BbFrameRate::LivePresenterLimit();
+        return BbFrameRate::ApplyVrrCap(live ? live : startup_frame_limit);
+    };
+    u32 frame_limit = limit_wanted();
+    u32 reflex_limit_sent = ~0u;
     auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
                                     : std::chrono::nanoseconds(0);
     auto slack = frame_period / 16;
@@ -994,15 +1011,21 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         timer.Start();
         const bool fast = bbport::fastload::Tick();
         // The live clock is installed after this thread starts: ask every iteration (0 = live mode off).
-        if (const u32 limit = BbFrameRate::LivePresenterLimit()) {
+        if (const u32 limit = limit_wanted()) {
             if (limit != frame_limit) {
                 immediate_flips = true;
                 frame_limit = limit;
                 frame_period = std::chrono::nanoseconds(1000000000 / frame_limit);
                 slack = frame_period / 16;
                 next_flip = std::chrono::steady_clock::now();
-                std::printf("VideoOut: frame limit %u FPS (live)\n", frame_limit);
+                std::printf("VideoOut: frame limit %u FPS (%s)\n", frame_limit,
+                            BbFrameRate::VrrCap() ? "live, variable refresh rate" : "live");
             }
+        }
+        // Reflex's latency sleep holds the presenter's rate too (its minimum frame interval), once Reflex runs.
+        if (reflex_limit_sent != frame_limit && Vulkan::Reflex::Tracking()) {
+            reflex_limit_sent = frame_limit;
+            Vulkan::Reflex::SetFrameInterval(frame_limit ? unsigned(1000000 / frame_limit) : 0u);
         }
         const auto tick_deadline =
             std::chrono::steady_clock::now() + (fast ? std::min(fast_period, vblank_period) : vblank_period);

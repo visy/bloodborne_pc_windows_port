@@ -371,7 +371,14 @@ void Swapchain::FindPresentMode() {
         return;
     }
 
-    const auto requested_mode = EmulatorSettings.GetPresentMode();
+    // Variable refresh rate (bbport.ini vrr): presents are not synced to vblank, so the display refreshes when a frame
+    // arrives; the frame limit (BbFrameRate::VrrCap) keeps the rate under its refresh, so nothing tears at the top.
+    // BB_PRESENT_MODE still wins when set.
+    const bool vrr = BbSettings::Get().startup_vrr && !std::getenv("BB_PRESENT_MODE");
+    const auto requested_mode = vrr ? std::string{"Immediate"} : EmulatorSettings.GetPresentMode();
+    if (vrr) {
+        LOG_INFO(Render_Vulkan, "Variable refresh rate: Immediate present mode (when offered), rate held under the refresh");
+    }
     if (requested_mode == "Mailbox") {
         present_mode = vk::PresentModeKHR::eMailbox;
     } else if (requested_mode == "Fifo") {
@@ -386,7 +393,9 @@ void Swapchain::FindPresentMode() {
 
     if (std::ranges::find(modes, present_mode) == modes.cend()) {
         // FIFO is guaranteed to be supported by the Vulkan spec.
-        constexpr auto fallback = vk::PresentModeKHR::eFifo;
+        const auto fallback = vrr && std::ranges::find(modes, vk::PresentModeKHR::eMailbox) != modes.cend()
+                                  ? vk::PresentModeKHR::eMailbox
+                                  : vk::PresentModeKHR::eFifo;
         LOG_WARNING(Render, "Requested present mode {} is not supported, falling back to {}.",
                     vk::to_string(present_mode), vk::to_string(fallback));
         present_mode = fallback;

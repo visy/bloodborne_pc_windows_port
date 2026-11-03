@@ -186,4 +186,14 @@ inline float LiveClockStep(LiveClockState& st, float measured, int target_fps, i
     return std::clamp(dt, floor_dt, max_dt);
 }
 
+/// Variable refresh rate: the frame rate to hold under a display's refresh so the display stays inside its VRR
+/// window and a present never waits for (or tears at) the top: refresh - refresh^2 / 3600 (the figure NVIDIA and
+/// Blur Busters give for G-Sync: 60 -> 59, 120 -> 116, 144 -> 138, 240 -> 224), floored. 0 for an unknown
+/// refresh (below 24 Hz or not finite); never above refresh - 1.
+inline int VrrFrameCap(float refresh_hz) {
+    if (!std::isfinite(refresh_hz) || refresh_hz < 24.0f) return 0;
+    const float cap = refresh_hz - refresh_hz * refresh_hz / 3600.0f;
+    return std::max(23, int(std::floor(std::min(cap, refresh_hz - 1.0f))));
+}
+
 } // namespace BbFrameRate
