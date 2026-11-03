@@ -8017,7 +8017,7 @@ def check_iv(v, L, name="iv"):
     need(v, L, n + " guest: told of the invader", 1, r"invade: notice: (An invader is coming|Invader .* has entered)", adm or 0)
     need(v, L, n + " invader: told it invades", 2, r"invade: notice: You invade ", adm or 0)
     need(v, L, n + " invader: no shared progress or items arrive (the host's rules are not sent)", 2,
-         r"invade: this game invades the host's world", adm or 0)
+         r"invade: this game invades the host's world", 0)
     # teams: the invader's chr is on its own team (a copy of the map enemies) on every game
     for i, who in ((0, "host"), (1, "guest"), (2, "invader")):
         need(v, L, n + " %s: the invader team is a copy of the map enemies" % who, i, r"invader: team \d+ is a copy of team 23", adm or 0)
