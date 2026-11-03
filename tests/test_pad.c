@@ -16,6 +16,10 @@ void bbgpu_ping_request(void) { ++pings; }
 static int gather_on, gathers;
 int bbgpu_gather_combo_enabled(void) { return gather_on; }
 void bbgpu_gather_request(const char *source) { (void)source; ++gathers; }
+static int chat_on, chats;
+int bbgpu_chat_enabled(void) { return chat_on; }
+void bbgpu_chat_request_pad(const char *source) { (void)source; ++chats; }
+int bbgpu_text_input_test_queue(const char *keys) { (void)keys; return 1; }
 void bbgpu_reflex_pre_input_sample(void) {}
 void bbgpu_reflex_on_input_sampled(void) {}
 /* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
@@ -559,6 +563,30 @@ int main(void) {
     inject(path,"touchpad l3");
     assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_TOUCHPAD) && (data.buttons & BTN_L3) && gathers==3);
     inject(path,"");
+    pad_read_state(1,&data);
+    /* Party text chat: touchpad held + L1 opens the preset list and reaches the game as neither; with chat off it is the
+     * game's L1 (touchpad held back until released). */
+    chat_on=1;
+    inject(path,"touchpad");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_TOUCHPAD));
+    inject(path,"touchpad l1");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & (BTN_TOUCHPAD|BTN_L1)) && data.touch_count==0 && chats==1);
+    inject(path,"l1");
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_L1) && chats==1); /* held back until released */
+    inject(path,"");
+    assert(pad_read_state(1,&data)==0 && data.buttons==0 && data.touch_count==0);
+    inject(path,"l1");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_L1) && chats==1); /* L1 alone: the game's */
+    inject(path,"");
+    pad_read_state(1,&data);
+    chat_on=0;
+    inject(path,"touchpad");
+    pad_read_state(1,&data);
+    inject(path,"touchpad l1");
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_L1) && chats==1);
+    inject(path,"");
+    pad_read_state(1,&data);
+    usleep(150000);
     pad_read_state(1,&data);
     /* Button prompts in the runtime: the device used last (a scripted keyboard key, a scripted pad
      * button), the set (the virtual pad's type, prompt_style), labels from the bindings

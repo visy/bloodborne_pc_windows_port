@@ -29,6 +29,7 @@
 #include "party/party_gather.h"
 #include "party/party_npctalk.h"
 #include "party/party_ping.h"
+#include "party/party_chat.h"
 #include "party/party_pvp.h"
 #include "party/party_status.h"
 #include "party/party_log.h"
@@ -232,6 +233,12 @@ bool PartyThroughWalls() {
 bool PartyPingsWanted() {
     return party::status::Enabled() && (coop::ping::Enabled() || PartyThroughWalls()) &&
            party::hud::Shown() && !party::hud::GameDialog();
+}
+
+/// Party text chat (party_chat.h): the log is drawn while chat is on and a party companion is up.
+bool PartyChatWanted() {
+    return coop::chat::Enabled() && party::hud::Shown() && !party::hud::GameDialog() &&
+           !party::chat::Read(party::hud::NowMs()).empty();
 }
 
 // Party alert (party_status SetAlert: the host refused us): a message box in the middle of the
@@ -1930,6 +1937,18 @@ void PartyTab() {
              "Зажмите тачпад (Tab) и нажмите R3 (Q) или нажмите V: метка там, куда вы смотрите. Вся "
              "группа видит её сквозь стены с расстоянием, вашим цветом, 10 секунд."),
            on);
+    Toggle("party_chat", T("Party chat", "Чат группы"), s.party_chat,
+           T("Off by default. T (keyboard; bbport.ini party_chat_key) or touchpad + L1 (pad: a list of short lines) writes "
+             "to the party. Lines show for a few seconds in the sender's colour. Offensive words are masked with Hide "
+             "offensive names on.",
+             "Выкл. по умолчанию. T (клавиатура; bbport.ini party_chat_key) или тачпад + L1 (геймпад: список коротких "
+             "фраз) пишет группе. Строки видны несколько секунд цветом отправителя. Грубые слова скрываются при "
+             "включённой защите имён."),
+           on);
+    Toggle("party_chat_receive", T("Show others' chat", "Чат других игроков"), s.party_chat_receive,
+           T("With party chat on: show the lines the other hunters write. Off: they are dropped.",
+             "При включённом чате: показывать строки других охотников. Выкл.: они отбрасываются."),
+           on);
     Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
            T("A small diamond with the distance on every companion on your map, drawn over walls and "
              "trees, in the companion's colour.",
@@ -3319,6 +3338,61 @@ void PartyPings() {
     }
 }
 
+/// Party text chat (party_chat.h): the last lines at the left edge, a bit below the middle (clear of the game's HUD and of
+/// the party panel), the sender's name in its party colour, the text in cream, fading out. Received text is masked with
+/// the offensive-name filter when "Hide offensive names" is on; a hateful sender name is shown masked too. Not interactive.
+void PartyChat() {
+    using namespace PartyHudDraw;
+    if (!coop::chat::Enabled() || BbFrameState::IsMenuOrLoading() || party::hud::GameDialog()) {
+        return;
+    }
+    const std::int64_t now = party::hud::NowMs();
+    const std::vector<party::chat::Line> lines = party::chat::Read(now);
+    if (lines.empty()) {
+        return;
+    }
+    const bool hide = BbSettings::Get().party_hide_bad_names;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 display = viewport->Size;
+    const float s = base_scale;
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+    ImGui::PushFont(game_font, 17.0f);
+    ImFont* font = ImGui::GetFont();
+    const float size = ImGui::GetFontSize();
+    const float x = std::round(display.x * 0.012f + 8.0f * s);
+    const float wrap = std::max(120.0f * s, display.x * 0.34f);
+    // Lay the lines out from the bottom up (the newest at the bottom), ending at 64% of the height.
+    float y = std::round(display.y * 0.64f);
+    for (auto it = lines.rbegin(); it != lines.rend(); ++it) {
+        const party::chat::Line& l = *it;
+        const float a = party::chat::Alpha(l.until_ms - now);
+        if (a <= 0.0f) {
+            continue;
+        }
+        float rgb[3];
+        party::hud::MemberColour(l.slot, rgb);
+        const std::string shown_name = (hide ? bbname::Display(l.name) : std::string(l.name)) + ": ";
+        const std::string& text = hide && !l.mine ? l.masked : l.text;
+        const ImVec2 name_size = ImGui::CalcTextSize(shown_name.c_str());
+        const ImVec2 body = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap - name_size.x);
+        const float h = std::max(name_size.y, body.y);
+        y -= h + 3.0f * s;
+        const ImU32 dark = Rgba(0.02f, 0.02f, 0.02f, 0.8f * a);
+        const ImU32 name_col = Rgba(rgb[0], rgb[1], rgb[2], a), text_col = Rgba(0.96f, 0.93f, 0.86f, a);
+        const ImVec2 at(x, y), tx(x + name_size.x, y);
+        bg->AddRectFilled(ImVec2(x - 4.0f * s, y - 1.0f * s), ImVec2(x + name_size.x + body.x + 5.0f * s, y + h + 1.0f * s),
+                          Rgba(0.0f, 0.0f, 0.0f, 0.38f * a), 3.0f * s);
+        for (const ImVec2 d : {ImVec2(-1, 0), ImVec2(1, 0), ImVec2(0, -1), ImVec2(0, 1)}) {
+            bg->AddText(font, size, ImVec2(at.x + d.x * s, at.y + d.y * s), dark, shown_name.c_str());
+            bg->AddText(font, size, ImVec2(tx.x + d.x * s, tx.y + d.y * s), dark, text.c_str(), nullptr,
+                        wrap - name_size.x);
+        }
+        bg->AddText(font, size, at, name_col, shown_name.c_str());
+        bg->AddText(font, size, tx, text_col, text.c_str(), nullptr, wrap - name_size.x);
+    }
+    ImGui::PopFont();
+}
+
 /// Party notices (join / leave / travel): the latest party_status event for ToastMs (by its length) in a bottom
 /// corner, clear of the game's HUD (bottom left; bottom right while the performance HUD has the
 /// bottom left), fading out. Not
@@ -3854,6 +3928,12 @@ bool HandleEvent(const SDL_Event& event) {
             coop::ping::Request("V key");
             return false;
         }
+        // T (party_chat_key): the party chat box (party_chat.h). Not taken from the game: a key.* binding still works.
+        if (!is_open && down && !event.key.repeat && event.key.key == SDL_Keycode(coop::chat::ChatKey()) &&
+            coop::chat::Enabled()) {
+            coop::chat::RequestOpen(false, "chat key");
+            return false;
+        }
         // H: the host gathers the party (I5, party_gather.h; as System > Party > Gather the party).
         // Not taken from the game either; on a guest it is only the game's key.
         if (!is_open && down && !event.key.repeat && event.key.key == SDLK_H && coop::gather::HotkeyAvailable()) {
@@ -3980,7 +4060,7 @@ bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
             CompileIndicatorShown() || coop::warper::Active() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
-            PartyPingsWanted() || PartyStainWanted() || BbMapView::IsOpen() || BbMapView::NoticeShown());
+            PartyPingsWanted() || PartyChatWanted() || PartyStainWanted() || BbMapView::IsOpen() || BbMapView::NoticeShown());
 }
 
 bool MenuOpen() {
@@ -4145,6 +4225,7 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
         if (!party::hud::GameMenu()) {  // the game's full-screen menu: none of these over it
             PartyHud(); // before the toast: it stacks above the panel
             PartyPings();
+            PartyChat();
             PartyStainMarker();
             PartyToast();
             PartyAlert();
