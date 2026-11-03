@@ -358,13 +358,16 @@ class SaveEditorTab(ttk.Frame):
         sel = [i for i in self.flag_tree.selection() if not i.startswith("g:")]
         if sel and self._risk():
             fid = int(sel[0])
-            self.model.set_flag(fid, not self.model.flag(fid))
+            on = not self.model.flag(fid)
+            for f in (F.lamp_flags(fid) if fid in F.ALL_LAMP_IDS else (fid,)):  # a lamp: its object flags too
+                self.model.set_flag(f, on)
             self.fill_flags()
 
     def light_lamps(self):
         if self._risk():
-            for fid in F.LAMP_IDS:
-                self.model.set_flag(fid, True)
+            for fid in F.ALL_LAMP_IDS:
+                for f in F.lamp_flags(fid):  # the lamp-lit flag and the lamp object's flags
+                    self.model.set_flag(f, True)
             self.fill_flags()
 
     def _fid(self):

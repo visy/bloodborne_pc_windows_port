@@ -406,8 +406,8 @@ def test_flag_lists_match_party_session():
     import party_session as ps
     from saveedit import flagsdata as F
     assert F.BOSS_IDS == ps.BOSS_FLAGS and F.LAMP_IDS == ps.LAMP_FLAGS and F.ENDING_IDS == ps.ENDING_FLAGS
-    assert all(M.group_key(f) is not None for f in F.BOSS_IDS + F.LAMP_IDS + F.ENDING_IDS)
-    assert len(F.bosses()) == 19 and len(F.lamps()) == 28
+    assert all(M.group_key(f) is not None for f in F.BOSS_IDS + F.ALL_LAMP_IDS + F.ENDING_IDS)
+    assert len(F.bosses()) == 19 and len(F.lamps()) == 28 + 16
     assert F.lamps()[0][1] == "Abandoned Old Workshop" and F.bosses()[4][1:] == ("Cathedral Ward", "Boss [12401800]")
     assert {g for _, g, _ in F.bosses() + F.lamps()} <= set(F.AREAS.values())
     assert M.group_key(12401800) == party_group(12401800)
@@ -487,6 +487,17 @@ def test_tab_refuses_while_game_runs(user, tmp_path, monkeypatch):
 @pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
 def test_catalogue_accepts_the_eboot_folder(tmp_path):
     assert N.Catalogue.load(GAME.parent, tmp_path).ok
+
+
+def test_lamp_flags_are_the_whole_lamp_dlc_included():
+    from saveedit import flagsdata as F
+    assert F.lamp_flags(73400201) == (73400201, 13407830, 13407831)       # Nightmare Church (issue #28)
+    assert F.lamp_flags(72410201) == (72410201, 12417830, 12417831)
+    assert F.lamp_flags(73600202) == (73600202, 13607850, 13607851)       # Fishing Hamlet
+    dlc = [f for f in F.lamps() if f[1] in ("Hunter's Nightmare", "Research Hall", "Fishing Hamlet")]
+    assert len(dlc) == 10 and {g for _, g, _ in dlc} == {"Hunter's Nightmare", "Research Hall", "Fishing Hamlet"}
+    assert all(M.group_key(x) is not None for f in F.ALL_LAMP_IDS for x in F.lamp_flags(f))
+    assert len(set(F.ALL_LAMP_IDS)) == len(F.ALL_LAMP_IDS)
 
 
 def test_lamp_and_boss_names_from_the_catalogue():
