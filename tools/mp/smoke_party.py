@@ -4361,6 +4361,10 @@ def phase_lw(only):
                     # party had rested at the Grand Cathedral lamp 3402950, 240 m away)
                     ["host_lastlamp=%s@1%%m34_00" % os.environ.get("BB_LW_LAMP", "3402950")] +
                     ["host_die@%s%%m34_00" % os.environ.get("BB_LW_DIE", "3")])  # the host first: its limbo
+    # BB_LW_LATE_HP=hp: the party's last hits take the boss to hp % while the host lies in its limbo, before the guests
+    # die (0.7.8: the wipe near the second-half threshold; BB_LW_HP=52 BB_LW_LATE_HP=45)
+    if os.environ.get("BB_LW_LATE_HP"):
+        host += ",host_kill=3400800:hp%s@%s%%m34_00" % (os.environ["BB_LW_LATE_HP"], os.environ.get("BB_LW_LATE_AT", "4"))
     g1 = ",".join(["guest_move=%s@6%%m34_00" % BR_LUDWIG,                   # into the arena, beside the host
                    "guest_die@%s%%m34_00~" % os.environ.get("BB_LW_GDIE", "20")] +  # the last one down: the wipe
                   # BB_LW_INJECT=hp: after the respawn load the guest's own copy of Ludwig is set to hp % (the
@@ -4369,6 +4373,8 @@ def phase_lw(only):
     players = int(os.environ.get("BB_LW_PLAYERS", "2"))
     ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1]
     env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LUDWIG_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1", "BB_PARTY_EVENT_SYNC_LOG=1"]
+    if os.environ.get("BB_LW_ENV"):          # "A=1;B=2" on every game (BB_NET_SIM=mobile ...)
+        env += os.environ["BB_LW_ENV"].split(";")
     if players > 2:
         # the report's party: host + 3 guests (4 players: the boss scaling row 7502), the guests down one after the other
         env.append("BB_PARTY_MAX=4")
