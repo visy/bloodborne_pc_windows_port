@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <set>
@@ -30,8 +31,9 @@ namespace coop::invade {
 constexpr const char* kEventName = "invade";
 constexpr int kGameSlots = 4;               ///< the game's player slots: the host and three phantoms (an invader is one)
 constexpr int kMaxInvaders = 1;             ///< one invader at a time
-constexpr double kRateWindowS = 600.0;      ///< an invader (address) may ask this many times per window ...
+constexpr double kRateWindowS = 600.0;      ///< an invader (address) may START this many invasions per window ...
 constexpr int kRateMax = 3;                 ///< ... then it waits for the oldest to age out
+constexpr int kSpamMax = 20;                ///< and may knock (a refused or admitted HELLO) this many times per window
 constexpr double kPendingMaxS = 120.0;      ///< an invader that is not in the world after this long is sent away
 constexpr double kReportEveryS = 5.0;       ///< the host repeats the state while an invader is there
 
@@ -148,21 +150,21 @@ inline bool Invadable(bool allow, int world_players, int invaders, int party_max
 class RateBook {
 public:
     /// Records an attempt at `now`; false (and not recorded) when the key already used kRateMax in the window.
-    bool Allow(const std::string& key, double now) {
+    bool Allow(const std::string& key, double now, int max = kRateMax) {
         auto& v = at_[key];
         v.erase(std::remove_if(v.begin(), v.end(), [&](double t) { return now - t >= kRateWindowS; }), v.end());
-        if (static_cast<int>(v.size()) >= kRateMax) return false;
+        if (static_cast<int>(v.size()) >= max) return false;
         v.push_back(now);
         if (at_.size() > 256) Trim(now);
         return true;
     }
     /// True when the next Allow(key) would refuse (nothing is recorded).
-    bool Limited(const std::string& key, double now) const {
+    bool Limited(const std::string& key, double now, int max = kRateMax) const {
         const auto it = at_.find(key);
         if (it == at_.end()) return false;
         int n = 0;
         for (double t : it->second) n += now - t < kRateWindowS ? 1 : 0;
-        return n >= kRateMax;
+        return n >= max;
     }
     void Clear() { at_.clear(); }
 
@@ -343,6 +345,77 @@ inline bool Decode(const std::string& body, Msg* out) {
 /// The invader tells the host it fell (its HP reached 0 on its own game). The host's own read of the invader's
 /// copy is the second opinion; either one ends the invasion.
 constexpr const char* kFellEvent = "invade_fell";
+
+// ---- the smoke's script, BB_PARTY_INVADE_TEST="name[=arg]@S[?cond][#N],..." ----
+// Steps run in order, each S seconds after the previous one finished (the first S seconds after this game's world is up).
+// names: allow=0|1 (the host's Allow invaders), view=boss|cutscene|loading|full|none (the host's moment, forced),
+// rejoin (an invader asks the host again), die (this player dies now). `?in` starts the delay when an invasion is on
+// (host: an invader is in the world; invader: it stands in the host's world), `?home` when there is none (the invader in
+// its own world, its link down); `#N` waits for the Nth time that condition came true.
+struct TestStep {
+    enum class Kind { Allow, View, Rejoin, Die } kind = Kind::Die;
+    int arg = 0;
+    std::string word;
+    double delay = 0;
+    int cond = 0;  // 0 none, 1 in, 2 home
+    int nth = 0;
+};
+
+inline bool ParseTest(const char* text, std::vector<TestStep>* out, std::string* bad = nullptr) {
+    out->clear();
+    if (!text) return true;
+    const std::string s(text);
+    std::size_t at = 0;
+    while (at <= s.size()) {
+        std::size_t end = s.find(',', at);
+        if (end == std::string::npos) end = s.size();
+        std::string item = s.substr(at, end - at);
+        at = end + 1;
+        if (item.empty()) {
+            if (end >= s.size()) break;
+            continue;
+        }
+        TestStep st;
+        const auto fail = [&] {
+            if (bad) *bad = item;
+            return false;
+        };
+        std::string head = item;
+        if (const std::size_t h = head.find('#'); h != std::string::npos) {
+            st.nth = std::atoi(head.c_str() + h + 1);
+            if (st.nth < 1 || st.nth > 20) return fail();
+            head = head.substr(0, h);
+        }
+        if (const std::size_t q = head.find('?'); q != std::string::npos) {
+            const std::string c = head.substr(q + 1);
+            if (c == "in") st.cond = 1;
+            else if (c == "home") st.cond = 2;
+            else return fail();
+            head = head.substr(0, q);
+        }
+        if (st.nth && !st.cond) return fail();
+        if (const std::size_t amp = head.find('@'); amp != std::string::npos) {
+            char* e = nullptr;
+            st.delay = std::strtod(head.c_str() + amp + 1, &e);
+            if (!e || *e || st.delay < 0) return fail();
+            head = head.substr(0, amp);
+        }
+        std::string arg;
+        if (const std::size_t eq = head.find('='); eq != std::string::npos) {
+            arg = head.substr(eq + 1);
+            head = head.substr(0, eq);
+        }
+        if (head == "allow" && (arg == "0" || arg == "1")) st.kind = TestStep::Kind::Allow, st.arg = arg == "1";
+        else if (head == "view" && (arg == "boss" || arg == "cutscene" || arg == "loading" || arg == "full" || arg == "none"))
+            st.kind = TestStep::Kind::View, st.word = arg;
+        else if (head == "rejoin" && arg.empty()) st.kind = TestStep::Kind::Rejoin;
+        else if (head == "die" && arg.empty()) st.kind = TestStep::Kind::Die;
+        else return fail();
+        out->push_back(st);
+        if (end >= s.size()) break;
+    }
+    return true;
+}
 
 // ---- the line the invader reads in its party status when a join is refused ----
 

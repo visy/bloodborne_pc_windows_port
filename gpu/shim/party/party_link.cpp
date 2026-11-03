@@ -1682,7 +1682,7 @@ struct PartyLink::Impl {
             std::string kind = r.str16();
             std::string json = r.str32();
             if (!r.ok) break;
-            if (m.invader) {  // the host's world actions, items and services are not for an invader
+            if (m.invader && !invader_rpc_ok(kind)) {  // only the game's session API; the rest is not for an invader
                 Writer w;
                 w.u32(id).u8(0).str32("{\"ResKind\":8,\"Error\":\"not allowed for an invader\"}");
                 send(c, kRpcResp, w);
@@ -2938,10 +2938,26 @@ bool invader_event_to_ok(const std::string& name) {
     return name == "invade" || name == "party_chat" || name == "host_session_end";
 }
 
+bool invader_rpc_ok(const std::string& kind) {
+    return kind == "http" || kind == "context_start" || kind == "create_room" || kind == "join_room" || kind == "leave_room" ||
+           kind == "heartbeat" || kind == "signaling_resolve" || kind == "signaling_update";
+}
+
 bool PartyLink::is_invader(int slot) const {
     std::lock_guard<std::mutex> lk(impl_->mu);
     const auto it = impl_->members.find(slot);
     return impl_->host && it != impl_->members.end() && it->second.invader;
+}
+
+bool PartyLink::drop_invader(int slot, const std::string& reason) {
+    Impl& I = *impl_;
+    std::lock_guard<std::mutex> lk(I.mu);
+    const auto it = I.members.find(slot);
+    if (!I.host || it == I.members.end() || !it->second.invader) return false;
+    I.log("party link: ending the invasion of " + it->second.name + " (slot " + std::to_string(slot) + "): " + reason);
+    I.release_member(slot, true, RejectCode::Invasion, reason);
+    I.publish();
+    return true;
 }
 
 bool PartyLink::kick(int slot, const std::string& reason) {

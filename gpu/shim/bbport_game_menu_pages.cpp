@@ -12,6 +12,7 @@
 
 #include "bbport_settings.h"
 #include "party/party_balance_rules.h"
+#include "party/party_invade.h"
 #include "party/party_link.h"  // kMaxPartyPlayers
 #include "party/party_npctalk.h"
 #include "party/party_status.h"
@@ -671,6 +672,22 @@ void DefineBuiltinPartyRows() {
     stay.toggle_get = [] { return BbSettings::Get().party_stay.load(); };
     stay.toggle_set = [](bool on) { BbSettings::Get().party_stay = on; };
     party_rows.push_back({stay});
+
+    // 0.7.8 (CL-4cc63c): the host blocks the invader for the session (docs/party/invasions.md). Shown only while one is there.
+    PartyRow block;
+    block.order = 38;
+    block.name = [](const B&) { return T2("Block the invader", "Заблокировать захватчика"); };
+    block.value = [](const B&) { return T2("Block", "Блок"); };
+    block.help = [](const B&) {
+        return T2("Press twice: send the invader home and refuse it for this session",
+                  "Нажмите дважды: отправить захватчика домой и не пускать до конца сессии");
+    };
+    block.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host && !coop::invade::InvaderName().empty(); };
+    block.press = PartyRow::Press::Confirm;
+    block.run = [](const B& b) {
+        if (Active(b)) coop::invade::RequestBlock();
+    };
+    party_rows.push_back({block});
 
     PartyRow leave;
     leave.order = 40;

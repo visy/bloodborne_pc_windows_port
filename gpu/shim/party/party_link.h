@@ -282,6 +282,9 @@ struct LinkConfig {
 // rest on both sides: progress, items, gathers, votes, world actions, lamps never cross to or from an invader).
 bool invader_event_from_ok(const std::string& name);
 bool invader_event_to_ok(const std::string& name);
+// 0.7.8: the RPCs an invader may make: the game's own session API (the FROM server emulation "http" and the room calls it needs to
+// ring the bell and be summoned). Everything else, e.g. "kick_member", is refused.
+bool invader_rpc_ok(const std::string& kind);
 
 // What differs between the host's and a guest's game (bbport build, eboot.bin, game params,
 // gameplay patches, gameplay mods, party hooks, party rules), one clause each with what to do,
@@ -444,6 +447,9 @@ public:
     bool kick(int slot, const std::string& reason);
     // Host: kick() by member name; false when no remote member has it.
     bool kick_name(const std::string& name, const std::string& reason = {});
+    // Host: end an invasion: BYE (RejectCode::Invasion, the reason) to the invader in `slot` and free the slot. Unlike kick() the
+    // name is not banned (an invader that lost may come again; the rate limit and the block list are the gate's).
+    bool drop_invader(int slot, const std::string& reason);
     bool is_banned(const std::string& name) const;
     // Host: a new party code secret (System > Party mode > New party code): new handshakes need the
     // new code (an old code's AUTH is refused); the members in now keep their sessions.

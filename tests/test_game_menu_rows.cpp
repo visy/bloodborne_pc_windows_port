@@ -20,6 +20,14 @@
 #include "gpu/shim/party/party_link.h"
 #include "gpu/shim/party/party_status.h"
 
+#include "party/party_invade.h"
+
+// The game menu pages call the invasion module (the Block the invader row); the unit test has no game: stubs.
+namespace coop::invade {
+std::string InvaderName() { return {}; }
+void RequestBlock() {}
+}  // namespace coop::invade
+
 namespace P = BbGameMenu::Pages;
 namespace ps = party::status;
 
