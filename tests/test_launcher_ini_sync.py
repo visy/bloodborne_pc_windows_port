@@ -115,6 +115,12 @@ class IniSync(unittest.TestCase):
         self.assertEqual(L.settings_env(old)["BB_PATCHES"], "Performance Patch (perf increase)")
         self.assertIsNone(L.settings_env({})["BB_PATCHES"])
 
+    def test_gpu_crash_detail_env(self):
+        L = self.L
+        self.assertEqual(L.settings_env({})["BB_BREADCRUMBS_TRANSFERS"], "0")
+        self.assertEqual(L.settings_env({"feat_gpu_crash_detail": False})["BB_BREADCRUMBS_TRANSFERS"], "0")
+        self.assertEqual(L.settings_env({"feat_gpu_crash_detail": True})["BB_BREADCRUMBS_TRANSFERS"], "1")
+
     # ---- migration
     def test_migration_missing_keys(self):
         L = self.L
