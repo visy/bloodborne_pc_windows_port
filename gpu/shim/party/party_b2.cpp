@@ -12514,6 +12514,47 @@ void Tick(const GameSnapshot& s) {
         TitleJoinHostTick(s);
         TitleJoinGuestTick(s, now);
     }
+    {
+        // BB_PARTY_BOSS_HP_LOG=1 (0.7.8, Ludwig wipe report): Ludwig's two chrs (3400800 / 3400801) HP, max HP and
+        // party doping, every 0.25 s from the start of a load until 15 s after world-up, only when it changes.
+        // Question: does a chr that has not been scaled yet (HP 2400 / max 41646 or HP 2400 / 2400 then max up) read
+        // as under half in the phase event 13404824 right after a respawn load.
+        static const bool on = EnvOn("BB_PARTY_BOSS_HP_LOG");
+        static double next = 0, up_at = -1e9;
+        static bool was_loading = false;
+        static std::string last[2];
+        static int lines = 0;
+        if (on && g_on.load() && lines < 300) {
+            if (s.loading && !was_loading) {
+                Log("boss HP probe: a load starts (%s)", Role() == RoleClient ? "guest" : "host or alone");
+                last[0].clear();
+                last[1].clear();
+            }
+            if (!s.loading && was_loading) up_at = now;
+            was_loading = s.loading;
+            if (now >= next && !s.loading && s.world_up) {
+                next = now + 0.25;
+                const std::uint32_t ents[2] = {3400800u, 3400801u};
+                for (int i = 0; i < 2; ++i) {
+                    const u64 chr =
+                        reinterpret_cast<u64(BB_COOP_SYSV*)(std::int32_t, u64, u64)>(Guest(0x13c97a0))(std::int32_t(ents[i]), 0, 0);
+                    // a line when the chr appears, its max HP or doping changes, or its HP ratio crosses 0.5
+                    const std::string key = balance::DescribeBossHp(chr, false);
+                    const u64 dm = chr ? Field<u64>(Field<u64>(chr, 0x3b0), 0x20) : 0;
+                    const int hp = dm ? Field<int>(dm, 0xf8, -1) : -1, mx = dm ? Field<int>(dm, 0xfc, -1) : -1;
+                    const bool low = mx > 0 && hp > 0 && hp * 2 < mx;
+                    const std::string k2 = key + (low ? " LOW" : "");
+                    if (k2 != last[i]) {
+                        last[i] = k2;
+                        ++lines;
+                        Log("boss HP probe: entity %u: %s%s (%s, %.1f s after world-up)", ents[i],
+                            balance::DescribeBossHp(chr).c_str(), low ? " - UNDER HALF" : "",
+                            Role() == RoleClient ? "guest" : "host or alone", now - up_at);
+                    }
+                }
+            }
+        }
+    }
     TestWarpTick(s, now);
     KickStalledTasks(s, now);
     TestBossTick(s, now);
