@@ -271,6 +271,12 @@ static void Rewards() {
             const bool paid = (r == Role::Invader && e == End::HostDied) || (r != Role::Invader && e == End::InvaderDied);
             CHECK(RewardFor(r, e).pay == paid);
         }
+    // the banners: the invader that won reads TargetClear (5), the host and guests that won BlackClear (7), nobody else a banner
+    CHECK(w.banner == 5 && h.banner == 7 && g.banner == 7);
+    for (End e : {End::None, End::InvaderDied, End::HostDied, End::Travel, End::BossFight, End::Disabled, End::Blocked, End::HostGone,
+                  End::Timeout})
+        for (Role r : {Role::Host, Role::Guest, Role::Invader})
+            CHECK((RewardFor(r, e).banner != 0) == RewardFor(r, e).pay);
     // an invader that lost / a host that fell is paid nothing, a guest is not paid when the host fell
     CHECK(!RewardFor(Role::Invader, End::InvaderDied).pay);
     CHECK(!RewardFor(Role::Host, End::HostDied).pay);
