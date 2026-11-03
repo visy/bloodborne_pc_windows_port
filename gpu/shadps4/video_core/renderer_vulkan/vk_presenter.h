@@ -54,6 +54,8 @@ struct Frame {
     /// flip request (CPU latency diagnostics); 0 without Reflex.
     u64 reflex_frame_id{};
     u64 content_frame_id{};
+    /// bbport: BB_LATENCY_LOG: steady-clock ns of the pad read behind this frame (0 when off).
+    u64 input_read_ns{}, flip_ns{};
 };
 
 enum SchedulerType {

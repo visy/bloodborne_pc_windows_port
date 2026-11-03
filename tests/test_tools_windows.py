@@ -235,3 +235,21 @@ class AnalyzeStabilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnalyzeLatencyTests(unittest.TestCase):
+    def test_summary_skips_warmup_and_takes_worst_tails(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("latency_analysis", TOOLS_WIN / "analyze_latency.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        lines = [f"latency: n=60 pad_age_us avg/p95/max={a}/{a * 2}/{a * 3} "
+                 f"read_to_present_ms avg/p95/max={b}/{b * 2}/{b * 3} reads=61"
+                 for a, b in [(900, 40), (1000, 20), (1200, 22), (1100, 21)]]
+        lines.insert(2, "latency: n=3 pad_age_us avg/p95/max=1/1/1 read_to_present_ms avg/p95/max=1/1/1 reads=3")
+        summary = module.summarise(module.parse("\n".join(lines)), skip=1)
+        self.assertEqual(summary["seconds"], 3)
+        self.assertAlmostEqual(summary["pad_age_us_avg"], 1100.0)
+        self.assertAlmostEqual(summary["read_to_present_ms_avg"], 21.0)
+        self.assertEqual(summary["pad_age_us_max"], 3600.0)
+        self.assertIsNone(module.summarise([], 0))

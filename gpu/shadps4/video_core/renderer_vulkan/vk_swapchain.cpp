@@ -371,13 +371,26 @@ void Swapchain::FindPresentMode() {
         return;
     }
 
-    const auto requested_mode = EmulatorSettings.GetPresentMode();
+    // Variable refresh rate (bbport.ini vrr): the frame limit (BbFrameRate::VrrCap) keeps the rate under the display's
+    // refresh, so the present mode is not what keeps it from tearing and the default (Mailbox: the newest frame goes out
+    // at once, nothing queues) stays. Immediate was tried (a windowed run lost 10% of its frame rate: the present
+    // waits for the compositor); BB_VRR_PRESENT_MODE=Immediate|FifoRelaxed|Fifo|Mailbox lets a VRR display's owner try one.
+    // BB_PRESENT_MODE still wins when set.
+    const char* vrr_mode = BbSettings::Get().startup_vrr ? std::getenv("BB_VRR_PRESENT_MODE") : nullptr;
+    const auto requested_mode = vrr_mode && !std::getenv("BB_PRESENT_MODE") ? std::string{vrr_mode}
+                                                                             : EmulatorSettings.GetPresentMode();
+    const bool vrr = BbSettings::Get().startup_vrr;
+    if (vrr) {
+        LOG_INFO(Render_Vulkan, "Variable refresh rate: present mode {}, rate held under the refresh", requested_mode);
+    }
     if (requested_mode == "Mailbox") {
         present_mode = vk::PresentModeKHR::eMailbox;
     } else if (requested_mode == "Fifo") {
         present_mode = vk::PresentModeKHR::eFifo;
     } else if (requested_mode == "Immediate") {
         present_mode = vk::PresentModeKHR::eImmediate;
+    } else if (requested_mode == "FifoRelaxed") {
+        present_mode = vk::PresentModeKHR::eFifoRelaxed;
     } else {
         LOG_ERROR(Render_Vulkan, "Unknown present mode {}, defaulting to Mailbox.",
                   EmulatorSettings.GetPresentMode());
@@ -386,7 +399,9 @@ void Swapchain::FindPresentMode() {
 
     if (std::ranges::find(modes, present_mode) == modes.cend()) {
         // FIFO is guaranteed to be supported by the Vulkan spec.
-        constexpr auto fallback = vk::PresentModeKHR::eFifo;
+        const auto fallback = vrr && std::ranges::find(modes, vk::PresentModeKHR::eMailbox) != modes.cend()
+                                  ? vk::PresentModeKHR::eMailbox
+                                  : vk::PresentModeKHR::eFifo;
         LOG_WARNING(Render, "Requested present mode {} is not supported, falling back to {}.",
                     vk::to_string(present_mode), vk::to_string(fallback));
         present_mode = fallback;

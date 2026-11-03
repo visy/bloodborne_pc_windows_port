@@ -88,11 +88,12 @@ int main() {
 
     assert(ParseFrameGen("bad") == 0 && ParseFrameGen("4") == 4 && ParseFgBackend("x") == FgDlss);
 
-    // NVIDIA Reflex: off by default, on / boost round trip, a restart on a change.
+    // NVIDIA Reflex: auto by default (0.7.8: on for NVIDIA, off elsewhere), on / boost / off round trip, a restart on a change.
     WriteIni(path, "# empty\n");
     Load();
-    assert(s.reflex == ReflexOff && s.startup_reflex == ReflexOff);
-    for (const char* mode : {"on", "boost", "off"}) {
+    assert(s.reflex == ReflexAuto && s.startup_reflex == ReflexAuto && !RestartNeeded());
+    assert(s.anti_lag == AntiLagAuto && !s.vrr && s.pad_fresh && s.ll_pacing);
+    for (const char* mode : {"on", "boost", "off", "auto"}) {
         char text[64];
         std::snprintf(text, sizeof(text), "reflex=%s\n", mode);
         WriteIni(path, text);
@@ -103,8 +104,24 @@ int main() {
     }
     s.reflex = ReflexOn;
     assert(RestartNeeded());
-    s.reflex = ReflexOff;
-    assert(ParseReflex("2") == ReflexBoost && ParseReflex("x") == ReflexOff);
+    s.reflex = ReflexAuto;
+    assert(ParseReflex("2") == ReflexBoost && ParseReflex("0") == ReflexOff && ParseReflex("x") == ReflexAuto);
+    // Anti-Lag 2, variable refresh rate, fresh pad: round trip; vrr / anti_lag need a restart, pad_fresh does not.
+    WriteIni(path, "anti_lag=on\nvrr=1\npad_fresh=0\n");
+    Load();
+    assert(s.anti_lag == AntiLagOn && s.vrr && !s.pad_fresh && !RestartNeeded());
+    Save();
+    {
+        const std::string saved = Read(path);
+        assert(saved.find("anti_lag=on") != std::string::npos && saved.find("vrr=1") != std::string::npos &&
+               saved.find("pad_fresh=0") != std::string::npos);
+    }
+    s.anti_lag = AntiLagOff;
+    assert(RestartNeeded());
+    s.anti_lag = AntiLagOn;
+    s.vrr = false;
+    assert(RestartNeeded());
+    assert(ParseAntiLag("off") == AntiLagOff && ParseAntiLag("1") == AntiLagOn && ParseAntiLag("x") == AntiLagAuto);
     std::remove(path);
     std::puts("PASS: frame generation settings");
 }

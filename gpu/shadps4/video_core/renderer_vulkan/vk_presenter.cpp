@@ -32,7 +32,9 @@
 #include "party/party_hud.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_fg_images.h"
+#include "video_core/renderer_vulkan/vk_antilag.h"
 #include "video_core/renderer_vulkan/vk_reflex.h"
+#include "bbport_latency.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/host_shaders/fg_hud_comp.h"
 
@@ -1735,6 +1737,10 @@ bool Presenter::PresentOne(Frame* frame, vk::Image source_image, vk::ImageView s
     }
 
     // Present to swapchain.
+    if (real) {
+        AntiLag::OnPresent();
+        BbLatency::NotePresent(frame->input_read_ns, frame->flip_ns);
+    }
     if (reflex) {
         if (real) Reflex::TraceCpuPresent(frame->content_frame_id);
         Reflex::OnPresentBegin(frame->reflex_frame_id, real);

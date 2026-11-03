@@ -27,7 +27,12 @@ const char* FrameGenName(int factor);
 int ParseFrameGen(const char* value);
 int ParseFgBackend(const char* value);
 /// NVIDIA Reflex (VK_NV_low_latency2; from Supermedo/bloodborne_pc PR #69 by FIocker). On restart.
-enum ReflexMode : int { ReflexOff = 0, ReflexOn = 1, ReflexBoost = 2, ReflexModeCount };
+/// ReflexAuto (the default, 0.7.8): on when the GPU is NVIDIA and the driver has the extension, off elsewhere.
+enum ReflexMode : int { ReflexOff = 0, ReflexOn = 1, ReflexBoost = 2, ReflexAuto = 3, ReflexModeCount };
+/// AMD Anti-Lag 2 (VK_AMD_anti_lag; 0.7.8): Auto (default) = on when the GPU is AMD and the driver has the extension.
+enum AntiLagMode : int { AntiLagOff = 0, AntiLagOn = 1, AntiLagAuto = 2, AntiLagModeCount };
+const char* AntiLagModeName(int mode);
+int ParseAntiLag(const char* value);
 const char* ReflexModeName(int mode);
 int ParseReflex(const char* value);
 /// Button prompts' icon set (src/pad_prompts.h PROMPT_STYLE_*): Auto (the device used last and the
@@ -102,10 +107,24 @@ struct Values {
     std::atomic<int> fg_backend{FgDlss};
     /// Measured while frame generation runs: rendered (source) and presented frames per second.
     std::atomic<float> source_fps{0.0f}, display_fps{0.0f};
-    /// NVIDIA Reflex: off (default), on, on + boost (bbport.ini reflex, BB_REFLEX). On restart.
-    std::atomic<int> reflex{ReflexOff};
+    /// NVIDIA Reflex: auto (default), off, on, on + boost (bbport.ini reflex, BB_REFLEX). On restart.
+    std::atomic<int> reflex{ReflexAuto};
     /// Reflex runs this session (chosen at start and the driver supports it; set by the renderer).
     std::atomic<bool> reflex_active{false};
+    /// What reflex resolves to this session (Off / On / Boost; Auto -> On on NVIDIA with the extension), set by the renderer.
+    std::atomic<int> reflex_resolved{ReflexOff};
+    /// AMD Anti-Lag 2 (bbport.ini anti_lag, BB_ANTI_LAG): auto (default), on, off. On restart.
+    std::atomic<int> anti_lag{AntiLagAuto};
+    std::atomic<bool> anti_lag_active{false};
+    /// Variable refresh rate (G-Sync / FreeSync; bbport.ini vrr, BB_VRR; default off, no portable way to detect it):
+    /// the frame limit stays under the display's refresh and presents are not vblank-synced. On restart.
+    std::atomic<bool> vrr{false};
+    /// Fresh gamepad state at the game's read (bbport.ini pad_fresh, BB_PAD_FRESH; default on; live): the pad is read again
+    /// from the device at that moment instead of the last event-loop pump (up to ~2 ms old).
+    std::atomic<bool> pad_fresh{true};
+    /// Low-latency frame pacing (bbport.ini ll_pacing, BB_LL_PACING; default on; live): the game starts reading input for
+    /// a frame only when the frames before it have been presented, so flips do not pile up in front of the display (a saturated queue held 39 ms of lag at 60 FPS).
+    std::atomic<bool> ll_pacing{true};
     /// Frame generation runs this session: chosen at start and its provider available (set by
     /// the presenter before the first frame).
     std::atomic<bool> fg_active{false};
@@ -440,7 +459,9 @@ struct Values {
     bool startup_gpl = false;
     int startup_frame_generation = 0;
     int startup_fg_backend = FgDlss;
-    int startup_reflex = ReflexOff;
+    int startup_reflex = ReflexAuto;
+    int startup_anti_lag = AntiLagAuto;
+    bool startup_vrr = false;
     bool startup_hdr = false;
 };
 

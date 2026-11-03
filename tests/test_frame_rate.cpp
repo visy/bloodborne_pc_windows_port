@@ -178,6 +178,12 @@ int main() {
     assert(LiveTargetFromRate(60) == 60 && LiveTargetFromRate(144) == 144);
     assert(LiveTargetFromRate(MaxRate) == 0 && LiveTargetFromRate(240) == 0 && LiveTargetFromRate(10) == 30);
 
+    // Variable refresh rate cap (0.7.8): just under the display's refresh; unknown refresh = no cap.
+    assert(VrrFrameCap(60.0f) == 59 && VrrFrameCap(59.94f) == 58 && VrrFrameCap(120.0f) == 116 && VrrFrameCap(144.0f) == 138);
+    assert(VrrFrameCap(165.0f) == 157 && VrrFrameCap(240.0f) == 224 && VrrFrameCap(30.0f) == 29);
+    assert(VrrFrameCap(0.0f) == 0 && VrrFrameCap(-5.0f) == 0 && VrrFrameCap(NAN) == 0 && VrrFrameCap(10.0f) == 0);
+    for (float hz = 24.0f; hz <= 500.0f; hz += 0.5f) assert(VrrFrameCap(hz) < hz && VrrFrameCap(hz) >= 23);
+
     // Live clock step: the step is the frame's time (game time follows real time); only +-1.5% micro-jitter is
     // locked to the target, with the difference carried over.
     {

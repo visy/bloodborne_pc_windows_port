@@ -22,6 +22,8 @@ void bbgpu_chat_request_pad(const char *source) { (void)source; ++chats; }
 int bbgpu_text_input_test_queue(const char *keys) { (void)keys; return 1; }
 void bbgpu_reflex_pre_input_sample(void) {}
 void bbgpu_reflex_on_input_sampled(void) {}
+void bbgpu_latency_pad_read(void) {}
+int bbgpu_pad_fresh(void) { return 0; }
 /* Mouse & keyboard mode (after Mrsuss60/bloodborne_pc_windows_port's test stubs). */
 static int mk_mode;
 static float mk_dx;

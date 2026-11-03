@@ -34,6 +34,8 @@ struct VideoOutPort {
     std::mutex port_mutex;
     std::condition_variable vo_cv;
     std::condition_variable vblank_cv;
+    /// bbport: notified when a flip was presented (flip_pending_num went down): WaitFlipQueue.
+    std::condition_variable flip_cv;
     int flip_rate = 0;
     int prev_index = -1;
     bool is_open = false;
@@ -87,6 +89,11 @@ public:
 
     VideoOutPort* GetPort(s32 handle);
 
+    /// bbport: frames handed to the swap thread that it has not finished presenting (WaitFlipQueue).
+    s32 SwapInFlight() const {
+        return swap_inflight.load(std::memory_order_acquire);
+    }
+
     int RegisterBuffers(VideoOutPort* port, s32 startIndex, void* const* addresses, s32 bufferNum,
                         const BufferAttribute* attribute);
     int UnregisterBuffers(VideoOutPort* port, s32 attributeIndex);
@@ -135,6 +142,7 @@ private:
     VideoOutPort main_port{};
     std::jthread present_thread;
     std::queue<Request> requests;
+    std::atomic<s32> swap_inflight{0};
 };
 
 } // namespace Libraries::VideoOut
