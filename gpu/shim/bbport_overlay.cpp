@@ -1519,6 +1519,14 @@ void ControlsTab() {
              "фонари, вы и ваша группа; клик по фонарю (крестовина + Cross) - переход к нему. Нужны данные "
              "карты, которые лаунчер делает из файлов игры (Prepare the map). Hunter's Atlas, MikeTat1988."),
            true);
+    Toggle("auto_hide_hud", T("Auto-hide HUD", "Автоскрытие HUD"), s.auto_hide_hud,
+           T("Like Elden Ring's HUD: Auto. The bars, item slots and echoes counter fade out while nothing happens "
+             "and come back on damage, stamina use, a fight, a lock-on, an item or weapon change, an echoes change "
+             "or a menu. The boss bar and prompts stay.",
+             "Как HUD: Auto в Elden Ring. Полосы, слоты предметов и счётчик отголосков исчезают, пока ничего не "
+             "происходит, и возвращаются при уроне, трате выносливости, бое, захвате цели, смене предмета или "
+             "оружия, изменении отголосков и в меню. Полоса босса и подсказки остаются."),
+           true);
     // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
     Choice("prompt_style", T("Button prompts", "Подсказки кнопок"), s.prompt_style, BbSettings::PromptStyleCount,
            [](int i) {
@@ -1948,6 +1956,12 @@ void PartyTab() {
     Toggle("party_chat_receive", T("Show others' chat", "Чат других игроков"), s.party_chat_receive,
            T("With party chat on: show the lines the other hunters write. Off: they are dropped.",
              "При включённом чате: показывать строки других охотников. Выкл.: они отбрасываются."),
+           on);
+    Toggle("party_name_colours", T("Coloured name tags", "Цветные имена"), s.party_name_colours,
+           T("Name tags above companions in each hunter's party colour (as in the party panel and chat), with a "
+             "strong outline. Off: the game's plate blue.",
+             "Имена над спутниками цветом охотника (как в панели группы и чате) с контуром. Выкл.: синий цвет "
+             "таблички игры."),
            on);
     Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
            T("A small diamond with the distance on every companion on your map, drawn over walls and "
@@ -3090,7 +3104,18 @@ void PartyHud() {
             bg->AddText(ImVec2(at.x + d4.x, at.y + d4.y), dark, label);
         }
         bg->AddText(ImVec2(at.x + o, at.y + o), Rgba(0.02f, 0.03f, 0.03f, 0.9f * alpha), label);  // drop shadow
-        bg->AddText(at, Rgba(pp.name_rgb[0], pp.name_rgb[1], pp.name_rgb[2], alpha), label);  // the plate's blue
+        float name_rgb[3] = {pp.name_rgb[0], pp.name_rgb[1], pp.name_rgb[2]};  // the plate's blue
+        if (BbSettings::Get().party_name_colours.load()) {
+            // The member's party colour; a stronger dark outline (diagonals too) keeps it readable on
+            // bright (snow, fire) and dark scenes.
+            party::hud::MemberColour(c.slot, name_rgb);
+            const ImU32 strong = Rgba(0.02f, 0.03f, 0.03f, 0.85f * alpha);
+            for (const ImVec2 d4 : {ImVec2(-o, -o), ImVec2(o, -o), ImVec2(-o, o), ImVec2(o, o),
+                                    ImVec2(-o, 0), ImVec2(o, 0), ImVec2(0, -o), ImVec2(0, o)}) {
+                bg->AddText(ImVec2(at.x + d4.x, at.y + d4.y), strong, label);
+            }
+        }
+        bg->AddText(at, Rgba(name_rgb[0], name_rgb[1], name_rgb[2], alpha), label);
         if (c.level_sync) {
             // The game plate's level-sync marker (SpEffect 9200): a small blue ring with a dot just
             // after the name, vertically on the name's x-height.
