@@ -494,8 +494,9 @@ def phase_rules(only):
     for tag in ["rules_h%d" % k for k in range(1, n + 1)] + ["rules_g%d" % k for k in range(1, n + 1)] + \
                ["rules_h%dc" % k for k in range(1, n + 1)] + ["rules_h_ffoff"]:
         watch += ["--watch", r"step \d+/\d+: ~?mark=%s(@|\s)=%s@1.2" % (tag, tag)]
+    # 420 s: ~1.35 s per menu step, 183 steps in 0.7.8 (330 s cut the last step, Friendly fire set back)
     return dict(
-        name="rules", seconds=330 + 90 * (RULES_PLAYERS > 2), count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
+        name="rules", seconds=420 + 90 * (RULES_PLAYERS > 2), count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
         env=["BB_GAME_MENU_TRACE=1", "BB_TEST_MENU_FILE={root}\\menu{i}.txt"] + (["BB_PARTY_MAX=%d" % RULES_PLAYERS] if RULES_PLAYERS > 2 else []),
         ienv=[],
         files={"menu0.txt": "joined %d %s\n-\n-\n" % (RULES_HOST_DELAY, host),
