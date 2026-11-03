@@ -104,6 +104,8 @@ def build_parser():
     s = add("move")
     s.add_argument("message_id", type=int)
     s.add_argument("bug")
+    s = add("split")
+    s.add_argument("message_id", type=int)
     add("list", _filters())
     s = add("show")
     s.add_argument("bug")
@@ -666,6 +668,20 @@ def _run(argv, who, out, db, stdin):
         if old and old != a.bug and c.bug(old):
             c.add_note(old, who, "note", f"moved message {a.message_id} to {a.bug}")
         return emit({"ok": True, "message": a.message_id, "from": old, "to": a.bug})
+    if a.cmd == "split":
+        m = c.message(a.message_id)
+        if not m:
+            raise CliError(f"no such message: {a.message_id}", 1)
+        old = m.get("bug_id") or ""
+        line = next((ln.strip() for ln in (m["content"] or "").splitlines() if ln.strip()), "")
+        title = mask_ips(line)[:60] or "log report " + time.strftime("%Y-%m-%d", time.gmtime(m["created"] or 0))
+        new = c.new_bug(title, "split", m["channel_id"], None, m["author_id"], tags={"triage": "pending"})
+        c.move_message(a.message_id, new)
+        c.touch_bug(new)
+        c.add_note(new, who, "note", f"split: message {a.message_id} moved out of {old or 'no bug'}")
+        if old and c.bug(old):
+            c.add_note(old, who, "note", f"split: message {a.message_id} moved out to {new}")
+        return emit({"ok": True, "message": a.message_id, "from": old, "to": new, "title": title})
     if a.cmd == "list":
         return emit([_summary(c, b) for b in _query(c, a)])
     if a.cmd == "show":

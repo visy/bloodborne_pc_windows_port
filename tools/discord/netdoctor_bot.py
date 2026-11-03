@@ -165,6 +165,13 @@ def wants_rerun(content):
     return any(w in FORCE_WORDS for w in words)
 
 
+def _name_day(path):
+    """YYYY-MM-DD from a Nightwatch file name (nightwatch-YYYYMMDD_HHMMSS.log), else ''."""
+    import re
+    m = re.search(r"nightwatch-(\d{4})(\d{2})(\d{2})_", os.path.basename(str(path)))
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
+
+
 def log_info(nd, path):
     """Who and when of one log (for grouping logs into sessions)."""
     import re
@@ -181,7 +188,8 @@ def log_info(nd, path):
     peers.discard(lg.name)
     return {"name": lg.name, "role": lg.role, "host": host,
             "start": nd._minutes(*lg.started) if lg.started else None,
-            "end": getattr(lg, "ended", None), "day": lg.started[0] if lg.started else "", "peers": peers}
+            "end": getattr(lg, "ended", None), "day": lg.started[0] if lg.started else _name_day(path),
+            "peers": peers}
 
 
 # --- Iosefka's live duty (NW_LIVE) -------------------------------------------------------------------------

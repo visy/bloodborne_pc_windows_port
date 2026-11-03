@@ -308,6 +308,8 @@ class Clinic:
         for sha, raw in self.db.execute("SELECT sha256, info FROM nw_loginfo"):
             d = json.loads(raw)
             d["peers"] = set(d.get("peers") or ())
+            if not d.get("host") and d.get("role") == "host" and d.get("name"):
+                d["host"] = d["name"]  # old rows: a host log's own name is the host
             out[sha] = d
         return out
 
