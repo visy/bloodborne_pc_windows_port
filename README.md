@@ -508,7 +508,8 @@ before anyone is in the game):
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your
   name and its distance. *Show party through walls* puts a small marker on every companion. Both on
   *System → My party: Display* and the launcher's *My Party* tab.
-- **Party text chat** (off by default, your own setting: *System → My party: Display → Party chat* or the launcher's *My Party* tab). Press
+- **Coloured name tags** (off by default, your own setting: *System → My party: Display → Coloured name tags* or the launcher's *My Party* tab): the name above each companion in that hunter's party colour (the colour of the party panel and the chat), with a dark outline.
+- **Party text chat** (off by default, your own setting: *System → My party: Chat & markers → Party chat* or the launcher's *My Party* tab). Press
   `T` (change it with `party_chat_key=<key name>` in `bbport.ini`), type a line (up to 120 characters) and press Enter; on a pad hold
   the touchpad (Xbox pads: `Back`) and press `L1` to pick a short line (*Help!*, *Follow me*, *Wait*, *Boss here*, *Thanks*,
   *Going to the Dream*) with the d-pad and Cross. Lines of every member (also from one guest to another) show for a few seconds at the

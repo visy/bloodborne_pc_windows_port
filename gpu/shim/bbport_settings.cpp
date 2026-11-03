@@ -286,6 +286,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_chat = i != 0;
     } else if (key == "party_chat_receive") {
         v.party_chat_receive = i != 0;
+    } else if (key == "party_name_colours") {
+        v.party_name_colours = i != 0;
     } else if (key == "party_through_walls") {
         v.party_through_walls = i != 0;
     } else if (key == "party_hud_ping") {
@@ -815,6 +817,7 @@ void Save() {
     put("party_pings", flag(v.party_pings));
     put("party_chat", flag(v.party_chat));
     put("party_chat_receive", flag(v.party_chat_receive));
+    put("party_name_colours", flag(v.party_name_colours));
     put("party_through_walls", flag(v.party_through_walls));
     put("party_stain_marker", flag(v.party_stain_marker));
     put("map_enabled", flag(v.map_enabled));
