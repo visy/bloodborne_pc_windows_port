@@ -1100,6 +1100,14 @@ void DefineAll() {
            "M (или L1 + R1 + Start) открывает карту; клик по зажжённому фонарю - переход. Нужно Prepare the map",
            toggle, Kind::Toggle);
 
+    // ---- Game HUD (0.7.8, CL-7d51fe): the game's own HUD, like Elden Ring's "HUD: Auto". ----
+    AddPage("Game HUD", "HUD игры", "The game's own bars and item slots: hide them while nothing happens (bbport)",
+            "Полосы и слоты игры: скрывать, пока ничего не происходит (bbport)");
+    AddRow(Flag(&Values::auto_hide_hud), "Auto-hide HUD", "Автоскрытие HUD",
+           "Off by default. Bars and slots fade out when idle; damage, fights, lock-on, items, menus bring them back",
+           "Выкл. по умолчанию. Полосы и слоты скрываются в покое; урон, бой, захват, предметы, меню возвращают", toggle,
+           Kind::Toggle);
+
     // ---- Game patches (after a restart) and the restart itself. ----
     AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",
             "Сглаживание игры, заставки, свободная камера, отладочное меню, перезапуск, выход (bbport)");

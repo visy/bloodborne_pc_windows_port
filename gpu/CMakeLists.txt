@@ -919,6 +919,12 @@ set_target_properties(party-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
 if (WIN32)
     target_link_libraries(party-hud-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# Auto-hide HUD rules (shim/party/auto_hud_rules.h, header only): triggers, holds, fades.
+# cmake --build out/gpu --target auto-hud-test
+add_executable(auto-hud-test EXCLUDE_FROM_ALL ../tests/test_auto_hud.cpp)
+target_compile_options(auto-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(auto-hud-test PRIVATE shim)
+set_target_properties(auto-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # NPC presence mirror (shim/party/party_npc_mirror.h, header only): the guest's plan, the event
 # body. cmake --build out/gpu --target party-npc-mirror-test
 add_executable(party-npc-mirror-test EXCLUDE_FROM_ALL ../tests/test_party_npc_mirror.cpp)
