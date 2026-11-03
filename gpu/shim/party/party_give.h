@@ -66,7 +66,13 @@ UiView UiSnapshot();
 /// The player pressed Give (any thread): handled on the next tick, the result goes to the party notice corner.
 void RequestGive(std::uint32_t goods, int n, int to_slot);
 
-/// The link's callback thread: EVENT give from `slot`. Only queues.
+/// The inventory's item command menu (bbport_game_menu.cpp, built on the game thread): offer "Give" for this item
+/// (type bits | goods id)? Only with the switch on, a party with another member, and an item the rules allow.
+bool MenuOffers(std::uint32_t item);
+/// The player chose Give in the item menu (item = type bits | id, inventory index).
+void MenuChosen(std::uint32_t item, std::uint32_t index);
+
+/// The link's callback thread: EVENT give/// The link's callback thread: EVENT give from `slot`. Only queues.
 void OnEvent(int slot, const std::string& body);
 /// Main thread, once a frame (the director). `host`: this game hosts the party.
 void Tick(const GameSnapshot& s, party::PartyLink* link, bool host);
