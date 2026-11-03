@@ -31,6 +31,25 @@ namespace VideoCore {
 static constexpr u64 PageShift = 12;
 static constexpr u64 NumFramesBeforeRemoval = 32;
 
+// Mrsuss60 6b2cc0e0 (shadPS4 ca36c7e3): SubresourceExtent's defaulted compare orders by levels
+// first and layers only on a tie, so an image with more mips but fewer layers counted as "bigger".
+// Contains() asks both dimensions. BB_TEX_EXTENT_CONTAINS=0 restores the lexicographic compares.
+static bool ExtentContainsOn() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_TEX_EXTENT_CONTAINS");
+        return !(env && env[0] == '0');
+    }();
+    return on;
+}
+/// The cached image cannot serve the requested extent.
+static bool ResourcesTooSmall(const SubresourceExtent& cached, const SubresourceExtent& requested) {
+    return ExtentContainsOn() ? !cached.Contains(requested) : cached < requested;
+}
+/// The requested extent is bigger than the cached image: expand it.
+static bool ExpandNeeded(const SubresourceExtent& cached, const SubresourceExtent& requested) {
+    return ExtentContainsOn() ? !cached.Contains(requested) : requested > cached;
+}
+
 TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
                            Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
                            BufferCache& buffer_cache_, PageManager& tracker_)
@@ -359,7 +378,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
     const bool bpp_match = requested_info.num_bits == cache_image.info.num_bits;
 
     // If an image in the cache has less slices we need to expand it
-    bool recreate = cache_image.info.resources < requested_info.resources;
+    bool recreate = ResourcesTooSmall(cache_image.info.resources, requested_info.resources);
 
     switch (binding) {
     case BindingType::Texture:
@@ -475,7 +494,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
         // Size and resources are greater, expand the image.
         if (image_info.type == cache_image.info.type &&
-            image_info.resources > cache_image.info.resources) {
+            ExpandNeeded(cache_image.info.resources, image_info.resources)) {
             return {ExpandImage(image_info, cache_image_id), -1, -1};
         }
 
@@ -657,7 +676,19 @@ ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     auto& new_image = slot_images[new_image_id];
 
     RefreshImage(new_image);
-    runtime.CopyImage(&src_image, &new_image);
+    // A CPU-dirty source holds stale contents: copying them after RefreshImage would overwrite
+    // the fresh upload. Copy (and inherit GpuModified) only when it holds GPU-written data.
+    // (Mrsuss60 6b2cc0e0 / shadPS4 699009c9; BB_EXPAND_GPU_VALID=0: always copy)
+    static const bool gpu_valid_only = [] {
+        const char* env = std::getenv("BB_EXPAND_GPU_VALID");
+        return !(env && env[0] == '0');
+    }();
+    if (!gpu_valid_only) {
+        runtime.CopyImage(&src_image, &new_image);
+    } else if (src_image.HasGpuValidData()) {
+        runtime.CopyImage(&src_image, &new_image);
+        new_image.flags |= (src_image.flags & ImageFlagBits::GpuModified);
+    }
 
     if (src_image.binding.is_bound || src_image.binding.is_target) {
         src_image.binding.needs_rebind = 1u;
@@ -803,7 +834,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (exact_fmt && info.pixel_format != check_info.pixel_format) {
             // Cannot reuse this image as we need the exact requested format.
             image_id = {};
-        } else if (check_info.resources < info.resources) {
+        } else if (ResourcesTooSmall(check_info.resources, info.resources)) {
             // The image was clearly picked up wrong.
             FreeImage(image_id);
             image_id = {};

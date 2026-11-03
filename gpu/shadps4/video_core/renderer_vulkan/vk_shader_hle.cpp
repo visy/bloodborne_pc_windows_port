@@ -17,6 +17,11 @@ extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
 
 namespace Vulkan {
 
+// BB_COPY_SHADER_TRACE: what skip-same did (ExecuteCopyShaderHLE runs on one thread).
+static struct {
+    u64 dispatches = 0, guarded = 0, ranges = 0, skipped = 0;
+} copy_skip_stats;
+
 // bbport: the copy shader runs ~57 times per frame with ~1024 small ranges each. As one
 // vkCmdCopyBuffer with that many regions it cost ~37 ns of GPU time per range (~2.1 ms per
 // frame) plus the recording; buffer_multi_copy.comp copies all ranges in one dispatch.
@@ -186,15 +191,62 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
                         (unsigned long long)hi, cs_program.num_thread_x.full,
                         cs_program.num_thread_y.full, u32(info.UserData().size()));
             calls = 0;
+            std::printf("Copy shader skip-same: %llu dispatches (%llu left whole: GPU-written buffers), "
+                        "%llu ranges compared, %llu skipped\n",
+                        (unsigned long long)copy_skip_stats.dispatches,
+                        (unsigned long long)copy_skip_stats.guarded,
+                        (unsigned long long)copy_skip_stats.ranges,
+                        (unsigned long long)copy_skip_stats.skipped);
         }
     }
+
+    // Mrsuss60 dcdb834f (BB_COPY_SKIP_SAME=1: on): a range whose host bytes already match is
+    // not copied. The host bytes only stand for what the GPU holds while neither buffer was
+    // written by the GPU since (a GPU-written destination can differ from its stale host
+    // bytes), so the whole dispatch skips nothing when either span is GPU-modified. Off by
+    // default: measured in Bloodborne, 99.997% of the copy shader's dispatches write into
+    // GPU-written buffers, so the guard leaves nothing to skip.
+    static const bool skip_same_env = [] {
+        const char* env = std::getenv("BB_COPY_SKIP_SAME");
+        return env && env[0] == '1';
+    }();
+    bool skip_same = skip_same_env && cs_program.dim_x != 0;
+    if (skip_same) {
+        u64 src_lo = ~0ull, src_hi = 0, dst_lo = ~0ull, dst_hi = 0;
+        for (u32 i = 0; i < cs_program.dim_x; ++i) {
+            const u64 size = u64(ctl_buf[i].end + 1) * buf_stride;
+            src_lo = std::min<u64>(src_lo, u64(ctl_buf[i].src_idx) * buf_stride);
+            src_hi = std::max<u64>(src_hi, u64(ctl_buf[i].src_idx) * buf_stride + size);
+            dst_lo = std::min<u64>(dst_lo, u64(ctl_buf[i].dst_idx) * buf_stride);
+            dst_hi = std::max<u64>(dst_hi, u64(ctl_buf[i].dst_idx) * buf_stride + size);
+        }
+        skip_same = !buffer_cache.IsRegionGpuModified(src_buf_sharp.base_address + src_lo,
+                                                      src_hi - src_lo) &&
+                    !buffer_cache.IsRegionGpuModified(dst_buf_sharp.base_address + dst_lo,
+                                                      dst_hi - dst_lo);
+        ++copy_skip_stats.dispatches;
+        copy_skip_stats.guarded += skip_same ? 0 : 1;
+    }
+    const u8* src_host = reinterpret_cast<const u8*>(src_buf_sharp.base_address);
+    const u8* dst_host = reinterpret_cast<const u8*>(dst_buf_sharp.base_address);
 
     for (u32 i = 0; i < cs_program.dim_x; i++) {
         const auto& [dst_idx, src_idx, end] = ctl_buf[i];
         const u32 local_dst_offset = dst_idx * buf_stride;
         const u32 local_src_offset = src_idx * buf_stride;
         const u32 local_size = (end + 1) * buf_stride;
+        if (skip_same && local_size != 0) {
+            ++copy_skip_stats.ranges;
+            if (std::memcmp(dst_host + local_dst_offset, src_host + local_src_offset,
+                            local_size) == 0) {
+                ++copy_skip_stats.skipped;
+                continue;
+            }
+        }
         copies.emplace_back(local_src_offset, local_dst_offset, local_size);
+    }
+    if (copies.empty()) {
+        return true;
     }
 
     // bbport: 64 KiB instead of 64 MiB. The copies are a few KiB spread over up to 57 MiB, and

@@ -64,6 +64,13 @@ struct SubresourceExtent {
     u32 layers = 1;
 
     auto operator<=>(const SubresourceExtent&) const = default;
+
+    // True if an image with this extent can serve every subresource of `other`. The defaulted
+    // operators compare levels first and layers only on a tie, which cannot answer this.
+    // (Mrsuss60 6b2cc0e0 / shadPS4 ca36c7e3)
+    bool Contains(const SubresourceExtent& other) const noexcept {
+        return levels >= other.levels && layers >= other.layers;
+    }
 };
 
 struct SubresourceRange {

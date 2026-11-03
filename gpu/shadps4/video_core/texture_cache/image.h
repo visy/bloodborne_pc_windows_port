@@ -117,6 +117,11 @@ struct Image {
         return track_addr != 0 && track_addr_end != 0;
     }
 
+    /// The GPU holds newer contents than guest memory (6b2cc0e0 / shadPS4 699009c9).
+    bool HasGpuValidData() const {
+        return True(flags & ImageFlagBits::GpuModified) && False(flags & ImageFlagBits::Dirty);
+    }
+
     bool SafeToDownload() const {
         return True(flags & ImageFlagBits::GpuModified) && False(flags & (ImageFlagBits::Dirty));
     }
