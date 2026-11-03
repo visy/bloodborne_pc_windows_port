@@ -11766,6 +11766,12 @@ bool TitleJoinRequested() {
     return TitleJoinOn() && Requested();
 }
 
+/// 0.7.8: this game started as an invader and the host refused it (REJECT Invasion): no title join, plain Continue.
+static bool LinkRefusedInvader() {
+    party::PartyLink* link = party::runtime_link();
+    return link && link->state() == party::LinkState::Rejected && link->reject_code() == party::RejectCode::Invasion;
+}
+
 bool TitleJoinHold(const GameSnapshot& s) {
     if (!TitleJoinOn() || !g_on.load()) {
         return false;
@@ -11787,6 +11793,7 @@ bool TitleJoinHold(const GameSnapshot& s) {
     }
     switch (phase) {
     case TitlePhase::Idle: {
+        if (LinkRefusedInvader()) return false;  // 0.7.8: a refused invader just Continues into its own world
         if (coop::stayhome::Active()) {
             // CL-adeb50 "Stay in my world": no automatic joining from the title either; plain Continue.
             static bool said = false;
