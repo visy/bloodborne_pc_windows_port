@@ -2214,6 +2214,9 @@ INI_FLAG_SETTINGS = [
     ("feat_live_fps", "live_fps", True, "BB_LIVE_FPS"),
     # Keyboard movement ramp (Mrsuss60 94388d59): WASD ease in / out like an analog stick; live in game.
     ("feat_key_ramp", "key_ramp", True, "BB_KEY_RAMP"),
+    # 0.7.8 (CL-916488): the in-game map (Hunter's Atlas by MikeTat1988), OFF by default; needs the map data
+    # made from the game's own files (Prepare the map, scripts/map_prepare.py).
+    ("feat_map", "map_enabled", False, "BB_MAP"),
 ]
 # Every BB_* variable the launcher no longer sets because its setting lives in bbport.ini.
 GAME_SETTING_ENVS = ["BB_UPSCALER", "BB_VOLUMETRIC_RES"] + [env for *_, env in INI_FLAG_SETTINGS]
@@ -3184,6 +3187,9 @@ class BloodborneLauncher(tk.Tk):
         self.feat_hud = self.ini_flag_vars["show_hud"]
         self.feat_mouse_keyboard = self.ini_flag_vars["mk_enabled"]
         self.feat_key_ramp = self.ini_flag_vars["key_ramp"]
+        self.feat_map = self.ini_flag_vars["map_enabled"]
+        self.map_status_var = tk.StringVar(value="")
+        self._map_busy = False
 
         # Party co-op (BB_PARTY_*)
         party_mode = str(self.settings.get("party_mode", "") or "")
@@ -3627,6 +3633,24 @@ class BloodborneLauncher(tk.Tk):
                     "Only keyboard movement; a gamepad is untouched. Also in game (Insert > Controls). "
                     "A game setting (bbport.ini key_ramp). Default: on.",
                     command=lambda: self.save_game_settings("key_ramp"))
+        self._check(sec, "In-game map (Hunter's Atlas)", self.feat_map,
+                    "Press M (or hold L1 + R1 + Start on a gamepad) in the game for a map of the area you are in: "
+                    "its floors, the lit lamps, you and your party; click a lamp to travel to it (the party travel "
+                    "rules apply). The map is made from YOUR game files once (button below); nothing of it is "
+                    "shipped. By MikeTat1988 (Hunter's Atlas, GPL-2.0-or-later). Also in game (Insert > Controls, "
+                    "System > Map). A game setting (bbport.ini map_enabled). Default: off.",
+                    command=self.on_map_toggle)
+        map_row = ttk.Frame(sec, style="Card.TFrame")
+        map_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 4), padx=(22, 0))
+        sec.next_row += 1
+        self.map_btn = ttk.Button(map_row, text="Prepare the map", style="Secondary.TButton",
+                                  command=lambda: self.prepare_map(force=True))
+        self.map_btn.grid(row=0, column=0, sticky="w")
+        ttk.Label(map_row, textvariable=self.map_status_var, style="Card.TLabel").grid(row=0, column=1, padx=8)
+        Tooltip(self.map_btn, "Reads your game folder once (about 10 minutes, the game files are only read) and "
+                              "writes the map data to user\\map. Needs the map generator (the map_generator "
+                              "folder of the release). Redo it after the game files change.")
+        self.refresh_map_status()
         prompt_combo = self._combo(
             sec, "Button prompts:", self.prompt_style_var, [c[0] for c in PROMPT_STYLE_CHOICES],
             "The icons in the game's button prompts and key guides. Auto (default): keys after "
@@ -4380,6 +4404,100 @@ class BloodborneLauncher(tk.Tk):
                        {"texture_quality": dict(TEXTURE_QUALITY_CHOICES).get(self.texture_quality_var.get(), "auto")})
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the texture quality setting to bbport.ini: {ex}")
+
+    # ---- In-game map data (scripts/map_prepare.py) ----
+    def map_prepare_args(self):
+        game = resolve_game_dir(self.eboot_var.get()) if self.eboot_var.get().strip() else None
+        py = Path(sys.executable)
+        if py.name.lower() == "pythonw.exe" and (py.parent / "python.exe").exists():
+            py = py.parent / "python.exe"
+        out = Path(os.environ.get("BB_MAP_DIR") or (party_user_dir() / "map"))
+        return py, game, out
+
+    def refresh_map_status(self):
+        """The Prepare the map line: ready, missing, or running."""
+        if self._map_busy:
+            return
+        try:
+            _, game, out = self.map_prepare_args()
+            stamp = out / "map.stamp"
+            if game is not None and stamp.is_file():
+                text = "Map data ready."
+            elif stamp.is_file():
+                text = "Map data present."
+            else:
+                text = "Not prepared yet."
+        except Exception:  # noqa: BLE001 - only a status line
+            text = ""
+        self.map_status_var.set(text)
+
+    def on_map_toggle(self):
+        """The In-game map checkbox: bbport.ini map_enabled at once; the first time on, the data is made."""
+        self.save_game_settings("map_enabled")
+        if self.feat_map.get():
+            self.prepare_map(force=False)
+
+    def prepare_map(self, force: bool):
+        """Runs scripts/map_prepare.py (Hunter's Atlas's generator on the game's files, then the baker) in the
+        background; a line of progress in the status label, the outcome in the log."""
+        if self._map_busy:
+            return
+        py, game, out = self.map_prepare_args()
+        if game is None:
+            if force:
+                messagebox.showinfo("Prepare the map", "Select the game folder (eboot.bin) first.")
+            return
+        script = APP_DIR / "scripts" / "map_prepare.py"
+        if not script.is_file():
+            self.log("[MAP] scripts\\map_prepare.py is missing.")
+            return
+        cmd = [str(py), "-I", str(script), "--game-dir", str(game), "--out-dir", str(out)]
+        if force:
+            cmd.append("--force")
+        self._map_busy = True
+        self.map_btn.configure(state="disabled")
+        self.map_status_var.set("Starting...")
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        if os.environ.get("BB_MAP_PYTHON"):
+            env["BB_MAP_PYTHON"] = os.environ["BB_MAP_PYTHON"]
+
+        def work():
+            code, last_error, done = -1, "", False
+            try:
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                        encoding="utf-8", errors="replace", env=env, cwd=str(APP_DIR),
+                                        creationflags=flags)
+                for line in proc.stdout:
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(msg, dict):
+                        continue
+                    if msg.get("stage") == "error":
+                        last_error = str(msg.get("message", ""))
+                    elif "progress" in msg:
+                        text = f"{msg['progress']}%  {msg.get('stage', '')}"
+                        self.after(0, lambda t=text: self.map_status_var.set(t))
+                    if msg.get("stage") == "done":
+                        done = True
+                code = proc.wait()
+            except OSError as ex:
+                last_error = str(ex)
+
+            def finish():
+                self._map_busy = False
+                self.map_btn.configure(state="normal")
+                if code in (0, 3) and (done or code == 3):
+                    self.log("[MAP] The map data is ready." if code == 0 else "[MAP] The map data is current.")
+                else:
+                    self.log(f"[MAP] The map could not be prepared: {last_error or 'exit code %d' % code}")
+                self.refresh_map_status()
+            self.after(0, finish)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def save_prompt_style(self):
         """The Button prompts choice: bbport.ini prompt_style (a running game picks it up within a
