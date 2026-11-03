@@ -37,7 +37,7 @@ from clinic_logic import mask_ips  # noqa: E402
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
 CLOSED = ("fixed", "closed", "duplicate")
 VISY_ONLY = ("export", "confirm-export", "import", "vpn-maint")
-DEVS_ONLY = ("vpn-profile",)  # how to enroll on the Nightwatch VPN (address + pin): only the two devs
+DEVS_ONLY = ("vpn-profile", "staff-audit")  # how to enroll on the Nightwatch VPN (address + pin): only the two devs
 DEVS = ("visy", "vlad")
 BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
 ND_RX = re.compile(r"^ND-[0-9a-f]{8}$")
@@ -90,6 +90,9 @@ def build_parser():
     add("health")
     add("vpn-profile")
     add("vpn-status")
+    s = add("staff-audit")   # who used the /clinic staff commands (names and ids only, no contents)
+    s.add_argument("--since", type=float, default=0.0, help="unix time")
+    s.add_argument("--limit", type=int, default=100)
     s = add("vpn-maint")   # VPN maintenance announcement (clinic_vpnmaint): schedule | list | cancel ID | preview
     s.add_argument("action", choices=("schedule", "list", "cancel", "preview"))
     s.add_argument("id", nargs="?", type=int)
@@ -807,6 +810,9 @@ def _run(argv, who, out, db, stdin):
             clinic_vpn.store(c, sample)
         out.write((clinic_vpn.status_text(sample, clinic_vpn.summary(c, time.time(), target)) + "\n").encode())
         return 0
+    if a.cmd == "staff-audit":
+        import clinic_staff
+        return emit([dict(r, at=_iso(r["at"])) for r in clinic_staff.audit_rows(c, a.since, a.limit)])
     if a.cmd == "export":
         _do_export(c, out)
         return 0
