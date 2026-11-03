@@ -526,7 +526,7 @@ static void RulesPages() {
                       u"Party votes on travel", u"NPC hunters fight all"};
     const V rewards = {u"Full rewards for guests", u"Boss drops for guests", u"Insight for bosses"};
     const V items = {u"Host's item rewards", u"Give the bells", u"Own key items as guest", u"Key items at once",
-                  u"Shared item notices"};
+                  u"Shared item notices", u"Give items to the party"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings",
                        u"Show party through walls", u"Coloured name tags", u"Above companions"};
     for (const ps::Role role : {ps::Role::Host, ps::Role::Guest}) {

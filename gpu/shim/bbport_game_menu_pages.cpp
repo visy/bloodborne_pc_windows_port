@@ -1738,7 +1738,7 @@ void DefineAll() {
            "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
            Kind::Toggle);
     // 0.7.8: give items to a party member (the inventory's item menu: Use / Discard / Give); off by default, also the consent to receive.
-    AddRow(Flag(&Values::party_give_items), "Give items to the party", "Передача предметов группе",
+    AddRow(Flag(&Values::party_give_items), "Give items to the party", "Передача предметов",
            "Adds Give to an item's menu in the inventory, and lets hunters give you items. Not key or story items",
            "Передача расходников охотникам и приём (меню Insert, вкладка Party). Не ключевые и не сюжетные",
            toggle, Kind::Toggle);
