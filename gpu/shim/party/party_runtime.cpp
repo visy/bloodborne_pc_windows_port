@@ -6,6 +6,7 @@
 #include "party_display_name.h"
 #include "party_chalice.h"
 #include "party_gestures.h"
+#include "party_chat.h"
 
 #include "party_addr.h"
 #include "party_code.h"
@@ -1343,6 +1344,10 @@ LinkCallbacks make_callbacks(bool host) {
                 coop::give::OnEvent(slot, body);
                 return;
             }
+            if (name == party::chat::kEventName) {  // a guest's chat line (party_chat.h): relayed by the tick
+                coop::chat::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::gather::kEventName) {  // a guest's answer to Gather the party (I5, party_gather.h)
                 coop::gather::OnEvent(slot, body);
                 return;
@@ -1506,6 +1511,10 @@ LinkCallbacks make_callbacks(bool host) {
             }
             if (name == coop::give::kEventName) {  // give items: the host's relay or its own message (party_give.h)
                 coop::give::OnEvent(slot, body);
+                return;
+            }
+            if (name == party::chat::kEventName) {  // a member's chat line (party_chat.h)
+                coop::chat::OnEvent(slot, body);
                 return;
             }
             if (name == coop::gather::kEventName) {  // the host gathers the party (I5, party_gather.h)

@@ -81,6 +81,7 @@ tab or *System > Mouse & keyboard* in game).
 | Menu (Options) | `Start` | `F1`, `O` | `Esc`, `F1` |
 | Gestures / key items (touchpad) | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right, `Back` alone the left half) | `Tab` or `G` / `Backspace` | `Tab` or `G` / `Backspace` |
 | Party: ping / gather the party (host) | Hold the touchpad, press `R3` / `L3` (Xbox pads: hold `Back`) | `V` / `H` (or `Tab` + `C` / `Tab` + `Z`) | `V` / `H` (or `Tab` + `Q` / `Tab` + `Z`) |
+| Party: text chat (off by default) | Hold the touchpad, press `L1` (Xbox pads: hold `Back`): a list of short lines | `T` (`party_chat_key` in `bbport.ini` changes it) | `T` |
 | Port settings | *System* in the game's menu | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in the launcher) | `Insert` | `Insert` |
 | Fullscreen | — | `Alt + Enter` | `Alt + Enter` |
@@ -512,6 +513,13 @@ before anyone is in the game):
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your
   name and its distance. *Show party through walls* puts a small marker on every companion. Both on
   *System → My party: Display* and the launcher's *My Party* tab.
+- **Party text chat** (off by default, your own setting: *System → My party: Display → Party chat* or the launcher's *My Party* tab). Press
+  `T` (change it with `party_chat_key=<key name>` in `bbport.ini`), type a line (up to 120 characters) and press Enter; on a pad hold
+  the touchpad (Xbox pads: `Back`) and press `L1` to pick a short line (*Help!*, *Follow me*, *Wait*, *Boss here*, *Thanks*,
+  *Going to the Dream*) with the d-pad and Cross. Lines of every member (also from one guest to another) show for a few seconds at the
+  left of the screen, each name in that member's party colour. The host's *Party chat* switch decides whether the party has chat;
+  *Show others' chat* mutes the other hunters for you only. With *Hide offensive names* on (the default) offensive words in
+  other players' lines are replaced by asterisks. Chat text is never written to the logs. Details: docs/party/chat.md.
 - **Friendly fire / PvP** (host's switch, off by default): party members can hurt each other, both
   ways, like invaders (*System → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
   gets no Echoes or Insight. While it is on, hunters who joined keep their full maximum health for the duel

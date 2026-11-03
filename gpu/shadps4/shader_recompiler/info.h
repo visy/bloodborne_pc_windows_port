@@ -236,6 +236,14 @@ struct Info : InfoPersistent {
         if (ptr_index != IR::NumScalarRegs && VAddr(base) < 0x10000) {
             return T{};
         }
+        if (ptr_index == IR::NumScalarRegs) {
+            // bbport: the sharp lies in the user data registers themselves (host memory that the
+            // shader source stores whole): not guest memory, nothing to record. Its address is
+            // the host copy's, which differs in a rebuild, so a logged read would miss there and
+            // the translator went on with zeros (a null tessellation constant buffer).
+            std::memcpy(&data, base + dword_offset, sizeof(T));
+            return data;
+        }
         // bbport: guest memory, recorded for the shader cache rebuild (guest_read_log.h).
         ReadGuest(&data, reinterpret_cast<VAddr>(base + dword_offset), sizeof(T));
         return data;

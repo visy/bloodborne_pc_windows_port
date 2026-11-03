@@ -196,7 +196,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
@@ -472,6 +472,16 @@ MY_PARTY_TAB = [
          "A small diamond with the distance on every companion on your map, drawn over "
          "walls and trees in the companion's colour. Also in the game: System > My party: Display. "
          "Default: off (bbport.ini party_through_walls)."),
+        ("check", "party_chat", "Party chat",
+         "Text chat for the party: press T (change it with party_chat_key=<key name> in "
+         "bbport.ini) and type, or on a pad hold the touchpad and press L1 (Back + L1 without a "
+         "touchpad) and pick a short line. Lines show for a few seconds in the sender's "
+         "colour. With Hide offensive names on, offensive words are masked. Also in the game: "
+         "System > My party: Display. Default: off (bbport.ini party_chat)."),
+        ("check", "party_chat_receive", "Show others' chat",
+         "With Party chat on: show the lines the other hunters write. Off: they are muted. "
+         "Also in the game: System > My party: Display. Default: on (bbport.ini "
+         "party_chat_receive)."),
         ("check", "party_stain_marker", "Bloodstain marker",
          "A red drop with \"Blood Echoes\" and the distance on the bloodstain of your lost "
          "echoes in the host's world, drawn over walls. The bloodstain is there either "
@@ -3230,6 +3240,9 @@ class BloodborneLauncher(tk.Tk):
         self.party_pings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_pings"))
         self.party_hud_ping = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_hud_ping"))
         self.party_through_walls = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_through_walls", False))
+        # Party text chat (bbport.ini party_chat off by default, party_chat_receive on).
+        self.party_chat = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_chat", False))
+        self.party_chat_receive = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_chat_receive", True))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))
         # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).
