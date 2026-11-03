@@ -245,6 +245,18 @@ static void Look() {
     CHECK(!b.remove_invader && !b.add_coop);
 }
 
+static void NameColour() {
+    const float blue[3] = {0.1f, 0.2f, 0.9f};
+    CHECK(IsInvaderName("Hunter2", "Hunter2"));
+    CHECK(!IsInvaderName("Hunter1", "Hunter2"));
+    CHECK(!IsInvaderName("Hunter1", ""));  // no invasion: nobody is red
+    CHECK(!IsInvaderName("", ""));
+    CHECK(NameRgb("Hunter2", "Hunter2", blue) == kInvaderNameRgb);
+    CHECK(NameRgb("Hunter1", "Hunter2", blue) == blue);
+    CHECK(NameRgb("Hunter2", "", blue) == blue);
+    CHECK(kInvaderNameRgb[0] > 0.8f && kInvaderNameRgb[1] < 0.3f && kInvaderNameRgb[2] < 0.3f);
+}
+
 static void Rewards() {
     const Reward w = RewardFor(Role::Invader, End::HostDied);
     CHECK(w.pay && w.rate == 0.1f && w.insight == 1);
@@ -275,6 +287,7 @@ static void Rewards() {
 
 int main() {
     Look();
+    NameColour();
     Rewards();
     Script();
     AllowDenyTable();
