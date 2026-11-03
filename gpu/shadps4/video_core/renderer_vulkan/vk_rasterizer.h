@@ -313,6 +313,7 @@ private:
         u32 depth_control = 0;
         bool depth_valid = false;
         bool stencil_valid = false;
+        u32 scissor_area = 0; ///< attachment-less pass: the scissors' bottom right (the render area)
         bool operator==(const BeginSignature&) const = default;
     };
     BeginSignature MakeBeginSignature(const GraphicsPipeline* pipeline) const;
