@@ -8,6 +8,8 @@
 
 #include <bit>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <cassert>
 #include <concepts>
 #include <cstddef>
@@ -157,7 +159,10 @@ public:
 
     Stream& operator<<(Id value) {
         if (value.value == 0) {
-            std::abort();
+            // bbport: a null Id operand is a translator bug in one shader; a throw lets the caller
+            // (the cache rebuild) skip that shader instead of aborting the process.
+            throw std::runtime_error("SPIR-V: null Id operand in op " +
+                                     std::to_string(words[op_index] & 0xffffu));
         }
         return *this << value.value;
     }

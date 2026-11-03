@@ -313,6 +313,9 @@ target_compile_options(shader-user-data-test PRIVATE -UNDEBUG)
 target_include_directories(shader-user-data-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(shader-user-data-test PRIVATE fmt::fmt Boost::headers)
 
+add_executable(sirit-null-id-test EXCLUDE_FROM_ALL ../tests/test_sirit_null_id.cpp)
+target_link_libraries(sirit-null-id-test PRIVATE sirit)
+
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)
