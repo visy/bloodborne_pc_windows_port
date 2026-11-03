@@ -1,0 +1,30 @@
+Hunter's Atlas, by MikeTat1988
+==============================
+
+Source:   https://github.com/MikeTat1988/HuntersAtlas
+Commit:   06d40213973074571cbae3954fd07a720f3917d5 (used unchanged where noted)
+Licence:  GNU General Public License, version 2 or (at your option) any later version.
+          The licence text is licenses/GPL-2.0.txt (the repository's own LICENSE file is
+          tools/map/generator/LICENSE, the same text).
+
+Hunter's Atlas was written for this port. The in-game map in this repository is built on it:
+
+  tools/map/generator/src/*.py              the map generator, taken unchanged (reads the game's collision, map and
+                                            menu files into area geometry, lamp data and names; its only dependencies
+                                            are listed in tools/map/generator/requirements-*.txt)
+  tools/map/generator/generate_atlas.spec   its PyInstaller freeze recipe, unchanged
+  gpu/shim/map/bbport_map_controller.*      the controller shortcut (hold L1 + R1 + Start), unchanged
+  gpu/shim/map/map_core.h                   the geometry model (floors as triangles per height layer, floor outlines,
+                                            wall segments, lamps) and the choice of the shown floor follow Hunter's
+                                            Atlas's map code (source/native/gpu/shim/bbport_map.cpp)
+
+The map's drawing, the data packing (scripts/bbmap_bake.py), the data preparation (scripts/map_prepare.py) and the
+travel hand-over to the port's lamp travel are this port's own work, under the port's licence.
+
+The generator needs no game file to be shipped: it runs once on the player's PC, on the player's own game folder, and
+writes its result to the player's user folder. Nothing made from the game's files is part of this repository or a
+release.
+
+The frozen generator bundles NumPy, SciPy, Shapely, Pillow, fontTools, lxml, zstandard and Soulstruct (GPL-3.0-or-later, the
+generator's reader for the game's archive formats); their licences and Soulstruct's source archive are in the release's
+map_generator\licenses folder (tools/map/build_generator.py puts them there).

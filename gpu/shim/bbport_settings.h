@@ -240,6 +240,10 @@ struct Values {
     /// 2026-10-20); the bloodstain and its echoes are there either way (ini party_stain_marker; env
     /// BB_PARTY_STAIN_MARKER overrides). Live, local.
     std::atomic<bool> party_stain_marker{false};
+    /// The in-game map (Hunter's Atlas by MikeTat1988; shim/map/map_view.h): M, or hold L1 + R1 + Start,
+    /// opens it. Off by default (ini map_enabled; env BB_MAP=0/1 overrides). Needs the map data the
+    /// launcher makes from the player's game files (Prepare the map). Live, local.
+    std::atomic<bool> map_enabled{false};
     /// The party HUD board shows each member's round-trip time in ms after the name, green / yellow / red
     /// by quality (ini party_hud_ping, default on). Live, local.
     std::atomic<bool> party_hud_ping{true};

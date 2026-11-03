@@ -762,6 +762,11 @@ add_executable(lamp-travel-test EXCLUDE_FROM_ALL ../tests/test_lamp_travel.cpp)
 target_compile_options(lamp-travel-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(lamp-travel-test PRIVATE shim)
 set_target_properties(lamp-travel-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# In-game map core (shim/map/map_core.h; Hunter's Atlas). ninja -C out/gpu map-core-test
+add_executable(map-core-test EXCLUDE_FROM_ALL ../tests/test_map_core.cpp)
+target_compile_options(map-core-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(map-core-test PRIVATE shim)
+set_target_properties(map-core-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # The world warper's rules (world_warper_rules.h). ninja -C out/gpu world-warper-test
 add_executable(world-warper-test EXCLUDE_FROM_ALL ../tests/test_world_warper.cpp)
 target_compile_options(world-warper-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

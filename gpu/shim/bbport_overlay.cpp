@@ -34,6 +34,7 @@
 #include "party/party_log.h"
 #include "party/seamless_rules.h"
 #include "party/world_warper.h"
+#include "map/map_view.h"
 #include "bbport_camera.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -486,6 +487,7 @@ void SetOpen(bool value) {
     // the next motion: mouse motion is not passed on while the menu is closed.
     if (value) {
         focus_request = true;
+        BbMapView::Close(); // the map and the settings menu do not share the screen
         if (SDL_Window* window = SDL_GetMouseFocus()) {
             float x = 0.0f, y = 0.0f;
             SDL_GetMouseState(&x, &y);
@@ -1501,6 +1503,14 @@ void ControlsTab() {
              "Mrsuss60/bloodborne_pc_windows_port 94388d59.",
              "Движение с клавиатуры нарастает за 70 мс и спадает за 45 мс, как большой палец на "
              "стике, а не сразу. Выкл: стик сразу полный или нейтральный."),
+           true);
+    Toggle("map_enabled", T("Hunter's Atlas map", "Карта Hunter's Atlas"), s.map_enabled,
+           T("M (or hold L1 + R1 + Start on a gamepad) opens the map: the area you are in with its floors, the lit "
+             "lamps, you and your party; click a lamp (d-pad + Cross) to travel to it. Needs the map data the "
+             "launcher makes from your game files (Prepare the map). Hunter's Atlas by MikeTat1988.",
+             "M (или удерживайте L1 + R1 + Start на геймпаде) открывает карту: область с этажами, зажжённые "
+             "фонари, вы и ваша группа; клик по фонарю (крестовина + Cross) - переход к нему. Нужны данные "
+             "карты, которые лаунчер делает из файлов игры (Prepare the map). Hunter's Atlas, MikeTat1988."),
            true);
     // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
     Choice("prompt_style", T("Button prompts", "Подсказки кнопок"), s.prompt_style, BbSettings::PromptStyleCount,
@@ -3774,6 +3784,9 @@ void UpdateTextInput(SDL_Window* window) {
     {
         std::scoped_lock lock{imgui_mutex};
         want = initialized && menu_open && ImGui::GetIO().WantTextInput;
+        if (initialized) {
+            BbMapView::PollWindowThread(); // the map's controller shortcut (hold L1 + R1 + Start)
+        }
     }
     if (want != SDL_TextInputActive(window)) {
         if (want) {
@@ -3791,6 +3804,19 @@ bool HandleEvent(const SDL_Event& event) {
     }
     ImGuiIO& io = ImGui::GetIO();
     const bool is_open = menu_open;
+    if (!is_open && !prompt_active) {
+        // The in-game map (Hunter's Atlas; map/map_view.h): its key / pad shortcut and, while it is
+        // open, every key, button and mouse event.
+        float density = 1.0f;
+        if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            density = PixelDensity(event.motion.windowID);
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+            density = PixelDensity(event.button.windowID);
+        }
+        if (BbMapView::HandleEvent(event, density)) {
+            return true;
+        }
+    }
     if (!is_open) {
         Ui::key_rows.capturing = -1; // a row waiting for a key when the menu closed
     } else if (Ui::KeyCaptureEvent(event)) {
@@ -3954,7 +3980,7 @@ bool Visible() {
     return initialized &&
            (menu_open || prompt_active || BbSettings::Get().show_fps || BbSettings::Get().show_hud || HdrPatternShown() ||
             CompileIndicatorShown() || coop::warper::Active() || ToastWanted() || AlertWanted() || NpcCaptionWanted() || PartyHudWanted() || PartyTagsWanted() ||
-            PartyPingsWanted() || PartyStainWanted());
+            PartyPingsWanted() || PartyStainWanted() || BbMapView::IsOpen() || BbMapView::NoticeShown());
 }
 
 bool MenuOpen() {
@@ -3963,7 +3989,7 @@ bool MenuOpen() {
 
 bool CapturesInput() {
     // The text dialog too: keys typed into it (Backspace is the touchpad) stay out of the game.
-    return menu_open || prompt_active;
+    return menu_open || prompt_active || BbMapView::IsOpen();
 }
 
 void RenderPrecompile(vk::CommandBuffer cmdbuf, vk::Extent2D extent) {
@@ -4124,6 +4150,9 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
             PartyAlert();
             PartyNpcCaption();
         }
+    }
+    if (!menu_open) {
+        BbMapView::Draw(io.DisplaySize.x, io.DisplaySize.y); // the in-game map (open) or its notice
     }
     if (prompt_active && !menu_open) {
         TextPrompt();

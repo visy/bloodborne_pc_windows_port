@@ -1092,6 +1092,14 @@ void DefineAll() {
             AddText("Both", "Обе оси")},
            Kind::List);
 
+    // ---- Map: the in-game map (shim/map/map_view.h; Hunter's Atlas by MikeTat1988), off by default. ----
+    AddPage("Map", "Карта", "The in-game map: areas, lamps, party; travel to a lit lamp (bbport, Hunter's Atlas)",
+            "Карта в игре: области, фонари, группа; переход к зажжённому фонарю (bbport, Hunter's Atlas)");
+    AddRow(Flag(&Values::map_enabled), "Hunter's Atlas map", "Карта Hunter's Atlas",
+           "M (or hold L1 + R1 + Start) opens the map; click a lit lamp to travel. Needs Prepare the map in the launcher",
+           "M (или удерживайте L1 + R1 + Start) открывает карту; клик по зажжённому фонарю - переход. Нужно Prepare the map в лаунчере",
+           toggle, Kind::Toggle);
+
     // ---- Game patches (after a restart) and the restart itself. ----
     AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",
             "Сглаживание игры, заставки, свободная камера, отладочное меню, перезапуск, выход (bbport)");

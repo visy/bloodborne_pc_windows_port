@@ -30,6 +30,7 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
 | **Finer motion blur** | Optional, off by default: the game builds its motion blur from half-resolution buffers; render them at 2x the pixels or at full resolution (*System > Display > Motion blur resolution*). [More](docs/SETTINGS.md) |
 | **HDR output** | Optional, off by default: HDR10 on an HDR display, highlights expanded to your display's peak while mid-tones and menus stay at paper white; calibration in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
+| **In-game map** | Optional, off by default: **M** opens a map of the area you are in with its floors, the lit lamps, you and your party; click a lamp to travel to it. Made from your own game files once (launcher: *Prepare the map*). Hunter's Atlas by MikeTat1988. [More](docs/SETTINGS.md#in-game-map) |
 | **No shader stutter** | Known shaders are built before the intro. New ones compile in the background. |
 | **Shareable shader cache** | Export / import one `.zip`, works across GPUs; drop a shared one into `user\cache_import\`. A built-in *Shader cache builder* travels the whole game by itself on a copy of your save to fill it. [More](docs/SETTINGS.md#shader-cache-builder-world-warper) |
 | **Save safety** | Crash-safe saving, save checks at start, automatic backups in party play. |
@@ -311,6 +312,7 @@ before anyone is in the game):
 - **Travel from any lamp to any lamp.** A lamp offers the headstones' list (the Hunter's Dream and
   every lit lamp) and takes you straight there with one loading screen (launcher: "Direct lamp
   travel", on by default).
+- **The map shows the party and travels.** With the in-game map on (*System > Map*), **M** shows every party member on your map as a named dot, and a click on a lit lamp travels there like a lamp's own list: the host's trip asks "Travel with the party?", a guest's moves only the guest.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later. A guest who travels
@@ -699,6 +701,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | ALuaNegra (via Mrsuss60's port) | Idle depth targets freed (VRAM growth) |
 | HatsyRei (via Mrsuss60's port, PR #152) | Windows system DLLs no longer shipped; licence notices for the shipped DLLs and built-in libraries (`out/licenses`) |
 | Vorshim92 | Pipeline cache kept between starts, stale `bbport.exe` guard, crash reaper, `run.bat` resolution fix, Reset shader cache button |
+| MikeTat1988 | [Hunter's Atlas](https://github.com/MikeTat1988/HuntersAtlas) (GPL-2.0-or-later): the in-game map's generator and map model; the map reads your own game files and ships nothing of them |
 | Thealexbarney | LibAtrac9 audio (MIT) |
 | ocornut | Dear ImGui (MIT) |
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
