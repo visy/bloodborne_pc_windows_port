@@ -27,6 +27,7 @@
 //    leave 40; the notices switch and the last event are on Party members).
 //  - New pages: add them in Pages::DefineAll (MaxPages below caps the System items).
 #include "bbport_game_menu.h"
+#include "party/party_give.h"
 #include "party/party_flow.h"
 #include "net/bbnet_internal.h"
 
@@ -125,6 +126,19 @@ const u8 AddPageItemPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
 constexpr u64 AddCommandItem = 0x1b4c9a0; ///< (command list, name+help texts, functor, 0) -> the list
 constexpr u32 TitleNewGame = 0x61f97;
 const u8 AddCommandItemPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
+// 0.7.8 give items (party_give.h): the inventory's item command menu (FUN_01ba0e70, "CommandList": Use, Discard ...)
+// builds its entries with AddCommandItem; each entry's functor is a polymorphic object {vtable, item context copy
+// at +8 (the item's inventory index at +0x50, type | id at +0x54)}; the Discard entry's operator() opens the
+// quantity dialog and returns it as a ref-counted menu object. A "Give" entry is added after Discard's own set-up,
+// just before the builder's finalize call (0x1bea630), with a vtable copied from the Discard command's and its
+// clone / operator() slots replaced (the game clones the functor into the entry).
+constexpr u64 ItemMenuBuilder = 0x1ba0e70, ItemMenuBuilderEnd = 0x1ba215a;
+constexpr u64 ItemMenuFinalize = 0x1bea630;     ///< (out, command list, finalizer fn)
+constexpr u64 CopyContext = 0x1c5da00;          ///< (dst, src): the item context's copy constructor
+constexpr u64 GameNew = 0x2bbe9a8;               ///< operator new
+constexpr u64 DiscardCommandVtable = 0x533fea0;  ///< the Discard command's functor class (8 slots)
+constexpr u32 ItemMenuDiscard = 102011;          ///< SP_menu text "Discard"
+const u8 FinalizePrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
 
 u64 image_base = 0;
 template <typename F>
@@ -549,6 +563,7 @@ AddFn add_original = nullptr;
 AddFn command_original = nullptr;
 std::atomic<const void*> screen_sound_text{nullptr};
 std::atomic<const void*> new_game_text{nullptr}; // the title's "New Game" text, as looked up
+std::atomic<const void*> discard_text{nullptr};  // the item menu's "Discard" text (give items, below)
 
 /// BB_GAME_MENU_TRACE=1: menu events in the log for scripted tests (tools driving the menu with
 /// BB_PAD_FILE wait for them): "Game menu: new text", "Game menu: System menu built",
@@ -724,6 +739,9 @@ BB_SYSV const char16_t* LookupHook(void* repository, u32 table, u32 category, u3
     if (category == TextName && id == TitleNewGame && text) {
         new_game_text = text;
     }
+    if (category == TextName && id == ItemMenuDiscard && text) {
+        discard_text = text;
+    }
     if (category == TextName && id == ScreenSoundItem && text) {
         screen_sound_text = text;
         bool cyrillic = false;
@@ -776,8 +794,83 @@ int PartyPageIndex() {
     return -1;
 }
 
+// ---- Give items: the item menu's command (0.7.8) ----
+constexpr std::size_t GiveObjectSize = 0x88;
+using FinalizeFn = void*(BB_SYSV*)(void*, void*, void*);
+FinalizeFn finalize_original = nullptr;
+std::array<void*, 12> give_vtable{};  ///< a copy of the Discard command's vtable, three slots ours
+thread_local u8* give_pending = nullptr;  ///< the Give functor made at Discard, added at finalize
+thread_local u32 give_pending_item = 0;
+
+bool InItemMenuBuilder(const void* return_address) {
+    const u64 at = reinterpret_cast<u64>(return_address) - image_base;
+    return at >= ItemMenuBuilder && at < ItemMenuBuilderEnd;
+}
+/// Copy-constructs a Give functor (`dst` null: a new one) from any command functor of the item menu (context at +8).
+BB_SYSV void* GiveClone(void* self, void* dst) {
+    using New = void*(BB_SYSV*)(u64);
+    using Copy = void*(BB_SYSV*)(void*, const void*);
+    if (!dst) {
+        dst = Game<New>(GameNew)(GiveObjectSize);
+        if (!dst) return nullptr;
+    }
+    std::memset(dst, 0, GiveObjectSize);
+    *reinterpret_cast<void**>(dst) = give_vtable.data();
+    Game<Copy>(CopyContext)(static_cast<u8*>(dst) + 8, static_cast<const u8*>(self) + 8);
+    return dst;
+}
+BB_SYSV void* GiveClone0(void* self) { return GiveClone(self, nullptr); }
+/// operator(): the player chose Give. Returns the menu object to show in `out` (a ref-counted pointer): none yet.
+BB_SYSV void* GiveInvoke(void* out, void* self, void* /*event*/) {
+    const u8* o = static_cast<const u8*>(self);
+    u32 item = 0, index = 0;
+    std::memcpy(&item, o + 0x54, 4);
+    std::memcpy(&index, o + 0x50, 4);
+    if (out) *static_cast<void**>(out) = nullptr;
+    coop::give::MenuChosen(item, index);
+    return out;
+}
+void BuildGiveVtable() {
+    if (give_vtable[0]) return;
+    const void* const* src = reinterpret_cast<const void* const*>(image_base + DiscardCommandVtable);
+    for (std::size_t i = 0; i < give_vtable.size(); ++i) give_vtable[i] = const_cast<void*>(src[i]);
+    give_vtable[0] = reinterpret_cast<void*>(&GiveClone0);
+    give_vtable[1] = reinterpret_cast<void*>(&GiveClone);
+    give_vtable[2] = reinterpret_cast<void*>(&GiveInvoke);
+}
+
+/// The item menu's finalize: the Give entry goes in just before it (after Discard's own set-up).
+BB_SYSV void* FinalizeHook(void* out, void* list, void* fin) {
+    u8* object = give_pending;
+    if (object && InItemMenuBuilder(__builtin_return_address(0))) {
+        give_pending = nullptr;
+        alignas(16) u8 pair[2 * TextSize] = {};
+        MakeTexts(pair, P::GiveCommandText(), P::GiveCommandHelp());
+        alignas(16) u8 function[FunctionSize] = {};
+        *reinterpret_cast<void**>(function + 0x20) = object;
+        command_original(list, pair, function, nullptr);
+        DestroyFunction(function);
+        DestroyTexts(pair);
+        std::printf("Game menu: Give added to the item menu (item %#x)\n", give_pending_item);
+    }
+    return finalize_original(out, list, fin);
+}
+
 /// The title's main menu: after its New Game item, the Party page as a title item.
 BB_SYSV void* CommandHook(void* list, void* pair, void* functor, void* x) {
+    if (const void* discard = discard_text.load();
+        discard && *reinterpret_cast<const void* const*>(pair) == discard && functor &&
+        InItemMenuBuilder(__builtin_return_address(0))) {
+        // The item menu's Discard entry is about to go in: make a Give functor for this item from Discard's.
+        void* object = *reinterpret_cast<void* const*>(static_cast<const u8*>(functor) + 0x20);
+        u32 item = 0;
+        if (object && bbnet::guest_read(reinterpret_cast<std::uintptr_t>(object) + 0x54, &item, 4) &&
+            coop::give::MenuOffers(item)) {
+            BuildGiveVtable();
+            give_pending = static_cast<u8*>(GiveClone(object, nullptr));
+            give_pending_item = item;
+        }
+    }
     void* result = command_original(list, pair, functor, x);
     const void* new_game = new_game_text.load();
     if (new_game && *reinterpret_cast<const void* const*>(pair) == new_game) {
@@ -925,6 +1018,11 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
         Detour(image, AddCommandItem, AddCommandItemPrologue, sizeof(AddCommandItemPrologue),
                reinterpret_cast<void*>(&CommandHook), reinterpret_cast<void**>(&command_original), cursor)) {
         std::printf("Game menu: the Party page is also on the title screen (after New Game)\n");
+    }
+    if (ok && command_original && !std::getenv("BB_PARTY_GIVE_MENU_OFF") &&
+        Detour(image, ItemMenuFinalize, FinalizePrologue, sizeof(FinalizePrologue),
+               reinterpret_cast<void*>(&FinalizeHook), reinterpret_cast<void**>(&finalize_original), cursor)) {
+        std::printf("Game menu: the item menu can offer Give\n");
     }
 #ifdef _WIN32
     DWORD old_protect = 0;

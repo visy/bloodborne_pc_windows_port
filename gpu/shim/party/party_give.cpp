@@ -3,6 +3,7 @@
 // thread only queues; the overlay calls UiWanted / UiSnapshot / RequestGive from the render thread.
 #include "party_give.h"
 
+#include "coop_hooks.h"
 #include "game_state.h"
 #include "party_async_io.h"
 #include "party_b2.h"
@@ -31,6 +32,7 @@ namespace coop::give {
 namespace {
 
 using u32 = std::uint32_t;
+using u64 = std::uint64_t;
 
 void Log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void Log(const char* fmt, ...) {
@@ -138,6 +140,27 @@ void Send(party::PartyLink* link, bool host, const Msg& m) {
 void ParseTest() {
     if (g_test_parsed) return;
     g_test_parsed = true;
+    if (std::getenv("BB_PARTY_GIVE_PROBE")) {  // RE probe: vtable slots of the item command menu's functors
+        for (const u64 va : {0x533fe50ull, 0x533fea0ull, 0x533fe00ull, 0x533ffe0ull, 0x533ff40ull, 0x5340030ull, 0x533d120ull,
+                             0x533fef0ull, 0x533fe00ull}) {
+            char line[400];
+            int n = std::snprintf(line, sizeof line, "probe vtable %#llx:", (unsigned long long)va);
+            for (int k = 0; k < 8; ++k) {
+                u64 v = 0;
+                if (SafeGet(Guest(va) + 8ull * k, &v)) n += std::snprintf(line + n, sizeof line - n, " %#llx", (unsigned long long)(v - Guest(0)));
+            }
+            Log("%s", line);
+        }
+        for (const u64 va : {0x1bea630ull, 0x1ba0e70ull, 0x1b4c9a0ull, 0x1c05030ull, 0x533fea0ull + 0x40ull}) {
+            char line[200];
+            int n = std::snprintf(line, sizeof line, "probe bytes %#llx:", (unsigned long long)va);
+            for (int k = 0; k < 16; ++k) {
+                unsigned char b = 0;
+                if (SafeGet(Guest(va) + k, &b)) n += std::snprintf(line + n, sizeof line - n, " %02x", b);
+            }
+            Log("%s", line);
+        }
+    }
     if (const char* f = std::getenv("BB_PARTY_GIVE_FAULT")) {
         g_fault = std::strcmp(f, "mute") == 0 ? 1 : std::strcmp(f, "linkdrop") == 0 ? 2 : 0;
         if (g_fault) Log("test fault: %s", f);
@@ -493,6 +516,25 @@ bool Enabled() {
         return e && std::strcmp(e, "1") == 0;
     }();
     return env || BbSettings::Get().party_give_items.load();
+}
+
+bool MenuOffers(std::uint32_t item) {
+    if (!Enabled() || (item & 0xf0000000u) != 0x40000000u) return false;
+    const party::status::Board b = party::status::Snapshot();
+    if (!b.enabled) return false;
+    int others = 0;
+    for (const party::status::Member& m : b.members) {
+        if (!m.local && m.connected) ++others;
+    }
+    if (others == 0) return false;
+    GoodsFacts f;
+    if (!ReadGiveFacts(item & 0x0fffffffu, &f)) return false;
+    return GiverVerdict(f, 1) == Why::None;
+}
+
+void MenuChosen(std::uint32_t item, std::uint32_t index) {
+    Log("item menu: Give chosen for item %#x (inventory index %u)", item, index);
+    Notice("Give: " + ItemName(item & 0x0fffffffu));
 }
 
 void UiWanted() {
