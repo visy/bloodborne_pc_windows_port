@@ -4,7 +4,7 @@ Back to the [README](../README.md).
 
 From [Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc) PR #69 by **FIocker**,
 adapted to bbport (0.6.1). The frame pacing (`fg_timing.h`) follows bbhost's frame generation
-cadence (GPL-3.0-or-later). Everything here is **off by default** and costs nothing when off.
+cadence (GPL-3.0-or-later). Frame generation is **off by default** and costs nothing when off; Reflex is Auto since 0.7.8.
 
 ## What it does
 
@@ -20,7 +20,7 @@ cadence (GPL-3.0-or-later). Everything here is **off by default** and costs noth
   skipped, never presented in a burst. A present is never held more than 100 ms.
 - **The HUD** of a generated frame is the rendered frame's own (`fg_hud.comp`): generation works
   on the scene without the HUD, the HUD is laid over the result, so text and bars do not ghost.
-- **NVIDIA Reflex** (Off / On / On + Boost): `VK_NV_low_latency2` revision 3 with
+- **NVIDIA Reflex** (Auto / Off / On / On + Boost; Auto, the default since 0.7.8, is on for an NVIDIA GPU whose driver has the extension at revision 3 and off elsewhere; see [LATENCY.md](LATENCY.md)): `VK_NV_low_latency2` revision 3 with
   `VK_KHR_present_id`: the driver's latency sleep before the game samples input, simulation /
   render / present markers. The PR's own measurements showed no meaningful latency reduction; it
   is offered as an option. Drivers with an older revision of the extension (e.g. 581.57 on an
