@@ -776,6 +776,11 @@ void Install(unsigned char* image, std::uint64_t size) {
             // The effects' step: the Deltatime patch redirects SprjSfx::Update's load (0x1f77d4e) to the live
             // global step itself, so the hooks' whole-1/60-s step (HookSfxStep) is not installed in live mode.
             std::printf("Live clock: effects step from the patch's global step (no 1/60 s quantising)\n");
+            // The plants' wind force: the Deltatime patch hands the wind code the live step, which the wind uses
+            // as the force too (V * step), so every long or short frame bent the plants by its own length (they
+            // shook). The force takes the authored 1/30 (bbhost b2818b4), the wave time keeps the live step.
+            std::printf("Live clock: grass wind force at the authored 1/30 %s\n",
+                        GrassWind() ? "on" : "NOT installed (other code or constant)");
         }
         StubWritable(false);
         if (ok) {
