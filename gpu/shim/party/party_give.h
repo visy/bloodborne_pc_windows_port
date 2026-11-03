@@ -3,8 +3,8 @@
 // machines are party_give_rules.h (unit test tests/test_party_give.cpp); this file reads the inventory, moves the
 // items and talks over the party link.
 //
-//   player   Insert menu > Party tab > "Give items": an item (only what the player holds and may give), a count and
-//            a member, then Give. Needs the own switch (bbport.ini party_give_items, default OFF; System > My party:
+//   player   the game's own inventory: an item's command menu (Use / Discard / Give), then a member list and an
+//            amount list, both native command menus (bbport_game_menu.cpp). Needs the own switch (bbport.ini party_give_items, default OFF; System > My party:
 //            Your items; the launcher's My Party tab) - the receiver's switch is its consent.
 //   link     EVENT give {op: offer / ready / refuse / commit / abort / done}. A guest sends to the host, who relays to
 //            the addressed member and sets "from" to the sender's slot (so host -> guest, guest -> host and
@@ -28,6 +28,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace party {
@@ -42,33 +43,20 @@ namespace coop::give {
 /// The own switch (BbSettings party_give_items, or BB_PARTY_GIVE_ITEMS=1). Any thread.
 bool Enabled();
 
-/// What the overlay shows (a copy; refreshed by Tick every ~0.5 s while UiWanted was called in the last 2 s).
-struct UiItem {
-    std::uint32_t id = 0;
-    int held = 0;
-    int max_give = 0;  ///< the most one give may carry
-    std::string name;
-};
-struct UiMember {
-    int slot = 0;
-    std::string name;  ///< the shown (filtered) name
-};
-struct UiView {
-    bool available = false;  ///< a party runs, the switch is on, the inventory was read
-    bool busy = false;       ///< a transfer is open
-    std::vector<UiItem> items;
-    std::vector<UiMember> members;
-    std::string status;      ///< the last result line ("Gave Blood Vial x3 to Ann" ...)
-};
-/// The overlay is open on the Party tab (any thread): keeps the snapshot fresh.
-void UiWanted();
-UiView UiSnapshot();
-/// The player pressed Give (any thread): handled on the next tick, the result goes to the party notice corner.
+/// A give of `n` of goods `goods` to the member in `to_slot` (any thread): handled on the next tick; the result goes to the
+/// party notice corner. (The item menu's last step; also the hidden test aid BB_PARTY_GIVE_TEST.)
 void RequestGive(std::uint32_t goods, int n, int to_slot);
 
 /// The inventory's item command menu (bbport_game_menu.cpp, built on the game thread): offer "Give" for this item
 /// (type bits | goods id)? Only with the switch on, a party with another member, and an item the rules allow.
 bool MenuOffers(std::uint32_t item);
+/// The members the Give picker lists (connected, not this player): slot and shown (filtered) name.
+std::vector<std::pair<int, std::string>> MenuMembers();
+/// The amounts the picker offers for `item`: 1, 2, 5, 10, 20, 50 below the most that can be given, then "all" last
+/// (the most one give can carry: held, at most 99, a quick-slot item keeps one). Empty: nothing can be given now.
+std::vector<int> MenuAmounts(std::uint32_t item);
+/// The picker's last step: give `n` of the item (type bits | id) to the member in `slot`.
+void MenuGive(std::uint32_t item, int n, int slot);
 /// The player chose Give in the item menu (item = type bits | id, inventory index).
 void MenuChosen(std::uint32_t item, std::uint32_t index);
 

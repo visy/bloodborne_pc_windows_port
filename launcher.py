@@ -598,7 +598,7 @@ MY_PARTY_TAB = [
          "(bbport.ini party_key_items_summoned; in the game: System > My party: Your items).", "party_key_view"),
         ("check", "party_give_items", "Give items to the party",
          "Lets you give consumables (vials, bullets, throwables, materials) to a hunter in your party and receive "
-         "theirs: Insert menu > Party tab > Give items. Your switch shows the list; theirs is their consent. The "
+         "theirs: open an item in the inventory, its menu has a Give entry (hunter, then amount). Your switch shows it; theirs is their consent. The "
          "giver loses the items only once the receiver has them (a lost link puts them back). Never key items, "
          "unique items, badges, tools or story items. In the game: System > My party: Your items. "
          "Default: off (bbport.ini party_give_items)."),

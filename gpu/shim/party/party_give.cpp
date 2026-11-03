@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // 0.7.8 give items to a party member, the game side (party_give.h). Main thread: Tick; OnEvent on the link's callback
-// thread only queues; the overlay calls UiWanted / UiSnapshot / RequestGive from the render thread.
+// thread only queues; the the item menu calls MenuOffers / MenuMembers / MenuAmounts / MenuGive.
 #include "party_give.h"
 
 #include "coop_hooks.h"
@@ -57,15 +57,11 @@ struct Request {
     int n = 0, to = 0;
 };
 std::deque<Request> g_requests;  // under g_mu
-double g_ui_until = 0;           // under g_mu: the snapshot is wanted until then
-UiView g_view;                   // under g_mu
-std::string g_status;            // under g_mu
 
 // main thread only
 Giver g_giver;
 Receiver g_recv;
 double g_last_give_at = -1e9;
-double g_next_view = 0;
 u32 g_next_id = 0;
 double g_steady_since = -1;
 bool g_test_parsed = false;
@@ -81,15 +77,9 @@ double g_next_watch = 0;
 std::vector<TestGive> g_test;
 int g_fault = 0;  // 1 mute, 2 linkdrop
 
-void SetStatus(const std::string& text) {
-    std::lock_guard<std::mutex> lk(g_mu);
-    g_status = text;
-}
-
-/// A line to the party notice corner and the Party tab's give status.
+/// A line to the party notice corner.
 void Notice(const std::string& text) {
     party::status::SetLastEvent(text);
-    SetStatus(text);
     Log("notice: %s", text.c_str());
 }
 
@@ -140,27 +130,6 @@ void Send(party::PartyLink* link, bool host, const Msg& m) {
 void ParseTest() {
     if (g_test_parsed) return;
     g_test_parsed = true;
-    if (std::getenv("BB_PARTY_GIVE_PROBE")) {  // RE probe: vtable slots of the item command menu's functors
-        for (const u64 va : {0x533fe50ull, 0x533fea0ull, 0x533fe00ull, 0x533ffe0ull, 0x533ff40ull, 0x5340030ull, 0x533d120ull,
-                             0x533fef0ull, 0x533fe00ull}) {
-            char line[400];
-            int n = std::snprintf(line, sizeof line, "probe vtable %#llx:", (unsigned long long)va);
-            for (int k = 0; k < 8; ++k) {
-                u64 v = 0;
-                if (SafeGet(Guest(va) + 8ull * k, &v)) n += std::snprintf(line + n, sizeof line - n, " %#llx", (unsigned long long)(v - Guest(0)));
-            }
-            Log("%s", line);
-        }
-        for (const u64 va : {0x1bea630ull, 0x1ba0e70ull, 0x1b4c9a0ull, 0x1c05030ull, 0x533fea0ull + 0x40ull}) {
-            char line[200];
-            int n = std::snprintf(line, sizeof line, "probe bytes %#llx:", (unsigned long long)va);
-            for (int k = 0; k < 16; ++k) {
-                unsigned char b = 0;
-                if (SafeGet(Guest(va) + k, &b)) n += std::snprintf(line + n, sizeof line - n, " %02x", b);
-            }
-            Log("%s", line);
-        }
-    }
     if (const char* f = std::getenv("BB_PARTY_GIVE_FAULT")) {
         g_fault = std::strcmp(f, "mute") == 0 ? 1 : std::strcmp(f, "linkdrop") == 0 ? 2 : 0;
         if (g_fault) Log("test fault: %s", f);
@@ -476,38 +445,6 @@ void Handle(int sender, Msg m, const GameSnapshot& gs, party::PartyLink* link, b
     }
 }
 
-// ---- the Party tab's view ----
-
-void RefreshView(const GameSnapshot& gs, party::PartyLink* link, bool host, double now) {
-    UiView v;
-    v.available = link && Enabled() && gs.world_up;
-    v.busy = g_giver.Busy();
-    if (v.available) {
-        const int me = link->local_slot();
-        for (const party::RosterEntry& e : link->roster()) {
-            if (e.slot != me && e.connected) v.members.push_back({e.slot, bbname::Display(e.name)});
-        }
-        const GateView gate = ReadGate(gs, host);
-        if (gate.world_up && !gate.loading) {
-            for (const auto& [id, count] : InventoryGoodsList()) {
-                GoodsFacts f;
-                if (!ReadGiveFacts(id, &f)) continue;
-                const int give = std::min(f.held, kMaxCount);
-                if (give < 1 || GiverVerdict(f, 1) != Why::None) continue;
-                // a quick-slot item keeps one
-                const int max_give = f.quick ? std::min(give, f.held - 1) : give;
-                if (max_give < 1) continue;
-                v.items.push_back({id, f.held, max_give, ItemName(id)});
-            }
-            std::sort(v.items.begin(), v.items.end(), [](const UiItem& a, const UiItem& b) { return a.id < b.id; });
-        }
-    }
-    (void)now;
-    std::lock_guard<std::mutex> lk(g_mu);
-    v.status = g_status;
-    g_view = std::move(v);
-}
-
 }  // namespace
 
 bool Enabled() {
@@ -532,21 +469,36 @@ bool MenuOffers(std::uint32_t item) {
     return GiverVerdict(f, 1) == Why::None;
 }
 
+std::vector<std::pair<int, std::string>> MenuMembers() {
+    std::vector<std::pair<int, std::string>> out;
+    const party::status::Board b = party::status::Snapshot();
+    for (const party::status::Member& m : b.members) {
+        if (!m.local && m.connected && m.slot >= 0) out.emplace_back(m.slot, b.ShownName(m.name));
+    }
+    return out;
+}
+
+std::vector<int> MenuAmounts(std::uint32_t item) {
+    std::vector<int> out;
+    GoodsFacts f;
+    if (!ReadGiveFacts(item & 0x0fffffffu, &f)) return out;
+    int most = std::min(f.held, kMaxCount);
+    if (f.quick) most = std::min(most, f.held - 1);
+    if (most < 1 || GiverVerdict(f, 1) != Why::None) return out;
+    for (const int n : {1, 2, 5, 10, 20, 50}) {
+        if (n < most) out.push_back(n);
+    }
+    out.push_back(most);
+    return out;
+}
+
+void MenuGive(std::uint32_t item, int n, int slot) {
+    Log("item menu: give %d of item %#x to slot %d", n, item, slot);
+    RequestGive(item & 0x0fffffffu, n, slot);
+}
+
 void MenuChosen(std::uint32_t item, std::uint32_t index) {
     Log("item menu: Give chosen for item %#x (inventory index %u)", item, index);
-    Notice("Give: " + ItemName(item & 0x0fffffffu));
-}
-
-void UiWanted() {
-    std::lock_guard<std::mutex> lk(g_mu);
-    g_ui_until = Now() + 2.0;
-}
-
-UiView UiSnapshot() {
-    std::lock_guard<std::mutex> lk(g_mu);
-    UiView v = g_view;
-    v.status = g_status;
-    return v;
 }
 
 void RequestGive(std::uint32_t goods, int n, int to_slot) {
@@ -563,13 +515,11 @@ void Tick(const GameSnapshot& gs, party::PartyLink* link, bool host) {
     ParseTest();
     std::deque<std::pair<int, std::string>> in;
     std::deque<Request> reqs;
-    bool ui = false;
     const double now = Now();
     {
         std::lock_guard<std::mutex> lk(g_mu);
         in.swap(g_in);
         reqs.swap(g_requests);
-        ui = now < g_ui_until;
     }
     if (!link || link->local_slot() < 0) {
         return;
@@ -626,10 +576,6 @@ void Tick(const GameSnapshot& gs, party::PartyLink* link, bool host) {
         for (const u32 g : g_watch) {
             Log("holdings goods %u = %d (storage %d)", g, ItemCount(kItemGoods, g), StorageItemCount(kItemGoods, g));
         }
-    }
-    if (ui && now >= g_next_view) {
-        g_next_view = now + 0.5;
-        RefreshView(gs, link, host, now);
     }
 }
 
