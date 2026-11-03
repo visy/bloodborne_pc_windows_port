@@ -3,6 +3,7 @@
 // link's IO thread and reads a snapshot the tick keeps.
 #include "party_invade.h"
 
+#include "coop_hooks.h"
 #include "game_state.h"
 #include "party_async_io.h"
 #include "party_b2.h"
@@ -107,6 +108,70 @@ void Notice(const std::string& text) {
     g_last_notice = text;
     party::status::SetLastEvent(text);
     Log("notice: %s", text.c_str());
+}
+
+
+// ---- rewards (party_invade_rules.h RewardFor): the game's own bonus routine, once per outcome, on the receiver's own game ----
+struct PendingReward {
+    bool set = false;
+    Role role = Role::Guest;
+    End end = End::None;
+    std::string name;
+    double since = 0;
+};
+PendingReward g_pending;
+RewardOnce g_reward_once;
+
+bool RewardsOn() {  // BB_PARTY_INVADE_REWARDS=0 turns the payouts off
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_INVADE_REWARDS");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
+/// Main thread. Remembers the outcome; PayTick pays it when this game's world is up (the invader's: its own world, after the
+/// send-home).
+void QueueReward(Role role, End end, const std::string& name) {
+    if (!RewardFor(role, end).pay) return;
+    g_pending = {true, role, end, name, Now()};
+}
+
+void PayTick(const GameSnapshot& s) {
+    if (!g_pending.set) return;
+    const double now = Now();
+    if (now - g_pending.since > 90.0) {
+        Log("reward: dropped, this game's world did not come up in 90 s");
+        g_pending = {};
+        return;
+    }
+    if (!s.world_up || s.loading || !s.player || !s.player_rec) return;
+    const PendingReward p = g_pending;
+    g_pending = {};
+    const Reward r = RewardFor(p.role, p.end);
+    const char* who = p.role == Role::Invader ? "invader" : p.role == Role::Host ? "host" : "guest";
+    if (!r.pay) return;
+    if (!RewardsOn()) {
+        Log("reward: %s, %s: off (BB_PARTY_INVADE_REWARDS=0)", who, EndWord(p.end));
+        return;
+    }
+    if (!g_reward_once.Take(p.name, p.end, now)) {
+        Log("reward: %s, %s: already paid for this outcome", who, EndWord(p.end));
+        return;
+    }
+    int id = 0, echoes0 = -1, insight0 = -1;
+    SafeGet(s.player_rec + 0x10, &id);
+    SafeGet(s.player_rec + 0x94, &echoes0);
+    SafeGet(s.player_rec + 0x84, &insight0);
+    // CalcExcuteMultiBonus(rate, player id, Insight) = 0x131d470: Blood Echoes at the rate of the receiver's level, Insight +N
+    // (the Lua's call in OnDeadEvent_HostDead / OnDeadEvent_NormalBlackDead; the Insight is capped at 99 by the game).
+    using Fn = void(BB_COOP_SYSV*)(float, std::uint64_t, int, int);
+    reinterpret_cast<Fn>(Guest(0x131d470))(r.rate, 0, id, r.insight);
+    int echoes1 = -1, insight1 = -1;
+    SafeGet(s.player_rec + 0x94, &echoes1);
+    SafeGet(s.player_rec + 0x84, &insight1);
+    Log("reward: %s, %s: rate %.2f, Insight +%d: Blood Echoes %d -> %d, Insight %d -> %d", who, EndWord(p.end), double(r.rate), r.insight,
+        echoes0, echoes1, insight0, insight1);
 }
 
 // ---- the smoke's script (BB_PARTY_INVADE_TEST, party_invade_rules.h ParseTest) ----
@@ -298,6 +363,7 @@ void GuestNotices(party::PartyLink* link) {
         for (const party::RosterEntry& e : link->roster())
             if (e.slot == party::kHostSlot) host_name = Shown(e.name);
         Notice(JoinAsInvader() ? EndTextForInvader(end_why, host_name) : EndTextForHost(end_why, Shown(end_name)));
+        QueueReward(JoinAsInvader() ? Role::Invader : Role::Guest, end_why, end_name);
     }
     if (state == g_seen.state && name == g_seen.name) return;
     const std::string was = g_seen.name;
@@ -323,8 +389,12 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host);
 }
 
 void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
-    if (!link) return;
+    if (!link) {
+        PayTick(s);
+        return;
+    }
     TickImpl(s, link, host);
+    PayTick(s);
     // The smoke's script, after the tick has updated the state it reads.
     bool in_state, home_state;
     if (host) {
@@ -486,6 +556,7 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
             Msg m{0, ent.name, end};
             link->post_event(party::kBroadcast, kEventName, Encode(m));
             Notice(!refusal.empty() ? "Invader " + Shown(ent.name) + " turned away: " + refusal : EndTextForHost(end, Shown(ent.name)));
+            if (refusal.empty()) QueueReward(Role::Host, end, ent.name);
             Log("invasion of slot %d ends: %s", slot, !refusal.empty() ? refusal.c_str() : EndWord(end));
             link->drop_invader(slot, why);
             g_inv = Invasion{};
