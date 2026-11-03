@@ -990,10 +990,23 @@ Mrsuss60's live FPS clock (docs/LIVE_FPS.md) is on by default; control = `BB_LIV
   stays the net.
 * One `lfw` run at 30 (live not in use) lost a game to a device lost at submit (`vk_scheduler.cpp:1260`, the known rare CL-ab12f5, copied to
   `agents\devlost_cl-ab12f5`); the retry passed. The control's `lu` at 120 had a similar GPU assert at `:1168`.
-* Measured rates (median game steps a second, two games on this PC): live 48.8 at 60 (game time 0.83 per real second), 48.8 / 32.1 at 60/48,
-  64-69 at 120; control 59.6 at 60, 59.9 / 32.1 at 60/48, 64 at 120. At a target of 60 the live clock runs slow under frame jitter (its slew
-  limit +12% / -15% a frame and the deadband lock make the step lag a long frame); the presenter limit at the target is what holds the rate
-  (without it the game ran 107 steps a second at a target of 60).
+* Speed, first port (slew-limited step, presenter-held target): live 48.8 steps a second and 0.83 game seconds per real second at a target of 60 vs
+  the hooks' 59.6 / 1.0. Two causes, both fixed (livefps078, second commit): the +12% / -15% slew limit lagged every long frame, and the game's pacer
+  asked for 1/240 s so only the presenter held the target, which a 480 Hz vblank quantised (49 steps at 60; vblank 240 / 120 gave 52-54, vblank
+  60 exactly 60.0). Now the step is the measured frame time (micro-jitter under 1.5% locked to the target with the difference carried), the pacer
+  mode hook waits for the target and `run.bat` keeps the presets' vblank.
+* Speed after the fix (median steps a second / game time per real second, in-world, same phases live vs `BB_LIVE_FPS=0`):
+
+| case | live | control |
+|---|---|---|
+| one game (`rs`), target 60 | 59.6 / 0.996 | 59.8 / 1.000 |
+| one game, target 120 (run 1 / run 2) | 67.9 / 1.000, 67.8 / 1.000 | 76.8 / 1.000, 68.0 / 0.999 |
+| two games (`md`), target 60 | 56.8 / 0.950 | 56.9 / 0.952 |
+| two games, 60/48 (inst0) | 55.9 / 0.937 | 57.7 / 0.965 |
+| two games, target 120 | 64.0 / 0.956 | 64.0 / 0.944 |
+
+  The two-game and 120 rates are the PC's (GPU and CPU bound), equal live and control within run noise (the one 76.8 control run was not repeated:
+  its repeat gave 68.0). Rows after the fix, live, 60 and 120: `lu` 8/8, `lfw` 39/39, `lfwc` 39/39 at both rates.
 
 ## 2026-10-25 (simonwipe): a guest's boss phase event no longer starts the host's scene
 
