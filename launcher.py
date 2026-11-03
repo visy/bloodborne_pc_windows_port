@@ -862,6 +862,38 @@ def parse_discovery_packet(data: bytes):
             "build": strings[0], "name": strings[1], "area": strings[2]}
 
 
+def parse_discovery_ext(data: bytes):
+    """The 0.7.8 extension datagram of a host announcement ([0xfa]['I'][1] id u32 flags u8 area u32 phase u8 ng u8, 14
+    bytes) as a dict, or None (untrusted input: strict, same rules as gpu/shim/net/party_discovery.cpp parse_ext)."""
+    if not isinstance(data, (bytes, bytearray)) or len(data) != 14:
+        return None
+    if data[0] != 0xFA or data[1] != 0x49 or data[2] != 1 or data[7] & ~3 or data[12] > 4 or (data[13] > 7 and data[13] != 255):
+        return None
+    return {"id": int.from_bytes(data[3:7], "big"), "invaders": bool(data[7] & 1), "boss": bool(data[7] & 2),
+            "area_id": int.from_bytes(data[8:12], "big"), "phase": data[12], "ng": data[13]}
+
+
+def party_where_module():
+    """scripts/party_where.py (the area / phase / NG words); None when it cannot be loaded."""
+    try:
+        scripts_dir = str(APP_DIR / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import party_where
+        return party_where
+    except Exception:  # noqa: BLE001 - a list column never stops the launcher
+        return None
+
+
+def where_words(area_id: int, phase: int, ng: int, boss: bool) -> tuple:
+    """(short, long): the Area column text ('Yahar'gul (Blood Moon)') and the 'Currently in: ...' line."""
+    pw = party_where_module()
+    if not pw:
+        return "", ""
+    short = pw.where_text(area_id, phase, 255, False)
+    return short, pw.currently_in(area_id, phase, ng, boss)
+
+
 # 0.7.8: the options the host owns (Max players and the hook-deciding party options): a guest starts with the
 # host's for that launch instead of being refused at the handshake. Mirrors gpu/shim/party/party_options.cpp.
 PARTY_ADOPT_KEYS = {"BB_PARTY_MAX": ("2", "3", "4", "5"), "BB_PARTY_GUEST_LAMPS": ("0", "1"),
@@ -933,6 +965,7 @@ class DiscoveryBook:
         self.own_ips = set(own_ips)
         self.ttl = ttl
         self._entries = {}
+        self._ext = {}      # (ip, id) -> (seen, extension dict)
         self._rate = {}
         self._lock = threading.Lock()
 
@@ -949,6 +982,13 @@ class DiscoveryBook:
                 self._rate = {k: v for k, v in self._rate.items() if v[0] >= int(now) - 1}
             if n >= DISCOVERY_MAX_PER_SEC:
                 return False
+            if len(data) == 14 and data[:2] == b"\xfaI":   # the 0.7.8 extension: invaders, where the host is
+                ext = parse_discovery_ext(data)
+                if ext is None:
+                    return False
+                if (ip, ext["id"]) in self._entries or len(self._ext) < DISCOVERY_MAX_ENTRIES:
+                    self._ext[(ip, ext["id"])] = (now, ext)
+                return True
             info = parse_discovery_packet(data)
             if info is None:
                 return False
@@ -965,11 +1005,21 @@ class DiscoveryBook:
     def _expire(self, now: float):
         for key in [k for k, e in self._entries.items() if now - e["seen"] > self.ttl]:
             del self._entries[key]
+        for key in [k for k, e in self._ext.items() if now - e[0] > self.ttl or k not in self._entries]:
+            del self._ext[key]
 
     def snapshot(self, now: float) -> list:
         with self._lock:
             self._expire(now)
-            return sorted((dict(e) for e in self._entries.values()), key=lambda e: (e["name"].lower(), e["ip"]))
+            out = []
+            for key, e in self._entries.items():
+                row = dict(e)
+                ext = self._ext.get(key)
+                row.update({"invaders": False, "boss": False, "area_id": 0, "phase": 0, "ng": 255})
+                if ext:
+                    row.update({k: v for k, v in ext[1].items() if k != "id"})
+                out.append(row)
+            return sorted(out, key=lambda e: (e["name"].lower(), e["ip"]))
 
 
 class DiscoveryListener(threading.Thread):
@@ -1077,9 +1127,11 @@ def discovery_rows(found: list, peers: list, my_version: str, hide_bad_names: bo
         if e["id"] in seen_ids:  # one game announcing on several adapters: listed once
             continue
         seen_ids.add(e["id"])
+        short, long_text = where_words(e.get("area_id", 0), e.get("phase", 0), e.get("ng", 255), e.get("boss", False))
         rows.append({"iid": f"{e['ip']}/{e['id']}", "name": shown_party_name(e["name"], hide_bad_names),
                      "level": str(e["level"] or "?"),
-                     "players": f"{e['players']}/{e['max']}", "area": e["area"] or "-",
+                     "players": f"{e['players']}/{e['max']}", "area": short or e["area"] or "-", "where": long_text,
+                     "invadable": bool(e.get("invaders")) and e["players"] < e["max"],
                      "password": "yes" if e["password"] else ("open" if e.get("open") else "no"), "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
                      "ok": discovery_build_matches(e["build"], my_version), "kind": "announce",
@@ -1087,7 +1139,7 @@ def discovery_rows(found: list, peers: list, my_version: str, hide_bad_names: bo
     for p in peers:
         if p["ip"] in seen_ips or not p["online"]:
             continue
-        rows.append({"iid": f"ts/{p['ip']}", "name": shown_party_name(p["name"], hide_bad_names), "level": "?", "players": "?", "area": "Tailscale",
+        rows.append({"iid": f"ts/{p['ip']}", "name": shown_party_name(p["name"], hide_bad_names), "level": "?", "players": "?", "area": "Tailscale", "where": "", "invadable": False,
                      "password": "?", "build": "?", "address": host_address_text(p["ip"], PARTY_DEFAULT_PORT),
                      "password_set": None, "ok": True, "kind": "tailscale"})
     return rows
@@ -1111,12 +1163,19 @@ def discovery_own_ips() -> set:
 # an OpenVPN tunnel, so hosts on the Nightwatch VPN announce to a small lobby on the VPN server (10.8.0.1,
 # UDP 9310; tools/vpn/lobby/nwlobby.py, docs/party/nightwatch_vpn.md) and this list asks it. The lobby gives
 # the host's tunnel address to join with; it is kept in the row and NEVER shown or saved.
+INVADE_TOOLTIP = ("Invade the selected game as a hostile phantom. Only hosts that turned on Allow invaders show it. "
+                  "No password is needed or sent. The host and its guests are told, you fight them, and you go home "
+                  "when you die or the host dies.")
+INVADE_CONFIRM = ("Invade {name}'s world?\n\nYou join as a hostile phantom: the host and their guests can kill you "
+                  "and you can kill them. You go home when you die or when they die. Your own save is not changed by "
+                  "the party.")
 LOBBY_ADDR = "10.8.0.1"
 LOBBY_PORT = 9310
 LOBBY_POLL_S = 5.0
 LOBBY_MAX_PAGES = 20
 LOBBY_MAGIC = b"\xfaL"
 LOBBY_FLAG_PASSWORD, LOBBY_FLAG_OWN = 1, 2
+LOBBY_FLAG_INVADERS, LOBBY_FLAG_BOSS = 4, 8   # type 9 (extended) rows only
 
 
 LOBBY_NET = "10.8.0.0/22"   # 0.7.8: room for 1021 players once the server widens its pool (was /24)
@@ -1147,8 +1206,54 @@ def lobby_target():
     return (LOBBY_ADDR, LOBBY_PORT), False
 
 
-def lobby_list_request(offset: int = 0) -> bytes:
-    return LOBBY_MAGIC + bytes([1, 2, (offset >> 8) & 255, offset & 255])
+def lobby_list_request(offset: int = 0, extended: bool = False) -> bytes:
+    """Type 2 (the v1 list) or, extended, type 8 (rows with the invader flag and where the host is)."""
+    return LOBBY_MAGIC + bytes([1, 8 if extended else 2, (offset >> 8) & 255, offset & 255])
+
+
+def lobby_parse_reply2(data: bytes):
+    """(total, offset, entries) of a type 9 (extended) lobby reply, or None (untrusted input: strict). An entry has the
+    type 3 keys plus invaders, boss, area (map id), phase, ng."""
+    if not isinstance(data, (bytes, bytearray)) or not 9 <= len(data) <= 1024:
+        return None
+    if data[:2] != LOBBY_MAGIC or data[2] != 1 or data[3] != 9:
+        return None
+    total, offset, count = (data[4] << 8) | data[5], (data[6] << 8) | data[7], data[8]
+    pos = 9
+    out = []
+    for _ in range(count):
+        if pos + 16 > len(data):
+            return None
+        ip = ".".join(str(b) for b in data[pos:pos + 4])
+        port = (data[pos + 4] << 8) | data[pos + 5]
+        flags, players, maxp = data[pos + 6], data[pos + 7], data[pos + 8]
+        area = int.from_bytes(data[pos + 9:pos + 13], "big")
+        phase, ng, n = data[pos + 13], data[pos + 14], data[pos + 15]
+        pos += 16
+        if (flags & ~15 or port < 1024 or maxp < 1 or maxp > 8 or players > maxp or n == 0 or phase > 4
+                or (ng > 7 and ng != 255) or pos + n + 1 > len(data)):
+            return None
+        try:
+            name = bytes(data[pos:pos + n]).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        pos += n
+        b = data[pos]
+        pos += 1
+        if pos + b > len(data):
+            return None
+        raw = bytes(data[pos:pos + b])
+        pos += b
+        if any(c < 0x20 or c >= 0x7F for c in raw):
+            return None
+        name = "".join(ch for ch in name if ch.isprintable())[:16]
+        if not name:
+            return None
+        out.append({"ip": ip, "port": port, "password": bool(flags & LOBBY_FLAG_PASSWORD),
+                    "own": bool(flags & LOBBY_FLAG_OWN), "invaders": bool(flags & LOBBY_FLAG_INVADERS),
+                    "boss": bool(flags & LOBBY_FLAG_BOSS), "players": players, "max": maxp, "area": area,
+                    "phase": phase, "ng": ng, "name": name, "build": raw.decode("ascii")})
+    return (total, offset, out) if pos == len(data) else None
 
 
 def lobby_parse_reply(data: bytes):
@@ -1197,18 +1302,28 @@ def lobby_fetch(target, bind_ip: str = "", timeout: float = 1.0):
     """The lobby's games as a list of entry dicts (all pages), or None when it does not answer."""
     import socket
     entries, offset = [], 0
+    extended = True   # type 8 first (0.7.8 lobbies); a lobby that does not answer it gets the v1 type 2 list
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(timeout)
             if bind_ip:
                 sock.bind((bind_ip, 0))
             for _ in range(LOBBY_MAX_PAGES):
-                sock.sendto(lobby_list_request(offset), target)
-                while True:  # only the lobby's own answer counts
-                    data, addr = sock.recvfrom(2048)
-                    if addr[0] == target[0] and addr[1] == target[1]:
-                        break
-                parsed = lobby_parse_reply(data)
+                sock.sendto(lobby_list_request(offset, extended), target)
+                try:
+                    while True:  # only the lobby's own answer counts
+                        data, addr = sock.recvfrom(2048)
+                        if addr[0] == target[0] and addr[1] == target[1]:
+                            break
+                except socket.timeout:
+                    if extended and offset == 0:
+                        extended = False
+                        continue
+                    raise
+                parsed = lobby_parse_reply2(data) if extended else lobby_parse_reply(data)
+                if parsed is None and extended and offset == 0:
+                    extended = False   # an answer we cannot read: ask the v1 way
+                    continue
                 if parsed is None or parsed[1] != offset:
                     return None if not entries else entries
                 total, _, page = parsed
@@ -1228,7 +1343,10 @@ def lobby_rows(entries: list, my_version: str, hide_bad_names: bool = True) -> l
     for i, e in enumerate(sorted(entries or [], key=lambda e: (e["name"].lower(), e["ip"]))):
         if e["own"]:
             continue
+        short, long_text = where_words(e.get("area", 0), e.get("phase", 0), e.get("ng", 255), e.get("boss", False))
         rows.append({"iid": f"vpn/{i}", "name": shown_party_name(e["name"], hide_bad_names), "players": f"{e['players']}/{e['max']}",
+                     "area": short or "-", "where": long_text,
+                     "invadable": bool(e.get("invaders")) and e["players"] < e["max"],
                      "password": "yes" if e["password"] else "open", "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
                      "ok": discovery_build_matches(e["build"], my_version),
@@ -1767,6 +1885,14 @@ PARTY_OPEN_TIP = (
     "Off by default (bbport.ini party_open; in the game: System > Party access).")
 
 
+PARTY_INVADERS_TIP = (
+    "Host only. Other players can invade your world as a hostile phantom from the public lists (the VPN or LAN lists, "
+    "the Nightwatch VPN lobby): they need no password, you and your guests are told, one invader at a time, never in a "
+    "boss fight, a loading screen or a cutscene, and never when your party is full (4 players). You can block an "
+    "invader for the session from the game. Off by default: nobody can invade you and the lists do not offer your game "
+    "for invasions (bbport.ini party_invaders, env BB_PARTY_INVADERS; in the game: System > Party access > Allow invaders).")
+
+
 def party_open_available(mode: str, password: str) -> bool:
     """Whether the Open party option means anything now: hosting, and no password (the password decides then)."""
     return mode == "host" and not (password or "").strip()
@@ -1778,7 +1904,7 @@ def party_env(s: dict) -> dict:
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
             "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS",
-            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN", "BB_PARTY_OPEN"]
+            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN", "BB_PARTY_OPEN", "BB_PARTY_INVADERS", "BB_PARTY_INVADE"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     # bbport.ini's (unset here, so a stale variable never overrides the ini; BB_PARTY_GUEST_INSIGHT too)
     keys += [env_name for _, env_name, _ in PARTY_INI_SWITCHES]
@@ -3293,12 +3419,17 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_entries = []
         self.vpn_lobby_rows = {}
         self.vpn_lobby_info_var = tk.StringVar(value="")
+        self.vpn_lobby_where_var = tk.StringVar(value="")
+        self.discovery_where_var = tk.StringVar(value="")
+        self._invade_launch = False
         self._vpn_lobby_busy = False
         self._vpn_join_addr = ""
         self._adopt_env = {}
         self._vpn_join_needs_password = True
         # 0.7.8 open party (bbport.ini party_open, off by default): a host without a password also takes plain-address joins
         self.party_open = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_open", False))
+        # 0.7.8 (CL-4cc63c): the host lets others invade from the public lists (bbport.ini party_invaders, off by default)
+        self.party_invaders = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_invaders", False))
         self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
         self.party_port_suffix_var = tk.StringVar(value="")
         self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
@@ -4183,6 +4314,8 @@ class BloodborneLauncher(tk.Tk):
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
         open_cb = self._check(sec, "Open party: no password, join by address (LAN/VPN)", self.party_open,
                               PARTY_OPEN_TIP, command=self.on_party_open_toggle)
+        self.party_invaders_cb = self._check(sec, "Allow invaders (listed games)", self.party_invaders, PARTY_INVADERS_TIP,
+                                             command=self.on_party_invaders_toggle)
         code_tip = (f"The code the host gave you, like {PARTY_CODE_EXAMPLE} (letters are not "
                     "case-sensitive; I, L and O count as 1, 1 and 0), or the host's address as host:port "
                     "(LAN, VPN, port forwarding). Older BBP2- / BBP1- codes work too. (BB_PARTY_CODE)")
@@ -4400,6 +4533,8 @@ class BloodborneLauncher(tk.Tk):
             self.party_vpn_lobby.set(ini_flag_value(ini, "party_vpn_lobby", False))
         if hasattr(self, "party_open_cb"):
             self.party_open.set(ini_flag_value(ini, "party_open", False))
+        if hasattr(self, "party_invaders_cb"):
+            self.party_invaders.set(ini_flag_value(ini, "party_invaders", False))
 
     def on_live_fps_toggle(self):
         """Live FPS clock: written at once (bbport.ini live_fps); the patches it replaces are locked out."""
@@ -4590,6 +4725,13 @@ class BloodborneLauncher(tk.Tk):
             self.log(f"[PARTY] Could not save party_open to bbport.ini: {ex}")
         self._ini_stamp = self.ini_stamp()
 
+    def on_party_invaders_toggle(self):
+        try:
+            update_ini(bbport_ini_path(), {"party_invaders": "1" if self.party_invaders.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save party_invaders to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
+
     def update_party_open_state(self):
         """The Open party checkbox needs hosting and no password (a password decides who joins)."""
         if hasattr(self, "party_open_cb"):
@@ -4733,6 +4875,8 @@ class BloodborneLauncher(tk.Tk):
         self.discovery_tree.tag_configure("mismatch", foreground="#6c6c6c")
         self.discovery_tree.pack(side="left")
         self.discovery_tree.bind("<Double-1>", lambda e: self.join_found_party())
+        self.discovery_tree.bind("<<TreeviewSelect>>", lambda e: self.show_where(self.discovery_tree, self.discovery_rows,
+                                                                                    self.discovery_where_var, self.discovery_invade_btn))
         row = ttk.Frame(sec, style="Card.TFrame")
         row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
         sec.next_row += 1
@@ -4742,8 +4886,15 @@ class BloodborneLauncher(tk.Tk):
         Tooltip(self.discovery_join_btn, "Fills the party address of the selected host (and asks for its "
                                          "password if it has one), then starts the game as a guest. Greyed "
                                          "rows run another bbport version.")
+        self.discovery_invade_btn = ttk.Button(row, text="Invade", style="Secondary.TButton", state="disabled",
+                                               command=self.invade_found_party)
+        self.discovery_invade_btn.pack(side="left", padx=(6, 0))
+        Tooltip(self.discovery_invade_btn, INVADE_TOOLTIP)
         self.discovery_info_var = tk.StringVar(value="")
         ttk.Label(row, textvariable=self.discovery_info_var, style="Hint.TLabel").pack(side="left", padx=(8, 0))
+        ttk.Label(sec, textvariable=self.discovery_where_var, style="Hint.TLabel", wraplength=330, justify="left").grid(
+            row=sec.next_row, column=0, columnspan=2, sticky="w")
+        sec.next_row += 1
         warn = ttk.Label(sec, textvariable=self.discovery_warn_var, style="Hint.TLabel", wraplength=330,
                          justify="left", foreground="#d98c1f")
         warn.grid(row=sec.next_row, column=0, columnspan=2, sticky="w")
@@ -4763,9 +4914,9 @@ class BloodborneLauncher(tk.Tk):
                     "theirs. Nobody sees an address, a password or an account name. Needs the VPN connected "
                     "(bbport.ini party_vpn_lobby; in the game: System > Party access).",
                     command=self.on_vpn_lobby_toggle)
-        cols = ("name", "players", "password", "build")
-        heads = {"name": "Hunter", "players": "Slots", "password": "Pass", "build": "Build"}
-        widths = {"name": 130, "players": 50, "password": 44, "build": 70}
+        cols = ("name", "players", "area", "password", "build")
+        heads = {"name": "Hunter", "players": "Slots", "area": "Area", "password": "Pass", "build": "Build"}
+        widths = {"name": 84, "players": 40, "area": 110, "password": 36, "build": 54}
         holder = ttk.Frame(sec, style="Card.TFrame")
         holder.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
         sec.next_row += 1
@@ -4776,6 +4927,8 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_tree.tag_configure("mismatch", foreground="#6c6c6c")
         self.vpn_lobby_tree.pack(side="left")
         self.vpn_lobby_tree.bind("<Double-1>", lambda e: self.join_vpn_lobby_game())
+        self.vpn_lobby_tree.bind("<<TreeviewSelect>>", lambda e: self.show_where(self.vpn_lobby_tree, self.vpn_lobby_rows,
+                                                                                    self.vpn_lobby_where_var, self.vpn_lobby_invade_btn))
         row = ttk.Frame(sec, style="Card.TFrame")
         row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(2, 2))
         sec.next_row += 1
@@ -4784,8 +4937,76 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_join_btn.pack(side="left")
         Tooltip(self.vpn_lobby_join_btn, "Asks for the host's password (not for an open game), then starts the game as a guest. "
                                          "Greyed rows run another bbport version.")
+        self.vpn_lobby_invade_btn = ttk.Button(row, text="Invade", style="Secondary.TButton", state="disabled",
+                                               command=self.invade_vpn_lobby_game)
+        self.vpn_lobby_invade_btn.pack(side="left", padx=(6, 0))
+        Tooltip(self.vpn_lobby_invade_btn, INVADE_TOOLTIP)
         ttk.Label(row, textvariable=self.vpn_lobby_info_var, style="Hint.TLabel").pack(side="left", padx=(8, 0))
+        ttk.Label(sec, textvariable=self.vpn_lobby_where_var, style="Hint.TLabel", wraplength=330, justify="left").grid(
+            row=sec.next_row, column=0, columnspan=2, sticky="w")
+        sec.next_row += 1
         self.after(1000, self.vpn_lobby_tick)
+
+    def show_where(self, tree, rows: dict, var, invade_btn):
+        """The selected row's 'Currently in: ...' line, and the Invade button only for a host that allows invaders."""
+        sel = tree.selection()
+        row = rows.get(sel[0]) if sel else None
+        var.set(row.get("where", "") if row else "")
+        try:
+            invade_btn.config(state="normal" if row and row.get("invadable") and row.get("ok") else "disabled")
+        except tk.TclError:
+            pass
+
+    def invade_vpn_lobby_game(self):
+        """Invade the selected lobby game: no password (an invader never sends one), the game starts as an invader."""
+        sel = self.vpn_lobby_tree.selection()
+        row = self.vpn_lobby_rows.get(sel[0]) if sel else None
+        if not row or not row.get("invadable"):
+            messagebox.showinfo("Invade", "Select a game that allows invaders first.")
+            return
+        if not messagebox.askyesno("Invade", INVADE_CONFIRM.format(name=row["name"])):
+            return
+        before = (self.party_mode_var.get(), self.party_password_var.get(), self.party_code_var.get())
+        self._adopt_env = dict(row.get("adopt") or {})
+        self._vpn_join_addr = row["address"]
+        self._vpn_join_needs_password = False
+        self._invade_launch = True
+        self.party_mode_var.set(PARTY_MODES[2][0])
+        self.party_code_var.set("")
+        self.party_password_var.set("")
+        try:
+            self.update_party_state()
+            self.launch_game()
+        finally:
+            self._invade_launch = False
+            self._adopt_env = {}
+            self._vpn_join_addr = ""
+            self._vpn_join_needs_password = True
+            self.party_mode_var.set(before[0])
+            self.party_password_var.set(before[1])
+            self.party_code_var.set(before[2])
+            self.update_party_state()
+
+    def invade_found_party(self):
+        """Invade the selected party of the VPN / LAN list (no password asked)."""
+        sel = self.discovery_tree.selection()
+        row = self.discovery_rows.get(sel[0]) if sel else None
+        if not row or not row.get("invadable"):
+            messagebox.showinfo("Invade", "Select a party that allows invaders first.")
+            return
+        if not messagebox.askyesno("Invade", INVADE_CONFIRM.format(name=row["name"])):
+            return
+        self.party_mode_var.set(PARTY_MODES[2][0])
+        self.party_code_var.set(row["address"])
+        self.party_password_var.set("")
+        self.on_party_change()
+        self._adopt_env = dict(row.get("adopt") or {})
+        self._invade_launch = True
+        try:
+            self.launch_game()
+        finally:
+            self._invade_launch = False
+            self._adopt_env = {}
 
     def on_vpn_lobby_toggle(self):
         try:
@@ -4841,7 +5062,7 @@ class BloodborneLauncher(tk.Tk):
             if iid not in want:
                 tree.delete(iid)
         for idx, r in enumerate(rows):
-            values = (r["name"], r["players"], r["password"], r["build"].split(" ")[0])
+            values = (r["name"], r["players"], r.get("area", "-"), r["password"], r["build"].split(" ")[0])
             tags = () if r["ok"] else ("mismatch",)
             if r["iid"] in tree.get_children():
                 tree.item(r["iid"], values=values, tags=tags)
@@ -4850,6 +5071,7 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_lobby_rows = want
         if selected and selected[0] in want:
             tree.selection_set(selected[0])
+        self.show_where(tree, want, self.vpn_lobby_where_var, self.vpn_lobby_invade_btn)
         if not on:
             self.vpn_lobby_info_var.set("Off.")
         elif self.vpn_lobby_entries is None:
@@ -4962,6 +5184,7 @@ class BloodborneLauncher(tk.Tk):
         self.discovery_rows = want
         if selected and selected[0] in want:
             tree.selection_set(selected[0])
+        self.show_where(tree, want, self.discovery_where_var, self.discovery_invade_btn)
         err = self.discovery_listener.error if self.discovery_listener else ""
         if not self.party_discovery.get():
             self.discovery_info_var.set("Discovery is off.")
@@ -6513,6 +6736,10 @@ class BloodborneLauncher(tk.Tk):
             self.apply_host_options(env)
         if self._vpn_join_addr and self.party_mode() == "join":
             env["BB_PARTY_CODE"] = self._vpn_join_addr  # a Nightwatch VPN lobby game: the address stays out of the UI
+        if self._invade_launch and self.party_mode() == "join":
+            env["BB_PARTY_INVADE"] = "1"      # this launch only: join as an invader, no password
+            env.pop("BB_PARTY_PASSWORD", None)
+            self.log("[PARTY] Starting as an invader (this start only): hostile to the host's party, no password sent.")
         if warper:
             warper_env(env, warper_paths())
         elif not self.offer_party_save_copy(env):

@@ -1266,6 +1266,12 @@ void DefineAll() {
            AddText("No password: players on your LAN or VPN join by plain address. You trust that network",
                    "Без пароля: игроки из вашей LAN или VPN входят по адресу. Вы доверяете этой сети"),
            toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
+    // 0.7.8 (CL-4cc63c): invasions into open public games (party/party_invade_rules.h, docs/party/invasions.md): the host lets
+    // other players join its world as hostile phantoms from the public lists. Live, the host's value only, off by default.
+    AddRow(Flag(&Values::party_invaders), AddText("Allow invaders", "Разрешить вторжения"),
+           AddText("Listed games only: other players may invade your world as hostile phantoms (one at a time). Off: never",
+                   "Только в списке игр: другие игроки могут вторгаться в ваш мир (по одному). Выкл.: никогда"),
+           toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
     AddRow(Info(), AddText("Host's access", "Доступ хоста"),
            AddText("The host decides who joins without a party code (Open party, Nightwatch VPN lobby)",
                    "Хост решает, кто входит без кода группы (открытая группа, лобби Nightwatch VPN)"),
