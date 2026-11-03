@@ -254,6 +254,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_messages = static_cast<int>(coop::splitscreen::ParseMessages(value));
     } else if (key == "party_conn_warnings") {
         v.party_conn_warnings = i != 0;
+    } else if (key == "party_give_items") {
+        v.party_give_items = i != 0;
     } else if (key == "party_item_notices") {
         v.party_item_notices = i != 0;
     } else if (key == "party_guest_lamps") {
@@ -804,6 +806,7 @@ void Save() {
     put("party_stay", flag(v.party_stay));
     put("party_messages", coop::splitscreen::MessagesName(coop::splitscreen::ClampMessages(v.party_messages.load())));
     put("party_conn_warnings", flag(v.party_conn_warnings));
+    put("party_give_items", flag(v.party_give_items));
     put("party_item_notices", flag(v.party_item_notices));
     put("party_name_tags", flag(v.party_name_tags));
     put("party_glow_off", flag(v.party_glow_off));

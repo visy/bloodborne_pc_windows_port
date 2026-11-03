@@ -120,6 +120,9 @@ int ItemStacks(std::uint32_t type_bits, std::uint32_t id);
 /// count} of every used entry: the key section in view (a summoned guest's emptied one with
 /// BB_PARTY_KEY_VIEW=0, items.md 10.7).
 std::vector<std::pair<std::uint32_t, int>> KeySectionItems();
+/// 0.7.8 (party_give): the goods of the inventory's normal section (consumables, materials, tools; index at or
+/// above the key section's +0x24): {goods id, count} of every used entry with a count above 0. Main thread.
+std::vector<std::pair<std::uint32_t, int>> InventoryGoodsList();
 /// GiveItemDirect 0x131CB70(0, type bits, id, count); false when the code differs or no player.
 /// It shows nothing; ShowItemGet adds the native "item acquired" entry.
 bool GiveItem(std::uint32_t type_bits, std::uint32_t id, int count);

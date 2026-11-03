@@ -22,6 +22,7 @@
 #include "party_fourp.h"
 #include "party_progress.h"
 #include "party_split.h"
+#include "party_give.h"
 #include "party_gather.h"
 #include "party_vote.h"
 #include "party_stayhome.h"
@@ -1338,6 +1339,10 @@ LinkCallbacks make_callbacks(bool host) {
                 coop::ping::OnEvent(slot, body);
                 return;
             }
+            if (name == coop::give::kEventName) {  // give items: a guest's offer / answer, relayed by the tick (party_give.h)
+                coop::give::OnEvent(slot, body);
+                return;
+            }
             if (name == coop::gather::kEventName) {  // a guest's answer to Gather the party (I5, party_gather.h)
                 coop::gather::OnEvent(slot, body);
                 return;
@@ -1497,6 +1502,10 @@ LinkCallbacks make_callbacks(bool host) {
             }
             if (name == party::ping::kEventName) {  // a member's ping (I2, party_ping.h)
                 coop::ping::OnEvent(slot, body);
+                return;
+            }
+            if (name == coop::give::kEventName) {  // give items: the host's relay or its own message (party_give.h)
+                coop::give::OnEvent(slot, body);
                 return;
             }
             if (name == coop::gather::kEventName) {  // the host gathers the party (I5, party_gather.h)

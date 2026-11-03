@@ -1722,6 +1722,11 @@ void DefineAll() {
            "A short notice when an item is shared with the party (key and unique items, weapons, runes)",
            "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
            Kind::Toggle);
+    // 0.7.8: give items to a party member (Insert menu > Party tab lists the items); off by default, also the consent to receive.
+    AddRow(Flag(&Values::party_give_items), "Give items to the party", "Передача предметов группе",
+           "Give consumables to hunters and take theirs (Insert menu, Party tab). Never key, unique or story items",
+           "Передача расходников охотникам и приём (меню Insert, вкладка Party). Не ключевые и не сюжетные",
+           toggle, Kind::Toggle);
 
 
     // ---- My party: Display: what this player sees of the party (local) ----
