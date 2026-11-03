@@ -65,6 +65,12 @@ u32 StoryNoticeText(u32 game_message);
 u32 EndingQuestionText();
 /// I5: the question a guest gets when the host gathers the party (party_gather.cpp).
 u32 GatherQuestionText();
+/// 0.7.8: the item menu's Give command (party_give.h): its name and help line.
+u32 GiveCommandText();
+u32 GiveCommandHelp();
+/// 0.7.8: run-time labels of the Give pickers (members / amounts), slots 0..7: the text id, and its text (UTF-8, both languages).
+u32 PickerText(int slot);
+void SetPickerText(int slot, const std::string& utf8);
 /// CL-a3a9e6: the question when a guest gathers the party ("Ann gathers the party. ..."); `SetGuestGatherQuestion` fills
 /// in the name first.
 u32 GuestGatherQuestionText();
