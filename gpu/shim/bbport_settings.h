@@ -36,6 +36,19 @@ enum PromptStyle : int { PromptAuto = 0, PromptPlayStation, PromptXbox, PromptNi
                          PromptStyleCount };
 const char* PromptStyleName(int style);
 int ParsePromptStyle(const char* value);
+/// Texture quality (texture_quality in bbport.ini; BB_TEXTURE_QUALITY overrides; applies after a
+/// restart): block-compressed materials loaded without their largest mip levels to save VRAM.
+/// Mip skipping from Mrsuss60/bloodborne_pc_windows_port 8841db5b, after deadinside28/bloodborne_pc.
+enum TextureQuality : int { TqAuto = 0, TqFull = 1, TqHalf = 2, TqQuarter = 3, TqCount = 4 };
+inline const char* TextureQualityName(int quality) {
+    switch (quality) {
+    case TqAuto: return "auto";
+    case TqFull: return "full";
+    case TqHalf: return "half";
+    case TqQuarter: return "quarter";
+    default: return "auto";
+    }
+}
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
@@ -131,6 +144,8 @@ struct Values {
     std::atomic<bool> mk_direct_camera{false};
     /// Button prompts (bbport.ini prompt_style, BB_PROMPT_STYLE, menus; live): PromptStyle.
     std::atomic<int> prompt_style{PromptAuto};
+    /// Keyboard movement ramp (ini key_ramp, BB_KEY_RAMP; live): the move stick rises over 70 ms and falls over 45 ms.
+    std::atomic<bool> key_ramp{true};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
@@ -143,6 +158,7 @@ struct Values {
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< 0 the game's, 1 lower (2 is read as 1, -2 as 0)
+    std::atomic<int> texture_quality{TqAuto}; ///< TextureQuality: auto (half on <= 3 GB cards), full, half, quarter
     /// Motion blur resolution (0.6.2's "Volumetric effects"; the game's half-resolution motion blur
     /// buffers; volumetric_resolution.h; idea from a playtester): 0 game default, 1 = 2x the
     /// pixels, 2 = the scene's resolution (ini volumetric_res, BB_VOLUMETRIC_RES). Live.
@@ -393,6 +409,7 @@ struct Values {
     bool startup_object_motion = true;
     bool startup_effects[EffectCount]{};
     int startup_model_lod = 0;
+    int startup_texture_quality = TqAuto;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
     bool startup_gpl = false;

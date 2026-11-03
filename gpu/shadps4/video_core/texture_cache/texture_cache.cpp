@@ -8,6 +8,7 @@
 #include "bbport_button_prompts.h"
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
+#include "bbport_settings.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -43,6 +44,26 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
     pressure_gc_samplers = max_samplers * 7 / 8;
     critical_gc_samplers = max_samplers * 15 / 16;
 
+    // texture_quality (Mrsuss60/bloodborne_pc_windows_port 8841db5b, after deadinside28/bloodborne_pc):
+    // fixed for the session. Auto = half on cards with 3 GB or less. The size decided on is the
+    // card's own device-local memory (not the budget left at start, which shrinks while other
+    // programs hold VRAM, so a 4 GB card is never made half by a browser); BB_VRAM_LIMIT_MB,
+    // the test cap, lowers it.
+    {
+        const int quality = BbSettings::Get().texture_quality.load(std::memory_order_relaxed);
+        u64 decide_mem = instance.GetDeviceLocalMemory() ? instance.GetDeviceLocalMemory()
+                                                         : instance.GetTotalMemoryBudget();
+        if (std::getenv("BB_VRAM_LIMIT_MB")) {
+            decide_mem = std::min(decide_mem, instance.GetTotalMemoryBudget());
+        }
+        texture_skip_wanted = TextureQualitySkip(quality, decide_mem);
+        std::printf("[Texture Quality] setting='%s', effective='%s' (device memory %.2f GB)\n",
+                    BbSettings::TextureQualityName(quality),
+                    texture_skip_wanted == 0 ? "full" : texture_skip_wanted == 1 ? "half" : "quarter",
+                    static_cast<double>(decide_mem) / (1024.0 * 1024.0 * 1024.0));
+        std::fflush(stdout);
+    }
+
     // Set up garbage collection parameters.
     if (!instance.CanReportMemoryUsage()) {
         trigger_gc_memory = 0;
@@ -69,6 +90,21 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
 }
 
 TextureCache::~TextureCache() = default;
+
+void TextureCache::AdjustView(const Image& image, ImageViewInfo& view) {
+    const u32 skip = image.info.skip_levels;
+    if (skip == 0) {
+        return;
+    }
+    const u32 first = view.range.base.level;
+    const u32 last = first + std::max(view.range.extent.levels, 1u) - 1;
+    const u32 levels = image.info.resources.levels;
+    const u32 new_first = std::min(first > skip ? first - skip : 0u, levels - 1);
+    const u32 new_last = std::min(last > skip ? last - skip : 0u, levels - 1);
+    view.range.base.level = new_first;
+    view.range.extent.levels = std::max(new_last, new_first) - new_first + 1;
+    view.min_lod = view.min_lod > skip * 256 ? view.min_lod - skip * 256 : 0;
+}
 
 std::string TextureCache::DescribeImagesIn(VAddr addr, u64 size) {
     std::unique_lock lock{mutex, std::try_to_lock}; // the caller may hold it already
@@ -647,6 +683,10 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     auto& cached = find_image_cache[key_hash % find_image_cache.size()];
     // An exact match stays valid while that image is registered with the same description;
     // resolved overlaps (views into other images) only until any image registration changes.
+    // A texture made without its largest levels (texture_quality) keeps the whole texture's description.
+    const auto whole_info = [](const Image& image) -> const ImageInfo& {
+        return image.guest_info.guest_address != 0 ? image.guest_info : image.info;
+    };
     const auto still_exact = [&] {
         if (cached.view_mip >= 0 || cached.view_slice >= 0 || !cached.image_id) {
             return false;
@@ -656,9 +696,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         }
         const Image& image = slot_images[cached.image_id];
         return True(image.flags & ImageFlagBits::Registered) &&
-               image.info.guest_address == info.guest_address &&
-               image.info.guest_size == info.guest_size && image.info.size == info.size &&
-               image.info.pixel_format == info.pixel_format;
+               whole_info(image).guest_address == info.guest_address &&
+               whole_info(image).guest_size == info.guest_size && whole_info(image).size == info.size &&
+               whole_info(image).pixel_format == info.pixel_format;
     };
     if (cached.image_id && !slot_images.is_allocated(cached.image_id)) {
         cached = {};
@@ -680,6 +720,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (cached.view_slice > 0) {
             desc.view_info.range.base.layer = cached.view_slice;
         }
+        AdjustView(image, desc.view_info);
         return cached.image_id;
     }
 
@@ -687,25 +728,51 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     ForEachImageInRegion(info.guest_address, info.guest_size,
                          [&](ImageId image_id, Image& image) { image_ids.push_back(image_id); });
 
+    // A texture without its largest levels (texture_quality) serves only the sampled binding of
+    // that very texture: bound otherwise, or met by another image over it, it goes (made again
+    // whole) and its address keeps its textures whole from then on.
+    for (auto it = image_ids.begin(); it != image_ids.end();) {
+        const Image& cached_img = slot_images[*it];
+        if (cached_img.info.skip_levels == 0) {
+            ++it;
+            continue;
+        }
+        const ImageInfo& whole = cached_img.guest_info;
+        const bool same = desc.type == BindingType::Texture &&
+                          whole.guest_address == info.guest_address &&
+                          whole.guest_size == info.guest_size && whole.size == info.size &&
+                          whole.type == info.type && whole.resources == info.resources &&
+                          IsVulkanFormatCompatible(whole.pixel_format, info.pixel_format);
+        if (same) {
+            ++it;
+            continue;
+        }
+        whole_textures.insert(whole.guest_address);
+        const ImageId id = *it;
+        it = image_ids.erase(it);
+        FreeImage(id);
+    }
+
     ImageId image_id{};
 
     // Check for a perfect match first
     for (const auto& cache_id : image_ids) {
         auto& cache_image = slot_images[cache_id];
-        if (cache_image.info.guest_address != info.guest_address) {
+        const ImageInfo& match_info = whole_info(cache_image);
+        if (match_info.guest_address != info.guest_address) {
             continue;
         }
-        if (cache_image.info.guest_size != info.guest_size) {
+        if (match_info.guest_size != info.guest_size) {
             continue;
         }
-        if (cache_image.info.size != info.size) {
+        if (match_info.size != info.size) {
             continue;
         }
-        if (!IsVulkanFormatCompatible(cache_image.info.pixel_format, info.pixel_format) ||
-            (cache_image.info.type != info.type && info.size != Extent3D{1, 1, 1})) {
+        if (!IsVulkanFormatCompatible(match_info.pixel_format, info.pixel_format) ||
+            (match_info.type != info.type && info.size != Extent3D{1, 1, 1})) {
             continue;
         }
-        if (exact_fmt && info.pixel_format != cache_image.info.pixel_format) {
+        if (exact_fmt && info.pixel_format != match_info.pixel_format) {
             continue;
         }
         image_id = cache_id;
@@ -732,10 +799,11 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
 
     if (image_id) {
         Image& image_resolved = slot_images[image_id];
-        if (exact_fmt && info.pixel_format != image_resolved.info.pixel_format) {
+        const ImageInfo& check_info = whole_info(image_resolved);
+        if (exact_fmt && info.pixel_format != check_info.pixel_format) {
             // Cannot reuse this image as we need the exact requested format.
             image_id = {};
-        } else if (image_resolved.info.resources < info.resources) {
+        } else if (check_info.resources < info.resources) {
             // The image was clearly picked up wrong.
             FreeImage(image_id);
             image_id = {};
@@ -744,7 +812,18 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
     // Create and register a new image
     if (!image_id) {
-        image_id = InsertImage(info);
+        // texture_quality: only a sampled, plain, block-compressed texture nothing has written.
+        u32 skip = 0;
+        if (texture_skip_wanted != 0 && !whole_textures.contains(info.guest_address)) {
+            skip = SkipLevelsFor(info, desc.type, desc.view_info.is_storage, texture_skip_wanted,
+                                 buffer_cache.IsRegionGpuModified(info.guest_address, info.guest_size));
+        }
+        if (skip > 0) {
+            image_id = InsertImage(info.Reduced(skip));
+            slot_images[image_id].guest_info = info;
+        } else {
+            image_id = InsertImage(info);
+        }
         RegisterImage(image_id);
     }
 
@@ -759,6 +838,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     if (view_slice > 0) {
         desc.view_info.range.base.layer = view_slice;
     }
+    AdjustView(image, desc.view_info);
 
     cached = FindImageCacheEntry{
         .address = info.guest_address,
@@ -783,6 +863,9 @@ ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure
     ForEachImageWithAddress(address, size, [&](ImageId image_id, Image& image) {
         if (ensure_valid && !image.SafeToDownload()) {
             return;
+        }
+        if (image.info.skip_levels != 0) {
+            return; // texture_quality: a sampled texture without its largest levels; its bytes are in guest memory
         }
         image_ids.push_back(image_id);
     });
@@ -991,12 +1074,12 @@ void TextureCache::RefreshImage(Image& image) {
             window_start = now;
         }
     }
+    // One copy per level (texture_quality: only the levels kept, offsets in the buffer
+    // DetileImage / the guest layout gives); levels a hash shows unchanged are dropped below.
+    boost::container::small_vector<vk::BufferImageCopy, 14> all_copies;
+    blit_helper.BuildUploadCopies(image, num_mips, num_layers, all_copies);
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
     for (u32 m = 0; m < num_mips; m++) {
-        const u32 width = std::max(image.info.size.width >> m, 1u);
-        const u32 height = std::max(image.info.size.height >> m, 1u);
-        const u32 depth =
-            image.info.props.is_volume ? std::max(image.info.size.depth >> m, 1u) : 1u;
         const auto [mip_size, mip_pitch, mip_height, mip_offset] = image.info.mips_layout[m];
 
         // Protect GPU modified resources from accidental CPU reuploads.
@@ -1015,21 +1098,7 @@ void TextureCache::RefreshImage(Image& image) {
             image.mip_hashes[m] = mip_hash;
         }
 
-        const u32 extent_width = mip_pitch ? std::min(mip_pitch, width) : width;
-        const u32 extent_height = mip_height ? std::min(mip_height, height) : height;
-        image_copies.push_back({
-            .bufferOffset = mip_offset,
-            .bufferRowLength = mip_pitch,
-            .bufferImageHeight = mip_height,
-            .imageSubresource{
-                .aspectMask = image.aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
-                .mipLevel = m,
-                .baseArrayLayer = 0,
-                .layerCount = num_layers,
-            },
-            .imageOffset = {0, 0, 0},
-            .imageExtent = {extent_width, extent_height, depth},
-        });
+        image_copies.push_back(all_copies[m]);
     }
 
     WatchImage(image, image_copies.empty() ? "refresh: nothing to copy" : "refresh: uploading");
@@ -1046,9 +1115,10 @@ void TextureCache::RefreshImage(Image& image) {
 
     scheduler.EndRendering();
 
+    const ImageInfo& upload_info = image.guest_info.guest_address != 0 ? image.guest_info : image.info;
     const auto [in_buffer, in_offset] =
-        buffer_cache.ObtainBufferForImage(image.info.guest_address, image.info.guest_size);
-    const auto [buffer, offset] = tile_manager.DetileImage(in_buffer, in_offset, image.info);
+        buffer_cache.ObtainBufferForImage(upload_info.guest_address, upload_info.guest_size);
+    const auto [buffer, offset] = tile_manager.DetileImage(in_buffer, in_offset, upload_info, image.info.skip_levels);
     for (auto& copy : image_copies) {
         copy.bufferOffset += offset;
     }

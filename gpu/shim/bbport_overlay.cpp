@@ -1157,6 +1157,18 @@ void EffectsTab() {
            T("Level of detail of models (game patch). Applies after restarting the game.",
              "Детализация моделей (патч игры). Применяется после перезапуска игры."),
            true, [&](int i) { Store(s.model_lod, lod_values[i], true); });
+    Choice("texture_quality", T("Texture quality", "Качество текстур"), s.texture_quality, BbSettings::TqCount,
+           [](int i) {
+               static const char* names[] = {"Auto", "Full", "Half", "Quarter"};
+               return i == 0 ? T("Auto", "Авто") : names[i];
+           },
+           [](int) { return true; },
+           T("Loads big compressed textures without their largest mip levels: less video memory. "
+             "Auto: half on cards with 3 GB or less. Applies after restarting the game "
+             "(Mrsuss60/bloodborne_pc_windows_port 8841db5b, deadinside28/bloodborne_pc).",
+             "Загружает большие сжатые текстуры без самых крупных мип-уровней: меньше видеопамяти. "
+             "Авто: половина на картах до 3 ГБ. Применяется после перезапуска игры."),
+           true, [&](int i) { Store(s.texture_quality, i, true); });
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         const auto& effect = BbSettings::Effects[e];
         const char* hint =
@@ -1483,6 +1495,13 @@ void ControlsTab() {
              "Мышь поворачивает камеру напрямую, 1:1, а не через правый стик (без мёртвой зоны и "
              "кривой). Камера мыши imedved; при захвате цели работает стик."),
            mk);
+    Toggle("key_ramp", T("Keyboard stick ramp", "Плавный разгон стика"), s.key_ramp,
+           T("Keyboard movement eases in over 70 ms and out over 45 ms like a thumb on an analog "
+             "stick, instead of jumping to full. Off: the stick is full or neutral at once. "
+             "Mrsuss60/bloodborne_pc_windows_port 94388d59.",
+             "Движение с клавиатуры нарастает за 70 мс и спадает за 45 мс, как большой палец на "
+             "стике, а не сразу. Выкл: стик сразу полный или нейтральный."),
+           true);
     // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
     Choice("prompt_style", T("Button prompts", "Подсказки кнопок"), s.prompt_style, BbSettings::PromptStyleCount,
            [](int i) {
