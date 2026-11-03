@@ -313,6 +313,9 @@ target_compile_options(shader-user-data-test PRIVATE -UNDEBUG)
 target_include_directories(shader-user-data-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(shader-user-data-test PRIVATE fmt::fmt Boost::headers)
 
+add_executable(sirit-null-id-test EXCLUDE_FROM_ALL ../tests/test_sirit_null_id.cpp)
+target_link_libraries(sirit-null-id-test PRIVATE sirit)
+
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)
@@ -1037,6 +1040,13 @@ add_executable(party-ping-test EXCLUDE_FROM_ALL ../tests/test_party_ping.cpp shi
 target_compile_options(party-ping-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-ping-test PRIVATE shim)
 set_target_properties(party-ping-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Party text chat (0.7.8, shim/party/party_chat.cpp; in bbgpu through SHIM_SOURCES): sanitising, EVENT party_chat JSON, the
+# rate limits, the word masking with the name filter, the line log. cmake --build out/gpu --target party-chat-test
+add_executable(party-chat-test EXCLUDE_FROM_ALL ../tests/test_party_chat.cpp shim/party/party_chat.cpp
+    shim/party/name_filter.cpp shim/net/json.cpp)
+target_compile_options(party-chat-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-chat-test PRIVATE shim)
+set_target_properties(party-chat-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Shared enemy drop roll (shim/party/party_droproll.cpp; in bbgpu through SHIM_SOURCES): seed,
 # MT19937 seeding, EVENT drop_seed (BB_PARTY_DROPROLL_NO_GAME). cmake --build out/gpu --target party-droproll-test
 add_executable(party-droproll-test EXCLUDE_FROM_ALL ../tests/test_party_droproll.cpp shim/party/party_droproll.cpp

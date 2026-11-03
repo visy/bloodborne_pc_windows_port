@@ -897,7 +897,7 @@ static void sample_host(PadData *d) {
              * click only comes on Back's release here, so ping_combo never sees it held); I5
              * Back held + L3 gathers the party (host). The stick click then reaches the game only
              * after it is released. */
-            static BackClickCombo back_r3, back_l3;
+            static BackClickCombo back_r3, back_l3, back_l1;
             int pinged=0;
             if (back_click_combo(&back_r3,back_down,&d->buttons,BTN_R3,bbgpu_ping_combo_enabled)) {
                 pinged=1;
@@ -908,6 +908,11 @@ static void sample_host(PadData *d) {
                 pinged=1;
                 bbgpu_gather_request("Back + L3");
                 puts("Runtime: gather (Back + L3)");
+            }
+            if (back_click_combo(&back_l1,back_down,&d->buttons,BTN_L1,bbgpu_chat_enabled)) {
+                pinged=1;
+                bbgpu_chat_request_pad("Back + L1");
+                puts("Runtime: party chat (Back + L1)");
             }
             const int side=back_combo_step(back_down,
                 back_down && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_DPAD_LEFT),
@@ -1034,6 +1039,20 @@ static void read_inject(void) {
             if (sc<0 || sc>=SDL_SCANCODE_COUNT) printf("Runtime: pad file: unknown key %s\n",name);
             else if (key_inject_count<KEY_INJECT_MAX) key_inject[key_inject_count++]=sc;
         }
+        /* typetext=Hello_there: the text box takes these keys (_ is a space) and Enter as soon as it opens (tests of the
+         * party chat); typepick=N: N Down presses and Enter (a pick list's entry). */
+        if (!strncmp(token,"typetext=",9)) {
+            char keys[80]; size_t n=0;
+            for (const char *c=token+9;*c && n<sizeof(keys)-2;++c) keys[n++]=*c=='_' ? ' ' : *c;
+            keys[n++]='\n'; keys[n]=0;
+            bbgpu_text_input_test_queue(keys);
+        }
+        if (!strncmp(token,"typepick=",9)) {
+            char keys[40]; int n=atoi(token+9), k=0;
+            for (int i=0;i<n && k<30;++i) keys[k++]='\x02';
+            keys[k++]='\n'; keys[k]=0;
+            bbgpu_text_input_test_queue(keys);
+        }
         /* key=NAME: a key press queued into the game window (the overlay menu: key=Insert). */
         if (!strncmp(token,"key=",4) && !bbgpu_test_key(token+4)) printf("Runtime: pad file: unknown key %s\n",token+4);
     }
@@ -1133,17 +1152,19 @@ static void touch_ids(PadData *d) {
  * comes: a ping, and the game sees neither button until both are released. I5 (party_gather.h):
  * on the host, the touchpad held + L3 (Z / C) gathers the party the same way. */
 static void ping_combo(PadData *d) {
-    static int state, right, r3_prev, l3_prev; /* state 0 idle, 1 touchpad held back, 2 combo sent */
+    static int state, right, r3_prev, l3_prev, l1_prev; /* state 0 idle, 1 touchpad held back, 2 combo sent */
     static uint32_t combo_button; /* the combo's stick click (BTN_R3 / BTN_L3), held back too */
     static uint64_t click_until;
     const uint64_t now=now_us();
     const int tp=(d->buttons & BTN_TOUCHPAD)!=0, r3=(d->buttons & BTN_R3)!=0, l3=(d->buttons & BTN_L3)!=0;
-    const int r3_rise=r3 && !r3_prev, l3_rise=l3 && !l3_prev;
+    const int l1=(d->buttons & BTN_L1)!=0;
+    const int r3_rise=r3 && !r3_prev, l3_rise=l3 && !l3_prev, l1_rise=l1 && !l1_prev;
     r3_prev=r3;
     l3_prev=l3;
+    l1_prev=l1;
     switch (state) {
     case 0:
-        if (!tp || !(bbgpu_ping_combo_enabled() || bbgpu_gather_combo_enabled())) {
+        if (!tp || !(bbgpu_ping_combo_enabled() || bbgpu_gather_combo_enabled() || bbgpu_chat_enabled())) {
             if (click_until) {
                 if (now<click_until) touch_click(d,right);
                 else click_until=0;
@@ -1163,6 +1184,11 @@ static void ping_combo(PadData *d) {
         if (l3_rise && bbgpu_gather_combo_enabled()) {
             state=2; combo_button=BTN_L3;
             bbgpu_gather_request("touchpad + L3"); puts("Runtime: gather (touchpad + L3)");
+            break;
+        }
+        if (l1_rise && bbgpu_chat_enabled()) { /* party text chat (party_chat.h): the preset list */
+            state=2; combo_button=BTN_L1;
+            bbgpu_chat_request_pad("touchpad + L1"); puts("Runtime: party chat (touchpad + L1)");
             break;
         }
         if (!tp) { state=0; click_until=now+120000; touch_click(d,right); return; }

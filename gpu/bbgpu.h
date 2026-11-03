@@ -55,6 +55,9 @@ void bbgpu_ping_request(void);
  * with gathering on; the pad reader calls request on touchpad held + L3 (Back + L3 without a touch
  * surface). `source` names the combo in the log. */
 int bbgpu_gather_combo_enabled(void);
+/* Party text chat (gpu/shim/party/party_chat.h): on while the setting is on in a party; the pad combo opens the preset list. */
+int bbgpu_chat_enabled(void);
+void bbgpu_chat_request_pad(const char *source);
 void bbgpu_gather_request(const char *source);
 /* NVIDIA Reflex (from Supermedo/bloodborne_pc PR #69 by FIocker; vk_reflex.h): before the
  * simulation samples pad input (driver frame pacing) and right after. No-ops unless Reflex runs. */

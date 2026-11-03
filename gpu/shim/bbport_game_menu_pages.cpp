@@ -1748,6 +1748,13 @@ void DefineAll() {
     own(&Values::party_through_walls, "Show party through walls", "Группа сквозь стены",
         "A small marker with the distance on each companion on your map, also behind walls",
         "Маленькая метка с расстоянием на каждом спутнике на вашей карте, и за стенами");
+    // Party text chat (party_chat.h), off by default.
+    own(&Values::party_chat, "Party chat", "Чат группы",
+        "Off by default. T (keyboard) or touchpad + L1 (pad: a list of short lines) writes to the party; lines show in your colour",
+        "Выкл. по умолчанию. T (клавиатура) или тачпад + L1 (геймпад: список коротких фраз) пишет группе; строки цветом отправителя");
+    own(&Values::party_chat_receive, "Show others' chat", "Чат других игроков",
+        "With party chat on: show the lines the other hunters write (off = mute them)",
+        "При включённом чате: показывать строки других охотников (выкл. = скрыть)");
     // The marker on the own lost-echoes bloodstain (bbport_overlay PartyStainMarker), off by default.
     own(&Values::party_stain_marker, "Bloodstain marker", "Метка пятна крови",
         "A marker with Blood Echoes and distance on your lost echoes' bloodstain, also behind walls",
