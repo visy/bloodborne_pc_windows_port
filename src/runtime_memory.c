@@ -115,7 +115,11 @@ typedef struct { void *start; uint64_t offset, length; int8_t prot, type; int16_
 _Static_assert(sizeof(VirtualQueryInfo)==72,"PS4 virtual query info layout");
 _Static_assert(sizeof(BatchEntry)==32,"PS4 batch map entry layout");
 
-/* Region table lock. Nested reads are counted per thread. */
+/* Region table lock. Nested reads are counted per thread.
+ * The game's own arguments and results (pointers it passes in) are read before the lock and
+ * written after it: such a page may be GPU-tracked, and its fault drains the draw pipe, whose
+ * recording thread looks regions up here for every draw (a freeze while the game mapped).
+ * Ported from Supermedo's a39f457a. */
 static HostRwlock lock=HOST_RWLOCK_INIT;
 static __thread unsigned exclusive_depth, shared_depth;
 static uint64_t table_generation;
@@ -646,10 +650,11 @@ static ABI int32_t direct_allocate(int64_t low, int64_t high, uint64_t size,
         }
         if (!overlap) break;
     }
-    blocks[slot] = (Block){start, size, type, 1}; *out = (int64_t)start;
+    blocks[slot] = (Block){start, size, type, 1};
     ensure_chunks(start,size);
     ++allocations; live_bytes += size;
     write_unlock();
+    *out = (int64_t)start; /* the game's result, written after the lock (see the lock's comment) */
     printf("Runtime: direct allocation offset=0x%" PRIx64 ", size=%" PRIu64 " bytes, type=%d\n", start, size, type);
     return 0;
 }
@@ -693,11 +698,14 @@ int runtime_extra_direct_map(uint64_t size, uint64_t alignment, void **out) {
     return result;
 }
 static ABI int32_t direct_map(void **out, uint64_t size, int prot, int flags, int64_t physical, uint64_t alignment) {
+    if (!out) return INVALID;
+    void *address=*out;
     write_lock();
-    int32_t result=map_direct_locked(out,size,prot,flags,physical,alignment);
+    int32_t result=map_direct_locked(&address,size,prot,flags,physical,alignment);
     write_unlock();
     flush_hooks();
-    if (!result) printf("Runtime: mapped direct memory %p, size=%" PRIu64 ", prot=0x%x\n", *out, size, prot);
+    if (!result) *out=address;
+    if (!result) printf("Runtime: mapped direct memory %p, size=%" PRIu64 ", prot=0x%x\n", address, size, prot);
     else memory_failure(MEM_FAIL_DIRECT_MAP,"map direct memory",size,(uint64_t)physical,
                         ((uint64_t)(unsigned)flags << 32) | (unsigned)prot,result);
     return result;
@@ -782,11 +790,14 @@ static int32_t map_flexible_locked(void **inout, uint64_t size, int prot, int fl
     return result;
 }
 static ABI int32_t map_flexible(void **inout, uint64_t size, int prot, int flags) {
+    if (!inout) return INVALID;
+    void *address=*inout;
     write_lock();
-    int32_t result=map_flexible_locked(inout,size,prot,flags);
+    int32_t result=map_flexible_locked(&address,size,prot,flags);
     write_unlock();
     flush_hooks();
-    if (!result) printf("Runtime: mapped flexible memory %p, size=%" PRIu64 ", prot=0x%x\n", *inout, size, prot);
+    if (!result) *inout=address;
+    if (!result) printf("Runtime: mapped flexible memory %p, size=%" PRIu64 ", prot=0x%x\n", address, size, prot);
     else memory_failure(MEM_FAIL_FLEXIBLE_MAP,"map flexible memory",size,flexible_bytes,
                         ((uint64_t)(unsigned)flags << 32) | (unsigned)prot,result);
     return result;
@@ -818,17 +829,19 @@ static ABI void *posix_mmap(void *addr, uint64_t size, int prot, int flags, int 
 static ABI int32_t reserve_range(void **inout, uint64_t size, int flags, uint64_t alignment) {
     if (!alignment) alignment=PAGE;
     if (!inout || !size || size%PAGE || !valid_alignment(alignment)) return INVALID;
+    void *address=*inout;
     write_lock();
-    if ((flags & MAP_FIXED_FLAG) && overlaps((uintptr_t)*inout,(uintptr_t)*inout+size,0)) {
+    if ((flags & MAP_FIXED_FLAG) && overlaps((uintptr_t)address,(uintptr_t)address+size,0)) {
         write_unlock();
-        memory_failure(MEM_FAIL_RESERVE,"reserve virtual range (fixed, in use)",size,(uint64_t)(uintptr_t)*inout,
+        memory_failure(MEM_FAIL_RESERVE,"reserve virtual range (fixed, in use)",size,(uint64_t)(uintptr_t)address,
                        ((uint64_t)(unsigned)flags << 32) | (unsigned)alignment,NO_MEMORY);
         return NO_MEMORY;
     }
-    int32_t result=place(inout,size,0,flags,alignment,KIND_RESERVED,0,0);
+    int32_t result=place(&address,size,0,flags,alignment,KIND_RESERVED,0,0);
     write_unlock();
-    if (!result) printf("Runtime: reserved virtual range %p, size=%" PRIu64 "\n", *inout, size);
-    else memory_failure(MEM_FAIL_RESERVE,"reserve virtual range",size,(uint64_t)(uintptr_t)*inout,
+    if (!result) *inout=address;
+    if (!result) printf("Runtime: reserved virtual range %p, size=%" PRIu64 "\n", address, size);
+    else memory_failure(MEM_FAIL_RESERVE,"reserve virtual range",size,(uint64_t)(uintptr_t)address,
                         ((uint64_t)(unsigned)flags << 32) | (unsigned)alignment,result);
     return result;
 }
@@ -867,11 +880,13 @@ static ABI int32_t query_protection(void *address, void **start, void **end, uin
     size_t first=i, last=i;
     while (first && vmas[first-1].end==vmas[first].start && vmas[first-1].kind!=KIND_RESERVED && vmas[first-1].prot==vmas[i].prot) --first;
     while (last+1<vma_count && vmas[last+1].start==vmas[last].end && vmas[last+1].kind!=KIND_RESERVED && vmas[last+1].prot==vmas[i].prot) ++last;
-    if (start) *start=(void *)vmas[first].start;
-    if (end) *end=(void *)vmas[last].end;
-    if (prot) *prot=(uint32_t)vmas[i].prot;
+    const uintptr_t run_start=vmas[first].start, run_end=vmas[last].end;
+    const uint32_t run_prot=(uint32_t)vmas[i].prot;
     __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
     read_unlock();
+    if (start) *start=(void *)run_start;
+    if (end) *end=(void *)run_end;
+    if (prot) *prot=run_prot;
     return 0;
 }
 static ABI int32_t virtual_query(const void *address, int flags, VirtualQueryInfo *info, uint64_t info_size) {
@@ -880,33 +895,39 @@ static ABI int32_t virtual_query(const void *address, int flags, VirtualQueryInf
     size_t i=vma_index((uintptr_t)address);
     if (i==vma_count || (vmas[i].start>(uintptr_t)address && !(flags & 1))) { read_unlock(); return ACCESS; }
     Vma v=vmas[i];
+    __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
+    read_unlock();
     memset(info,0,sizeof(*info));
     info->start=v.start; info->end=v.end;
     info->offset=v.kind==KIND_DIRECT ? v.phys : 0;
     info->protection=v.prot; info->memory_type=v.type;
     info->flags=(v.kind==KIND_FLEXIBLE ? 1u : 0) | (v.kind==KIND_DIRECT ? 2u : 0) | (v.kind!=KIND_RESERVED ? 16u : 0);
     strcpy(info->name, v.kind==KIND_RESERVED ? "reserved" : v.kind==KIND_DIRECT ? "direct" : "flexible");
-    __atomic_add_fetch(&queries,1,__ATOMIC_RELAXED);
-    read_unlock();
     return 0;
 }
 static ABI int32_t direct_memory_type(uint64_t phys, int *type, void **start, void **end) {
     read_lock();
     for (int i=0;i<LIMIT;++i) if (blocks[i].used && phys>=blocks[i].start && phys-blocks[i].start<blocks[i].size) {
-        if (type) *type=blocks[i].type;
-        if (start) *start=(void *)(uintptr_t)blocks[i].start;
-        if (end) *end=(void *)(uintptr_t)(blocks[i].start+blocks[i].size);
-        read_unlock(); return 0;
+        const Block b=blocks[i];
+        read_unlock();
+        if (type) *type=b.type;
+        if (start) *start=(void *)(uintptr_t)b.start;
+        if (end) *end=(void *)(uintptr_t)(b.start+b.size);
+        return 0;
     }
     read_unlock();
     return ACCESS;
 }
 static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, int flags) {
     if (!entries || count<0) return INVALID;
+    /* The game's entries are read before the lock and the results written after it. */
+    BatchEntry *copy=malloc((size_t)(count ? count : 1)*sizeof(*copy));
+    if (!copy) return NO_MEMORY;
+    memcpy(copy,entries,(size_t)count*sizeof(*copy));
     int32_t result=0; int done=0;
     write_lock();
     for (; done<count; ++done) {
-        BatchEntry *e=&entries[done];
+        BatchEntry *e=&copy[done];
         switch (e->operation) {
         case 0: result=map_direct_locked(&e->start,e->length,(uint8_t)e->prot,flags,(int64_t)e->offset,0); break;
         case 1: result=unmap_locked((uintptr_t)e->start,e->length); break;
@@ -919,12 +940,14 @@ static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, in
     }
     write_unlock();
     flush_hooks();
+    for (int i=0; i<done; ++i) entries[i].start=copy[i].start;
     if (processed) *processed=done;
     if (result) {
-        const BatchEntry *e=done<count ? &entries[done] : NULL;
+        const BatchEntry *e=done<count ? &copy[done] : NULL;
         memory_failure(MEM_FAIL_BATCH,"batch map",e ? e->length : 0,e ? (uint64_t)(uintptr_t)e->start : 0,
                        e ? (uint64_t)(unsigned)e->operation : 0,result);
     }
+    free(copy);
     return result;
 }
 static ABI int32_t batch_map(BatchEntry *entries, int count, int *processed) {
