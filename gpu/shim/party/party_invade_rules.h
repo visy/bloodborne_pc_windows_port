@@ -417,6 +417,69 @@ inline bool ParseTest(const char* text, std::vector<TestStep>* out, std::string*
     return true;
 }
 
+
+// ---- the invader's look (SpEffects) ----
+// The phantom look is a SpEffect: the chr's effect update plays SpEffectVfxParam row `stateInfo` of every SpEffect that has
+// useSpEffectEffect. A cooperator carries 9006 (stateInfo 272, SFX 211: the blue white-phantom glow); the game's invader
+// effect is 9026 (the Sinister Bell's 9025 + 1; stateInfo 276, SFX 212). The invader's chr is a cooperator on the other
+// games (9006), so its look is 9006 -> 9026, per chr, and back at the end.
+constexpr int kCoopLookEffect = 9006;
+constexpr int kInvaderLookEffect = 9026;
+
+struct LookStep {
+    bool remove_coop = false;   ///< take 9006 off the chr (and remember to put it back)
+    bool add_invader = false;   ///< apply 9026
+};
+inline LookStep LookNow(bool has_coop, bool has_invader) {
+    return {has_coop, !has_invader};
+}
+struct LookBack {
+    bool remove_invader = false;  ///< take 9026 off (only if this code put it on)
+    bool add_coop = false;        ///< put 9006 back (only if this code took it off)
+};
+inline LookBack LookEnd(bool added_invader, bool removed_coop, bool has_invader, bool has_coop) {
+    return {added_invader && has_invader, removed_coop && !has_coop};
+}
+
+// ---- rewards: the game's own rules (global_event.lua of eventcommon.luabnd, OnDeadEvent_*; EquipParamGoods) ----
+// Cost: none. The Sinister Resonant Bell (goods 225) has consumeHeroPoint 0 and isConsume 0: it is not used up and costs
+// no Insight (the Beckoning Bell, goods 200, costs 1 Insight; the party layer already zeroes that).
+// Payout, by the game's CalcExcuteMultiBonus(rate, player, insight) = 0x131d470 (Lua: SOUL_RATE_S 0.1, _L 0.5):
+//   the host died (the invader won)        the invader: Blood Echoes at rate 0.1 and +1 Insight   (OnDeadEvent_HostDead)
+//   the invader died (the host's side won) the host: echoes at rate 0.5, no Insight               (OnDeadEvent_NormalBlackDead)
+//                                          each guest: echoes at rate 0.5 * 0.5 = 0.25, no Insight (same, "client")
+// Nobody else is paid and no other ending pays. The echoes are the game's own amount for the receiver's level.
+enum class Role : std::uint8_t { Host, Guest, Invader };
+struct Reward {
+    bool pay = false;
+    float rate = 0;    ///< CalcExcuteMultiBonus' first argument
+    int insight = 0;   ///< its last argument
+};
+constexpr float kRateS = 0.1f, kRateL = 0.5f;
+inline Reward RewardFor(Role role, End end) {
+    if (end == End::HostDied && role == Role::Invader) return {true, kRateS, 1};
+    if (end == End::InvaderDied && role == Role::Host) return {true, kRateL, 0};
+    if (end == End::InvaderDied && role == Role::Guest) return {true, kRateL * 0.5f, 0};
+    return {};
+}
+
+/// One payout per invasion outcome on this game: the same (invader name, ending) within kRewardOnceS is paid once, whichever
+/// path reports it (the host's own decision, the broadcast, a resent event).
+constexpr double kRewardOnceS = 120.0;
+class RewardOnce {
+public:
+    bool Take(const std::string& name, End end, double now) {
+        if (have_ && name == name_ && end == end_ && now - at_ < kRewardOnceS) return false;
+        have_ = true, name_ = name, end_ = end, at_ = now;
+        return true;
+    }
+private:
+    bool have_ = false;
+    std::string name_;
+    End end_ = End::None;
+    double at_ = 0;
+};
+
 // ---- the line the invader reads in its party status when a join is refused ----
 
 inline std::string RefusedText(const std::string& reason) {

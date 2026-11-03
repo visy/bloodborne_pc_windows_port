@@ -7390,6 +7390,7 @@ void GlowTick(double now) {
     static coop::glow::Refresh refresh;
     const bool off = coop::glow::GlowOff(BbSettings::Get().party_glow_off.load(), env, party::status::Enabled());
     const u8 type = refresh.Update(off, now);
+    static const bool invader_look = !(std::getenv("BB_PARTY_INVADE_LOOK") && std::getenv("BB_PARTY_INVADE_LOOK")[0] == '0');
     for (const coop::glow::GlowRow& r : coop::glow::kGlowRows) {
         const u64 row = GameParamRow("SpEffectVfxParam", "SP_EFFECT_VFX_PARAM_ST", r.row);
         if (!row) {
@@ -7402,10 +7403,11 @@ void GlowTick(double now) {
                 type == coop::glow::kEffectPaused ? "a live switch: the chrs' glow entries end" : "plays again");
         }
         const std::int32_t cur = Field<std::int32_t>(row, 0, r.sfx);
-        const std::int32_t want = coop::glow::WantedSfx(cur, r.sfx, off);
+        const bool row_off = coop::glow::RowOff(r.row, off, invader_look);
+        const std::int32_t want = coop::glow::WantedSfx(cur, r.sfx, row_off);
         if (want != cur && SafeWrite(row, &want, sizeof want)) {
             Log("glow: SpEffectVfxParam %u midst SFX %d -> %d (%s)", r.row, cur, want,
-                off ? "companions without the phantom glow" : "the game's phantom glow");
+                row_off ? "companions without the phantom glow" : "the game's phantom glow");
         } else if (want == cur && cur != r.sfx && cur != coop::glow::kNoSfx) {
             static bool told = false;
             if (!told) {
