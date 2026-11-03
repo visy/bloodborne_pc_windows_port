@@ -799,7 +799,7 @@ static void test_vitals() {
     v.max_stamina = 60000;
     v.pos[0] = 1e9f;
     CHECK(sanitize_vitals(v));
-    CHECK(v.flags == (kVitalsValid | kVitalsAlive | kVitalsSpectating) && v.max_hp == kMaxVitalsHp && v.hp == kMaxVitalsHp);
+    CHECK(v.flags == (kVitalsValid | kVitalsAlive | kVitalsSpectating | kVitalsBossBar) && v.max_hp == kMaxVitalsHp && v.hp == kMaxVitalsHp);
     CHECK(v.max_stamina == kMaxVitalsStamina && v.stamina == kMaxVitalsStamina && v.pos[0] == 0.0f);
     MemberVitals w;
     w.slot = kMaxVitals;
