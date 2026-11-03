@@ -653,13 +653,14 @@ void LogThread(double period) {
 // main loop's step block at 0x2018e3d in a known form and makes the cloth, animation and platform
 // code read the pacer's measured frame time ([pacer + 0x264]) and a guest-global step (image +
 // 0x535A908). LiveClockTick replaces that block: it sets the pacer's frame time target and the
-// measured time from the target rate (LiveClockStep: deadband, slew, clamp) and returns the step.
+// measured time from the target rate (LiveClockStep: the frame's time, clamped) and returns the step.
 // Upstream installed it from probe.c with a 25-byte stub; here it is a detour with the registers
 // kept, like HookStep. Live mode and the hooks above never run together (Install picks one).
 std::atomic<bool> live_requested{false};
 std::atomic<bool> live_supported{false};
 LiveClockState live_state;
 bool live_deltatime_cave = false;
+bool live_pacer_ok = false;
 std::atomic<int> live_logged_target{-1};
 
 /// The block at 0x2018e3d as the patch leaves it (46 bytes up to 0x2018e6b): movss xmm0,[rbx+0x264];
@@ -679,6 +680,7 @@ void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     float interval = Frame30;
     const float dt = LiveClockStep(live_state, measured, target, s.max_dt_hz.load(std::memory_order_relaxed), interval);
     *reinterpret_cast<float*>(pacer + 0x18) = interval;
+    live->shortest = interval; // the pacer-mode hook (HookPacerMode) reads it: the pacer waits for the target
     // All of the patch's code caves sample the pacer's measured time: they get the filtered one.
     *reinterpret_cast<float*>(pacer + 0x264) = dt;
     if (live_deltatime_cave) *reinterpret_cast<float*>(image_base + LiveGlobalDt) = dt;
@@ -718,6 +720,13 @@ bool InstallLive() {
     if (!Detour(LiveBlockSite, LiveBlock, sizeof(LiveBlock), e)) {
         std::printf("Live clock: the step block could not be replaced: static 60 FPS\n");
         return false;
+    }
+    // The game's own pacer must wait for the target: the patch's mode setups ask for 1/240 s (measured: 107 steps a
+    // second at a target of 60 without it), so the pacer mode hook of the hooks mode (one vblank, no flip skipping,
+    // the frame time target from live->shortest, which the clock sets every frame) is installed here too.
+    live_pacer_ok = HookPacerMode() && HookPacerLate();
+    if (!live_pacer_ok) {
+        std::printf("Live clock: the pacer mode hook is not installed: the presenter holds the target instead\n");
     }
     // The pacer's frame time target in its four mode setups: mov dword [r12 + 0x18], 1/60 (the patch).
     constexpr std::uint32_t Was = 0x3c888889, Now = 0x3b888889; // 1/60 s, 1/240 s
@@ -855,8 +864,9 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
 unsigned LivePresenterLimit() {
     if (!live_requested.load(std::memory_order_relaxed)) return 0;
     if (!live_supported.load(std::memory_order_relaxed)) return 60; // the patch's static rate
-    // The presenter is the live limiter, as upstream (the pacer's interval alone does not hold the target:
-    // measured 107 steps a second at a target of 60 without it).
+    // The game's pacer holds the target (live_pacer_ok): the presenter only keeps the 240 FPS ceiling, so the two
+    // limiters do not beat against each other. Without the pacer hook the presenter holds the target (upstream).
+    if (live_pacer_ok) return unsigned(LiveCeiling);
     const int target = BbSettings::Get().target_fps.load(std::memory_order_relaxed);
     return target <= 0 ? unsigned(LiveCeiling) : unsigned(std::clamp(target, 30, LiveCeiling));
 }
