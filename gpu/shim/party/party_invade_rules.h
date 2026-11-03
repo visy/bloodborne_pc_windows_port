@@ -463,16 +463,22 @@ inline const float* NameRgb(const std::string& member, const std::string& invade
 //                                          each guest: echoes at rate 0.5 * 0.5 = 0.25, no Insight (same, "client")
 // Nobody else is paid and no other ending pays. The echoes are the game's own amount for the receiver's level.
 enum class Role : std::uint8_t { Host, Guest, Invader };
+// The result banners (the game's text effects: Lua SetTextEffect = native 0x13360B0, a queue the HUD shows): global_event.lua shows
+// TEXT_TYPE_TargetClear (5) to a hostile phantom that killed the host (PlayerKill) and TEXT_TYPE_BlackClear (7) to whoever killed a
+// hostile phantom (and counts it, AddKillBlackGhost). Vanilla shows the second to the killer only; the party shows it to the host
+// and every guest (any of them may have dealt the blow). Nothing is shown for the other endings.
+constexpr int kTextTargetClear = 5, kTextBlackClear = 7;
 struct Reward {
     bool pay = false;
     float rate = 0;    ///< CalcExcuteMultiBonus' first argument
     int insight = 0;   ///< its last argument
+    int banner = 0;    ///< the text effect type to show (0 none)
 };
 constexpr float kRateS = 0.1f, kRateL = 0.5f;
 inline Reward RewardFor(Role role, End end) {
-    if (end == End::HostDied && role == Role::Invader) return {true, kRateS, 1};
-    if (end == End::InvaderDied && role == Role::Host) return {true, kRateL, 0};
-    if (end == End::InvaderDied && role == Role::Guest) return {true, kRateL * 0.5f, 0};
+    if (end == End::HostDied && role == Role::Invader) return {true, kRateS, 1, kTextTargetClear};
+    if (end == End::InvaderDied && role == Role::Host) return {true, kRateL, 0, kTextBlackClear};
+    if (end == End::InvaderDied && role == Role::Guest) return {true, kRateL * 0.5f, 0, kTextBlackClear};
     return {};
 }
 

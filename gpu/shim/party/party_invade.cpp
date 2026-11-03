@@ -137,7 +137,39 @@ void QueueReward(Role role, End end, const std::string& name) {
     g_pending = {true, role, end, name, Now()};
 }
 
+/// The game's own big banner: SetTextEffect (the Lua's native, 0x13360B0): the type goes into the HUD's queue.
+void ShowBanner(int type, const char* who, const char* end) {
+    using Fn = void(BB_COOP_SYSV*)(std::uint64_t, int);
+    reinterpret_cast<Fn>(Guest(0x13360b0))(0, type);
+    Log("banner: %s, %s: text effect %d", who, end, type);
+}
+
+/// Test aid BB_PARTY_BANNER_TEST=<type>[,<type>...]: 25 s after the world is up, every 10 s, the next banner (the live check
+/// of which text a type shows).
+void BannerTestTick(const GameSnapshot& s) {
+    static const char* env = std::getenv("BB_PARTY_BANNER_TEST");
+    static std::vector<int> types;
+    static double t0 = -1;
+    static std::size_t next = 0;
+    static bool parsed = false;
+    if (!parsed) {
+        parsed = true;
+        for (const char* c = env; env && *c;) {
+            types.push_back(std::atoi(c));
+            while (*c && *c != ',') ++c;
+            if (*c == ',') ++c;
+        }
+    }
+    if (types.empty() || !s.world_up || s.loading || !s.player) return;
+    const double now = Now();
+    if (t0 < 0) t0 = now + 25.0;
+    if (now < t0 || next >= types.size()) return;
+    ShowBanner(types[next++], "test", "test");
+    t0 = now + 10.0;
+}
+
 void PayTick(const GameSnapshot& s) {
+    BannerTestTick(s);
     if (!g_pending.set) return;
     const double now = Now();
     if (now - g_pending.since > 90.0) {
@@ -151,12 +183,13 @@ void PayTick(const GameSnapshot& s) {
     const Reward r = RewardFor(p.role, p.end);
     const char* who = p.role == Role::Invader ? "invader" : p.role == Role::Host ? "host" : "guest";
     if (!r.pay) return;
-    if (!RewardsOn()) {
-        Log("reward: %s, %s: off (BB_PARTY_INVADE_REWARDS=0)", who, EndWord(p.end));
-        return;
-    }
     if (!g_reward_once.Take(p.name, p.end, now)) {
         Log("reward: %s, %s: already paid for this outcome", who, EndWord(p.end));
+        return;
+    }
+    if (r.banner) ShowBanner(r.banner, who, EndWord(p.end));
+    if (!RewardsOn()) {
+        Log("reward: %s, %s: off (BB_PARTY_INVADE_REWARDS=0)", who, EndWord(p.end));
         return;
     }
     int id = 0, echoes0 = -1, insight0 = -1;
