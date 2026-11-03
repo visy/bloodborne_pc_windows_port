@@ -592,6 +592,18 @@ try:
     import bb_guard
 except Exception:
     bb_guard = None
+try:  # files written whole or not at all (scripts/safe_write.py); a plain write without it
+    import safe_write
+except Exception:
+    safe_write = None
+
+
+def write_whole(path, text: str):
+    """Writes a settings file whole or not at all: a full drive or a crash halfway leaves the old file."""
+    if safe_write is not None:
+        safe_write.write_text(path, text)
+    else:
+        Path(path).write_text(text, encoding="utf-8")
 # Support bundle (scripts/support_bundle.py): logs + crash logs + settings, secrets removed.
 try:
     import support_bundle
@@ -1653,9 +1665,7 @@ def revoke_party_code(user_dir: Path) -> list:
         data = None
     if isinstance(data, dict) and "host_secret" in data:
         del data["host_secret"]
-        tmp = flow.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, flow)
+        write_whole(flow, json.dumps(data, indent=2) + "\n")
         changed.append("party.json")
     return changed
 
@@ -1963,7 +1973,7 @@ def write_env_bat(path: Path, settings_path: Path = SETTINGS_FILE):
         if settings_path.exists() and migrate_window_mode(data):
             changed = True
         if changed:
-            settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            write_whole(settings_path, json.dumps(data, indent=2))
     except OSError:
         pass
     lines = ["@echo off"]
@@ -2160,9 +2170,7 @@ def update_ini(path: Path, values: dict):
         out.append(line)
     out += [f"{key}={value}" for key, value in values.items() if key not in written]
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text("\n".join(out) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    write_whole(path, "\n".join(out) + "\n")  # whole or not at all; a failed write leaves no .tmp behind
 
 
 # ---- Game settings: bbport.ini is their one source of truth ----
@@ -2918,7 +2926,7 @@ class BloodborneLauncher(tk.Tk):
             migrate_ini_rev(bbport_ini_path())  # bbport.ini's one-time changes (rot off, 0.7.2)
             moved = migrate_settings_to_ini(self.settings, bbport_ini_path())
             if moved is not None:
-                SETTINGS_FILE.write_text(json.dumps(self.settings, indent=2), encoding="utf-8")
+                write_whole(SETTINGS_FILE, json.dumps(self.settings, indent=2))
         except OSError:
             pass
         self.all_xml_patches = load_xml_patches()
@@ -5830,7 +5838,7 @@ class BloodborneLauncher(tk.Tk):
     def save_settings(self):
         data = self.current_settings()
         try:
-            SETTINGS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            write_whole(SETTINGS_FILE, json.dumps(data, indent=2))
         except OSError:
             pass
 
