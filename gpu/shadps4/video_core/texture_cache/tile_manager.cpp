@@ -225,7 +225,8 @@ void TileManager::RecordTilingDispatch(vk::Pipeline pipeline, const vk::Descript
 }
 
 std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* in_buffer,
-                                                       u64 in_offset, const ImageInfo& info) {
+                                                       u64 in_offset, const ImageInfo& info,
+                                                       u32 first_level) {
     if (!info.props.is_tiled) {
         return {in_buffer, in_offset};
     }
@@ -236,18 +237,25 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
     if (bpp == 0 || info.guest_size == 0) {
         return {in_buffer, in_offset};
     }
-    const auto dim_x = static_cast<u32>((info.guest_size / bpp) / 64);
+    first_level = std::min(first_level, info.resources.levels - 1);
+    const u64 skipped = first_level != 0 ? info.mips_layout[first_level].offset : 0;
+    const u64 bytes = info.guest_size > skipped ? info.guest_size - skipped : 0;
+    if (bytes == 0) {
+        return {in_buffer, in_offset};
+    }
+    const auto dim_x = static_cast<u32>((bytes / bpp) / 64);
     if (dim_x == 0) {
         return {in_buffer, in_offset};
     }
 
     TilingInfo params{};
     params.bank_swizzle = info.bank_swizzle;
-    params.micro_tiled_mips = info.micro_tiled_mips;
-    params.num_mips = info.resources.levels;
+    // texture_quality: levels before first_level are not detiled; the linear output starts at the first one kept.
+    params.micro_tiled_mips = info.micro_tiled_mips >> first_level;
+    params.num_mips = info.resources.levels - first_level;
     for (u32 mip = 0; mip < params.num_mips; ++mip) {
         auto& mip_info = params.mips[mip];
-        mip_info = info.mips_layout[mip];
+        mip_info = info.mips_layout[mip + first_level];
         if (info.props.is_block) {
             mip_info.pitch = std::max((mip_info.pitch + 3) / 4, 1U);
             mip_info.height = std::max((mip_info.height + 3) / 4, 1U);
@@ -260,7 +268,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
         .range = sizeof(params),
     };
 
-    const auto staging = runtime.GetStagingPool().Request(info.guest_size, MemoryType::DeviceLocal);
+    const auto staging = runtime.GetStagingPool().Request(bytes, MemoryType::DeviceLocal);
 
     scheduler.EndRendering();
     runtime.FlushBarriers();
@@ -273,7 +281,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
     const vk::DescriptorBufferInfo linear_buffer_info{
         .buffer = staging.buffer->Handle(),
         .offset = staging.offset,
-        .range = info.guest_size,
+        .range = bytes,
     };
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, false), tiled_buffer_info, linear_buffer_info,
@@ -284,7 +292,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
                          vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderRead);
 
-    runtime.AccessBuffer(staging.buffer, staging.offset, info.guest_size,
+    runtime.AccessBuffer(staging.buffer, staging.offset, bytes,
                          vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderWrite);
     runtime.FlushBarriers();
