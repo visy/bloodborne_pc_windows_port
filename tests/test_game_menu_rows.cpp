@@ -243,7 +243,7 @@ static void Reported() {
     ps::SetState(ps::State::Hosting);
     P::Load();
     names = Names(access);
-    assert(names.size() == 2 && names[0] == "Nightwatch VPN lobby" && names[1] == "Open party (no password)");
+    assert(names.size() == 3 && names[0] == "Nightwatch VPN lobby" && names[1] == "Open party (no password)" && names[2] == "Allow invaders");
     context = {};
     context.party_process = context.party_save = context.in_world = true;
     ps::ResetForTest(true);

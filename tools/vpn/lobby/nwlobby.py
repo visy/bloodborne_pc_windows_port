@@ -25,6 +25,22 @@ Wire format (version 1, big endian, at most 512 bytes in, 1024 out):
                    password), full (players >= max), joinable (open and not full), free_slots (in open games),
                    sizes {"<max>": games}, builds {"<version>": games} (top 5, first word of the build, <= 32 chars):
                    counts only, no names or addresses
+Version 1 extension (0.7.8: invaders and "where the host is"). The v1 packets above are unchanged and an old client
+keeps working: it never sends types 7-9 and its type 3 replies never carry the new flag bits.
+  type 7 announce ext  (host -> lobby, right after every type 1; ignored when the sender has no live entry)
+                   flags u8 (bit0 the host allows invaders, bit1 a boss fight is on), area u32 (the host's map id
+                   0xAABBCCDD, 0 unknown), phase u8 (0 unknown, 1 day, 2 evening, 3 night, 4 Blood Moon),
+                   ng u8 (0 = NG, 1..7 = NG+n, 255 unknown)                       -- 7 body bytes, strict
+  type 8 list2     offset u16                      (as type 2, asks for the extended reply)
+  type 9 reply2    total u16, offset u16, count u8, then count entries:
+                   ipv4 4, port u16, flags u8 (bit0 password, bit1 your own entry, bit2 allows invaders, bit3 boss
+                   fight), players u8, max u8, area u32, phase u8, ng u8, name: u8 len + UTF-8, build: u8 len + ASCII
+The extension lives as long as the entry (TTL) and is replaced by the next type 7; a host that stops sending it (an
+older build, or "Allow invaders" off and no extension) is listed with flags bit2 clear and area 0. The bit2 flag is
+only ever set from the host's own type 7 sent in the last TTL seconds: a host with invasions off is never invadable
+here. A client asks type 8 first and falls back to type 2 when the lobby does not answer (an older lobby drops type 8).
+The area id is a map id and nothing else (no coordinates); the client turns it into words (scripts/party_where.py
+holds the table the launcher uses: "Currently in: Yahar'gul (Blood Moon), NG").
 An announce is not answered; a list request is answered with one reply page. Anything malformed is
 dropped without an answer. The client UI shows names, flags and counts, never the address.
 """
@@ -41,7 +57,9 @@ import unicodedata
 MAGIC = b"\xfaL"
 VERSION = 1
 T_ANNOUNCE, T_LIST, T_REPLY, T_BYE, T_STATS, T_STATS_REPLY = 1, 2, 3, 4, 5, 6
+T_ANNOUNCE_EXT, T_LIST2, T_REPLY2 = 7, 8, 9
 F_PASSWORD, F_SELF = 1, 2
+F_INVADERS, F_BOSS = 4, 8   # type 9 only; type 3 never carries them
 
 MAX_PACKET = 512            # a longer datagram is dropped unread
 MAX_REPLY = 1024
@@ -160,6 +178,25 @@ def parse_announce(body: bytes):
     return flags, port, players, maxp, build, name
 
 
+def parse_announce_ext(body: bytes):
+    """(flags, area, phase, ng) or None. Strict: 7 bytes, flags only bit0/bit1, phase 0..4, ng 0..7 or 255."""
+    if len(body) != 7:
+        return None
+    flags, area, phase, ng = body[0], int.from_bytes(body[1:5], "big"), body[5], body[6]
+    if flags > 3 or phase > 4 or (ng > 7 and ng != 255):
+        return None
+    return flags, area, phase, ng
+
+
+def encode_announce_ext(invaders: bool, boss: bool, area: int, phase: int, ng: int) -> bytes:
+    return (MAGIC + bytes([VERSION, T_ANNOUNCE_EXT, (1 if invaders else 0) | (2 if boss else 0)]) +
+            area.to_bytes(4, "big") + bytes([phase, ng]))
+
+
+def encode_list2(offset: int = 0) -> bytes:
+    return MAGIC + bytes([VERSION, T_LIST2, (offset >> 8) & 255, offset & 255])
+
+
 def encode_announce(name: str, port: int, players: int, maxp: int, build: str, password: bool) -> bytes:
     nb = name.encode("utf-8")[:NAME_MAX_BYTES]
     bb = build.encode("ascii", "replace")[:BUILD_MAX]
@@ -223,6 +260,40 @@ def parse_reply(data: bytes):
     return total, offset, out
 
 
+def parse_reply2(data: bytes):
+    """(total, offset, [entry dict]) of a type 9 reply or None. Entry: as parse_reply plus invaders, boss, area, phase, ng."""
+    if len(data) < 9 or data[:2] != MAGIC or data[2] != VERSION or data[3] != T_REPLY2:
+        return None
+    total, offset, count = (data[4] << 8) | data[5], (data[6] << 8) | data[7], data[8]
+    pos = 9
+    out = []
+    for _ in range(count):
+        if pos + 16 > len(data):
+            return None
+        ip = ".".join(str(b) for b in data[pos:pos + 4])
+        port = (data[pos + 4] << 8) | data[pos + 5]
+        flags, players, maxp = data[pos + 6], data[pos + 7], data[pos + 8]
+        area = int.from_bytes(data[pos + 9:pos + 13], "big")
+        phase, ng, n = data[pos + 13], data[pos + 14], data[pos + 15]
+        pos += 16
+        if flags & ~15 or phase > 4 or (ng > 7 and ng != 255) or pos + n + 1 > len(data):
+            return None
+        name = data[pos:pos + n].decode("utf-8", "replace")
+        pos += n
+        b = data[pos]
+        pos += 1
+        if pos + b > len(data):
+            return None
+        build = data[pos:pos + b].decode("ascii", "replace")
+        pos += b
+        out.append({"ip": ip, "port": port, "password": bool(flags & F_PASSWORD), "own": bool(flags & F_SELF),
+                    "invaders": bool(flags & F_INVADERS), "boss": bool(flags & F_BOSS), "players": players,
+                    "max": maxp, "area": area, "phase": phase, "ng": ng, "name": name, "build": build})
+    if pos != len(data):
+        return None
+    return total, offset, out
+
+
 class Lobby:
     """The whole state: {source ip string: entry}. handle() is the only entry point; it never raises."""
 
@@ -233,6 +304,7 @@ class Lobby:
         self.max_entries = max_entries
         self.entries = {}   # ip -> (expiry, flags, port, players, max, build, name)
         self.buckets = {}   # ip -> (tokens, last)
+        self.ext = {}       # ip -> (expiry, flags, area, phase, ng): the 0.7.8 extension (type 7)
 
     def allowed(self, ip: str) -> bool:
         try:
@@ -256,6 +328,8 @@ class Lobby:
     def expire(self, now: float):
         for ip in [k for k, e in self.entries.items() if e[0] <= now]:
             del self.entries[ip]
+        for ip in [k for k, e in self.ext.items() if e[0] <= now or k not in self.entries]:
+            del self.ext[ip]
         # forget idle rate buckets (full again anyway)
         if len(self.buckets) > 2 * self.max_entries:
             self.buckets = {k: v for k, v in self.buckets.items() if now - v[1] < 10.0}
@@ -285,14 +359,21 @@ class Lobby:
                 name = masked_name(name)   # still listed, under a neutral name (no log line: the lobby logs nothing)
             self.entries[ip] = (now + self.ttl, flags, port, players, maxp, build, name)
             return None
+        if kind == T_ANNOUNCE_EXT:
+            p = parse_announce_ext(body)
+            self.expire(now)
+            if p is not None and ip in self.entries:   # only a host that announced (type 1) and is alive
+                self.ext[ip] = (now + self.ttl,) + p
+            return None
         if kind == T_BYE:
             if len(body) == 0:
                 self.entries.pop(ip, None)
+                self.ext.pop(ip, None)
             return None
-        if kind == T_LIST:
+        if kind in (T_LIST, T_LIST2):
             if len(body) != 2:
                 return None
-            return self.page((body[0] << 8) | body[1], ip, now)
+            return self.page((body[0] << 8) | body[1], ip, now, extended=kind == T_LIST2)
         return None
 
     def stats(self, data: bytes, now: float):
@@ -314,7 +395,7 @@ class Lobby:
              "free_slots": sum(max(0, e[4] - e[3]) for e in open_rows), "sizes": sizes, "builds": top}
         return MAGIC + bytes([VERSION, T_STATS_REPLY]) + json.dumps(d, separators=(",", ":"), sort_keys=True).encode()
 
-    def page(self, offset: int, requester: str, now: float) -> bytes:
+    def page(self, offset: int, requester: str, now: float, extended: bool = False) -> bytes:
         self.expire(now)
         rows = sorted(self.entries.items(), key=lambda kv: (kv[1][6].casefold(), kv[0]))
         total = len(rows)
@@ -322,13 +403,21 @@ class Lobby:
         count = 0
         for ip, (_, flags, port, players, maxp, build, name) in rows[offset:offset + MAX_PAGE_ENTRIES]:
             nb, bb = name.encode("utf-8"), build.encode("ascii")
-            ent = (bytes(int(x) for x in ip.split(".")) + bytes([port >> 8, port & 255,
-                   flags | (F_SELF if ip == requester else 0), players, maxp, len(nb)]) + nb + bytes([len(bb)]) + bb)
+            own = F_SELF if ip == requester else 0
+            if extended:
+                ex = self.ext.get(ip)
+                xf, area, phase, ng = (ex[1], ex[2], ex[3], ex[4]) if ex else (0, 0, 0, 255)
+                ent = (bytes(int(x) for x in ip.split(".")) + bytes([port >> 8, port & 255,
+                       flags | own | (F_INVADERS if xf & 1 else 0) | (F_BOSS if xf & 2 else 0), players, maxp]) +
+                       area.to_bytes(4, "big") + bytes([phase, ng, len(nb)]) + nb + bytes([len(bb)]) + bb)
+            else:   # the v1 row: an old client's strict parser accepts only the password and own bits
+                ent = (bytes(int(x) for x in ip.split(".")) + bytes([port >> 8, port & 255,
+                       flags | own, players, maxp, len(nb)]) + nb + bytes([len(bb)]) + bb)
             if 9 + len(chunk) + len(ent) > MAX_REPLY:
                 break
             chunk += ent
             count += 1
-        return (MAGIC + bytes([VERSION, T_REPLY, total >> 8, total & 255, (offset >> 8) & 255, offset & 255,
+        return (MAGIC + bytes([VERSION, T_REPLY2 if extended else T_REPLY, total >> 8, total & 255, (offset >> 8) & 255, offset & 255,
                                count]) + bytes(chunk))
 
 
