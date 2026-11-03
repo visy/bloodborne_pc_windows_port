@@ -32,6 +32,7 @@ Environment:
                        Default off: the bot then behaves exactly as before (no archive, no new replies).
   NW_DELETE            1 = live duty may delete the original message (after replacement + verified archive).
                        Without it a live bot archives silently and posts nothing (DMs included). See CLINIC.md.
+  NETDOCTOR_STAFF_*    who may use /clinic (default roles Mod and Dev); see clinic_staff.py and CLINIC.md
   NW_TMP               temp folder for downloads (default: <system temp>/iosefka)
 Needs the privileged Message Content intent (Developer Portal -> Bot) to read ordinary messages.
 """
@@ -52,6 +53,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import clinic_asks as asks  # noqa: E402
 import clinic_outbox as ob  # noqa: E402
+import clinic_staff  # noqa: E402
 import clinic_discord as cd  # noqa: E402
 import clinic_health as hl  # noqa: E402
 import clinic_vpn  # noqa: E402
@@ -801,6 +803,8 @@ def main():
         cd.clean_stale_tmp(CTX.tmp_root)
     print(f"clinic live duty: {'ON' if CTX.live else 'off'}, delete: {'ON' if CTX.delete else 'off'}", flush=True)
     tree = app_commands.CommandTree(client)
+    staff_gate = clinic_staff.Gate(clinic_staff.Config.from_env(os.environ))
+    clinic_staff.register(tree, client, CTX, staff_gate)   # /clinic: mods and devs only (clinic_staff.py)
     guild = discord.Object(id=int(os.environ["NETDOCTOR_GUILD"])) if os.environ.get("NETDOCTOR_GUILD") else None
     auto = os.environ.get("NETDOCTOR_AUTO", "react").lower()  # off | react | reply
     allowed_channels = {int(x) for x in os.environ.get("NETDOCTOR_CHANNELS", "").replace(",", " ").split()
