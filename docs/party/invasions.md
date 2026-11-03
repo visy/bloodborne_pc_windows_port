@@ -164,4 +164,33 @@ keys are derived the same way as for a cooperator with `invader key` in place of
 * `tests/test_nwlobby.py` (types 7-9, the unchanged type 3 reply, the shipped 0.7.7 server ignoring the new datagrams, the flag
   never set without a live extension), `tests/test_launcher_invade.py` (words, type 9 parser against the server, the fetch
   against a new and an old server, discovery extension, Invade enablement).
-* Smoke group `invade` (phases `iv`, `ivx`): see the end of this file for the results.
+* Smoke groups `invade` (phase `iv`), `invade_refuse` (`ivx`), `invade_sim` (`ivn`: `iv` under `BB_NET_SIM=dsl` on all three games): the results below.
+
+## Live results (2026-11-03, loopback, three / two instances, `tools/mp/smoke_party.py --only invade | invade_refuse | invade_sim`)
+
+* **`iv`** (host with Allow invaders on, a cooperating guest, an invader without a password; 31 of 31 rows): the invader's first dial
+  at its title is refused (*the host is not in a world you can enter now*), the second from its own world is admitted, stands in
+  the world about 17 s later; its chr is on the invader team on all three games (the host's and the guest's copy of it moved from
+  team 20 / 21 to 22, its own from 19 / 20); the host's and the guest's blows hurt it (503 -> 442 -> ... -> 121) and its blows hurt
+  the host (719 -> 658); no friendly-fire cell opens between host and guest. It then dies (`ForceDead`): it tells the host, goes
+  home through the game's own send-home (`OnLeave_Limit`, no lamp revive), the host and the guest read *The invader NAME was
+  defeated and goes home*; it asks again, is admitted again, and when the **host** dies the invader reads *You defeated HOST: back
+  home* and goes home; the cells and the chr are put back. No crash, no *Session lost*.
+* **`ivx`** (host and invader; 11 of 11): refused with the named reason while Allow invaders is off, in a boss fight, in a
+  cutscene and with 4 players in the world (the host's view forced by the smoke script `BB_PARTY_INVADE_TEST`, see DEBUG_SWITCHES.md;
+  a real fourth player needs five games, the table is unit tested), admitted when nothing is in the way.
+* Screenshots of the fight (host, guest) show the invader as a normal hunter with a name tag and a party-list entry: **the red
+  phantom look is not done** (see below). The notices are on the party panel's last-event line and in the log; they were not
+  caught by the 10-second screenshots.
+
+## Not done / unproven
+
+* **The red phantom look.** Writing the chr type 2 (black phantom) on the invader's chr (`BB_PARTY_INVADE_LOOK=1`) changed nothing
+  on screen in the live run, so it is off by default; no other look (SpEffect, tint) was found.
+* **Rewards.** No Echoes / Insight / items for winning or losing, the Sinister Resonant Bell / Bell-Ringing Woman items are not
+  used or consumed, and the game's own bell use does not start matchmaking (the manual pick list is the first step).
+* **Health.** The invader's health is the phantom's (the host's *Phantom health cut* applies where that rule reaches its game).
+* **Boss fog / cutscene / loading** are proven by the forced view (the gate and the pending checks are the same code as for the
+  real flags: `BossBarShown`, `CutscenePlaying`, `loading`); a real fog walk with an invader on the way was not run. An invader
+  that is already in when a fog is entered is sent home (`CheckEnd`, unit tested; not run live).
+* **Real networks.** Only loopback and `BB_NET_SIM` (below); never the VPN.
