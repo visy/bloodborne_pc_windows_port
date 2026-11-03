@@ -494,8 +494,9 @@ def phase_rules(only):
     for tag in ["rules_h%d" % k for k in range(1, n + 1)] + ["rules_g%d" % k for k in range(1, n + 1)] + \
                ["rules_h%dc" % k for k in range(1, n + 1)] + ["rules_h_ffoff"]:
         watch += ["--watch", r"step \d+/\d+: ~?mark=%s(@|\s)=%s@1.2" % (tag, tag)]
+    # 420 s: ~1.35 s per menu step, 183 steps in 0.7.8 (330 s cut the last step, Friendly fire set back)
     return dict(
-        name="rules", seconds=330 + 90 * (RULES_PLAYERS > 2), count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
+        name="rules", seconds=420 + 90 * (RULES_PLAYERS > 2), count=RULES_PLAYERS, headless=max(0, RULES_PLAYERS - 2),
         env=["BB_GAME_MENU_TRACE=1", "BB_TEST_MENU_FILE={root}\\menu{i}.txt"] + (["BB_PARTY_MAX=%d" % RULES_PLAYERS] if RULES_PLAYERS > 2 else []),
         ienv=[],
         files={"menu0.txt": "joined %d %s\n-\n-\n" % (RULES_HOST_DELAY, host),
@@ -4360,6 +4361,10 @@ def phase_lw(only):
                     # party had rested at the Grand Cathedral lamp 3402950, 240 m away)
                     ["host_lastlamp=%s@1%%m34_00" % os.environ.get("BB_LW_LAMP", "3402950")] +
                     ["host_die@%s%%m34_00" % os.environ.get("BB_LW_DIE", "3")])  # the host first: its limbo
+    # BB_LW_LATE_HP=hp: the party's last hits take the boss to hp % while the host lies in its limbo, before the guests
+    # die (0.7.8: the wipe near the second-half threshold; BB_LW_HP=52 BB_LW_LATE_HP=45)
+    if os.environ.get("BB_LW_LATE_HP"):
+        host += ",host_kill=3400800:hp%s@%s%%m34_00" % (os.environ["BB_LW_LATE_HP"], os.environ.get("BB_LW_LATE_AT", "4"))
     g1 = ",".join(["guest_move=%s@6%%m34_00" % BR_LUDWIG,                   # into the arena, beside the host
                    "guest_die@%s%%m34_00~" % os.environ.get("BB_LW_GDIE", "20")] +  # the last one down: the wipe
                   # BB_LW_INJECT=hp: after the respawn load the guest's own copy of Ludwig is set to hp % (the
@@ -4368,6 +4373,8 @@ def phase_lw(only):
     players = int(os.environ.get("BB_LW_PLAYERS", "2"))
     ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1]
     env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LUDWIG_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1", "BB_PARTY_EVENT_SYNC_LOG=1"]
+    if os.environ.get("BB_LW_ENV"):          # "A=1;B=2" on every game (BB_NET_SIM=mobile ...)
+        env += os.environ["BB_LW_ENV"].split(";")
     if players > 2:
         # the report's party: host + 3 guests (4 players: the boss scaling row 7502), the guests down one after the other
         env.append("BB_PARTY_MAX=4")
