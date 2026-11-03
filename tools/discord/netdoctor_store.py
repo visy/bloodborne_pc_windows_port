@@ -10,6 +10,7 @@ Grouping logs into sessions is pure logic here (same_session / group_sessions / 
 tested without Discord.
 """
 import hashlib
+import re
 import json
 import shutil
 import sqlite3
@@ -214,23 +215,65 @@ def new_ref():
     return "ND-" + secrets.token_hex(4)
 
 
-def same_session(a, b):
-    """Two logs are one party session: linked by player names and compatible in time.
+def _day_key(day):
+    """A calendar day as a comparable key: 'YYYY-MM-DD' -> day number (same scale as net_doctor _minutes // 1440),
+    any other non-empty text as itself, nothing as None."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", day or "")
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+        return ((y - 2000) * 372 + (mo - 1) * 31 + (d - 1))
+    return day or None
 
-    start/end are minutes (net_doctor _minutes); end is known for Nightwatch logs (file name = close time).
+
+def info_days(info):
+    """The calendar day of a log: its first line's date or Nightwatch file-name date, else derived from its
+    start, else its close (minutes count from 2000-01-01). Old stored rows may lack `day`: derived on the fly."""
+    days = set()
+    k = _day_key(info.get("day"))
+    if k is None and info.get("start") is not None:
+        k = info["start"] // 1440
+    if k is None and info.get("end") is not None:
+        k = info["end"] // 1440
+    if k is not None:
+        days.add(k)
+    return days
+
+
+def info_host(info):
+    """The party host's character name: the roster's host, else the log's own name when it is a host log."""
+    return info.get("host") or (info.get("name") if info.get("role") == "host" else None) or None
+
+
+def same_session(a, b):
+    """Two logs are one party session: the same calendar day, linked by player names and compatible in time.
+
+    start/end are minutes since 2000-01-01 (net_doctor _minutes); end is known for Nightwatch logs (file name =
+    close time). A log whose day cannot be told is linked only by names, never by time alone.
     """
-    if a["host"] and b["host"] and a["host"] != b["host"]:
+    ha, hb = info_host(a), info_host(b)
+    if ha and hb and ha != hb:
         return False  # two different parties
-    named = bool((a["name"] and a["name"] in b["peers"]) or (b["name"] and b["name"] in a["peers"])
-                 or (a["host"] and a["host"] == b["host"]))
-    if a["start"] is not None and b["start"] is not None:
-        if abs(a["start"] - b["start"]) > 180:
+    da, db_ = info_days(a), info_days(b)
+    if (da or db_) and not (da and db_):
+        known_day = False  # one side has no day: names only
+    elif da and db_:
+        if not (da & db_):
+            return False  # a session is one day's
+        known_day = True
+    else:
+        known_day = False
+    named = bool((a.get("name") and a["name"] in (b.get("peers") or ()))
+                 or (b.get("name") and b["name"] in (a.get("peers") or ()))
+                 or (ha and ha == hb))
+    sa, sb = a.get("start"), b.get("start")
+    if sa is not None and sb is not None and known_day:
+        if abs(sa - sb) > 180:
             return False
-        if a["end"] is not None and b["start"] > a["end"] + 1:
+        if a.get("end") is not None and sb > a["end"] + 1:
             return False
-        if b["end"] is not None and a["start"] > b["end"] + 1:
+        if b.get("end") is not None and sa > b["end"] + 1:
             return False
-        return named or abs(a["start"] - b["start"]) <= 20
+        return named or abs(sa - sb) <= 20
     return named
 
 

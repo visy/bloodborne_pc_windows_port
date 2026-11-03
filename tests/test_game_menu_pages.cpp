@@ -23,6 +23,14 @@
 #include "gpu/shim/party/party_balance_rules.h"
 #include "gpu/shim/party/party_status.h"
 
+#include "party/party_invade.h"
+
+// The game menu pages call the invasion module (the Block the invader row); the unit test has no game: stubs.
+namespace coop::invade {
+std::string InvaderName() { return {}; }
+void RequestBlock() {}
+}  // namespace coop::invade
+
 namespace P = BbGameMenu::Pages;
 
 static std::filesystem::path ini;
@@ -477,7 +485,7 @@ static void Party() {
     // rejoin, leave) are hidden, the extension row shows (in order).
     ps::ResetForTest(false);
     P::Load();
-    assert(P::PartyRowCount() == 10); // status, rot, copy, LAN copy, rejoin, gather, new party code, stay, leave + the extension row
+    assert(P::PartyRowCount() == 11); // status, rot, copy, LAN copy, rejoin, gather, new party code, stay, block the invader, leave + the extension row
     assert(!hud.visible()); // the party HUD switch: party mode only
     std::vector<const P::Row*> shown;
     for (const P::Row& row : party.rows) if (!row.visible || row.visible()) shown.push_back(&row);
@@ -526,7 +534,7 @@ static void RulesPages() {
                       u"Party votes on travel", u"NPC hunters fight all"};
     const V rewards = {u"Full rewards for guests", u"Boss drops for guests", u"Insight for bosses"};
     const V items = {u"Host's item rewards", u"Give the bells", u"Own key items as guest", u"Key items at once",
-                  u"Shared item notices"};
+                  u"Shared item notices", u"Give items to the party"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings",
                        u"Show party through walls", u"Coloured name tags", u"Above companions"};
     for (const ps::Role role : {ps::Role::Host, ps::Role::Guest}) {

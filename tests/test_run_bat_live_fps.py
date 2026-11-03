@@ -15,7 +15,7 @@ class RunBatLiveFpsTests(unittest.TestCase):
 
     def test_derivation_is_inside_the_relaunch_loop(self):
         loop = BAT.index(':prepare_patches\n')
-        patches_call = BAT.index('scripts\patches.py --out')
+        patches_call = BAT.index(r'scripts\patches.py --out')
         live = BAT.index('set "BB_LIVE_FPS=%RUN_LIVE_ENV%"')
         vblank = BAT.index('set "BB_VBLANK_HZ=%RUN_VBLANK_ENV%"')
         self.assertTrue(loop < live < patches_call, 'BB_LIVE_FPS is read from the ini before patches.py runs')

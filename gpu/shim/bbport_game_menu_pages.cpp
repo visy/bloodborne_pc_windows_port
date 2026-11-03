@@ -12,6 +12,7 @@
 
 #include "bbport_settings.h"
 #include "party/party_balance_rules.h"
+#include "party/party_invade.h"
 #include "party/party_link.h"  // kMaxPartyPlayers
 #include "party/party_npctalk.h"
 #include "party/party_status.h"
@@ -173,7 +174,10 @@ std::vector<Page> pages;
 u32 split_text[1] = {0};
 u32 notice_text[1] = {0};
 u32 ending_text[1] = {0};
+constexpr int kPickerTexts = 8;
+u32 picker_text[kPickerTexts] = {};  // 0.7.8: item menu Give pickers: run-time labels (members, amounts)
 u32 gather_text[1] = {0};
+u32 give_command_text[2] = {0, 0};  // 0.7.8: the item menu's Give command: name, help
 u32 guest_gather_text[1] = {0};  // CL-a3a9e6: a guest gathers the party (run-time: who)
 u32 vote_text[1] = {0};  // 0.7.3: the travel vote's question (run-time: who, where)
 
@@ -668,6 +672,22 @@ void DefineBuiltinPartyRows() {
     stay.toggle_get = [] { return BbSettings::Get().party_stay.load(); };
     stay.toggle_set = [](bool on) { BbSettings::Get().party_stay = on; };
     party_rows.push_back({stay});
+
+    // 0.7.8 (CL-4cc63c): the host blocks the invader for the session (docs/party/invasions.md). Shown only while one is there.
+    PartyRow block;
+    block.order = 38;
+    block.name = [](const B&) { return T2("Block the invader", "Заблокировать захватчика"); };
+    block.value = [](const B&) { return T2("Block", "Блок"); };
+    block.help = [](const B&) {
+        return T2("Press twice: send the invader home and refuse it for this session",
+                  "Нажмите дважды: отправить захватчика домой и не пускать до конца сессии");
+    };
+    block.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host && !coop::invade::InvaderName().empty(); };
+    block.press = PartyRow::Press::Confirm;
+    block.run = [](const B& b) {
+        if (Active(b)) coop::invade::RequestBlock();
+    };
+    party_rows.push_back({block});
 
     PartyRow leave;
     leave.order = 40;
@@ -1285,6 +1305,12 @@ void DefineAll() {
            AddText("No password: players on your LAN or VPN join by plain address. You trust that network",
                    "Без пароля: игроки из вашей LAN или VPN входят по адресу. Вы доверяете этой сети"),
            toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
+    // 0.7.8 (CL-4cc63c): invasions into open public games (party/party_invade_rules.h, docs/party/invasions.md): the host lets
+    // other players join its world as hostile phantoms from the public lists. Live, the host's value only, off by default.
+    AddRow(Flag(&Values::party_invaders), AddText("Allow invaders", "Разрешить вторжения"),
+           AddText("Listed games only: other players may invade your world as hostile phantoms (one at a time). Off: never",
+                   "Только в списке игр: другие игроки могут вторгаться в ваш мир (по одному). Выкл.: никогда"),
+           toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
     AddRow(Info(), AddText("Host's access", "Доступ хоста"),
            AddText("The host decides who joins without a party code (Open party, Nightwatch VPN lobby)",
                    "Хост решает, кто входит без кода группы (открытая группа, лобби Nightwatch VPN)"),
@@ -1307,6 +1333,10 @@ void DefineAll() {
     // 0.7.3: lamp travel voting (party_vote.cpp): who wants to travel where, set before it opens.
     vote_text[0] = AddDynamic(DynamicCapacity - 1);
 
+    give_command_text[0] = AddText("Give", "ÐÐµÑÐµÐ´Ð°ÑÑ");
+    give_command_text[1] = AddText("Give some of this item to a party member.",
+                                   "ÐÐµÑÐµÐ´Ð°ÑÑ ÑÐ°ÑÑÑ Ð¿ÑÐµÐ´Ð¼ÐµÑÐ° ÑÐ»ÐµÐ½Ñ Ð³ÑÑÐ¿Ð¿Ñ.");
+    for (u32& t : picker_text) t = AddDynamic(24);
     guest_gather_text[0] = AddDynamic(DynamicCapacity - 1);
     gather_text[0] = AddText("The host gathers the party.\nYES: go to the host now.  NO: stay where you are.",
                              "Хозяин собирает группу.\nДА: перейти к хозяину сейчас.  НЕТ: остаться здесь.");
@@ -1752,6 +1782,11 @@ void DefineAll() {
            "A short notice when an item is shared with the party (key and unique items, weapons, runes)",
            "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
            Kind::Toggle);
+    // 0.7.8: give items to a party member (the inventory's item menu: Use / Discard / Give); off by default, also the consent to receive.
+    AddRow(Flag(&Values::party_give_items), "Give items to the party", "Передача предметов",
+           "Adds Give to an item's menu in the inventory, and lets hunters give you items. Not key or story items",
+           "Передача расходников охотникам и приём (меню Insert, вкладка Party). Не ключевые и не сюжетные",
+           toggle, Kind::Toggle);
 
 
     // ---- My party: Display: what this player sees of the party (local) ----
@@ -1927,6 +1962,26 @@ void RefreshBalance() {
 u32 EndingQuestionText() {
     Define();
     return ending_text[0];
+}
+
+u32 GiveCommandText() {
+    Define();
+    return give_command_text[0];
+}
+u32 GiveCommandHelp() {
+    Define();
+    return give_command_text[1];
+}
+
+u32 PickerText(int slot) {
+    Define();
+    return slot >= 0 && slot < kPickerTexts ? picker_text[slot] : 0;
+}
+void SetPickerText(int slot, const std::string& utf8) {
+    Define();
+    if (slot < 0 || slot >= kPickerTexts) return;
+    const std::u16string w = Utf16(utf8.c_str());
+    SetDynamic16(picker_text[slot], w, w);
 }
 
 u32 GatherQuestionText() {

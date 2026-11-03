@@ -325,6 +325,10 @@ struct Values {
     /// and VPN subnets. ini party_open, env BB_PARTY_OPEN. Live. Off by default, so hosting with no password stays
     /// code only until the player asks for it.
     std::atomic<bool> party_open{false};
+    /// 0.7.8 (CL-4cc63c): "Allow invaders" (party/party_invade_rules.h, docs/party/invasions.md): the HOST lets other players
+    /// join its world as hostile phantoms from the public lists (VPN lobby / LAN discovery). Only the host's value counts. ini
+    /// party_invaders, env BB_PARTY_INVADERS. Live. Off by default.
+    std::atomic<bool> party_invaders{false};
     /// 0.7.7 (CL-2eec68): splitscreen mode for several windows on one screen (party/party_splitscreen_rules.h): the party
     /// HUD shows only the compass, no name tags, party messages cut to errors. Each player's own. ini
     /// party_splitscreen, env BB_PARTY_SPLITSCREEN. Live. Off by default.
@@ -343,6 +347,10 @@ struct Values {
     /// rune) is given (party/party_item_notice_rules.h). Per player; shows only while the party notices
     /// (party_toasts) are on. ini party_item_notices. Live.
     std::atomic<bool> party_item_notices{true};
+    /// 0.7.8: give items to a party member (party/party_give_rules.h): the Insert menu's Party tab lists the own
+    /// consumables and sends one to a member through a two-phase transfer. The giver's switch shows the list, the
+    /// receiver's is its consent. Per player. OFF by default. ini party_give_items; env BB_PARTY_GIVE_ITEMS=1 wins.
+    std::atomic<bool> party_give_items{false};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,

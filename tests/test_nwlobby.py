@@ -224,6 +224,125 @@ class Reply(unittest.TestCase):
         self.assertIsNone(nw.parse_reply(b"\xfaL\x02\x03" + data[4:]))
 
 
+class Extension(unittest.TestCase):
+    """0.7.8: the invader flag and 'where the host is' (types 7-9) and old / new client compatibility."""
+
+    def lobby(self):
+        lob = nw.Lobby()
+        lob.handle(ann(name="Alice", pw=False), A, 0)
+        lob.handle(ann(name="Bob", pw=True), B, 0)
+        lob.handle(nw.encode_announce_ext(True, False, 0x1C010000, 4, 1), A, 0)   # Alice: invaders, Yahar'gul, Blood Moon, NG+1
+        return lob
+
+    def test_old_client_gets_the_v1_reply_unchanged(self):
+        lob = self.lobby()
+        ents = nw.parse_reply(lob.handle(nw.encode_list(), C, 1))[2]     # the strict v1 parser, as shipped
+        self.assertEqual([(e["name"], e["password"]) for e in ents], [("Alice", False), ("Bob", True)])
+        raw = lob.handle(nw.encode_list(), C, 1)
+        self.assertEqual(raw[3], nw.T_REPLY)
+        # no new flag bit anywhere in a type 3 row: the old parser would refuse the whole page
+        for e in ents:
+            self.assertNotIn("invaders", e)
+
+    def test_new_client_gets_flags_and_where(self):
+        lob = self.lobby()
+        raw = lob.handle(nw.encode_list2(), C, 1)
+        self.assertEqual(raw[3], nw.T_REPLY2)
+        total, off, ents = nw.parse_reply2(raw)
+        self.assertEqual((total, off), (2, 0))
+        a, b = ents
+        self.assertEqual((a["name"], a["invaders"], a["boss"], a["area"], a["phase"], a["ng"]),
+                         ("Alice", True, False, 0x1C010000, 4, 1))
+        # Bob never sent an extension (an older build): not invadable, nothing known
+        self.assertEqual((b["name"], b["invaders"], b["area"], b["phase"], b["ng"]), ("Bob", False, 0, 0, 255))
+        # an address is never in the strict v1 view of the same host, and the reply names no address field beyond ip
+        self.assertTrue(nw.parse_reply(lob.handle(nw.encode_list(), C, 2)))
+
+    def test_the_shipped_0_7_7_server_ignores_the_new_datagrams(self):
+        """The server as deployed before 0.7.8 (git history) drops types 7 and 8 and keeps the host listed."""
+        import subprocess, types
+        try:
+            src = subprocess.run(["git", "show", "c7ed408f:tools/vpn/lobby/nwlobby.py"], cwd=ROOT, capture_output=True,
+                                 check=True).stdout.decode("utf-8")
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("git history not available")
+        old = types.ModuleType("nwlobby_old")
+        exec(compile(src, "nwlobby_old", "exec"), old.__dict__)
+        lob = old.Lobby()
+        lob.handle(ann(), A, 0)
+        self.assertIsNone(lob.handle(nw.encode_announce_ext(True, False, 1, 1, 1), A, 1))
+        self.assertIsNone(lob.handle(nw.encode_list2(), C, 1))      # no answer: the client falls back to type 2
+        self.assertEqual(len(lob.entries), 1)
+        self.assertIsNotNone(nw.parse_reply(lob.handle(nw.encode_list(), C, 2)))
+
+    def test_invaders_off_is_never_listed_invadable(self):
+        lob = self.lobby()
+        lob.handle(nw.encode_announce_ext(False, False, 0x18010000, 2, 0), A, 5)    # the host switched it off
+        a = nw.parse_reply2(lob.handle(nw.encode_list2(), C, 6))[2][0]
+        self.assertFalse(a["invaders"])
+        self.assertEqual((a["area"], a["phase"], a["ng"]), (0x18010000, 2, 0))
+
+    def test_extension_expires_with_the_entry_and_needs_a_live_entry(self):
+        lob = self.lobby()
+        nw_ttl = nw.TTL
+        a = nw.parse_reply2(lob.handle(nw.encode_list2(), C, nw_ttl - 1))[2]
+        self.assertTrue(a[0]["invaders"] if a else False)
+        # past the TTL the host (not refreshed) is gone and so is its flag
+        self.assertEqual(nw.parse_reply2(lob.handle(nw.encode_list2(), C, nw_ttl + 1))[2], [])
+        # an extension from a sender with no entry is ignored (no flag out of nothing)
+        lob2 = nw.Lobby()
+        lob2.handle(nw.encode_announce_ext(True, True, 1, 1, 1), A, 0)
+        self.assertEqual(lob2.ext, {})
+        # a host that said bye loses its extension
+        lob3 = self.lobby()
+        lob3.handle(nw.encode_bye(), A, 1)
+        self.assertEqual(lob3.ext, {})
+
+    def test_bad_extensions_dropped(self):
+        lob = nw.Lobby()
+        lob.handle(ann(), A, 0)
+        good = nw.encode_announce_ext(True, True, 5, 3, 7)
+        bads = [good[:-1], good + b"x", good[:4] + bytes([4]) + good[5:],        # unknown flag bit
+                good[:9] + bytes([5]) + good[10:],                                 # phase 5
+                good[:10] + bytes([8]),                                            # ng 8
+                good[:4]]
+        for i, b in enumerate(bads):
+            lob.handle(b, A, 1 + i)
+            self.assertEqual(lob.ext, {}, i)
+        lob.handle(good, A, 20)
+        self.assertEqual(lob.ext[A][1:], (3, 5, 3, 7))
+
+    def test_hostile_senders_and_rate(self):
+        lob = nw.Lobby()
+        # outside the tunnel network: nothing is stored
+        lob.handle(ann(), "192.168.1.5", 0)
+        lob.handle(nw.encode_announce_ext(True, False, 1, 1, 1), "192.168.1.5", 0)
+        self.assertEqual((lob.entries, lob.ext), ({}, {}))
+
+    def test_reply2_parser_strict_and_paging(self):
+        lob = nw.Lobby()
+        for i in range(30):
+            ip = f"10.8.0.{20 + i}"
+            lob.handle(ann(name=f"H{i:02d}", pw=False), ip, 0)
+            lob.handle(nw.encode_announce_ext(i % 2 == 0, False, 0x18000000 + i, 1, 0), ip, 0)
+        seen, off = [], 0
+        for _ in range(10):
+            raw = lob.handle(nw.encode_list2(off), C, 1)
+            self.assertLessEqual(len(raw), nw.MAX_REPLY)
+            total, o, ents = nw.parse_reply2(raw)
+            self.assertEqual(o, off)
+            seen += ents
+            off += len(ents)
+            if not ents or off >= total:
+                break
+        self.assertEqual(len(seen), 30)
+        self.assertEqual(sum(1 for e in seen if e["invaders"]), 15)
+        raw = lob.handle(nw.encode_list2(), C, 1)
+        self.assertIsNone(nw.parse_reply2(raw[:-1]))
+        self.assertIsNone(nw.parse_reply2(raw + b"\x00"))
+        self.assertIsNone(nw.parse_reply2(nw.MAGIC + bytes([1, 3]) + raw[4:]))
+
+
 class Stats(unittest.TestCase):
     def test_counts(self):
         lob = nw.Lobby()

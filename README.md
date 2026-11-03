@@ -427,6 +427,11 @@ before anyone is in the game):
 - **Chalice glyph list.** With *Chalice glyph list* on (*System -> My party: Chalice*, the launcher's My Party tab, `party_glyph_list`, off by default) the Ritual Altar's *Search by Chalice Glyph* opens with a list of the party's glyphs to pick from (your dungeons, the guests', and `patches/chalice_glyphs.json`) above the code keyboard; pick one and the whole party enters that dungeon together. An unknown code gets a clear notice. See docs/party/chalice.md 11.
 - **Chalice layer travel.** With the host's rule *Chalice layer travel* (*System -> Party rules: PvP & lamps*, the launcher's Party Rules tab, `party_layer_travel`, off by default) the host's Chalice Dungeon lamp lists the dungeon's other lit lamps (the layers) next to the Hunter's Dream, and the host's choice takes the party along (a guest with a dungeon of its own is summoned back in next to the host; a guest without one is carried too, by the summon or by the same lamp warp on its own game). Not for guests staying in their own world. See docs/party/chalice_layers.md.
 - **Guests can gather the party.** With the host's rule *Guests can gather* (*System -> Party rules: Travel*, the launcher's Party Rules tab, `party_guest_gather`, off by default) a guest sees *System -> Party -> Gather the party*: it asks the host and the other guests to come to it (each is asked and may say no; an in-world warp beside the guest, only players in the same map, never a loading screen). Same refusals and 30 s pause as the host's gather; not while the guest stays in its own world. See docs/party/guest_gather.md.
+- **Invasions into open public games.** The host decides: *Allow invaders* (*System -> Party access*, the launcher's Party tab,
+  `party_invaders`, off by default, live) lets other players join a game from the launcher's lists as a hostile phantom
+  (**Invade**, next to Join, no password): you and your guests are told, fight it, and it goes home when it dies or when the host
+  dies. One at a time, never in a boss fight, a loading screen or a cutscene, never into a full (4 player) game; you can block it
+  for the session (*System -> Party -> Block the invader*). See docs/party/invasions.md.
 - **Stay in my world.** As a guest you can pause the automatic joining without leaving the party, e.g. for your own
   Chalice ritual or shopping: *System -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
   `party_stay`, off by default, live). You ring no bell, are not gathered and not asked to vote; the host does not wait
@@ -436,6 +441,11 @@ before anyone is in the game):
   default, your own setting) makes the party HUD show only the compass (a direction arrow and the distance per
   companion), hides the name tags above the companions and cuts party messages to errors. *Party messages* (same
   page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
+- **Give items to a party member.** *Give items to the party* (*System -> My party: Your items*, the launcher's My Party
+  tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give* to the command menu of an
+  item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials only, never
+  key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
+  when the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
   ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My

@@ -1907,6 +1907,12 @@ void PartyTab() {
              "Короткое уведомление «<предмет>: передан группе», когда ключевой или уникальный предмет, оружие "
              "или руна переданы группе. Не для обычных предметов."),
            on);
+    Toggle("party_give_items", T("Give items to the party", "Передача предметов группе"), s.party_give_items,
+           T("Give consumables to a hunter in your party and receive theirs (Give in an item's menu in the inventory). Your switch shows it; "
+             "theirs is their consent. Never key, unique or story items. Default: off.",
+             "Передача расходников охотникам группы и получение от них (строки ниже). Ваш переключатель показывает "
+             "список; их - согласие. Никогда ключевые, уникальные и сюжетные предметы. По умолчанию: выкл."),
+           on);
     Toggle("party_conn_warnings", T("Connection warnings", "Предупреждения о связи"), s.party_conn_warnings,
            T("A notice with the fix when the Windows Firewall, the router or a wrong address keeps the party "
              "from working (nobody reaches your party, a guest's game is not heard, the host cannot be "
