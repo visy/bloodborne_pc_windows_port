@@ -654,8 +654,12 @@ bool DeserializeShaderSource(std::vector<u8>&& data, ShaderSource& source) {
            source.runtime_info.sw_stage == source.sw_stage;
 }
 
-bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
-                   Shader::Pools& pools, Shader::Info& base_info, RebuiltShader& out) {
+/// Why the last RebuildShader on this thread returned false (for the log line).
+static thread_local const char* rebuild_failure = "";
+
+static bool RebuildShaderUnguarded(const ShaderSource& source, const Shader::Profile& profile,
+                                   Shader::Pools& pools, Shader::Info& base_info,
+                                   RebuiltShader& out) {
     Shader::GuestReadLog log{Shader::GuestReadLog::Mode::Replay};
     log.ranges = source.ranges;
     log.flat_bufs = source.flat_bufs;
@@ -681,9 +685,14 @@ bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
         auto binding = source.start;
         const auto program =
             Shader::TranslateProgram(code, pools, base_info, runtime_info, profile);
+        if (log.failed) {
+            rebuild_failure = "a guest memory read is missing from its source";
+            return false;
+        }
         out.spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, binding);
         out.spec = Shader::StageSpecialization(base_info, runtime_info, profile, source.start);
         if (log.failed) {
+            rebuild_failure = "a guest memory read is missing from its source";
             return false;
         }
         out.meta = SerializeShaderMeta(base_info, out.spec, HashCombine(source.pgm_hash, u64{0}), 0);
@@ -691,6 +700,7 @@ bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
         // GetProgram, new permutation: specialize on the program's Info with this draw's user
         // data, then translate a fresh Info.
         if (base_info.pgm_hash != source.pgm_hash || base_info.hw_stage != source.hw_stage) {
+            rebuild_failure = "no program Info for the permutation";
             return false;
         }
         Shader::Info info = base_info;
@@ -703,8 +713,13 @@ bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
         new_info.pgm_base = source.pgm_base;
         auto binding = source.start;
         const auto program = Shader::TranslateProgram(code, pools, new_info, runtime_info, profile);
+        if (log.failed) {
+            rebuild_failure = "a guest memory read is missing from its source";
+            return false;
+        }
         out.spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime_info, program, binding);
         if (log.failed) {
+            rebuild_failure = "a guest memory read is missing from its source";
             return false;
         }
         out.meta = SerializeShaderMeta(info, out.spec, HashCombine(source.pgm_hash, u64(source.perm_idx)),
@@ -714,24 +729,33 @@ bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
     return true;
 }
 
-/// RebuildShader with the translator's assertions turned into a skipped shader (a stored source
-/// that does not replay with this build) instead of stopping the game.
-static bool RebuildShaderGuarded(const ShaderSource& source, const Shader::Profile& profile,
-                                 Shader::Pools& pools, Shader::Info& base_info,
-                                 RebuiltShader& out) {
-    ::Common::SetAssertThrowsOnThisThread(true);
-    bool ok = false;
+/// Translates a stored shader source again. A source that does not replay with this build (a
+/// guest read missing from the log, a translator assertion, a SPIR-V emission error) is a
+/// skipped shader, never a stopped game: the assertions of this thread throw meanwhile, and every
+/// exception ends in false. Both callers (cache rebuild, self-test) get this guard.
+bool RebuildShader(const ShaderSource& source, const Shader::Profile& profile,
+                   Shader::Pools& pools, Shader::Info& base_info, RebuiltShader& out) {
+    struct AssertThrows {
+        AssertThrows() { ::Common::SetAssertThrowsOnThisThread(true); }
+        ~AssertThrows() { ::Common::SetAssertThrowsOnThisThread(false); }
+    } assert_throws;
+    rebuild_failure = "";
     try {
-        ok = RebuildShader(source, profile, pools, base_info, out);
+        return RebuildShaderUnguarded(source, profile, pools, base_info, out);
     } catch (const std::exception& e) {
         LOG_WARNING(Render, "Shader cache: shader {:#018x} permutation {} does not rebuild ({}): "
                     "skipped, it compiles again when used", source.pgm_hash, source.perm_idx,
                     e.what());
-        ok = false;
+        rebuild_failure = "the translator failed on it";
+    } catch (...) {
+        LOG_WARNING(Render, "Shader cache: shader {:#018x} permutation {} does not rebuild "
+                    "(unknown error): skipped, it compiles again when used", source.pgm_hash,
+                    source.perm_idx);
+        rebuild_failure = "the translator failed on it";
     }
-    ::Common::SetAssertThrowsOnThisThread(false);
-    return ok;
+    return false;
 }
+
 
 u32 RebuildProgramSources(u64 pgm_hash, std::span<const u32> perms, const Shader::Profile& profile,
                           Shader::Pools& pools, u32& num_skipped) {
@@ -746,11 +770,19 @@ u32 RebuildProgramSources(u64 pgm_hash, std::span<const u32> perms, const Shader
         db.Load(Storage::BlobType::ShaderSource, name, blob);
         ShaderSource source{};
         RebuiltShader out{};
-        const bool ok = (perm_idx == 0 || have_base) &&
-                        DeserializeShaderSource(std::move(blob), source) &&
-                        source.pgm_hash == pgm_hash && source.perm_idx == perm_idx &&
-                        RebuildShaderGuarded(source, profile, pools, base_info, out);
+        const char* reason = nullptr;
+        if (perm_idx != 0 && !have_base) {
+            reason = "its program has no permutation 0 that rebuilt";
+        } else if (!DeserializeShaderSource(std::move(blob), source) ||
+                   source.pgm_hash != pgm_hash || source.perm_idx != perm_idx) {
+            reason = "its source is damaged or of another version";
+        } else if (!RebuildShader(source, profile, pools, base_info, out)) {
+            reason = *rebuild_failure ? rebuild_failure : "it does not translate again";
+        }
+        const bool ok = reason == nullptr;
         if (!ok) {
+            LOG_WARNING(Render, "Shader cache: shader {:#018x} permutation {} dropped: {}; it "
+                        "compiles again when the game uses it", pgm_hash, perm_idx, reason);
             // Useless now (damaged, another version, no permutation 0, or it does not replay):
             // the shader is compiled again when the game uses it, which writes a new source.
             db.Remove(Storage::BlobType::ShaderSource, name);

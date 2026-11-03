@@ -75,5 +75,29 @@ int main() {
     assert(read() == expected);
     Shader::Info::num_ud_snapshots = 0;
 
+    // Shader cache rebuild (Replay log): a sharp that lies in the user data registers is host
+    // memory stored whole with the shader source, not a guest read. Its address differs from the
+    // recorded run, so it must not go through the log (a miss left the translator with zeros,
+    // a null tessellation constant buffer, and a null SPIR-V Id that stopped the game).
+    {
+        Shader::GuestReadLog replay{Shader::GuestReadLog::Mode::Replay};
+        Shader::GuestReadLog::Scope scope{&replay};
+        assert(info.ReadUdReg<AmdGpu::Buffer>(Shader::IR::NumScalarRegs, descriptor_offset) ==
+               expected);
+        assert(!replay.failed);
+        // A table behind a pointer is guest memory: not in the log means a failed replay.
+        set_pointer(reinterpret_cast<u64>(table.data()));
+        assert(read() == AmdGpu::Buffer{});
+        assert(replay.failed);
+        // ... and served from the recorded copy when it is there.
+        Shader::GuestReadLog replay2{Shader::GuestReadLog::Mode::Replay};
+        replay2.ranges.push_back({reinterpret_cast<VAddr>(table.data() + descriptor_offset),
+                                  std::vector<u8>(sizeof(expected))});
+        std::memcpy(replay2.ranges[0].bytes.data(), &expected, sizeof(expected));
+        Shader::GuestReadLog::Scope scope2{&replay2};
+        assert(read() == expected);
+        assert(!replay2.failed);
+    }
+
     std::puts("Shader user data: null tables, vertex consumers, direct registers and snapshots passed");
 }
