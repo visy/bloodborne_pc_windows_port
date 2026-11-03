@@ -15,7 +15,7 @@ Two frame-rate systems exist in this tree and they never run together:
 | Patches | none (BB_FRAME_HOOKS=0: the FPS++ patches) | one XML patch, `60 FPS++ (Deltatime)` (`patches/Bloodborne.xml`) |
 | Where the step comes from | `FrameStep` at `0x2018e36`, the measured frame time clamped to [1/rate, 1/30 s] | `LiveClockTick` replaces the step block at `0x2018e3d` (46 bytes, checked against the patch's exact bytes) |
 | Per-frame constants | 48 redirected operands recomputed every frame (`Live` struct), cloth stiffness factor, steady time | the patch's ~30 code caves read the pacer's measured time (`[pacer + 0x264]`) and a guest global (`image + 0x535A908`); the clock writes both |
-| Time filter | steady time (+-5% a frame) only for cloth and plants | measured dt locked to the target inside +-8%, slewed +12% / -15% a frame, clamped to [1/240 s, 1/`max_dt_hz`] |
+| Time filter | steady time (+-5% a frame) only for cloth and plants | the step is the measured frame time, clamped to [1/240 s, 1/`max_dt_hz`]; only +-1.5% micro-jitter is locked to the target, the difference carried to the next frame (Mrsuss60's +-8% deadband and +12% / -15% slew limit made the game run at 0.83 of real time under frame jitter and were dropped) |
 | Rate change | `SetTargetRate` (sweep tool only) | System menu > Live FPS > Target frame rate, at once; the presenter limit follows |
 
 Live clock per frame (`LiveClockStep`, `gpu/shim/bbport_frame_rate_logic.h`, unit test `frame-rate-test`): the pacer's frame
@@ -62,8 +62,14 @@ the party layer already handles different rates (lift guard, ladder and fall rul
 
 ## Evidence
 
-Physics smoke at 30 / 60 / 60/48 / 120, live vs `BB_LIVE_FPS=0`: all rows green with live on; docs/party/world_actions.md 10.1.5 has the
-table. The lift drop-through of CL-eab030 was not reproduced either way. Known cost: under frame jitter the live step lags (0.83 game
-seconds per real second at a target of 60 with two games on one PC; the hooks keep 1.0), a consequence of the slew limiter and the
-presenter-paced target. Unproven: the fallbacks (an eboot the patch does not fit), a party with live on one side only in a real session
-(the smoke ran live on both sides), the System menu target switch in game.
+Physics smoke at 30 / 60 / 60/48 / 120, live vs `BB_LIVE_FPS=0`: all rows green with live on (docs/party/world_actions.md 10.1.5). The
+lift drop-through of CL-eab030 was not reproduced either way.
+
+Speed (median game steps a second / game seconds per real second, in-world): see 10.1.5. After the fix a single game at a target of 60 makes
+59.6 / 0.996 (hooks 59.8 / 1.000); two games on one PC match the hooks (56.8 / 0.950 vs 56.9 / 0.952, the load is the PC's).
+What made the first port slow: (1) the slew limiter lagged every long frame (game time 0.83); (2) the game's pacer asked for 1/240 s so
+nothing held the target but the presenter, and with a 480 Hz vblank that ran 49 steps a second at a target of 60; the pacer mode hook of
+the hooks mode now waits for the target (`live->shortest`, set each frame by the clock) and `run.bat` keeps the presets' vblank (60 Hz for 60,
+90 Hz for 90, 480 Hz otherwise: at 60 Hz exactly 60 steps, at 480 / 240 / 120 Hz 49-54).
+Unproven: the fallbacks (an eboot the patch does not fit), a party with live on one side only in a real session, the System menu target switch
+in game (a target above the start vblank, 60 or 90, is not reached: start at 120 or more).
