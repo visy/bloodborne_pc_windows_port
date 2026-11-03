@@ -53,6 +53,7 @@ a regression.
 - [ ] Symbols to `rel\symbols\X.Y.Z`.
 - [ ] Stage `relXYZ` from the previous stage plus the new exe, gpu-caps, launcher, `run.bat`, `net_doctor.bat`, docs
       (without docs/superpowers), scripts, patches, `tools/legacy-cpu-plan.json`. No saves, shader caches or `__pycache__`.
+- [ ] The map generator (0.7.8, Hunter's Atlas): `python tools/map/build_generator.py --python <venv>\Scripts\python.exe` (venv: `tools/map/generator/requirements-frozen.txt` + `requirements-build.txt`; its self test must pass), copy `out\map_generator` to `relXYZ\map_generator` next to `scripts\`, and `licenses\HuntersAtlas.txt` with the other notices. No map data made from game files goes in (`user\map` is the player's, written by the launcher's *Prepare the map*).
 - [ ] Join check on the staged build (`relcheck`), plus the phases touched by any late fix, on the final exe.
 - [ ] Zip `bloodborne_pc_windows_port_vX.Y.Z.zip` from the final stage; `zipfile.testzip()` is clean.
 - [ ] Release notes: plain **Added / Changed / Fixed** sections; no player names, IPs or log excerpts; credit upstream
