@@ -222,7 +222,60 @@ static void Script() {
     CHECK(bad == "die?in#21");
 }
 
+
+static void Look() {
+    CHECK(kCoopLookEffect == 9006 && kInvaderLookEffect == 9026);
+    // a remote copy of the invader: a cooperator (9006) -> swap
+    LookStep a = LookNow(true, false);
+    CHECK(a.remove_coop && a.add_invader);
+    // its own chr: only 9026
+    a = LookNow(false, false);
+    CHECK(!a.remove_coop && a.add_invader);
+    // already done: nothing
+    a = LookNow(false, true);
+    CHECK(!a.remove_coop && !a.add_invader);
+    // the end puts back only what was changed
+    LookBack b = LookEnd(true, true, true, false);
+    CHECK(b.remove_invader && b.add_coop);
+    b = LookEnd(true, false, true, false);  // the invader's own game: no 9006 to put back
+    CHECK(b.remove_invader && !b.add_coop);
+    b = LookEnd(false, false, true, true);  // another mod's 9026: left alone
+    CHECK(!b.remove_invader && !b.add_coop);
+    b = LookEnd(true, true, false, true);  // the game already did it
+    CHECK(!b.remove_invader && !b.add_coop);
+}
+
+static void Rewards() {
+    const Reward w = RewardFor(Role::Invader, End::HostDied);
+    CHECK(w.pay && w.rate == 0.1f && w.insight == 1);
+    const Reward h = RewardFor(Role::Host, End::InvaderDied);
+    CHECK(h.pay && h.rate == 0.5f && h.insight == 0);
+    const Reward g = RewardFor(Role::Guest, End::InvaderDied);
+    CHECK(g.pay && g.rate == 0.25f && g.insight == 0);
+    // every other pairing pays nothing
+    for (End e : {End::None, End::InvaderDied, End::HostDied, End::Travel, End::BossFight, End::Disabled, End::Blocked, End::HostGone,
+                  End::Timeout})
+        for (Role r : {Role::Host, Role::Guest, Role::Invader}) {
+            const bool paid = (r == Role::Invader && e == End::HostDied) || (r != Role::Invader && e == End::InvaderDied);
+            CHECK(RewardFor(r, e).pay == paid);
+        }
+    // an invader that lost / a host that fell is paid nothing, a guest is not paid when the host fell
+    CHECK(!RewardFor(Role::Invader, End::InvaderDied).pay);
+    CHECK(!RewardFor(Role::Host, End::HostDied).pay);
+    CHECK(!RewardFor(Role::Guest, End::HostDied).pay);
+    // once per outcome
+    RewardOnce once;
+    CHECK(once.Take("A", End::InvaderDied, 10.0));
+    CHECK(!once.Take("A", End::InvaderDied, 11.0));
+    CHECK(once.Take("A", End::HostDied, 12.0));
+    CHECK(once.Take("B", End::HostDied, 13.0));
+    CHECK(!once.Take("B", End::HostDied, 14.0));
+    CHECK(once.Take("B", End::HostDied, 14.0 + kRewardOnceS + 1));  // a later invasion by the same name
+}
+
 int main() {
+    Look();
+    Rewards();
     Script();
     AllowDenyTable();
     FourPlayers();
