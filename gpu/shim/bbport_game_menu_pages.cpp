@@ -934,7 +934,7 @@ void DefineAll() {
                },
                [](int i) { BbSettings::Get().target_fps = LiveTargets[std::clamp(i, 0, LiveTargetCount - 1)]; }),
            "Target frame rate", "Целевой FPS",
-           "Used while the Live FPS clock runs; takes effect at once (below the target the game slows down as before)",
+           "Used while the Live FPS clock runs; takes effect at once. Above 60 / 90 needs a start at 120 or more (vblank)",
            "Работает при включённом живом FPS; действует сразу (ниже цели игра замедляется как раньше)",
            {AddText("30", "30"), AddText("60", "60"), AddText("90", "90"), AddText("120", "120"), AddText("144", "144"),
             AddText("Uncapped (240)", "Без лимита (240)")},
