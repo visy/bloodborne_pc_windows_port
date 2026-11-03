@@ -186,6 +186,18 @@ int main() {
     assert(bb_test_write_file(path, lod_ini, sizeof(lod_ini) - 1) == 0);
     BbSettings::Load();
     assert(BbSettings::Get().model_lod == 0);
+    // texture_quality (Mrsuss60 8841db5b): auto by default; names read; unknown stays; key_ramp default on.
+    BbSettings::Get().texture_quality = BbSettings::TqAuto;
+    {
+        const char tq_ini[] = "texture_quality=quarter\nkey_ramp=0\n";
+        assert(bb_test_write_file(path, tq_ini, sizeof(tq_ini) - 1) == 0);
+        BbSettings::Load();
+        assert(BbSettings::Get().texture_quality == BbSettings::TqQuarter && !BbSettings::Get().key_ramp);
+        const char tq_bad[] = "texture_quality=half\ntexture_quality=bogus\n";
+        assert(bb_test_write_file(path, tq_bad, sizeof(tq_bad) - 1) == 0);
+        BbSettings::Load();
+        assert(BbSettings::Get().texture_quality == BbSettings::TqHalf);
+    }
     std::remove(path);
 
     // 0.7.2 settings_rev 1: a 0.7.1 bbport.ini's party_rot=1 (the game wrote its old default at
