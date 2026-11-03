@@ -33,6 +33,7 @@
 #include "party_npc_test.h"
 #include "party_guestsvc.h"
 #include "party_split.h"
+#include "party_give.h"
 #include "party_gather.h"
 #include "party_vote.h"
 #include "party_stayhome.h"
@@ -5747,6 +5748,7 @@ void PartyDirector::Tick() {
     PARTY_PERF_CALL(split::Tick(s, link));  // split travel: the lamp choice dialog (party_split.h)
     if (role != PartyRole::None) {
         PARTY_PERF_CALL(gather::Tick(s, link, role == PartyRole::Host));  // I5 Gather the party (party_gather.h)
+        PARTY_PERF_CALL(give::Tick(s, link, role == PartyRole::Host));    // 0.7.8 give items (party_give.h)
         PARTY_PERF_CALL(vote::Tick(s, link, role == PartyRole::Host));    // 0.7.3 lamp travel voting (party_vote.h)
         PARTY_PERF_CALL(stayhome::Tick(link, role == PartyRole::Host));   // CL-adeb50 stay in my world
     }
