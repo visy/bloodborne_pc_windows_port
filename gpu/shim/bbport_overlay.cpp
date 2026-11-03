@@ -1778,6 +1778,12 @@ void PartyTab() {
                                      : T("None", "Нет"),
          on ? Plain() : Dim());
 
+    // 0.7.8: give items to a party member (party_give.h), above the codes so the rows are in view.
+    if (BbSettings::Get().party_give_items.load() || coop::give::Enabled()) {
+        GiveRows(on);
+        ImGui::Spacing();
+    }
+
     // Party code + copy. A host has two when it knows its public address: the Internet code
     // (friends elsewhere) and the LAN code (same network: most routers cannot loop back to their
     // own public address).
@@ -2235,10 +2241,6 @@ void PartyTab() {
                                 "За каждого охотника, в % от шага самой игры для боссов (100 % = как в игре; "
                                 "обычные враги в игре не усиливаются). Стойкость от 0 %: как в игре."),
                on, [&](int i) { Store(*sc.value, sc.table[std::clamp(i, 0, 10)], true); });
-    }
-    if (s.party_give_items.load() || coop::give::Enabled()) {
-        ImGui::Spacing();
-        GiveRows(on);
     }
     if (!b.last_event.empty()) {
         ImGui::Spacing();
@@ -3695,6 +3697,22 @@ void TextPrompt() {
 
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
+/// Test aid BB_OVERLAY_OPEN_PARTY_AT=<s>: opens the menu on the Party tab that many seconds after the first frame (a
+/// screenshot of the give rows, 0.7.8).
+void OpenPartyTabTest() {
+    static const char* at = std::getenv("BB_OVERLAY_OPEN_PARTY_AT");
+    static bool done = false;
+    static std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    if (!at || done) {
+        return;
+    }
+    if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= std::atof(at)) {
+        done = true;
+        Ui::state.tab = 5;
+        SetOpen(true);
+    }
+}
+
 void ScriptedKeys() {
     static const char* path = std::getenv("BB_MENU_KEYS_FILE");
     static std::chrono::steady_clock::time_point last_check{};
@@ -4177,8 +4195,9 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
         frame_history_next = (frame_history_next + 1) % FrameHistory;
     }
     Telemetry::wanted.store(initialized && BbSettings::Get().show_hud, std::memory_order_relaxed);
-    if (std::getenv("BB_MENU_KEYS_FILE") && initialized) {
+    if ((std::getenv("BB_MENU_KEYS_FILE") || std::getenv("BB_OVERLAY_OPEN_PARTY_AT")) && initialized) {
         std::scoped_lock lock{imgui_mutex};
+        OpenPartyTabTest();
         ScriptedKeys();
     }
     if (initialized) {
