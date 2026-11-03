@@ -399,6 +399,7 @@ static void ReportWorkerException(const char* what) {
 void DrawPreparation::WorkerLoop(std::stop_token stop, u32 index) {
     Common::SetCurrentThreadName(("bb:DrawPrep" + std::to_string(index)).c_str());
     BbThreads::MakeBackground();
+    BbThreads::draw_prep_worker = true;
     auto regs = std::make_unique<AmdGpu::Regs>();
     constexpr u64 NoPosition = ~0ull;
     u64 position = NoPosition; ///< `regs` holds the state at the start of this buffer
