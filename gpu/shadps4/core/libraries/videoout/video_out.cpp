@@ -17,6 +17,7 @@
 #include "core/libraries/videoout/videoout_error.h"
 #include "bbport_frame_rate.h"
 #include "core/platform.h"
+#include "video_core/renderer_vulkan/vk_antilag.h"
 #include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 
@@ -153,6 +154,36 @@ s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(s32 handle, s32 rate) {
     return ORBIS_OK;
 }
 
+static std::atomic<u64> flips_submitted{0};
+
+static std::atomic<u32> presenter_limit{0};
+
+u32 PresenterLimit() {
+    return presenter_limit.load(std::memory_order_relaxed);
+}
+
+void SetPresenterLimit(u32 limit) {
+    presenter_limit.store(limit, std::memory_order_relaxed);
+}
+
+u64 FlipsSubmitted() {
+    return flips_submitted.load(std::memory_order_relaxed);
+}
+
+bool WaitFlipQueue(s32 max_pending, u32 timeout_us) {
+    if (!driver) {
+        return false;
+    }
+    auto* port = driver->GetPort(1);
+    if (!port || !port->is_open) {
+        return false;
+    }
+    std::unique_lock lock{port->port_mutex};
+    return port->flip_cv.wait_for(lock, std::chrono::microseconds(timeout_us), [&] {
+        return port->flip_status.flip_pending_num + driver->SwapInFlight() <= max_pending;
+    });
+}
+
 s32 PS4_SYSV_ABI sceVideoOutIsFlipPending(s32 handle) {
     LOG_TRACE(Lib_VideoOut, "called");
     auto* port = driver->GetPort(handle);
@@ -192,7 +223,9 @@ s32 PS4_SYSV_ABI sceVideoOutSubmitFlip(s32 handle, s32 bufferIndex, s32 flipMode
         LOG_ERROR(Lib_VideoOut, "Flip queue is full");
         return ORBIS_VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
     }
+    flips_submitted.fetch_add(1, std::memory_order_relaxed);
     Vulkan::Reflex::OnSimulationEnd();
+    Vulkan::AntiLag::OnFlip();
 
     return ORBIS_OK;
 }
@@ -362,7 +395,9 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
     }
 
     const u64 content_frame_id = Vulkan::Reflex::CurrentSimFrameId();
+    flips_submitted.fetch_add(1, std::memory_order_relaxed);
     Vulkan::Reflex::OnSimulationEnd();
+    Vulkan::AntiLag::OnFlip();
     Platform::IrqC::Instance()->RegisterOnce(
         Platform::InterruptId::GfxFlip, [=](Platform::InterruptId irq) {
             ASSERT_MSG(irq == Platform::InterruptId::GfxFlip, "An unexpected IRQ occured");

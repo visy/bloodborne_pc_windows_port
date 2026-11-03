@@ -29,6 +29,13 @@ bool SetTargetRate(int rate);
 /// is not; the target, 240 for uncapped; 60 when the eboot did not take the hook: the patch's static
 /// rate). Read every present loop, so the menu's target changes it at once.
 unsigned LivePresenterLimit();
+/// Variable refresh rate (bbport.ini vrr, at start): the highest frame rate that stays inside the display's VRR
+/// window (VrrFrameCap of its refresh rate); 0 = vrr off or the refresh rate unknown.
+unsigned VrrCap();
+/// `limit` (0 = none) lowered to VrrCap() when vrr is on; unchanged otherwise.
+unsigned ApplyVrrCap(unsigned limit);
+/// The window thread's reading of the display's refresh rate in Hz (0 = unknown).
+void SetDisplayRefresh(float hz);
 /// The live clock hook is installed and steps the game.
 bool LiveActive();
 /// The last step's dt (s; 0 when the hooks are off).

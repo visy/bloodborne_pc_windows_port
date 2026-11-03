@@ -12,6 +12,7 @@
 #include "sdl_window.h"
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
+#include "bbport_frame_rate.h"
 #include "bbport_mouse.h"
 #include "bloodborne_cam.h"
 
@@ -341,6 +342,24 @@ constexpr u64 kCaptureClickMs = 250;
 } // namespace
 
 bool WindowSDL::PollEvents() {
+    {
+        // The display's refresh rate for the variable refresh rate cap (BbFrameRate::VrrCap), twice a second.
+        static u64 last_ms = 0;
+        const u64 now_ms = SDL_GetTicks();
+        if (!last_ms || now_ms - last_ms >= 500) {
+            last_ms = now_ms;
+            const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
+            const SDL_DisplayMode* mode = display ? SDL_GetCurrentDisplayMode(display) : nullptr;
+            static float logged = -1.0f;
+            float hz = mode ? mode->refresh_rate : 0.0f;
+            if (const char* forced = std::getenv("BB_DISPLAY_REFRESH")) hz = float(std::atof(forced)); // test aid: pretend this refresh
+            BbFrameRate::SetDisplayRefresh(hz);
+            if (hz != logged) {
+                logged = hz;
+                std::printf("Window: display refresh %.2f Hz\n", double(hz));
+            }
+        }
+    }
     {
         std::scoped_lock lock{text_mutex};
         if (text_requested) { // SDL text input must be toggled from the window thread

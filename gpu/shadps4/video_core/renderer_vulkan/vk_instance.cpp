@@ -17,6 +17,7 @@
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
+#include "video_core/renderer_vulkan/vk_antilag.h"
 #include "video_core/renderer_vulkan/vk_reflex.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -228,6 +229,7 @@ Instance::~Instance() {
     if (reflex_supported) {
         Reflex::Shutdown();
     }
+    AntiLag::Shutdown();
     ImGui::Core::Shutdown(GetDevice());
     vmaDestroyAllocator(allocator);
 }
@@ -556,7 +558,32 @@ bool Instance::CreateDevice() {
     // bbport: NVIDIA Reflex (VK_NV_low_latency2 rev 3 + VK_KHR_present_id; from
     // Supermedo/bloodborne_pc PR #69 by FIocker), only when chosen for this start.
     reflex_supported = false;
-    if (BbSettings::Get().startup_reflex != BbSettings::ReflexOff) {
+    {
+        // Auto (the default): Reflex on for an NVIDIA GPU, off elsewhere; Anti-Lag 2 on for an AMD GPU.
+        auto& st = BbSettings::Get();
+        const bool nvidia = GetVendorID() == 0x10DE, amd = GetVendorID() == 0x1002;
+        int reflex = st.startup_reflex;
+        if (reflex == BbSettings::ReflexAuto) reflex = nvidia ? BbSettings::ReflexOn : BbSettings::ReflexOff;
+        st.reflex_resolved = reflex;
+        int anti_lag = st.startup_anti_lag;
+        if (anti_lag == BbSettings::AntiLagAuto) anti_lag = amd ? BbSettings::AntiLagOn : BbSettings::AntiLagOff;
+        if (anti_lag == BbSettings::AntiLagOn) {
+            std::vector<const char*> al_ext;
+            anti_lag_supported = AntiLag::ConfigureDevice(physical_device, al_ext);
+            for (const char* name : al_ext) {
+                if (enabled_extensions.size() < enabled_extensions.capacity()) enabled_extensions.push_back(name);
+                else anti_lag_supported = false;
+            }
+            if (!anti_lag_supported) {
+                std::printf("Anti-Lag 2: not supported by this GPU or driver (VK_AMD_anti_lag); off\n");
+            }
+        }
+        std::printf("Low latency: reflex=%s (setting %s), anti-lag-2=%s (setting %s), GPU vendor 0x%04x\n",
+                    BbSettings::ReflexModeName(reflex), BbSettings::ReflexModeName(st.startup_reflex),
+                    anti_lag_supported ? "on" : "off", BbSettings::AntiLagModeName(st.startup_anti_lag),
+                    unsigned(GetVendorID()));
+    }
+    if (BbSettings::Get().reflex_resolved != BbSettings::ReflexOff) {
         std::vector<const char*> reflex_extensions;
         vk::PhysicalDeviceVulkan12Features reflex_vk12{};
         vk::PhysicalDevicePresentIdFeaturesKHR reflex_present_id{};
@@ -755,12 +782,18 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceFaultFeaturesEXT{
             .deviceFault = true,
         },
+        vk::PhysicalDeviceAntiLagFeaturesAMD{
+            .antiLag = true,
+        },
     };
     if (!device_fault) {
         device_chain.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
     }
     if (!reflex_supported) {
         device_chain.unlink<vk::PhysicalDevicePresentIdFeaturesKHR>();
+    }
+    if (!anti_lag_supported) {
+        device_chain.unlink<vk::PhysicalDeviceAntiLagFeaturesAMD>();
     }
 
     if (!custom_border_color) {
@@ -921,7 +954,9 @@ bool Instance::CreateDevice() {
         }
         settings.fg_active = ok;
     }
-    if (BbSettings::Get().startup_reflex != BbSettings::ReflexOff) {
+    AntiLag::Initialize(*device, anti_lag_supported);
+    BbSettings::Get().anti_lag_active = AntiLag::Active();
+    if (BbSettings::Get().reflex_resolved != BbSettings::ReflexOff) {
         Reflex::Initialize(*instance, physical_device, *device, reflex_supported);
         reflex_supported = Reflex::Tracking();
         BbSettings::Get().reflex_active = reflex_supported;
