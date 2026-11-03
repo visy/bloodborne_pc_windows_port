@@ -1100,8 +1100,16 @@ void DefineAll() {
             "Карта в игре: области, фонари, группа; переход к зажжённому фонарю (bbport, Hunter's Atlas)");
     AddRow(Flag(&Values::map_enabled), "Hunter's Atlas map", "Карта Hunter's Atlas",
            "M (or hold L1 + R1 + Start) opens the map; click a lit lamp to travel. Needs Prepare the map in the launcher",
-           "M (или удерживайте L1 + R1 + Start) открывает карту; клик по зажжённому фонарю - переход. Нужно Prepare the map в лаунчере",
+           "M (или L1 + R1 + Start) открывает карту; клик по зажжённому фонарю - переход. Нужно Prepare the map",
            toggle, Kind::Toggle);
+
+    // ---- Game HUD (0.7.8, CL-7d51fe): the game's own HUD, like Elden Ring's "HUD: Auto". ----
+    AddPage("Game HUD", "HUD игры", "The game's own bars and item slots: hide them while nothing happens (bbport)",
+            "Полосы и слоты игры: скрывать, пока ничего не происходит (bbport)");
+    AddRow(Flag(&Values::auto_hide_hud), "Auto-hide HUD", "Автоскрытие HUD",
+           "Off by default. Bars and slots fade out when idle; damage, fights, lock-on, items, menus bring them back",
+           "Выкл. по умолчанию. Полосы и слоты скрываются в покое; урон, бой, захват, предметы, меню возвращают", toggle,
+           Kind::Toggle);
 
     // ---- Game patches (after a restart) and the restart itself. ----
     AddPage("Game patches", "Патчи игры", "The game's own AA, intros, free camera, debug menu, restart, quit (bbport)",
@@ -1755,17 +1763,9 @@ void DefineAll() {
     own(&Values::party_through_walls, "Show party through walls", "Группа сквозь стены",
         "A small marker with the distance on each companion on your map, also behind walls",
         "Маленькая метка с расстоянием на каждом спутнике на вашей карте, и за стенами");
-    // Party text chat (party_chat.h), off by default.
-    own(&Values::party_chat, "Party chat", "Чат группы",
-        "Off by default. T (keyboard) or touchpad + L1 (pad: a list of short lines) writes to the party; lines show in your colour",
-        "Выкл. по умолчанию. T (клавиатура) или тачпад + L1 (геймпад: список коротких фраз) пишет группе; строки цветом отправителя");
-    own(&Values::party_chat_receive, "Show others' chat", "Чат других игроков",
-        "With party chat on: show the lines the other hunters write (off = mute them)",
-        "При включённом чате: показывать строки других охотников (выкл. = скрыть)");
-    // The marker on the own lost-echoes bloodstain (bbport_overlay PartyStainMarker), off by default.
-    own(&Values::party_stain_marker, "Bloodstain marker", "Метка пятна крови",
-        "A marker with Blood Echoes and distance on your lost echoes' bloodstain, also behind walls",
-        "Метка с отголосками и расстоянием на пятне крови с вашими отголосками, и за стенами");
+    own(&Values::party_name_colours, "Coloured name tags", "Цветные имена",
+        "Off by default. Name tags above companions use each hunter's party colour (as in the party panel and chat)",
+        "Выкл. по умолчанию. Имена над спутниками цветом охотника (как в панели группы и чате)");
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 5); },
@@ -1778,6 +1778,21 @@ void DefineAll() {
             AddText("Name and ping", "Имя и пинг")},
            Kind::List);
 
+
+    // ---- My party: Chat & markers (0.7.8): the party text chat and the bloodstain marker (the Display page holds 6 rows at most) ----
+    AddPage("My party: Chat & markers", "Моя группа: чат, метки", "Yours: party text chat, the bloodstain marker (bbport)",
+            "Ваше: текстовый чат группы, метка пятна крови (bbport)");
+    // Party text chat (party_chat.h), off by default.
+    own(&Values::party_chat, "Party chat", "Чат группы",
+        "Off by default. T (keyboard) or touchpad + L1 (pad: short lines) writes to the party, in your colour",
+        "Выкл. по умолчанию. T (клавиатура) или тачпад + L1 (геймпад: фразы) пишет группе, вашим цветом");
+    own(&Values::party_chat_receive, "Show others' chat", "Чат других игроков",
+        "With party chat on: show the lines the other hunters write (off = mute them)",
+        "При включённом чате: показывать строки других охотников (выкл. = скрыть)");
+    // The marker on the own lost-echoes bloodstain (bbport_overlay PartyStainMarker), off by default.
+    own(&Values::party_stain_marker, "Bloodstain marker", "Метка пятна крови",
+        "A marker with Blood Echoes and distance on your lost echoes' bloodstain, also behind walls",
+        "Метка с отголосками и расстоянием на пятне крови с вашими отголосками, и за стенами");
 
     // ---- My party: Look & notices: how companions are drawn on this screen, the join / leave notices ----
     AddPage("My party: Look & notices", "Моя группа: вид, оповещ.", "Yours: how the other hunters look on your screen, join/leave notices, NPC dialogue (bbport)",

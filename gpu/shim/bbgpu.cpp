@@ -7,6 +7,7 @@
 #include "party/party_director.h"
 #include "party/lamp_travel.h"
 #include "party/mirror_frame.h"
+#include "party/auto_hud.h"
 #include "party/world_warper.h"
 #include "party/coop_hooks.h"
 #include "party/game_state.h"
@@ -410,6 +411,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     bbnet::set_guest_reader(&coop::SafeRead);
     coop::HooksInit(image, size);  // the image for game-state reads (the performance HUD's menu / banner check, solo too)
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
+    coop::autohud::Install();  // the auto-hide HUD (0.7.8; setting off by default)
     coop::mirror::Install();  // the Dream mirror's editor in character creation's frame (H5)
     coop::warper::Install(image, size);  // the world warper (BB_WORLD_WARPER, solo shader-cache builder)
     coop::b2::InstallOwnWorldTypeGuard();  // own-world chr type repair, every mode (party save played offline)
