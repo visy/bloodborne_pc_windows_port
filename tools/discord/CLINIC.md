@@ -572,3 +572,57 @@ with `uv pip install --python ~/netdoctor-venv/bin/python pytest` if missing), k
 pattern `[t]ools/discord/netdoctor_bot.py` and starts it with `keepalive.sh`, waits for the `netdoctor bot
 ready as` log line, then runs `iosefka_cli.py --as visy health`. Any failure resets to the recorded commit,
 restarts, and sends an alert (`clinic_health.py alert TEXT`, plain REST, same destination rules).
+
+## For moderators and developers: the /clinic slash commands
+
+Iosefka lets the server's **Mod** and **Dev** roles look into the bug archive from Discord, to help players in the
+channels. Read-only, private, audited. Source: `tools/discord/clinic_staff.py`.
+
+**Where and who.** In the server and in a DM with the bot. Allowed: members holding a role named exactly `Mod` or
+`Dev` (case-insensitive), or a user id listed in the settings. In a DM the bot looks the sender up as a member of the
+server (REST fetch, remembered 2 minutes), so someone who lost the role is refused within 2 minutes. Everyone else
+sees the commands (Discord cannot show a command to a role without an admin editing Server Settings > Integrations by
+hand, so by default they are visible to all) and gets a polite private refusal; the refusal is audited too. Replies
+are ephemeral (only the caller sees them); in a DM they are private by nature. Limits: 12 commands and 4 file
+requests per user per minute.
+
+**Settings** (`~/.config/netdoctor/env`; restart the bot after a change):
+
+| Variable | Meaning |
+|---|---|
+| `NETDOCTOR_STAFF_ROLES` | role ids or names, comma separated; REPLACES the default `Mod, Dev` |
+| `NETDOCTOR_STAFF_USERS` | user ids allowed whatever their roles |
+| `NETDOCTOR_STAFF_WRITE_ROLES` / `_USERS` | who may also use `/clinic note`; empty (default) = the command does not exist |
+| `NETDOCTOR_STAFF_HIDE_PERM` | e.g. `manage_messages`: hide `/clinic` from members without that permission (an admin must then allow Mod and Dev in Server Settings > Integrations > the bot); default unset |
+| `NETDOCTOR_STAFF_MAX_MB` | largest attachment, default 8 (also capped by the server's own limit) |
+
+**Commands** (all under `/clinic`):
+
+- `list` filters `status`, `triage` (tag value), `area` (component tag), `version` (bugs linked to that changelist
+  version), `reporter` (id, mention or name), `since` (`2026-10-01` or `7d`), `query` (title, notes, message text);
+  paginated with Prev / Next buttons.
+- `show bug` card: status, tags, reporter, dates, counts, merged duplicates, linked CL items, notes timeline.
+- `messages bug`: each message with its Discord link (thread or channel; the replacement note's link when Iosefka
+  replaced the original), author, state, excerpt, file names.
+- `files bug [logs|images|stills|videos|all]`: the stored files as attachments, ephemeral. Logs are always run through
+  IP masking (public IPs become `<public IP>`, LAN/VPN ones keep one octet) even though the archive keeps the raw
+  bytes; player names stay (staff only). Many or big files are zipped; anything over the size limit is named and left
+  out. At most 4 attachment messages per command.
+- `result bug`: triage notes and the stored net_doctor analysis text (IPs masked).
+- `queue` (triage queue), `needlogs` (open bugs with no log), `mine` (bugs you reported), `find` (player name,
+  Discord id, or NW-id; also searches the player names found in logs), `changed bug` (linked CL items plus status
+  history), `health` (latest health summary, no names or log lines).
+- Changelists (every track and version, including planned / future ones and dropped items): `cl item CL-xxxxxx` (text,
+  dev notes, status, tags, rank, linked bugs, commits, cases, history), `cl list` (filters `track`, `version`,
+  `status`, `priority` = rank tag, `area`, `text`), `cl version`, `cl versions` (with item counts), `cl notes track
+  version` (release-notes markdown), `cl bug NW-x` (bug to items), `cl related NW-x|CL-x` (bugs of an item plus the
+  cross-track related lookup).
+- `note bug text` (only when a write role/user is configured): adds a note `staff:<name>` (IPs masked).
+
+**Audit.** Every use, allowed or refused, is stored in `nw_audit`: time, user id and name, command, the bug / CL id,
+the NAMES of the filters used (never their values), guild or DM. Read it with
+`iosefka_cli.py --as visy staff-audit [--since UNIXTIME] [--limit N]` (devs only).
+
+**Deploy.** Normal `deploy.sh` (owner runs it); the bot syncs the new global commands in `on_ready` (a new global
+command can take a while to show up in Discord clients; restart the Discord app to speed it up). Needs nothing new on
+the server: discord.py 2.5.2 is already in the venv, and no new intent.
