@@ -245,6 +245,18 @@ static void Look() {
     CHECK(!b.remove_invader && !b.add_coop);
 }
 
+static void NameColour() {
+    const float blue[3] = {0.1f, 0.2f, 0.9f};
+    CHECK(IsInvaderName("Hunter2", "Hunter2"));
+    CHECK(!IsInvaderName("Hunter1", "Hunter2"));
+    CHECK(!IsInvaderName("Hunter1", ""));  // no invasion: nobody is red
+    CHECK(!IsInvaderName("", ""));
+    CHECK(NameRgb("Hunter2", "Hunter2", blue) == kInvaderNameRgb);
+    CHECK(NameRgb("Hunter1", "Hunter2", blue) == blue);
+    CHECK(NameRgb("Hunter2", "", blue) == blue);
+    CHECK(kInvaderNameRgb[0] > 0.8f && kInvaderNameRgb[1] < 0.3f && kInvaderNameRgb[2] < 0.3f);
+}
+
 static void Rewards() {
     const Reward w = RewardFor(Role::Invader, End::HostDied);
     CHECK(w.pay && w.rate == 0.1f && w.insight == 1);
@@ -259,6 +271,12 @@ static void Rewards() {
             const bool paid = (r == Role::Invader && e == End::HostDied) || (r != Role::Invader && e == End::InvaderDied);
             CHECK(RewardFor(r, e).pay == paid);
         }
+    // the banners: the invader that won reads TargetClear (5), the host and guests that won BlackClear (7), nobody else a banner
+    CHECK(w.banner == 5 && h.banner == 7 && g.banner == 7);
+    for (End e : {End::None, End::InvaderDied, End::HostDied, End::Travel, End::BossFight, End::Disabled, End::Blocked, End::HostGone,
+                  End::Timeout})
+        for (Role r : {Role::Host, Role::Guest, Role::Invader})
+            CHECK((RewardFor(r, e).banner != 0) == RewardFor(r, e).pay);
     // an invader that lost / a host that fell is paid nothing, a guest is not paid when the host fell
     CHECK(!RewardFor(Role::Invader, End::InvaderDied).pay);
     CHECK(!RewardFor(Role::Host, End::HostDied).pay);
@@ -275,6 +293,7 @@ static void Rewards() {
 
 int main() {
     Look();
+    NameColour();
     Rewards();
     Script();
     AllowDenyTable();
