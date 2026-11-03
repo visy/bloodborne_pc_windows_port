@@ -25,7 +25,8 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 | **Party co-op, no server** | Play the whole campaign with friends over a direct connection: no PSN, no server. Modelled on Elden Ring Seamless Co-op. [More](#party-co-op) |
 | **Settings in the game's menu** | Every port setting is a page in the game's own *System* menu, with gamepad navigation. |
 | **Keyboard, mouse and any gamepad** | Classic keyboard layout or mouse & keyboard mode, every key rebindable; button prompts show your keys, Xbox or Nintendo buttons. [Controls](#controls) |
-| **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed: hooks in the game's code follow each frame's real time (deadinside's 0.6-pre1 work; *Frame rate by game hooks* in the launcher, off = the community FPS++ patches), plus bbhost's high-FPS fixes for effects, grass wind and the Bloodletter's L2. |
+| **High frame rates** | 30 / 60 / 90 / 120 / uncapped with correct game speed. **Live FPS** (on by default, Mrsuss60's work): the game's clock follows the real frame time, so physics, cloth and the camera stay steady at any rate, and the target can be changed in *System > Live FPS*. Off = deadinside's frame-rate hooks or the community FPS++ patches; plus bbhost's high-FPS fixes for effects, grass wind and the Bloodletter's L2. [More](docs/LIVE_FPS.md) |
+| **Texture quality** | *Auto / full / half / quarter*: large textures can skip their top mip level to save video memory; *auto* only steps down on cards with 3 GB or less. |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
 | **Input lag** | Frames no longer queue before the display, the gamepad is read at the moment the game asks (both on), NVIDIA Reflex / AMD Anti-Lag 2 automatic on those GPUs, G-Sync / FreeSync switch. [More](docs/LATENCY.md) |
@@ -614,23 +615,25 @@ are capped at 95% too.
 
 | Change | Status |
 |---|---|
+| Invasions: the red hostile-phantom look and the vanilla rewards | In progress |
+| Character creation: choosing glasses no longer locks the editor; a clean Favourites portrait | In progress |
+| Chalice Dungeons with a guest started in offline mode: no kick home, a clear message | In progress |
+| A lamp a guest lit is fully usable in the host's world (GitHub #28) | In progress |
+| After a party wipe at Ludwig: no second-half scene, boss bar or "Prey Slaughtered" by mistake | Needs logs (diagnostics in the launcher) |
+| A guest joining the host in Yahar'gul loads in (no endless loading screen) | Needs the host's log |
 | FSR 4 white or grey picture fixed | Protective fixes built; the cause (FSR 4 with HDR on in Windows) is still being confirmed |
 | Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (opt-in first) |
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
-| Game-style fades instead of blinks for in-world moves and revives | Planned |
-| Shader cache builder: bosses, gestures and hunter tools; a fuller shared cache | In progress |
-| Playtest 3 over the Internet on 0.7.0 (the fixes from playtest 2, VPN joins, 3-4 players) | Needs players: see `docs/party/playtest2_checklist.md` |
 
 ### Known issues
 
 - **FSR 4 can show a white or grey picture** on some PCs. The cause is under investigation (suspected:
   FSR 4 with HDR turned on in Windows). Meanwhile switch to FSR 3.1, DLSS or no upscaler.
-- **The fixes since playtest 2 were tested on one PC** (several game copies, simulated internet lag),
-  not yet in a real Internet session. Please send support bundles if something goes wrong (see
+- **Real sessions:** a 4-player playtest over the Internet (2026-11-01, 5 hours) found the bugs fixed in 0.7.8;
+  the newest features (invasions, item giving, chat, the map) were tested on one PC with several game copies and
+  simulated internet lag. Please send support bundles if something goes wrong (see
   [Reporting a co-op bug](#reporting-a-co-op-bug)).
 - **Reported in real sessions and fixed in 0.7.6 or not yet, none confirmed live on two PCs:** after an ending nobody could join (fixed 0.7.6), a guest's save advancing two New Game+ cycles (fixed 0.7.6), joins over a VPN failing for a guest behind a strict NAT, a 4-player lobby with guests stuck loading, 4-10 s outages on Hamachi or a phone hotspot sending guests home, guests not seeing each other until a teleport, a wrong ending cutscene and late credits for a guest, the boss standing idle while the host is dead and a guest fights, talking to an NPC next to a lamp opening the lamp's travel prompt for a guest, and a clip on the edge of descending lifts. Open ones are tracked in [ERSC_PARITY.md](docs/party/ERSC_PARITY.md).
-- **The Bath Messengers may pop in and out** (with their sound repeating) for a player watching while
-  another browses their shop. Being fixed.
 
 ### Connecting over the internet
 
@@ -713,7 +716,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport): flat memory image, two-stage Vulkan pipeline, motion vectors; Linux mouse look capture (via Mrsuss60); in 0.6.2 fixes from 0.6-pre1 (Supermedo/bloodborne_pc 72e5c8ce): idle VRAM copies released on 4 GB cards, NVIDIA start without DLSS, unresolved Vulkan commands, pipeline cache stages, write-trap race, occlusion pass scale, sampler anisotropy clamp; next release: button prompts for the keyboard, Xbox and Nintendo pads (72e5c8ce) and the frame rate by hooks in the game's code (0.6-pre1) |
-| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press; next release: clear error for a missing or truncated `sce_module/libc.prx`; crash logs that name failed allocations and the game's own assertions, crash exit codes by cause, a stripped (smaller) `bbport.exe` |
+| Mrsuss60 | Original Windows port: Win32 runtime, Vulkan on Windows, build scripts, character creation and keyboard fixes, touchpad Gestures and Personal Effects menus, performance HUD; audio pop fix, paths with parentheses in `run.bat`, parallel `build.bat`; CPUs without FSGSBASE (Windows TLS fallback), driver pipeline binaries kept between sessions, more background shader compile threads; SnormNz crash fix (packed formats such as 11_11_10), texture collector never evicting bound targets or presented surfaces; stream buffer placement switch (`BB_STREAM_MEMORY`), no draw-queue wait at `SET_PREDICATION`; mouse sensitivity fix (stick dead zone compensation), in-game key rebinding, focus click not a game press; next release: Live FPS (the dynamic in-game clock), texture quality (mip skipping, from deadinside28), the command processor packet-size fix, three shader translation fixes, texture cache extent fixes, the keyboard stick ramp, `eboot.elf` support (with facundo1701); clear error for a missing or truncated `sce_module/libc.prx`; crash logs that name failed allocations and the game's own assertions, crash exit codes by cause, a stripped (smaller) `bbport.exe` |
 | shadPS4 team | Vulkan video core and shader recompiler (GPL-2.0+), sirit; next release: first-page texture lookup (145932bf, via Mrsuss60's port) |
 | droogie and the bbhost team | Long-session stability fixes; menu button rows and the menu cursor's offsets; direct summon delivery; the Hunter's Dream mirror (appearance editor); next release: the high-FPS fixes for effects, grass wind and the Bloodletter's L2 (Kyoskii, perf/next 6f735f4, b2818b4) ([bbhost](https://github.com/droogie/bbhost), GPL-3.0+) |
 | FireBurn | FSR-Vulkan (MIT); AMD FidelityFX SDK (MIT) |
