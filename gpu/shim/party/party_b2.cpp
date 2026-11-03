@@ -545,6 +545,35 @@ BB_COOP_SYSV void OwnWorldTypeHook(u64, u64, u64, u64, u64, u64) {
         "set to 0 before this load builds the chr (flow %d)", rem, flow);
 }
 
+/// Guest: the host is in a Chalice Dungeon and this game cannot make the channel request (FrpgNetMan +8 clear: offline mode, or
+/// the FROM login never finished; NW-cab726f): the summon could not bring it in, so it must not be sent to its own world (the
+/// kick home and a load that fails) but stay where it is, with the notice, and follow the host out again. BB_PARTY_CHALICE_
+/// OFFLINE_HOLD=0 restores the send-home. Test aid BB_PARTY_CHALICE_MSG_TEST=offline_mode reads as offline mode.
+void Send(int slot, const std::string& body);
+std::atomic<bool> g_offline_hold_noticed{false};
+bool ChaliceOfflineHold(bool host_in_dungeon, dsummon::StuckWhy* why = nullptr) {
+    static const bool enabled = !(std::getenv("BB_PARTY_CHALICE_OFFLINE_HOLD") && std::getenv("BB_PARTY_CHALICE_OFFLINE_HOLD")[0] == '0');
+    if (Role() != RoleClient) return false;
+    const char* t = std::getenv("BB_PARTY_CHALICE_MSG_TEST");
+    const bool test = t && std::strcmp(t, "offline_mode") == 0;
+    const u64 nm = Field<u64>(Guest(0x553b120), 0, 0);  // FrpgNetMan
+    if (!nm && !test) return false;
+    const unsigned online = test ? 0 : Field<u8>(nm, 0x8, 0xff);
+    const unsigned choice = test ? 0 : Field<u8>(nm, 0xa, 0xff);
+    if (!dsummon::HoldOfflineGuest(enabled, online, host_in_dungeon)) return false;
+    if (why) *why = dsummon::OfflineWhy(choice);
+    return true;
+}
+/// The hold's notice, once per stay (the host is told the same way as for a stopped summon).
+void ChaliceOfflineHoldNotice(dsummon::StuckWhy why) {
+    if (g_offline_hold_noticed.exchange(true)) return;
+    Log("chalice: notice shown: %s (this guest stays out of the host's Chalice Dungeon: its game is %s, no channel request is "
+        "possible)", why == dsummon::StuckWhy::OfflineMode ? dsummon::OfflineModeTitle() : dsummon::OfflineTitle(),
+        why == dsummon::StuckWhy::OfflineMode ? "in offline mode" : "online-less (the FROM login never finished)");
+    party::status::SetAlert(dsummon::GuestNotice(why));
+    Send(0, dsummon::EncodeStuck(why));
+}
+
 bool SendHomeVeto(u64 site) {
     const bool own_leave = SendHomeVetoForOwnLeave() || g_chalice_bail.exchange(false);
     // Split travel: OnLeave_Limit (0x138A51C: the room-gone / irregular-leave path) sent a guest
@@ -556,6 +585,15 @@ bool SendHomeVeto(u64 site) {
     // guest is in its own world and the bell's summon brings it into the dungeon (chalice.md 4;
     // live, beta 6: dropped here, the guest stayed in the host's Dream and was never summoned).
     const bool host_in_chalice = HostInOtherChalice();
+    dsummon::StuckWhy hold_why = dsummon::StuckWhy::Offline;
+    if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && host_in_chalice &&
+        ChaliceOfflineHold(true, &hold_why)) {
+        Log("guest: send-home at +0x138a51c (OnLeave_Limit) dropped: the host is in a Chalice Dungeon and this game is offline "
+            "(no channel request possible), so the summon could not bring it in; it stays in the host's world");
+        UndoLeaveState("OnLeave_Limit's send-home dropped (offline guest)");
+        ChaliceOfflineHoldNotice(hold_why);
+        return true;
+    }
     if (g_on.load() && Role() == RoleClient && site == 0x138a51c && !own_leave && host_in_chalice) {
         Log("guest: send-home at +0x138a51c (OnLeave_Limit) not dropped: the host is in a Chalice Dungeon this game "
             "does not have; the summon brings this game in from its own world");
@@ -7352,6 +7390,7 @@ void GlowTick(double now) {
     static coop::glow::Refresh refresh;
     const bool off = coop::glow::GlowOff(BbSettings::Get().party_glow_off.load(), env, party::status::Enabled());
     const u8 type = refresh.Update(off, now);
+    static const bool invader_look = !(std::getenv("BB_PARTY_INVADE_LOOK") && std::getenv("BB_PARTY_INVADE_LOOK")[0] == '0');
     for (const coop::glow::GlowRow& r : coop::glow::kGlowRows) {
         const u64 row = GameParamRow("SpEffectVfxParam", "SP_EFFECT_VFX_PARAM_ST", r.row);
         if (!row) {
@@ -7364,10 +7403,11 @@ void GlowTick(double now) {
                 type == coop::glow::kEffectPaused ? "a live switch: the chrs' glow entries end" : "plays again");
         }
         const std::int32_t cur = Field<std::int32_t>(row, 0, r.sfx);
-        const std::int32_t want = coop::glow::WantedSfx(cur, r.sfx, off);
+        const bool row_off = coop::glow::RowOff(r.row, off, invader_look);
+        const std::int32_t want = coop::glow::WantedSfx(cur, r.sfx, row_off);
         if (want != cur && SafeWrite(row, &want, sizeof want)) {
             Log("glow: SpEffectVfxParam %u midst SFX %d -> %d (%s)", r.row, cur, want,
-                off ? "companions without the phantom glow" : "the game's phantom glow");
+                row_off ? "companions without the phantom glow" : "the game's phantom glow");
         } else if (want == cur && cur != r.sfx && cur != coop::glow::kNoSfx) {
             static bool told = false;
             if (!told) {
@@ -10483,7 +10523,7 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
         // dungeon (an empty m29: the grey screen). Ask first; not yet usable: the delivery waits (3 tries).
         static int offline_fails = 0;
         static bool offline_shown = false;
-        const bool test_offline = ChaliceMsgTest("offline");  // test aid: the game reads as offline
+        const bool test_offline = ChaliceMsgTest("offline") || ChaliceMsgTest("offline_mode");  // test aid: the game reads as offline
         const u64 probe = test_offline ? 0 : ChannelRequestById(room.channel);
         if (!probe) {
             const u64 nm = Field<u64>(Guest(kNetMan), 0, 0);
@@ -10499,10 +10539,16 @@ bool DeliverSummon(const dsummon::Room& room, const std::string& host_name) {
             if (dsummon::OfflineNoticeDue(why, offline_fails)) {
                 if (!offline_shown) {
                     offline_shown = true;
-                    Log("chalice: notice shown: %s (this game never came online: no channel request is possible; a region / "
-                        "online patch is the likely cause)", dsummon::OfflineTitle());
-                    party::status::SetAlert(dsummon::GuestNotice(dsummon::StuckWhy::Offline));
-                    Send(0, dsummon::EncodeStuck(dsummon::StuckWhy::Offline));
+                    // The cause from FrpgNetMan +0xa (the title's online choice): clear = offline mode, set = the login never
+                    // finished (region / online patch, ss.info). The launcher's "Online: offline mode" log line is not it.
+                    const dsummon::StuckWhy cause = dsummon::OfflineWhy(ChaliceMsgTest("offline_mode") ? 0u : unsigned(Field<u8>(nm, 0xa, 0xff)));
+                    Log("chalice: notice shown: %s (%s)",
+                        cause == dsummon::StuckWhy::OfflineMode ? dsummon::OfflineModeTitle() : dsummon::OfflineTitle(),
+                        cause == dsummon::StuckWhy::OfflineMode
+                            ? "this game is in offline mode: no channel request is possible"
+                            : "this game never came online: no channel request is possible; a region / online patch is the likely cause");
+                    party::status::SetAlert(dsummon::GuestNotice(cause));
+                    Send(0, dsummon::EncodeStuck(cause));
                 }
             } else if (why != dsummon::NoChannel::Offline) {
                 party::status::SetAlert("This game's network is not ready to fetch the host's Chalice Dungeon yet; the summon is "
@@ -11012,6 +11058,16 @@ void ChaliceApartTick(const GameSnapshot& s, double now) {
     const bool apart = client && steady && ((s.map_id >> 24) & 0xff) != 29 && host_dungeon &&
                        phase == GuestPhase::Idle && g_death_held_at.load() <= 0 && !g_dead_follow.load();
     g_chalice_apart = apart;
+    if (!host_dungeon) g_offline_hold_noticed = false;
+    if (apart) {
+        // A game that cannot make the channel request is not sent home: the summon could not bring it back in.
+        dsummon::StuckWhy hold_why = dsummon::StuckWhy::Offline;
+        if (ChaliceOfflineHold(true, &hold_why)) {
+            since = 0;
+            ChaliceOfflineHoldNotice(hold_why);
+            return;
+        }
+    }
     if (!apart) {
         since = 0;
         noticed = false;
@@ -11058,6 +11114,12 @@ bool ChaliceRejoinPressed() {
     if (!deathrules::ChaliceRejoinLeavesFirst(true, g_chalice_apart.load(), dsummon::ChaliceMap(host_map))) {
         return false;
     }
+    dsummon::StuckWhy hold_why = dsummon::StuckWhy::Offline;
+    if (ChaliceOfflineHold(true, &hold_why)) {  // the summon could not bring this game in: it stays, with the notice
+        g_offline_hold_noticed = false;
+        ChaliceOfflineHoldNotice(hold_why);
+        return true;
+    }
     g_chalice_chosen = false;
     g_empty_loads = 0;
     g_empty_notice = false;
@@ -11090,7 +11152,7 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
             if (DS().names.count(from_slot)) name = DS().names[from_slot];
         }
         Log("chalice: notice shown: Chalice summon stopped for a guest (slot %d, %s)", from_slot,
-            why == dsummon::StuckWhy::Offline ? "offline" : "empty loads");
+            why == dsummon::StuckWhy::Empty ? "empty loads" : "offline");
         party::status::SetAlert(dsummon::HostNotice(why, bbname::Display(name)));
         return;
     }
