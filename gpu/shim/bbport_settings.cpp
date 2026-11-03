@@ -286,6 +286,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_chat = i != 0;
     } else if (key == "party_chat_receive") {
         v.party_chat_receive = i != 0;
+    } else if (key == "party_name_colours") {
+        v.party_name_colours = i != 0;
     } else if (key == "party_through_walls") {
         v.party_through_walls = i != 0;
     } else if (key == "party_hud_ping") {
@@ -294,6 +296,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_stain_marker = i != 0;
     } else if (key == "map_enabled") {
         v.map_enabled = i != 0;
+    } else if (key == "auto_hide_hud") {
+        v.auto_hide_hud = i != 0;
     } else if (key == "party_friendly_fire") {
         v.party_friendly_fire = i != 0;
     } else if (key == "party_share_lamps") {
@@ -470,7 +474,7 @@ void Load() {
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_GPL", "gpl"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
-        {"BB_HUD", "show_hud"},                     {"BB_HUD_POSITION", "hud_position"},
+        {"BB_HUD", "show_hud"},                     {"BB_AUTO_HUD", "auto_hide_hud"}, {"BB_PARTY_NAME_COLOURS", "party_name_colours"},                     {"BB_HUD_POSITION", "hud_position"},
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
         {"BB_MOUSE_DIRECT_CAMERA", "mk_direct_camera"},
         {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
@@ -815,9 +819,11 @@ void Save() {
     put("party_pings", flag(v.party_pings));
     put("party_chat", flag(v.party_chat));
     put("party_chat_receive", flag(v.party_chat_receive));
+    put("party_name_colours", flag(v.party_name_colours));
     put("party_through_walls", flag(v.party_through_walls));
     put("party_stain_marker", flag(v.party_stain_marker));
     put("map_enabled", flag(v.map_enabled));
+    put("auto_hide_hud", flag(v.auto_hide_hud));
     put("party_hud_ping", flag(v.party_hud_ping));
     put("party_friendly_fire", flag(v.party_friendly_fire));
     put("party_share_lamps", flag(v.party_share_lamps));
