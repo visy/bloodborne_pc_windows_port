@@ -1211,7 +1211,13 @@ static void test_invader() {
         std::lock_guard<std::mutex> lk(gm);
         return deny;
     };
-    PartyLink host(hc, recorder_callbacks(hr, "host"));
+    LinkCallbacks hcb = recorder_callbacks(hr, "host");
+    std::atomic<int> rpcs{0};
+    hcb.on_rpc = [&](int, const std::string& kind, const std::string&) {
+        ++rpcs;
+        return std::string("{\"ok\":\"") + kind + "\"}";
+    };
+    PartyLink host(hc, hcb);
     std::string err;
     CHECK(host.start_host(&err));
     // A cooperator with the password (slot 1).
@@ -1256,7 +1262,13 @@ static void test_invader() {
     CHECK(hr.cmds.load() == 0 && hr.progress.load() == 0);
     // An RPC (a world action, an item) from the invader is refused by the host without reaching its handler.
     std::string reply;
-    CHECK(!inv.rpc_call("give_item", "{}", &reply, 1500) || reply.find("invader") != std::string::npos);
+    CHECK(!inv.rpc_call("give_item", "{}", &reply, 1500) && reply.find("not allowed for an invader") != std::string::npos);
+    CHECK(!inv.rpc_call("kick_member", "{}", &reply, 1500) && reply.find("not allowed for an invader") != std::string::npos);
+    CHECK(rpcs.load() == 0);  // neither reached the host's handler
+    // The game's session API goes through (the bell and the summon need it).
+    CHECK(inv.rpc_call("http", "{}", &reply, 1500) && reply.find("\"ok\":\"http\"") != std::string::npos);
+    CHECK(inv.rpc_call("join_room", "{}", &reply, 1500) && rpcs.load() == 2);
+    CHECK(invader_rpc_ok("heartbeat") && !invader_rpc_ok("kick_member") && !invader_rpc_ok("world_action"));
     // A third player cannot be admitted as an invader into the cooperator slot count: max_players 3 = host, coop, invader.
     LinkConfig ic2 = base_cfg("Second", "");
     ic2.invader = true;

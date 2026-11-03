@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace coop::invade;
 
@@ -118,6 +119,10 @@ static void RateLimit() {
     for (int i = 0; i < kRateMax; ++i) CHECK(c.Allow("k", i));
     for (int i = 0; i < 20; ++i) CHECK(!c.Allow("k", 100 + i));
     CHECK(c.Allow("k", kRateWindowS + 1));
+    // A different limit per book: knocking is looser than starting invasions.
+    RateBook e;
+    for (int i = 0; i < kSpamMax; ++i) CHECK(e.Allow("k", i, kSpamMax));
+    CHECK(!e.Allow("k", 50, kSpamMax) && e.Limited("k", 50, kSpamMax) && !e.Limited("other", 50, kSpamMax));
     // A flood of keys does not grow the book without bound.
     RateBook d;
     for (int i = 0; i < 2000; ++i) d.Allow("k" + std::to_string(i), i * 1000.0);
@@ -200,7 +205,25 @@ static void Wire() {
     CHECK(RefusedText(DenyText(Deny::BossFight)) == "invasion refused: a boss fight is on in the host's world");
 }
 
+static void Script() {
+    std::vector<TestStep> st;
+    std::string bad;
+    CHECK(ParseTest("allow=0@2,view=boss@50,rejoin@20?home,die@45?in,die@40?in#2,view=none@1", &st, &bad));
+    CHECK(st.size() == 6);
+    CHECK(st[0].kind == TestStep::Kind::Allow && st[0].arg == 0 && st[0].delay == 2);
+    CHECK(st[1].kind == TestStep::Kind::View && st[1].word == "boss");
+    CHECK(st[2].kind == TestStep::Kind::Rejoin && st[2].cond == 2 && st[2].delay == 20);
+    CHECK(st[3].kind == TestStep::Kind::Die && st[3].cond == 1 && st[3].nth == 0);
+    CHECK(st[4].cond == 1 && st[4].nth == 2);
+    CHECK(ParseTest(nullptr, &st) && st.empty());
+    CHECK(ParseTest("", &st) && st.empty());
+    for (const char* b : {"allow=2", "view=maybe", "rejoin=1", "die#2", "die?out", "jump@1", "die@x", "die@-1", "die?in#0", "die?in#21"})
+        CHECK(!ParseTest(b, &st, &bad));
+    CHECK(bad == "die?in#21");
+}
+
 int main() {
+    Script();
     AllowDenyTable();
     FourPlayers();
     ListedAsInvadable();
