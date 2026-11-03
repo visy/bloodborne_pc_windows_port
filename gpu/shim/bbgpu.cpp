@@ -651,6 +651,10 @@ extern "C" float bbgpu_audio_boost() {
     return env > 0.0f ? env : BbSettings::Get().audio_boost.load();
 }
 
+extern "C" int bbgpu_key_ramp() {
+    return BbSettings::Get().key_ramp.load() ? 1 : 0;
+}
+
 extern "C" int bbgpu_prompt_style() {
     return BbSettings::Get().prompt_style.load();
 }

@@ -7,6 +7,7 @@
 #include "shader_recompiler/resource.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/texture_cache/host_compatibility.h"
+#include "bbport_settings.h"
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/tile.h"
 
@@ -307,6 +308,50 @@ s32 ImageInfo::SliceOf(const ImageInfo& info, s32 mip) const {
     }
 
     return addr_diff / guest_size;
+}
+
+ImageInfo ImageInfo::Reduced(u32 skip) const {
+    ImageInfo out = *this;
+    out.size.width = std::max(size.width >> skip, 1u);
+    out.size.height = std::max(size.height >> skip, 1u);
+    out.pitch = std::max(pitch >> skip, 1u);
+    out.resources.levels = resources.levels - skip;
+    for (u32 level = 0; level < out.resources.levels; ++level) {
+        out.mips_layout[level] = mips_layout[level + skip];
+    }
+    out.micro_tiled_mips = micro_tiled_mips >> skip;
+    out.skip_levels = static_cast<u8>(skip);
+    return out;
+}
+
+u32 TextureQualitySkip(int quality, u64 vram_budget) {
+    if (quality == BbSettings::TqAuto) {
+        // Half on cards with a 3 GB budget or less; the GC's own low-VRAM marks (<= 4 GB) are separate.
+        quality = vram_budget <= (3ull << 30) ? BbSettings::TqHalf : BbSettings::TqFull;
+    }
+    return quality == BbSettings::TqQuarter ? 2 : quality == BbSettings::TqHalf ? 1 : 0;
+}
+
+u32 SkipLevelsFor(const ImageInfo& info, BindingType binding_type, bool is_storage,
+                  u32 wanted, bool is_gpu_modified) {
+    if (wanted == 0) {
+        return 0;
+    }
+
+    // Only sampled, block-compressed, mipmapped 2D textures (materials).
+    // Not render targets, storage, depth, volume, or lookup tables.
+    if (binding_type != BindingType::Texture || is_storage ||
+        !info.props.is_block || info.type != AmdGpu::ImageType::Color2D || info.props.is_depth || info.props.is_volume ||
+        info.num_samples != 1 || info.resources.layers != 1 || info.resources.levels < 3 || is_gpu_modified) {
+        return 0;
+    }
+
+    u32 skip = 0;
+    while (skip < wanted && info.resources.levels - skip >= 3 &&
+           std::min(info.size.width, info.size.height) >> skip >= 512) {
+        ++skip;
+    }
+    return skip;
 }
 
 } // namespace VideoCore
