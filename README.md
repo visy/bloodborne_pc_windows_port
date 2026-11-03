@@ -28,6 +28,7 @@ Based on [bbport](https://github.com/deadinside28/bloodborne_pc) by deadinside28
 | **High frame rates** | 30 / 60 / 90 / uncapped, with correct game speed: hooks in the game's code follow each frame's real time (deadinside's 0.6-pre1 work; *Frame rate by game hooks* in the launcher, off = the community FPS++ patches), plus bbhost's high-FPS fixes for effects, grass wind and the Bloodletter's L2. |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |
 | **Frame generation** | Optional, off by default: DLSS FG (2x-4x, RTX 40/50) or FSR FG (2x), paced, HUD kept sharp; NVIDIA Reflex. [More](docs/FG_REFLEX.md) |
+| **Input lag** | Frames no longer queue before the display, the gamepad is read at the moment the game asks (both on), NVIDIA Reflex / AMD Anti-Lag 2 automatic on those GPUs, G-Sync / FreeSync switch. [More](docs/LATENCY.md) |
 | **Finer motion blur** | Optional, off by default: the game builds its motion blur from half-resolution buffers; render them at 2x the pixels or at full resolution (*System > Display > Motion blur resolution*). [More](docs/SETTINGS.md) |
 | **HDR output** | Optional, off by default: HDR10 on an HDR display, highlights expanded to your display's peak while mid-tones and menus stay at paper white; calibration in *System > HDR*. [More](docs/SETTINGS.md#hdr-output) |
 | **In-game map** | Optional, off by default: **M** opens a map of the area you are in with its floors, the lit lamps, you and your party; click a lamp to travel to it. Made from your own game files once (launcher: *Prepare the map*). Hunter's Atlas by MikeTat1988. [More](docs/SETTINGS.md#in-game-map) |
@@ -674,6 +675,7 @@ Guide: [docs/PARTY.md](docs/PARTY.md) · Progress vs. Elden Ring Seamless Co-op:
 | Building from source, DLSS, FSR 4 assets | [docs/BUILDING.md](docs/BUILDING.md) |
 | Settings, launcher, controls, environment variables | [docs/SETTINGS.md](docs/SETTINGS.md) |
 | Frame generation (DLSS FG, FSR FG) and NVIDIA Reflex | [docs/FG_REFLEX.md](docs/FG_REFLEX.md) |
+| Input latency: frame pacing, fresh pad read, Reflex, Anti-Lag 2, VRR | [docs/LATENCY.md](docs/LATENCY.md) |
 | Shader compilation and sharing the cache | [docs/SHADERS.md](docs/SHADERS.md) |
 | Saves, backups, restoring, game file check | [docs/SAVES.md](docs/SAVES.md) |
 | Mods, XML patches, DLC | [docs/MODS.md](docs/MODS.md) |
