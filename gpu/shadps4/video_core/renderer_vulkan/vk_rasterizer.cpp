@@ -731,6 +731,46 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     }
 }
 
+// Screen, window and generic scissors intersected (with the window offset). Mrsuss60 6b2cc0e0 moved
+// this into GetCombinedScissor so BeginRenderingFull can use it too.
+static AmdGpu::Scissor CombinedScissor(const AmdGpu::Regs& regs) {
+    const auto combined_scissor_value_tl = [](s16 scr, s16 win, s16 gen, s16 win_offset) {
+        return std::max({scr, s16(win + win_offset), s16(gen + win_offset)});
+    };
+    const auto combined_scissor_value_br = [](s16 scr, s16 win, s16 gen, s16 win_offset) {
+        return std::min({scr, s16(win + win_offset), s16(gen + win_offset)});
+    };
+    const bool enable_offset = !regs.window_scissor.window_offset_disable;
+
+    AmdGpu::Scissor scsr{};
+    scsr.top_left_x = combined_scissor_value_tl(
+        regs.screen_scissor.top_left_x, s16(regs.window_scissor.top_left_x),
+        s16(regs.generic_scissor.top_left_x),
+        enable_offset ? regs.window_offset.window_x_offset : 0);
+    scsr.top_left_y = combined_scissor_value_tl(
+        regs.screen_scissor.top_left_y, s16(regs.window_scissor.top_left_y),
+        s16(regs.generic_scissor.top_left_y),
+        enable_offset ? regs.window_offset.window_y_offset : 0);
+    scsr.bottom_right_x = combined_scissor_value_br(
+        regs.screen_scissor.bottom_right_x, regs.window_scissor.bottom_right_x,
+        regs.generic_scissor.bottom_right_x,
+        enable_offset ? regs.window_offset.window_x_offset : 0);
+    scsr.bottom_right_y = combined_scissor_value_br(
+        regs.screen_scissor.bottom_right_y, regs.window_scissor.bottom_right_y,
+        regs.generic_scissor.bottom_right_y,
+        enable_offset ? regs.window_offset.window_y_offset : 0);
+    return scsr;
+}
+
+// BB_RENDER_AREA_SCISSOR=0: attachment-less passes keep the maximum framebuffer size as render area.
+static bool RenderAreaBoundByScissor() {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_RENDER_AREA_SCISSOR");
+        return !(env && env[0] == '0');
+    }();
+    return on;
+}
+
 static std::pair<u32, u32> GetDrawOffsets(
     const AmdGpu::Regs& regs, const Shader::Info& info,
     const std::optional<Shader::Gcn::FetchShaderData>& fetch_shader) {
@@ -3721,6 +3761,13 @@ Rasterizer::BeginSignature Rasterizer::MakeBeginSignature(const GraphicsPipeline
     std::memcpy(&sig.depth_control, &regs.depth_control, sizeof(u32));
     sig.depth_valid = regs.depth_buffer.DepthValid();
     sig.stencil_valid = regs.depth_buffer.StencilValid();
+    if (RenderAreaBoundByScissor() && !sig.ids[AmdGpu::NUM_COLOR_BUFFERS] &&
+        std::none_of(sig.ids.begin(), sig.ids.end() - 1, [](auto id) { return bool(id); })) {
+        // No attachment: the render area follows the scissors, which can change between draws.
+        const auto scissor = CombinedScissor(regs);
+        sig.scissor_area = (u32(std::clamp<s32>(scissor.bottom_right_x, 0, 0xffff)) << 16) |
+                           u32(std::clamp<s32>(scissor.bottom_right_y, 0, 0xffff));
+    }
     return sig;
 }
 
@@ -4207,6 +4254,16 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
     if (state.num_layers == std::numeric_limits<u16>::max()) {
         state.num_layers = 1;
+        // No attachment set the render area: it stayed at the maximum framebuffer size. Draws
+        // cannot pass the scissors, so bound it by them (Mrsuss60 6b2cc0e0 / shadPS4 0cd6e4f2;
+        // BB_RENDER_AREA_SCISSOR=0: off). Scaled passes keep their own sizes.
+        if (RenderAreaBoundByScissor() && !reduced && target_scale[0] == 1.0f && target_scale[1] == 1.0f) {
+            const AmdGpu::Scissor scissor = CombinedScissor(regs);
+            if (scissor.bottom_right_x > 0 && scissor.bottom_right_y > 0) {
+                state.width = std::min<u32>(state.width, scissor.bottom_right_x);
+                state.height = std::min<u32>(state.height, scissor.bottom_right_y);
+            }
+        }
     }
 
     if (reduced) {
@@ -4640,31 +4697,7 @@ void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool
 void Rasterizer::UpdateViewportScissorState() const {
     const auto& regs = Regs();
 
-    const auto combined_scissor_value_tl = [](s16 scr, s16 win, s16 gen, s16 win_offset) {
-        return std::max({scr, s16(win + win_offset), s16(gen + win_offset)});
-    };
-    const auto combined_scissor_value_br = [](s16 scr, s16 win, s16 gen, s16 win_offset) {
-        return std::min({scr, s16(win + win_offset), s16(gen + win_offset)});
-    };
-    const bool enable_offset = !regs.window_scissor.window_offset_disable;
-
-    AmdGpu::Scissor scsr{};
-    scsr.top_left_x = combined_scissor_value_tl(
-        regs.screen_scissor.top_left_x, s16(regs.window_scissor.top_left_x),
-        s16(regs.generic_scissor.top_left_x),
-        enable_offset ? regs.window_offset.window_x_offset : 0);
-    scsr.top_left_y = combined_scissor_value_tl(
-        regs.screen_scissor.top_left_y, s16(regs.window_scissor.top_left_y),
-        s16(regs.generic_scissor.top_left_y),
-        enable_offset ? regs.window_offset.window_y_offset : 0);
-    scsr.bottom_right_x = combined_scissor_value_br(
-        regs.screen_scissor.bottom_right_x, regs.window_scissor.bottom_right_x,
-        regs.generic_scissor.bottom_right_x,
-        enable_offset ? regs.window_offset.window_x_offset : 0);
-    scsr.bottom_right_y = combined_scissor_value_br(
-        regs.screen_scissor.bottom_right_y, regs.window_scissor.bottom_right_y,
-        regs.generic_scissor.bottom_right_y,
-        enable_offset ? regs.window_offset.window_y_offset : 0);
+    const AmdGpu::Scissor scsr = CombinedScissor(regs);
 
     boost::container::static_vector<vk::Viewport, AmdGpu::NUM_VIEWPORTS> viewports;
     boost::container::static_vector<vk::Rect2D, AmdGpu::NUM_VIEWPORTS> scissors;
