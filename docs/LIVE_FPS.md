@@ -23,8 +23,9 @@ time target (`[pacer + 0x18]`) is set to 1/target (1/240 for uncapped); the meas
 which is also what the game steps by (`[rbp - 0x38]`). The pacer's four mode setups carry 1/240 s as their frame time (the
 patch since 83a168ee; older patch bytes are lowered at start), so 90 / 120 / uncapped can exceed 60 FPS. The presenter
 (`videoout/driver.cpp`) takes its frame limit from `BbFrameRate::LivePresenterLimit()` every iteration. The effects' step in
-whole 1/60 s (bbhost fix) runs from the live step; the hooks' other high-rate fixes (grass wind force) are not installed:
-the Deltatime patch owns the plants' wind code.
+whole 1/60 s (bbhost fix) runs from the live step; the plants' wind force is fixed at the authored 1/30 as in the hooks mode (`GrassWind()`, installed in live mode too since
+0.7.8: the Deltatime patch had made the force V * the live step, so every long frame bent the plants by its own length and they shook;
+the wave time keeps the live step).
 
 ## Switches
 
