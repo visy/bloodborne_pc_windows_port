@@ -175,15 +175,14 @@ if "%BB_AUTO_RENDER_RES%"=="1" (
 if "%BB_FPS%"=="" set "BB_FPS=uncap"
 set "fps=%BB_FPS%"
 
-REM Live FPS clock (Mrsuss60's live FPS patching): BB_LIVE_FPS from the launcher, else live_fps from
-REM bbport.ini (the in-game menu). The same value goes to patches.py and the game, so the patch set and
-REM the hook agree. On by default; the game's own 30 FPS never uses it. On by default.
-if "%BB_LIVE_FPS%"=="" if exist "%BB_CONFIG%" for /f "usebackq tokens=1,2 delims== " %%a in ("%BB_CONFIG%") do (
-    if "%%a"=="live_fps" set "BB_LIVE_FPS=%%b"
+REM What the user set in the environment (BB_LIVE_FPS, BB_VBLANK_HZ), before run.bat derives its own values: the
+REM party relaunch (exit code 75, :prepare_patches) derives them again from bbport.ini, which the game's menu may
+REM have changed (Live FPS toggled in System > Live FPS), instead of keeping the first pass's values.
+if not defined RUN_ENV_SAVED (
+    set "RUN_ENV_SAVED=1"
+    set "RUN_LIVE_ENV=%BB_LIVE_FPS%"
+    set "RUN_VBLANK_ENV=%BB_VBLANK_HZ%"
 )
-if "%BB_LIVE_FPS%"=="" set "BB_LIVE_FPS=1"
-if "%fps%"=="30" set "BB_LIVE_FPS=0"
-if "%BB_FPS_PATCH%"=="0" set "BB_LIVE_FPS=0"
 
 REM The scaled sizes go through a file, like mods.py above: read with for /f ('"%PYTHON%" ...
 REM "%BB_CONFIG%"') the command lost its quotes and printed nothing, so an output other than
@@ -249,6 +248,18 @@ if %render_pixels% GTR 2073600 echo Render %BB_RENDER_RES%: direct memory %BB_DM
 
 REM The party flow's restart (exit code 75, below) comes back here: party mode changes the patches.
 :prepare_patches
+set "fps=%BB_FPS%"
+REM Live FPS clock (Mrsuss60's live FPS patching): BB_LIVE_FPS from the launcher, else live_fps from
+REM bbport.ini (the in-game menu). The same value goes to patches.py and the game, so the patch set and
+REM the hook agree. On by default; the game's own 30 FPS never uses it. On by default.
+set "BB_LIVE_FPS=%RUN_LIVE_ENV%"
+if "%BB_LIVE_FPS%"=="" if exist "%BB_CONFIG%" for /f "usebackq tokens=1,2 delims== " %%a in ("%BB_CONFIG%") do (
+    if "%%a"=="live_fps" set "BB_LIVE_FPS=%%b"
+)
+if "%BB_LIVE_FPS%"=="" set "BB_LIVE_FPS=1"
+if "%fps%"=="30" set "BB_LIVE_FPS=0"
+if "%BB_FPS_PATCH%"=="0" set "BB_LIVE_FPS=0"
+
 set "patches_dir=%BB_PATCHES_DIR%"
 if "%patches_dir%"=="" set "patches_dir=%BB_DATA_DIR%\patches"
 set "patches_config=%BB_PATCHES_CONFIG%"
@@ -283,6 +294,7 @@ if "%BB_GPU_WRITE_TWINS_MAX%"=="" set "BB_GPU_WRITE_TWINS_MAX=65536"
 REM Live FPS uses the same vblank as the presets (60 -> 60 Hz, 90 -> 90 Hz, others 480 Hz): the game's pacer waits in
 REM vblank ticks, and at 480 Hz a target of 60 ran at 49 steps a second (measured), at 60 Hz exactly 60.
 REM Frame rate: uncap = delta-time patch, vblank 480 Hz (frames shown at once); 60/90 fixed.
+set "BB_VBLANK_HZ=%RUN_VBLANK_ENV%"
 if "%BB_VBLANK_HZ%"=="" (
     if "%fps%"=="uncap" (
         set "BB_VBLANK_HZ=480"
