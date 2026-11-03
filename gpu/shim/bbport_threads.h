@@ -31,6 +31,11 @@ extern "C" __thread BbRecoverBuf* runtime_fault_recover;
 
 namespace BbThreads {
 
+/// True on a draw preparation worker thread (vk_draw_prep.cpp). Such a worker reads guest memory
+/// ahead of the GPU thread while holding the shader cache's lock: a fault on a GPU-tracked page
+/// must not be served there (page_manager.cpp).
+inline thread_local bool draw_prep_worker = false;
+
 /// Hardware threads available to the process.
 inline unsigned Available() {
 #ifdef _WIN32
