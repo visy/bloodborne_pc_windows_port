@@ -8165,6 +8165,13 @@ def check_iv(v, L, name="iv"):
     need(v, L, n + " host: paid for the fallen invader (echoes at 0.50, no Insight)", 0, r"invade: reward: host, invader_died: rate 0\.50, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell or 0)
     need(v, L, n + " guest: paid for the fallen invader (echoes at 0.25, no Insight)", 1, r"invade: reward: guest, invader_died: rate 0\.25, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell or 0)
     need(v, L, n + " invader: paid for the fallen host (echoes at 0.10 and +1 Insight)", 2, r"invade: reward: invader, host_died: rate 0\.10, Insight \+1: Blood Echoes -?\d+ -> -?\d+", hd or 0)
+    # the result banners (the game's text effects): ADVERSARY EXPUNGED (7) to the host and the guest, PREY SLAUGHTERED (5) only to the invader
+    need(v, L, n + " host: the 'adversary expunged' banner when the invader fell", 0, r"invade: banner: host, invader_died: text effect 7", fell or 0)
+    need(v, L, n + " guest: the 'adversary expunged' banner when the invader fell", 1, r"invade: banner: guest, invader_died: text effect 7", fell or 0)
+    need(v, L, n + " invader: the 'prey slaughtered' banner when it killed the host", 2, r"invade: banner: invader, host_died: text effect 5", hd or 0)
+    none_of(v, L, n + " the host and the guest never get PREY SLAUGHTERED (text effect 1 / 5) nor a boss-defeat banner in an invasion",
+            r"invade: banner: (host|guest), \w+: text effect [15]|boss defeat processing 2003\[12\]", 0, 1e9, (0, 1))
+    none_of(v, L, n + " the invader gets no banner when it falls", r"invade: banner: invader, invader_died", 0, 1e9)
     none_of(v, L, n + " the invader is not paid when it falls, the host not when it falls, the guest not for the host", r"invade: reward: (invader, invader_died|host, host_died|guest, host_died)", 0, 1e9)
     check_common(v, L, n)
 
