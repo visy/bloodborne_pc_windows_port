@@ -12,6 +12,7 @@ Everything the clinic holds is private: logs carry player names, Steam/PSN names
 
 ```
 ssh iosefka new                                                  what is new since my last check (also bugs that got new material)
+ssh iosefka split <message_id>                                    move a message out of its bug into a NEW bug
 ssh iosefka triage-queue                                         bugs waiting for a triage pass + auto-linked messages
 ssh iosefka list --open --tag component=nw-launcher              all open launcher bugs
 ssh iosefka list --open --tag component=coop-mod --tag feature=chalice     open co-op chalice bugs
@@ -236,6 +237,14 @@ Example queries: `list --open --tag area=hunters-nightmare`, `list --tag nw_vers
 - `ssh iosefka title NW-x "'new title'"`: set the title (IPs masked).
 - `ssh iosefka move <message_id> NW-x`: re-point one message and its files to another bug (for a wrong
   auto-link); both bugs get a note.
+- `ssh iosefka split <message_id>`: move one message and its files out of its bug into a NEW bug (status
+  new, triage pending, title from the message's first line or "log report <date>"); both bugs get a note.
+  Use it to repair a wrong auto-link.
+- Session rule (auto-link by log): two logs are one session only on the same calendar day (taken from the
+  log's date, the Nightwatch file name, or the start/close time; old rows derive it on the fly). A log with
+  no determinable day links only by shared player names, never by time of day alone; the time-only branch
+  needs equal known days and both start times. A host log (roster host, or its own name when it is a host
+  log) never links to a session with a different host.
 
 ### assign, share, merge
 

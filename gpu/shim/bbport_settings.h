@@ -324,6 +324,10 @@ struct Values {
     /// rune) is given (party/party_item_notice_rules.h). Per player; shows only while the party notices
     /// (party_toasts) are on. ini party_item_notices. Live.
     std::atomic<bool> party_item_notices{true};
+    /// 0.7.8: give items to a party member (party/party_give_rules.h): the Insert menu's Party tab lists the own
+    /// consumables and sends one to a member through a two-phase transfer. The giver's switch shows the list, the
+    /// receiver's is its consent. Per player. OFF by default. ini party_give_items; env BB_PARTY_GIVE_ITEMS=1 wins.
+    std::atomic<bool> party_give_items{false};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,
