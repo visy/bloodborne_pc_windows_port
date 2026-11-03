@@ -152,6 +152,41 @@ nonce, and expects `AUTH = guest nonce || BLAKE2b-256(key = invader key, "bbp-au
 keys are derived the same way as for a cooperator with `invader key` in place of the party key. Refusals are REJECT with
 `RejectCode 9 (Invasion)` and the named reason (or `2 Mismatch` with the usual identity reason).
 
+## The red phantom look (0.7.8)
+
+The look is a SpEffect, not the chr type. The chr's effect update plays, for every SpEffect with `useSpEffectEffect`, the
+SpEffectVfxParam row named by its `stateInfo`: the cooperator SpEffect 9006 has stateInfo 272 (row 272: midst SFX 211, the
+blue phantom glow), and the game's invader SpEffect 9026 (the Sinister Bell's 9025 + 1, same 0.7 max-HP cut) has stateInfo 276
+(row 276: SFX 212). (Writing the chr type, tried first, changed nothing; the 0x1b27 / 0x1b28 the cooperator code writes at the
+chr's registration are idle-animation ids, not a look.) The invader's chr is a cooperator (9006) on the other games, so per chr
+and per frame (`party_pvp.cpp` `InvaderTick`): 9006 is taken off with the game's `RemoveSpEffect` 0x17E1D90 and 9026 applied
+through the chr's own `ApplySpEffect` (vfunc +0x3f0); the invader's own chr just gets 9026. At the end of the invasion 9026 is
+removed and 9006 put back (only what this code changed). The look is the game's own and nothing more: BB has no PhantomParam table (no such param in gameparam / paramdef, no body tint, alpha or edge parameter), the cooperator and the invader effects are the same particle effect, FXR 211 and 212 in `frpg_sfxbnd_commoneffects` (17648 bytes each, 63 bytes differ: only the colours, 211 = (0.37, 0.79, 1.0) blue, 212 = (0.78, 0.25, 0.38) red), attached to dummy poly 203 of the chr. So there is no separate red body material to apply; the red glow around the body is the vanilla hostile phantom look. Not compared with a live vanilla invader (none available offline). Pure mapping: `LookNow` / `LookEnd` in `party_invade_rules.h`. Switch:
+`BB_PARTY_INVADE_LOOK=0` turns it off (default on, as a part of the invasion feature, which is off by default).
+The "Companions without glow" setting edits the same rows 272 / 276, so with it on (the default) the SFX is removed and the
+red look is not visible either (the SpEffect is still on); turn the setting off to see the red / blue glows.
+
+## Rewards and costs (the game's own rules)
+
+From `global_event.lua` (eventcommon.luabnd, `OnDeadEvent_HostDead`, `OnDeadEvent_NormalBlackDead`; the game's SOUL_RATE_S 0.1,
+SOUL_RATE_L 0.5) and `EquipParamGoods`:
+
+| | Rule in the game's data |
+|---|---|
+| Cost to invade | None. The Sinister Resonant Bell (goods 225, SpEffect 9025) has `consumeHeroPoint` 0 and `isConsume` 0: it is not used up and costs no Insight (the Beckoning Bell, 200, costs 1 Insight; the party layer zeroes that). It is usable alive or grey, not in a session (`enable_multi` 0). |
+| The invader kills the host | The invader: Blood Echoes by `CalcExcuteMultiBonus(0.1, ...)` and **+1 Insight**. |
+| The host (and guests) kill the invader | The host: Blood Echoes at rate **0.5**, no Insight. Each guest: rate 0.5 * 0.5 = **0.25**, no Insight. (The Lua also drops a bloodstain of the invader, `CreateHeroBloodStain`: not reproduced.) |
+| Anything else (travel, boss fog, block, switch off, link lost) | nothing |
+| Bell-ringing Woman | no rule of its own in the data: she only gives the bells (the Lua has no invasion branch for her) |
+
+`CalcExcuteMultiBonus` (native 0x131D470) is the game's routine: echoes = rate * the level-up cost curve at the receiver's level,
+added through the player chr (shown on screen), and Insight + N (capped at 99). It is called on **the receiver's own game**
+with the receiver's own record, so the invader's reward is in the invader's own save and the host's and guests' in theirs; no
+reward goes through the party's progress mirror (the invader's progress events are dropped by the host, and the host's echo
+payouts are local), so nothing leaks into the host world or back. One payout per outcome: `RewardOnce` (same invader name and
+ending within 120 s) and one pending outcome per game; the invader is paid once its own world is up after the send-home.
+`BB_PARTY_INVADE_REWARDS=0` turns the payouts off. Pure table: `RewardFor` in `party_invade_rules.h` (unit test).
+
 ## Tests
 
 * `party-invade-test`: the allow / deny table (every row, the order), the 4-player table (host + 2 guests: room; 3: none; party
@@ -185,10 +220,7 @@ keys are derived the same way as for a cooperator with `invader key` in place of
 
 ## Not done / unproven
 
-* **The red phantom look.** Writing the chr type 2 (black phantom) on the invader's chr (`BB_PARTY_INVADE_LOOK=1`) changed nothing
-  on screen in the live run, so it is off by default; no other look (SpEffect, tint) was found.
-* **Rewards.** No Echoes / Insight / items for winning or losing, the Sinister Resonant Bell / Bell-Ringing Woman items are not
-  used or consumed, and the game's own bell use does not start matchmaking (the manual pick list is the first step).
+* **Real networks beyond what is listed below, and the human bloodstain.** The game's Lua also has the host call CreateHeroBloodStain when a red invader falls (a bloodstain of the invader); it is not reproduced (see Rewards).
 * **Health.** The invader's health is the phantom's (the host's *Phantom health cut* applies where that rule reaches its game).
 * **Boss fog / cutscene / loading** are proven by the forced view (the gate and the pending checks are the same code as for the
   real flags: `BossBarShown`, `CutscenePlaying`, `loading`); a real fog walk with an invader on the way was not run. An invader
