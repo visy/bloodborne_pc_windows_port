@@ -232,6 +232,12 @@ struct Values {
     /// everyone sees it through walls with its distance for 10 s (ini party_pings; env
     /// BB_PARTY_PINGS overrides). Live, local: off = no combo, no sending, others' pings not drawn.
     std::atomic<bool> party_pings{true};
+    /// Party text chat (0.7.8, party_chat.h): the chat key (T) or touchpad + L1 opens a box / preset list; lines reach every
+    /// member in a small fading log in the sender's colour. Off by default: off = no key, no sending, others' lines
+    /// ignored (ini party_chat; env BB_PARTY_CHAT overrides). Live, local.
+    std::atomic<bool> party_chat{false};
+    /// Chat on: show the lines of the other members (ini party_chat_receive, default on); off = they are dropped on arrival.
+    std::atomic<bool> party_chat_receive{true};
     /// I2: every party member on this map drawn through walls as a small marker with its distance
     /// in its colour (ini party_through_walls; off by default: busy next to the name plates). Live.
     std::atomic<bool> party_through_walls{false};
