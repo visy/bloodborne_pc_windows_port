@@ -3,6 +3,9 @@
 The ids are the lists scripts/party_session.py checks after a party session (tests/test_saveedit.py keeps
 them equal). Names come from the player's own game files at run time (names.Catalogue: lamp warp-list
 texts and NPC/boss names); this file holds only ids and the area of each (own strings):
+  lamp object flags 1AAB7810 + 20n and +11 = the same lamp's object (set with the lamp-lit flag by the game's own
+                         lighting; a save with the lit flag alone has the lamp in the travel list but dead at the
+                         lamp itself, GitHub issue #28), see lamp_flags()
   lamp flag 7AAB02nn   = the n-th lamp of map AAB (m24_01 = AAB 241); its warp-list text is menu id 7000AABn
                          (4 lamps of Central Yharnam = 70002410..13: lamp counts per area agree, and
                          72102410 "1st Floor Sickroom" -> lamp 2412950 in docs/party/travel.md)
@@ -15,6 +18,12 @@ LAMP_IDS = (72110200, 72200200, 72200201, 72300200, 72300201, 72300202, 72400200
             72410201, 72410202, 72410203, 72420200, 72420201, 72420202, 72500200, 72500201, 72500202,
             72600200, 72600201, 72600202, 72600203, 72700200, 72700201, 72800200, 72800201, 72800202,
             72800203)
+# The lamps the editor offers besides LAMP_IDS: Byrgenwerth / the Lecture Building (320), the Nightmare Frontier (330)
+# and the three Old Hunters areas (340 Hunter's Nightmare, 350 Research Hall, 360 Fishing Hamlet; the DLC flags are
+# cleared by the game's own DLC-removal events in a save without the DLC). The table is lamp_travel_rules.h kLamps.
+EXTRA_LAMP_IDS = (73200200, 73200201, 73200202, 73200203, 73300200, 73300201, 73400200, 73400201, 73400202,
+                  73400203, 73500200, 73500201, 73500202, 73600200, 73600201, 73600202)
+ALL_LAMP_IDS = LAMP_IDS + EXTRA_LAMP_IDS
 ENDING_IDS = (21, 22, 23, 6600, 6601, 6602, 6603, 6604)
 # boss kill flag -> chr id in the game's NPC name list (None: no evidence which boss it is)
 BOSS_CHR = {12101800: 804000, 12101850: 540000, 12201800: 210000, 12301800: 209000, 12401800: 502000,
@@ -43,9 +52,16 @@ def bosses(cat=None):
     return out
 
 
+def lamp_flags(lit):
+    """All the flags of the lamp whose lamp-lit flag is `lit` (7AAB02nn): the flag itself and its object's
+    1AAB7810 + 20n and +11, which the game's own lighting sets with it (lampshare::LitFlags in the game)."""
+    base = 10000000 + (lit // 10000 % 1000) * 10000 + 7800 + 20 * (lit % 100)
+    return (lit, base + 10, base + 11)
+
+
 def lamps(cat=None):
     out = []
-    for f in LAMP_IDS:
+    for f in ALL_LAMP_IDS:
         name = (cat.lamp_name(f) if cat is not None else None) or f"Lamp {f % 100 + 1}"
         out.append((f, group_of(f), f"{name} [{f}]"))
     return out

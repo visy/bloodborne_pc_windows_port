@@ -4,6 +4,7 @@
 #include <boost/container/small_vector.hpp>
 #include "bbport_toggles.h"
 #include "bblayer_write_traps.h"
+#include "bbport_threads.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -311,6 +312,13 @@ struct PageManager::Impl {
         const auto is_gpu_thread = rasterizer->IsGpuSideThread();
         if (is_gpu_thread) {
             BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
+        } else if (BbThreads::draw_prep_worker && runtime_fault_recover) {
+            // bbport (Supermedo, a39f457a): a draw preparation worker reading ahead of the GPU
+            // thread holds the shader cache's lock, which the GPU thread takes to add a shader.
+            // Serving the fault would download from the GPU: waiting for the GPU thread while
+            // blocking it (a freeze). It goes back to its recovery point (probe.c) and the GPU
+            // thread prepares that draw itself.
+            return false;
         }
         // Traps on reads too (no access, BbLayer::WriteTraps::NoAccess): their owner first.
         if (BbLayer::WriteTraps::Reasons(addr) & BbLayer::WriteTraps::VramData) {
