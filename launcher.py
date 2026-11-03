@@ -2059,6 +2059,9 @@ def settings_env(s: dict) -> dict:
     # Sound timing log for crackle reports: late buffers, underruns, a summary per minute
     env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
     env["BB_BOSS_LOG"] = "1" if on("feat_boss_log", False) else "0"
+    # Ludwig's health and party scaling after loads (wipe reports); the peers' network event states (packet 0x31 etc.)
+    env["BB_PARTY_BOSS_HP_LOG"] = "1" if on("feat_boss_hp_log", False) else "0"
+    env["BB_PARTY_EVENT_SYNC_LOG"] = "1" if on("feat_event_sync_log", False) else "0"
     env["BB_INPUT_LOG"] = "1" if on("feat_input_log", False) else "0"
     # Party network receive gap log: was a peer quiet, or this PC's receive thread late (outage reports)
     env["BB_NET_RXGAP_LOG"] = "1" if on("feat_net_rxgap_log", False) else "0"
@@ -3312,6 +3315,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
         self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
         self.feat_boss_log = tk.BooleanVar(value=self.settings.get("feat_boss_log", False))
+        self.feat_boss_hp_log = tk.BooleanVar(value=self.settings.get("feat_boss_hp_log", False))
+        self.feat_event_sync_log = tk.BooleanVar(value=self.settings.get("feat_event_sync_log", False))
         self.feat_input_log = tk.BooleanVar(value=self.settings.get("feat_input_log", False))
         self.feat_net_rxgap_log = tk.BooleanVar(value=self.settings.get("feat_net_rxgap_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
@@ -3870,6 +3875,14 @@ class BloodborneLauncher(tk.Tk):
                     "Logs a boss's position, animation, health and the nearest player every 10 s while a boss bar "
                     "is up, for reports of a boss that stands still or ignores a player in a party. The "
                     "\"may be stuck\" line is always logged. Default: off (BB_BOSS_LOG).")
+        self._check(sec, "Boss health log (Ludwig after a wipe)", self.feat_boss_hp_log,
+                    "Logs Ludwig's health, maximum health and the party's boss scaling whenever they change, after "
+                    "every load, for reports of his second-half scene or a \"Prey Slaughtered\" banner with him alive "
+                    "after a party wipe. Default: off (BB_PARTY_BOSS_HP_LOG).")
+        self._check(sec, "Event sync log (party boss events)", self.feat_event_sync_log,
+                    "Logs the event states other players send to this game (boss phases, doors, bell events), at "
+                    "most 600 lines of each kind, for reports of a scene or fight that started on its own in a "
+                    "party. Default: off (BB_PARTY_EVENT_SYNC_LOG).")
         self._check(sec, "Network receive gap log (co-op outages)", self.feat_net_rxgap_log,
                     "For reports of \"connection unstable\" or outage lines in a party: when a player's game "
                     "traffic was silent for 2 s or more, whether this PC's receive thread ran on time "
@@ -6170,6 +6183,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_save_log": self.feat_save_log.get(),
             "feat_audio_log": self.feat_audio_log.get(),
             "feat_boss_log": self.feat_boss_log.get(),
+            "feat_boss_hp_log": self.feat_boss_hp_log.get(),
+            "feat_event_sync_log": self.feat_event_sync_log.get(),
             "feat_input_log": self.feat_input_log.get(),
             "feat_net_rxgap_log": self.feat_net_rxgap_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),

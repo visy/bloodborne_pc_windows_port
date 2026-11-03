@@ -223,7 +223,12 @@ Lua BlockClear2 with PREY SLAUGHTERED) starts when 3400800 OR 3400801 reads as d
 means one game's copy of an entity read as dead. New always-on lines tell which: `boss defeat processing 2003[12] on this game
 (guest / host or alone): event, entity, boss bar` and `boss clear of boss N runs on this game (role, s after its last load, bar)`
 (12 lines a run each), next to the existing `Party story: host / guest #seq cutscene 34000030 (... event 13404825)`.
-Leads that stay open: the real boss HP ratio right after the respawn load (max HP of the party doping row 7501 / 7502 against
-the unscaled HP of a chr that has not ticked) falling under 0.5 in the host's own event; the guests' flag syncs. Smoke knobs:
+HP-ratio lead, tested and refuted (`BB_PARTY_BOSS_HP_LOG=1`, "boss HP probe" lines, every 0.25 s, on every game, in `lw`; also
+set by the smoke): after a respawn load Ludwig's chrs stand unscaled at HP 16658 / max 16658 (base 2400) with none of the
+doping rows 7500 / 7501 / 7502; when the party is near, the row comes on (3 players 7501: 41646; 4 players 7502: 54139) and HP and
+max HP reach the scaled value in the same sample (once on a guest the row was on for 0.3 s with HP = max = 16658 still), so the
+ratio is never under half and 13404824 cannot fire from it; no "UNDER HALF" line in 3 and 4 player runs with a walk back to the
+arena (`BB_LW_WALK=1`, `BB_LW_WALK_AT`, `BB_LW_WALK_TO`; the walk does not reach the re-fight's fog region 3402801, so the
+fight itself was not re-entered). Leads that stay open: the guests' flag syncs; real network timing. Smoke knobs:
 `BB_LW_LATE_HP` / `BB_LW_LATE_AT` (a second boss HP set after the host's death), `BB_LW_ENV="A=1;B=2"`, `BB_LW_DIE`, `BB_LW_GDIE`.
 
