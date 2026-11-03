@@ -80,6 +80,9 @@ typedef struct {
 int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion);
 /* Button prompts: bbport.ini prompt_style (src/pad_prompts.h PROMPT_STYLE_*, 0 Auto). */
 int bbgpu_prompt_style(void);
+/* Keyboard movement ramp (bbport.ini key_ramp, BB_KEY_RAMP; default on): the move stick eases in
+ * over 70 ms and out over 45 ms instead of jumping (Mrsuss60 94388d59). */
+int bbgpu_key_ramp(void);
 /* Master volume multiplier: BB_AUDIO_BOOST, else the audio_boost setting (default 1.4). */
 float bbgpu_audio_boost(void);
 /* Test aid (BB_PAD_FILE "key=NAME"): a key press and release queued into the game window's

@@ -634,6 +634,43 @@ static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *o
     *oy=s->held_y=y<-127 ? -127 : y>127 ? 127 : y;
     return 1;
 }
+/* The keyboard stick's analog ramp (after Mrsuss60/bloodborne_pc_windows_port 94388d59, "analog
+ * stick simulation"): the stick does not jump to full when a key goes down or to neutral when it
+ * goes up; its size rises over KEY_RAMP_RISE_US (70 ms) and falls over KEY_RAMP_FALL_US (45 ms)
+ * like a thumb on a real stick, so the hunter eases into and out of a step. Only the size is
+ * ramped: the direction (key_stick_step's square gate, which the game's run / walk and
+ * sprint-ending rules were measured against) is kept, and after the keys are up the last
+ * direction is held while the size falls. A ramp at 1 is exactly the stick key_stick_step gave.
+ * Pure (time and state in, stick out) so tests/test_pad.c can check it. Mrsuss60's version also
+ * rounded the diagonal onto the unit circle (W+D = 90,90); that is NOT done here: the round gate
+ * walks where the square one runs (measured, see key_stick_step). */
+#define KEY_RAMP_RISE_US 70000u
+#define KEY_RAMP_FALL_US 45000u
+#define KEY_RAMP_MAX_DT_US 50000u
+typedef struct { double size; int held_x, held_y; uint64_t at; } KeyRampState;
+static KeyRampState key_move_ramp;
+static int key_ramp_step(KeyRampState *s, int active, int x, int y, uint64_t now, int *ox, int *oy) {
+    uint64_t dt=s->at && now>s->at ? now-s->at : 0;
+    s->at=now;
+    if (dt>KEY_RAMP_MAX_DT_US) dt=KEY_RAMP_MAX_DT_US;
+    if (active) {
+        s->held_x=x; s->held_y=y;
+        s->size+=(double)dt/KEY_RAMP_RISE_US;
+        if (s->size>1.0) s->size=1.0;
+    } else {
+        s->size-=(double)dt/KEY_RAMP_FALL_US;
+        if (s->size<0.0) s->size=0.0;
+    }
+    if (s->size<=1e-6) {
+        s->size=0.0;
+        if (!active) { s->held_x=s->held_y=0; s->at=0; } /* idle: the next press starts from this sample */
+        return 0;
+    }
+    /* The first sample after a key goes down has dt 0: size 0 and no stick yet (one read, a few ms). */
+    const int vx=(int)lround((double)s->held_x*s->size), vy=(int)lround((double)s->held_y*s->size);
+    *ox=vx; *oy=vy;
+    return 1;
+}
 /* The walk key (IN_WALK, key.walk=, Left Alt by default; after Mrsuss60/bloodborne_pc_windows_port
  * 5e029181 by HatsyRei, who used 48): while it is held the keyboard's move stick keeps its angle
  * but its larger axis is KEY_STICK_WALK instead of 127, so the hunter walks. Measured in game
@@ -652,7 +689,10 @@ static void apply_keyboard(PadData *d, const bool *k) {
     const int lx=key_direction(&key_axes[0],key_down(k,IN_MOVE_LEFT),key_down(k,IN_MOVE_RIGHT));
     const int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
     int sx, sy;
-    if (key_stick_step(&key_move_stick,lx,ly,now_us(),&sx,&sy)) {
+    const uint64_t now=now_us();
+    int moving=key_stick_step(&key_move_stick,lx,ly,now,&sx,&sy);
+    if (bbgpu_key_ramp()) moving=key_ramp_step(&key_move_ramp,moving,sx,sy,now,&sx,&sy);
+    if (moving) {
         if (key_down(k,IN_WALK)) { sx=key_stick_walk(sx); sy=key_stick_walk(sy); }
         /* All the way is 0 / 255, as key_axis gives the other sticks. */
         d->left_x=(uint8_t)(sx<=-127 ? 0 : sx>=127 ? 255 : 128+sx);

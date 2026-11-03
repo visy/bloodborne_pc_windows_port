@@ -59,13 +59,7 @@ class TextureCache {
     using PageTable = MultiLevelPageTable<Traits>;
 
 public:
-    enum class BindingType : u32 {
-        Texture,
-        Storage,
-        RenderTarget,
-        DepthTarget,
-        VideoOut,
-    };
+    using BindingType = VideoCore::BindingType;
 
     struct ImageDesc {
         ImageInfo info;
@@ -125,6 +119,9 @@ public:
 
     /// Retrieves the image handle of the image with the provided attributes.
     [[nodiscard]] ImageId FindImage(ImageDesc& desc, bool exact_fmt = false);
+
+    /// Adjusts view mip levels when the image has reduced texture quality (skipped top mips).
+    void AdjustView(const Image& image, ImageViewInfo& view);
 
     /// Retrieves image whose address matches provided
     [[nodiscard]] ImageId FindImageFromRange(VAddr address, size_t size, bool ensure_valid = true);
@@ -457,6 +454,8 @@ private:
     Common::SlotVector<ImageView> slot_image_views;
     tsl::robin_map<u64, Sampler> samplers;
     std::unordered_set<ImageId> download_images;
+    std::unordered_set<VAddr> whole_textures; ///< addresses whose textures stay whole (texture_quality)
+    u32 texture_skip_wanted = 0;              ///< mip levels texture_quality skips (0 full, 1 half, 2 quarter)
     u64 total_used_memory = 0;
     u64 gc_evictions = 0, gc_downloads = 0, gc_dropped = 0; ///< bbport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};

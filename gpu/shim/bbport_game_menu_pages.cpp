@@ -782,6 +782,18 @@ void DefineAll() {
            {off, AddText("FSR 3.1", "FSR 3.1"), AddText("FSR 4", "FSR 4"), AddText("FSR 4.1.1", "FSR 4.1.1"),
             AddText("TAA", "TAA"), AddText("DLSS", "DLSS")},
            Kind::List);
+    // ---- Textures: mip skipping to save VRAM (Mrsuss60 8841db5b, after deadinside28); after a restart. ----
+    AddPage("Textures", "Текстуры", "Texture quality for small video memory (bbport; after a restart)",
+            "Качество текстур для малой видеопамяти (bbport; после перезапуска)");
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return v.texture_quality.load(); },
+               [](int i) { BbSettings::Get().texture_quality = std::clamp(i, 0, BbSettings::TqCount - 1); }),
+           "Texture quality", "Качество текстур",
+           "After a restart. Auto: half on cards with 3 GB or less. Half / quarter skip the largest mip levels",
+           "После перезапуска. Авто: половина на картах до 3 ГБ. Половина / четверть пропускают крупные мипы",
+           {AddText("Auto", "Авто"), AddText("Full", "Полное"), AddText("Half", "Половина"),
+            AddText("Quarter", "Четверть")},
+           Kind::List);
     // ---- Sound: master volume boost (Display has its 6 rows). ----
     AddPage("Sound", "Звук", "Master volume boost with a soft limiter (bbport)",
             "Усиление общей громкости с мягким ограничителем (bbport)");
@@ -1035,6 +1047,10 @@ void DefineAll() {
     AddRow(Scaled(&Values::mk_sens_y, SensTable), "Vertical speed", "Скорость по вертикали",
            "Mouse sensitivity: 0 = 0.25, 5 = 1.0 (default), 10 = 5.0",
            "Чувствительность мыши: 0 = 0.25, 5 = 1.0 (по умолчанию), 10 = 5.0", {}, Kind::Slider);
+    AddRow(Flag(&Values::key_ramp), "Keyboard stick ramp", "Плавный разгон стика",
+           "WASD ease in over 70 ms and out over 45 ms like a thumb on a stick (Mrsuss60). Off: instant",
+           "WASD плавно нарастают за 70 мс и спадают за 45 мс, как большой палец на стике. Выкл: сразу", toggle,
+           Kind::Toggle);
     // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return v.prompt_style.load(); },
