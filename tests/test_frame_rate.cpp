@@ -178,33 +178,48 @@ int main() {
     assert(LiveTargetFromRate(60) == 60 && LiveTargetFromRate(144) == 144);
     assert(LiveTargetFromRate(MaxRate) == 0 && LiveTargetFromRate(240) == 0 && LiveTargetFromRate(10) == 30);
 
-    // Live clock step: steady frames at the target give exactly the target; a frame time within 8%
-    // is locked; a spike is slewed (+12% a frame) and clamped to 1/30 s; a faster frame slews down.
+    // Live clock step: the step is the frame's time (game time follows real time); only +-1.5% micro-jitter is
+    // locked to the target, with the difference carried over.
     {
         LiveClockState st;
         float interval = 0;
         const float t60 = 1.0f / 60;
-        assert(Near(LiveClockStep(st, t60 * 1.05f, 60, 30, interval), t60, 1e-6f) && Near(interval, t60, 1e-6f));
-        const float spike = LiveClockStep(st, 0.5f, 60, 30, interval);  // a 500 ms stall
-        assert(Near(spike, t60 * 1.12f, 1e-6f));
-        float dt = spike;
-        for (int i = 0; i < 30; ++i) dt = LiveClockStep(st, 0.5f, 60, 30, interval);
-        assert(Near(dt, Frame30, 1e-6f));                                  // never above 1/30 s
-        for (int i = 0; i < 60; ++i) dt = LiveClockStep(st, t60, 60, 30, interval);
-        assert(Near(dt, t60, 1e-6f));                                      // back to the target
+        assert(Near(LiveClockStep(st, t60 * 1.01f, 60, 30, interval), t60, 1e-6f) && Near(interval, t60, 1e-6f));
+        // A long frame is stepped as it is (up to 1/30 s), no lag: time is conserved.
+        { LiveClockState a; assert(Near(LiveClockStep(a, 0.025f, 60, 30, interval), 0.025f, 1e-6f)); }
+        { LiveClockState a; assert(Near(LiveClockStep(a, 0.5f, 60, 30, interval), Frame30, 1e-6f)); }   // never above 1/30 s
+        { LiveClockState a; assert(Near(LiveClockStep(a, 0.005f, 60, 30, interval), 0.005f, 1e-6f)); }  // a short frame too
+        // Over a run of jittery frames the stepped time equals the real time (below the clamps).
+        {
+            LiveClockState sj;
+            double real = 0, game = 0;
+            for (int i = 0; i < 20000; ++i) {
+                const float m = 1.0f / 60 * (1.0f + 0.4f * std::sin(float(i) * 0.7f)) * (1.0f + 0.01f * std::sin(float(i)));
+                real += double(m);
+                game += double(LiveClockStep(sj, m, 60, 30, interval));
+            }
+            assert(std::fabs(game / real - 1.0) < 0.002);
+            // Frames a little over the target (a PC that holds 58 FPS): game time stays 1.0, not 0.97.
+            LiveClockState sk;
+            double r2 = 0, g2 = 0;
+            for (int i = 0; i < 20000; ++i) {
+                const float m = 1.0f / 58;
+                r2 += double(m);
+                g2 += double(LiveClockStep(sk, m, 60, 30, interval));
+            }
+            assert(std::fabs(g2 / r2 - 1.0) < 0.002);
+        }
         // Invalid measurements count as the target; uncapped paces at the 240 FPS ceiling.
         LiveClockState st2;
         assert(Near(LiveClockStep(st2, NAN, 120, 30, interval), 1.0f / 120, 1e-6f));
         LiveClockState st3;
         assert(Near(LiveClockStep(st3, 0.0f, 0, 30, interval), 1.0f / 240, 1e-6f) && Near(interval, 1.0f / 240, 1e-6f));
-        // A target above the physics clamp (max_dt_hz 120 < 60?): the step is at least the target.
         LiveClockState st4;
         assert(Near(LiveClockStep(st4, 0.2f, 30, 240, interval), 1.0f / 30, 1e-6f));
-        // Switching the target in the menu: the stall of the switch does not become a spike.
+        // Switching the target resets the carry.
         LiveClockState st5;
-        LiveClockStep(st5, 1.0f / 60, 60, 30, interval);
-        const float after = LiveClockStep(st5, 0.05f, 120, 30, interval);
-        assert(after <= 1.0f / 60 * 1.12f + 1e-6f);
+        LiveClockStep(st5, 1.0f / 60 * 1.01f, 60, 30, interval);
+        assert(Near(LiveClockStep(st5, 1.0f / 120, 120, 30, interval), 1.0f / 120, 1e-6f));
     }
 
     // The layout the game's code reads.

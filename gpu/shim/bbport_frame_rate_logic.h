@@ -153,9 +153,12 @@ struct LiveClockState {
     int previous_target = -1;
 };
 
-/// The simulation step for a frame the pacer measured at `measured` s (upstream's bb_live_clock_tick
-/// after 83a168ee). `target_fps` 0 = uncapped, `max_dt_hz` the physics clamp (1/30 s by default).
-/// `interval` receives the pacer's frame time target.
+/// The simulation step for a frame the pacer measured at `measured` s. Mrsuss60's clock (a7cbfae6, 83a168ee) held the
+/// step to +-8% of the target and slewed it +12% / -15% a frame; with two games on one PC that made the game run at
+/// 0.83 of real time at a target of 60 (the step lagged every long frame). Here the step IS the frame's time, so game
+/// time follows real time: clamped to [1/240 s, 1/max_dt_hz] (below that rate the game slows down, as it always did),
+/// and only micro-jitter (+-1.5% of the target: timer granularity) is locked to the target, with the difference carried
+/// to the next frame so no time is lost. `target_fps` 0 = uncapped; `interval` receives the pacer's frame time target.
 inline float LiveClockStep(LiveClockState& st, float measured, int target_fps, int max_dt_hz, float& interval) {
     const float floor_dt = 1.0f / 240.0f;
     const float target = target_fps > 0 ? 1.0f / float(target_fps) : floor_dt;
@@ -163,27 +166,24 @@ inline float LiveClockStep(LiveClockState& st, float measured, int target_fps, i
     if (max_dt < target) max_dt = target;
     interval = target;
     float raw = std::isfinite(measured) && measured > 0.0f ? measured : target;
-    if (raw > max_dt) raw = max_dt;
-    if (raw < floor_dt) raw = floor_dt;
-    if (target_fps > 0) { // OS timer / vsync micro-jitter: inside +-8% of the target, exactly the target
-        const float band = target * 0.08f;
-        if (raw >= target - band && raw <= target + band) raw = target;
-    }
-    if (st.smoothed <= 0.0f) {
-        st.smoothed = target;
+    raw = std::clamp(raw, floor_dt, max_dt);
+    if (st.previous_target != target_fps) { // the target changed in the menu: no carry across it
         st.previous_target = target_fps;
-    } else {
-        if (st.previous_target != target_fps) { // a stall while the menu switched the target is no spike
-            st.previous_target = target_fps;
-            if (target_fps > 0 && raw > target && raw > st.smoothed) raw = target > st.smoothed ? target : st.smoothed;
-        }
-        if (raw > st.smoothed) {
-            st.smoothed += std::min(raw - st.smoothed, st.smoothed * 0.12f);
-        } else if (raw < st.smoothed) {
-            st.smoothed -= std::min(st.smoothed - raw, st.smoothed * 0.15f);
+        st.smoothed = 0.0f;
+    }
+    float dt = raw;
+    if (target_fps > 0) {
+        const float band = target * 0.015f;
+        const float want = raw + st.smoothed; // the time owed from the frames locked before (smoothed = carry)
+        if (want >= target - band && want <= target + band) {
+            dt = target;
+            st.smoothed = want - target; // |carry| stays inside the band: nothing is lost for good
+        } else {
+            dt = want; // pays what the locked frames owed
+            st.smoothed = 0.0f;
         }
     }
-    return std::clamp(st.smoothed, floor_dt, max_dt);
+    return std::clamp(dt, floor_dt, max_dt);
 }
 
 } // namespace BbFrameRate
