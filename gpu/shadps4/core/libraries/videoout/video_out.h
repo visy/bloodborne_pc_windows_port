@@ -130,6 +130,9 @@ s32 PS4_SYSV_ABI sceVideoOutWaitVblank(s32 handle);
 /// bbport (low-latency pacing): waits until at most `max_pending` flips are waiting to be presented, or `timeout_us` passed.
 /// True when the wait ended on its own condition. The caller is the game's thread at the start of a frame.
 bool WaitFlipQueue(s32 max_pending, u32 timeout_us);
+/// The presenter's frame limit in FPS (0 = none), kept by the video-out thread.
+u32 PresenterLimit();
+void SetPresenterLimit(u32 limit);
 /// Flips submitted since start (any thread): lets a caller wait once per flip.
 u64 FlipsSubmitted();
 

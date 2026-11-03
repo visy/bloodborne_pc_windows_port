@@ -156,6 +156,16 @@ s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(s32 handle, s32 rate) {
 
 static std::atomic<u64> flips_submitted{0};
 
+static std::atomic<u32> presenter_limit{0};
+
+u32 PresenterLimit() {
+    return presenter_limit.load(std::memory_order_relaxed);
+}
+
+void SetPresenterLimit(u32 limit) {
+    presenter_limit.store(limit, std::memory_order_relaxed);
+}
+
 u64 FlipsSubmitted() {
     return flips_submitted.load(std::memory_order_relaxed);
 }

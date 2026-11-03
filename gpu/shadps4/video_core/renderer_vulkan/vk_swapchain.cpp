@@ -371,13 +371,17 @@ void Swapchain::FindPresentMode() {
         return;
     }
 
-    // Variable refresh rate (bbport.ini vrr): presents are not synced to vblank, so the display refreshes when a frame
-    // arrives; the frame limit (BbFrameRate::VrrCap) keeps the rate under its refresh, so nothing tears at the top.
+    // Variable refresh rate (bbport.ini vrr): the frame limit (BbFrameRate::VrrCap) keeps the rate under the display's
+    // refresh, so the present mode is not what keeps it from tearing and the default (Mailbox: the newest frame goes out
+    // at once, nothing queues) stays. Immediate was tried (a windowed run lost 10% of its frame rate: the present
+    // waits for the compositor); BB_VRR_PRESENT_MODE=Immediate|FifoRelaxed|Fifo|Mailbox lets a VRR display's owner try one.
     // BB_PRESENT_MODE still wins when set.
-    const bool vrr = BbSettings::Get().startup_vrr && !std::getenv("BB_PRESENT_MODE");
-    const auto requested_mode = vrr ? std::string{"Immediate"} : EmulatorSettings.GetPresentMode();
+    const char* vrr_mode = BbSettings::Get().startup_vrr ? std::getenv("BB_VRR_PRESENT_MODE") : nullptr;
+    const auto requested_mode = vrr_mode && !std::getenv("BB_PRESENT_MODE") ? std::string{vrr_mode}
+                                                                             : EmulatorSettings.GetPresentMode();
+    const bool vrr = BbSettings::Get().startup_vrr;
     if (vrr) {
-        LOG_INFO(Render_Vulkan, "Variable refresh rate: Immediate present mode (when offered), rate held under the refresh");
+        LOG_INFO(Render_Vulkan, "Variable refresh rate: present mode {}, rate held under the refresh", requested_mode);
     }
     if (requested_mode == "Mailbox") {
         present_mode = vk::PresentModeKHR::eMailbox;
@@ -385,6 +389,8 @@ void Swapchain::FindPresentMode() {
         present_mode = vk::PresentModeKHR::eFifo;
     } else if (requested_mode == "Immediate") {
         present_mode = vk::PresentModeKHR::eImmediate;
+    } else if (requested_mode == "FifoRelaxed") {
+        present_mode = vk::PresentModeKHR::eFifoRelaxed;
     } else {
         LOG_ERROR(Render_Vulkan, "Unknown present mode {}, defaulting to Mailbox.",
                   EmulatorSettings.GetPresentMode());
