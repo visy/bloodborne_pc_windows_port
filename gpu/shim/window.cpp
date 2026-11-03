@@ -351,7 +351,8 @@ bool WindowSDL::PollEvents() {
             const SDL_DisplayID display = SDL_GetDisplayForWindow(window);
             const SDL_DisplayMode* mode = display ? SDL_GetCurrentDisplayMode(display) : nullptr;
             static float logged = -1.0f;
-            const float hz = mode ? mode->refresh_rate : 0.0f;
+            float hz = mode ? mode->refresh_rate : 0.0f;
+            if (const char* forced = std::getenv("BB_DISPLAY_REFRESH")) hz = float(std::atof(forced)); // test aid: pretend this refresh
             BbFrameRate::SetDisplayRefresh(hz);
             if (hz != logged) {
                 logged = hz;

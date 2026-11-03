@@ -32,6 +32,7 @@
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/videoout/driver.h"
+#include "core/libraries/videoout/video_out.h"
 #include "core/libraries/kernel/equeue.h"
 
 extern "C" void runtime_sleep_stats(uint64_t* calls, uint64_t* ns);
@@ -1023,6 +1024,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             }
         }
         // Reflex's latency sleep holds the presenter's rate too (its minimum frame interval), once Reflex runs.
+        Libraries::VideoOut::SetPresenterLimit(frame_limit);
         if (reflex_limit_sent != frame_limit && Vulkan::Reflex::Tracking()) {
             reflex_limit_sent = frame_limit;
             Vulkan::Reflex::SetFrameInterval(frame_limit ? unsigned(1000000 / frame_limit) : 0u);
