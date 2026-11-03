@@ -92,6 +92,7 @@ struct Invasion {
     int announced = 0;  // 0 nothing, 1 pending sent, 2 in sent
     double sent_at = 0;
     bool fell = false;  // the invader said it fell
+    double away_since = -1;  // the invader's state says it is not in the world (Home / Title) since then
 };
 Invasion g_inv;
 std::mutex g_fell_mu;
@@ -440,7 +441,17 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
             g.invader_state = 0;
             return;
         }
-        const bool arrived = ent.state == party::MemberState::InHostWorld;
+        // Once in, a loading screen of the invader's (its game loads while the host's world stays) does not make it "coming" again;
+        // a state that says it is back home (Home / Title / Prologue) for 3 s ends the invasion (it left the session).
+        const bool was_in = g_inv.announced == 2;
+        const bool arrived = ent.state == party::MemberState::InHostWorld || (was_in && ent.state == party::MemberState::Loading);
+        if (was_in && (ent.state == party::MemberState::Home || ent.state == party::MemberState::Title ||
+                       ent.state == party::MemberState::Prologue)) {
+            if (g_inv.away_since < 0) g_inv.away_since = now;
+        } else {
+            g_inv.away_since = -1;
+        }
+        const bool went_home = g_inv.away_since >= 0 && now - g_inv.away_since > 3.0;
         // The invader's own HP, from its vitals (the host's copy of it): 0 means it fell.
         bool invader_alive = !g_inv.fell;
         {
@@ -460,6 +471,7 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
         l.boss_fight = v.boss_fight;
         l.link_up = ent.connected;
         End end = CheckEnd(l);
+        if (end == End::None && went_home) end = End::HostGone;  // it left the host's world by itself
         // Before the invader stands in the world, a moment that turned bad refuses it (boss fog, a cutscene, a travel ...).
         std::string refusal;
         if (end == End::None && !arrived) {

@@ -245,6 +245,7 @@ struct InvaderState {
     u64 chr = 0;
     u32 entity = 0;
     int from = 0;
+    u32 from_type = 0;     // the chr's phantom type before the look was changed (0: not changed)
     Clock::time_point scan_at{};
     bool failed = false;
     bool logged_chr = false;
@@ -420,13 +421,26 @@ void SpareScan(u64 wcm, const std::vector<u64>& players) {
 }
 
 constexpr int kEnemyTeam = 23;  // the map's enemies: what the invader's team is copied from
+constexpr u32 kInvaderChrType = 2;  // the black / red phantom (chr +0x78; 1 is the white phantom a cooperator is)
+bool InvaderLook() {  // BB_PARTY_INVADE_LOOK=1: the chr type as a black phantom's (off: it showed no red look in a live run)
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_INVADE_LOOK");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
 
 void InvaderRestoreChr(const char* why) {
     InvaderState& iv = IV();
     if (iv.chr && Field<u32>(iv.chr, 0x1f0, 0) == iv.entity && Field<u32>(iv.chr, kChrTeam, 0) == u32(iv.team)) {
         const u32 t = u32(iv.from);
         if (SafeWrite(iv.chr + kChrTeam, &t, 4)) Log("invader: its chr is back on team %d (%s)", iv.from, why);
+        if (iv.from_type && Field<u32>(iv.chr, kChrType, 0) == kInvaderChrType) {
+            const u32 ty = iv.from_type;
+            if (SafeWrite(iv.chr + kChrType, &ty, 4)) Log("invader: its phantom type is back to %u", ty);
+        }
     }
+    iv.from_type = 0;
     iv.chr = 0;
     iv.logged_chr = false;
 }
@@ -533,6 +547,14 @@ void InvaderTick(bool active, u64 player) {
         if (player == last_player && hp >= 0 && last_hp >= 0 && hp < last_hp) Log("invader: own HP %d -> %d%s", last_hp, hp, hp == 0 ? " (dead)" : "");
         last_player = player;
         last_hp = hp;
+    }
+    if (InvaderLook()) {  // the red phantom's look: the chr type as a black phantom's
+        const u32 ty = Field<u32>(chr, kChrType, 0);
+        if (ty != kInvaderChrType && ty != 0) {
+            if (!iv.from_type) iv.from_type = ty;
+            const u32 w = kInvaderChrType;
+            if (SafeWrite(chr + kChrType, &w, 4)) Log("invader: chr %x phantom type %u -> %u (the invader's look)", ent, ty, w);
+        }
     }
     if (Field<u32>(chr, kChrTeam, 0) != u32(iv.team)) {
         const u32 t = u32(iv.team);

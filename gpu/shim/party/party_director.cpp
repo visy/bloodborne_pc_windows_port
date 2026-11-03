@@ -5533,6 +5533,12 @@ void PartyDirector::Tick() {
         }
         const party::MemberState ms = LocalState(s, st.start_prologue);
         const std::uint32_t map = s.world_up ? s.map_id : 0;
+        // A link made anew (Rejoin, an invader asking again after a refusal) knows nothing of the state sent to the old one.
+        static const party::PartyLink* sent_to = nullptr;
+        if (link != sent_to) {
+            sent_to = link;
+            st.sent_any = false;
+        }
         if (!st.sent_any || ms != st.sent_state || map != st.sent_map) {
             st.sent_any = true;
             st.sent_state = ms;
