@@ -452,8 +452,7 @@ def reply_bug(clinic, message):
 
 
 def _same_session(a, b):
-    if a.get("day") and b.get("day") and a["day"] != b["day"]:
-        return False  # a session is one day's; the post may come days later, the log cannot
+    # same_session itself needs the same calendar day (the post may come days later, the log cannot)
     try:
         return _sib("netdoctor_store").same_session(a, b)
     except KeyError:

@@ -197,6 +197,13 @@ static ABI int32_t audio_init(void) {
     if (!initialized) {
 #ifdef _WIN32
         timeBeginPeriod(1);
+        { /* BB_AFFINITY_MASK=<hex>: test aid, limits the process to these logical CPUs (low-core-count audio A/B) */
+            const char *am=getenv("BB_AFFINITY_MASK");
+            if (am && *am) {
+                const DWORD_PTR m=(DWORD_PTR)strtoull(am,NULL,16);
+                printf("Runtime: BB_AFFINITY_MASK %s -> %s\n", am, m && SetProcessAffinityMask(GetCurrentProcess(),m) ? "set" : "FAILED");
+            }
+        }
 #endif
     }
     initialized=1;
@@ -290,8 +297,13 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
 #ifdef _WIN32
     static _Thread_local int s_audio_prio_set=0;
     if (!s_audio_prio_set) {
-        /* Use THREAD_PRIORITY_HIGHEST: avoids starvation of Haswell 4C/4T CPU while maintaining low latency */
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        /* BB_AUDIO_THREAD_PRIO=normal|above|highest (default highest; A/B test aid) */
+        const char *pe=getenv("BB_AUDIO_THREAD_PRIO");
+        int prio=THREAD_PRIORITY_HIGHEST;
+        if (pe && !strcmp(pe,"normal")) prio=THREAD_PRIORITY_NORMAL;
+        else if (pe && !strcmp(pe,"above")) prio=THREAD_PRIORITY_ABOVE_NORMAL;
+        SetThreadPriority(GetCurrentThread(), prio);
+        printf("Runtime: audio output thread priority %d\n", prio);
         s_audio_prio_set=1;
     }
 #endif
