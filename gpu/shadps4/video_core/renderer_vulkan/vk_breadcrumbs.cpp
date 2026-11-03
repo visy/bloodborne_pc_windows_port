@@ -163,6 +163,10 @@ void PrintEntry(const Stream& stream, u64 id, const char* label) {
     switch (c.kind) {
     case Kind::Pass:
         Out(" %s", c.name ? c.name : "?");
+        if (c.address) {
+            Out(" (target handle %#llx, offset %u, %llu bytes)", (unsigned long long)c.address,
+                c.count[2], (unsigned long long)c.count[0] | (unsigned long long)c.count[1] << 32);
+        }
         break;
     case Kind::Draw:
     case Kind::DrawIndexed:
@@ -291,6 +295,14 @@ u32 NewStream(const Instance& instance, const char* name) {
 
 bool Enabled() noexcept {
     return enabled;
+}
+
+bool TransfersEnabled() noexcept {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_BREADCRUMBS_TRANSFERS");
+        return v && v[0] == '1';
+    }();
+    return enabled && on;
 }
 
 u32 Note(u32 stream_index, const Crumb& crumb) {
