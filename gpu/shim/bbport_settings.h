@@ -253,6 +253,10 @@ struct Values {
     /// opens it. Off by default (ini map_enabled; env BB_MAP=0/1 overrides). Needs the map data the
     /// launcher makes from the player's game files (Prepare the map). Live, local.
     std::atomic<bool> map_enabled{false};
+    /// Auto-hide HUD (0.7.8, CL-7d51fe; party/auto_hud.h): the game's HP / stamina bars, item slots and the echoes /
+    /// Insight counters fade out while nothing happens and come back on damage, stamina use, a fight, a lock-on, an
+    /// equipment change or a menu, like Elden Ring's "HUD: Auto". Off by default (ini auto_hide_hud; env BB_AUTO_HUD=0/1). Live.
+    std::atomic<bool> auto_hide_hud{false};
     /// The party HUD board shows each member's round-trip time in ms after the name, green / yellow / red
     /// by quality (ini party_hud_ping, default on). Live, local.
     std::atomic<bool> party_hud_ping{true};

@@ -1519,6 +1519,14 @@ void ControlsTab() {
              "фонари, вы и ваша группа; клик по фонарю (крестовина + Cross) - переход к нему. Нужны данные "
              "карты, которые лаунчер делает из файлов игры (Prepare the map). Hunter's Atlas, MikeTat1988."),
            true);
+    Toggle("auto_hide_hud", T("Auto-hide HUD", "Автоскрытие HUD"), s.auto_hide_hud,
+           T("Like Elden Ring's HUD: Auto. The bars, item slots and echoes counter fade out while nothing happens "
+             "and come back on damage, stamina use, a fight, a lock-on, an item or weapon change, an echoes change "
+             "or a menu. The boss bar and prompts stay.",
+             "Как HUD: Auto в Elden Ring. Полосы, слоты предметов и счётчик отголосков исчезают, пока ничего не "
+             "происходит, и возвращаются при уроне, трате выносливости, бое, захвате цели, смене предмета или "
+             "оружия, изменении отголосков и в меню. Полоса босса и подсказки остаются."),
+           true);
     // Button prompts (bbport_button_prompts.h, from deadinside28/bloodborne_pc 72e5c8ce): live.
     Choice("prompt_style", T("Button prompts", "Подсказки кнопок"), s.prompt_style, BbSettings::PromptStyleCount,
            [](int i) {
