@@ -5857,7 +5857,7 @@ def check_rwt(v, L):
 
 # Phase gv (~4 min, 2 players, group `give_items`; 0.7.8 CL-63e235): give items to a party member, both directions.
 # Test aid BB_PARTY_GIVE_TEST (party_give.h), times in seconds after the world is steady with a member connected; both
-# games start with the switch OFF (the default) and turn it on with "on@s". Quicksilver Bullets 900 (host 40, guest 0),
+# games start with the switch OFF (the default) and turn it on with "on@s". Quicksilver Bullets 900 (host 20 = the inventory maximum, guest 0),
 # Blood Vials 1000 (host 10, guest 18: the guest inventory takes 2, the storage box the other 3), Sword Hunter Badge
 # 4114 (host 1: refused). Host: 900 x10 -> guest, the badge (refused), 900 x1 while the guest switch is off (their
 # consent), 1000 x5 (past the inventory maximum), 900 x50 (not held). Guest: 900 x4 -> host, 900 x1 with its own switch off.
@@ -5865,12 +5865,13 @@ GV_UNTIL = [r"0:applied goods 900 x4 from slot 1", r"1:applied goods 1000 x5 fro
 
 
 def gv_ienv(net=None):
-    host = ",".join(["god", "goods=900:40", "goods=1000:10", "goods=4114:1"])
+    host = ",".join(["god", "goods=900:20", "goods=1000:10", "goods=4114:1"])
     g1 = ",".join(["god", "goods=900:0", "goods=1000:18"])
     out = ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1,
            "0:BB_PARTY_GIVE_WATCH=900,1000,4114", "1:BB_PARTY_GIVE_WATCH=900,1000",
+           "0:BB_OVERLAY_OPEN_PARTY_AT=60",  # the Insert menu on the Party tab for the screenshot of the give rows
            "0:BB_PARTY_GIVE_TEST=on@0,900:10:1@25,4114:1:1@40,900:1:1@75,1000:5:1@95,900:50:1@110",
-           "1:BB_PARTY_GIVE_TEST=on@0,900:4:0@50,off@62,900:1:0@64,on@90"]
+           "1:BB_PARTY_GIVE_TEST=on@0,900:4:0@50,off@62,900:1:0@64,on@80"]
     if net:
         out += ["0:BB_NET_SIM=" + net, "1:BB_NET_SIM=" + net]
     return out
@@ -5879,7 +5880,8 @@ def gv_ienv(net=None):
 def phase_gv(only, name="gv", net=None):
     watch = []
     for rx, tag in ((r"Party give: notice: Gave .* x10 to", "gave"), (r"Party give: notice: .* x10 from", "got"),
-                    (r"Party give: notice: Gave .* x4 to", "back")):
+                    (r"Party give: notice: Gave .* x4 to", "back"),
+                    (r"request goods 900 x50 to slot 1 refused", "rows")):
         watch += ["--watch", "%s=%s@0.8" % (rx, tag)]
     return dict(
         name=name, seconds=360 if net else 300, count=2, headless=0, until_hold=15,
@@ -5901,7 +5903,7 @@ def check_gv(v, L, tag="gv"):
     j = need(v, L, tag + " join: 2 players", 0, r"cooperators 0 -> 1")
     # switch off by default: nothing until the test turns it on
     need(v, L, tag + " host -> guest: 10 Quicksilver Bullets leave the host inventory", 0,
-         r"removed goods 900 x10: held 40 -> 30 \(removed 10\)", j or 0)
+         r"removed goods 900 x10: held 20 -> 10 \(removed 10\)", j or 0)
     need(v, L, tag + " host -> guest: the guest game gives them (verified count)", 1,
          r"applied goods 900 x10 from slot 0: inventory 0 -> 10, storage \d+ -> \d+ \(arrived 10\)", j or 0)
     need(v, L, tag + " host -> guest: the giver transfer ends with all 10 arrived", 0, r"transfer ended: got 10 of 10, refund 0", j or 0)
@@ -5909,7 +5911,7 @@ def check_gv(v, L, tag="gv"):
     need(v, L, tag + " notice on the receiver (<item> xN from <name>)", 1, r"Party give: notice: .* x10 from ", j or 0)
     # guest -> host
     need(v, L, tag + " guest -> host: 4 leave the guest inventory", 1, r"removed goods 900 x4: held 10 -> 6 \(removed 4\)", j or 0)
-    need(v, L, tag + " guest -> host: the host game gives them", 0, r"applied goods 900 x4 from slot 1: inventory 30 -> 34", j or 0)
+    need(v, L, tag + " guest -> host: the host game gives them", 0, r"applied goods 900 x4 from slot 1: inventory 10 -> 14", j or 0)
     # a story / unique item is refused before anything moves
     need(v, L, tag + " the Sword Hunter Badge is refused on the giver", 0, r"request goods 4114 x1 to slot 1 refused: (story|unique|key_item)", j or 0)
     none_of(v, L, tag + " no offer for the badge ever left the host", r"offer id \d+: goods 4114", insts=(0,))
@@ -5924,7 +5926,7 @@ def check_gv(v, L, tag="gv"):
     # conservation: nothing lost, nothing created
     h = gv_holdings(L, 0, 900)
     g = gv_holdings(L, 1, 900)
-    v.step(tag + " Quicksilver Bullets are conserved (host 34 + guest 6 = 40)", h == 34 and g == 6, "host %s, guest %s" % (h, g))
+    v.step(tag + " Quicksilver Bullets are conserved (host 14 + guest 6 = 20)", h == 14 and g == 6, "host %s, guest %s" % (h, g))
     h = gv_holdings(L, 0, 1000)
     v.step(tag + " Blood Vials: the host lost exactly 5", h == 5, "host %s" % h)
     none_of(v, L, tag + " no roll-back, no failed removal on a clean link", r"rolled back|refund \d+ of goods", insts=(0, 1))
@@ -5972,7 +5974,7 @@ def phase_gvr(only):
     return dict(
         name="gvr", seconds=300, count=2, headless=0, until_hold=10,
         env=[],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_DIRECTOR_TEST=god,goods=900:20",
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=god,goods=900:0", "1:BB_PARTY_DIRECTOR_TEST=god,goods=900:20",
               "0:BB_PARTY_GIVE_TEST=on@0", "1:BB_PARTY_GIVE_TEST=on@0,900:5:0@30", "0:BB_PARTY_GIVE_FAULT=mute",
               "0:BB_PARTY_GIVE_WATCH=900", "1:BB_PARTY_GIVE_WATCH=900"],
         watch=["--watch", r"Party give: notice: Give .* the item was put back=back@0.8"],
@@ -5989,7 +5991,7 @@ def check_gvr(v, L):
     need(v, L, "gvr the roll-back is told to the player", 1, r"notice: Give .*: no confirmation, the item was put back", r or 0)
     none_of(v, L, "gvr the host never applied it", r"applied goods 900", insts=(0,))
     a, b = gv_holdings(L, 1, 900), gv_holdings(L, 0, 900)
-    v.step("gvr bullets are conserved (guest 20, host 0)", a == 20 and b in (0, None), "guest %s, host %s" % (a, b))
+    v.step("gvr bullets are conserved (guest 20, host 0)", a == 20 and b == 0, "guest %s, host %s" % (a, b))
     check_common(v, L, "gvr")
 
 
