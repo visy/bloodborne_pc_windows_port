@@ -4348,6 +4348,7 @@ def check_lr(v, L):
 # 40 = past the second-phase scene), host and guest both die (the host first: the limbo; the guest last:
 # the wipe). After the respawn load nobody goes into the arena for LW_HOLD seconds: no scene, no bar.
 LW_HOLD = 50
+LW_ARENA_XZ = os.environ.get("BB_LW_WALK_TO", "-407.93:-700.0:2.5:60")    # x : z : tolerance : timeout of a stick walk to the arena entrance
 LW_UNTIL = [r"0:a wipe; the[\s\S]*loading screen gone"]
 
 
@@ -4371,8 +4372,16 @@ def phase_lw(only):
                   # stale-guest-state test: its heat-up events run and tell the host)
                   (["guest_kill=3400800:hp%s@%s%%m34_00" % (inject, os.environ.get("BB_LW_INJECT_AT", "12"))] if inject else []))
     players = int(os.environ.get("BB_LW_PLAYERS", "2"))
+    walk = os.environ.get("BB_LW_WALK") == "1"
+    if walk:
+        # BB_LW_WALK=1 (0.7.8): after the wipe's respawn load the party walks back to Ludwig's arena on foot (a stick
+        # toward the arena entrance, region 3402805), as players do: no scene before the walk, no defeat banner at all
+        at = os.environ.get("BB_LW_WALK_AT", "75")
+        host += ",host_stick=%s@%s%%m34_00" % (LW_ARENA_XZ, at)
+        g1 += ",guest_stick=%s@%s%%m34_00" % (LW_ARENA_XZ, at)
     ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1]
-    env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LUDWIG_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1", "BB_PARTY_EVENT_SYNC_LOG=1"]
+    env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LUDWIG_CLEAR, "BB_PARTY_TEST_INVINCIBLE=1", "BB_PARTY_EVENT_SYNC_LOG=1",
+           "BB_PARTY_BOSS_HP_LOG=1"]
     if os.environ.get("BB_LW_ENV"):          # "A=1;B=2" on every game (BB_NET_SIM=mobile ...)
         env += os.environ["BB_LW_ENV"].split(";")
     if players > 2:
@@ -4383,7 +4392,7 @@ def phase_lw(only):
     return dict(
         name="lw", seconds=480, count=players, headless=max(0, players - 2), pads=(0, 1),
         env=env, ienv=ienv,
-        crash=[], until=LW_UNTIL, until_hold=LW_HOLD,
+        crash=[], until=LW_UNTIL, until_hold=int(os.environ.get("BB_LW_HOLD", "150" if walk else str(LW_HOLD))),
     )
 
 
@@ -4413,10 +4422,17 @@ def check_lw(v, L):
         if inj is not None:
             need(v, L, "lw the guest's phase event state reached the host and was not applied", 0,
                  r"Boss phase: event 134048\d\d's state from a guest not applied", inj - 0.5, inj + 20)
+    walk = os.environ.get("BB_LW_WALK") == "1"
+    win = float(os.environ.get("BB_LW_WALK_AT", "75")) - 35 if walk else LW_HOLD   # walk mode: until the party leaves
     none_of(v, L, "lw no second-phase scene after the wipe (34000030 / event 13404825)",
-            r"cutscene 34000030|event 13404825", up, up + LW_HOLD, insts=(0, 1))
-    none_of(v, L, "lw no fight after the wipe (bar, fog, first fight)", BOSS_START + r"|cutscene 34000020", up, up + LW_HOLD)
-    none_of(v, L, "lw the host stays at the lamp (no stage warp 3402807)", r"warp 3402807", up, up + LW_HOLD, insts=(0, 1))
+            r"cutscene 34000030|event 13404825", up, up + win, insts=(0, 1))
+    none_of(v, L, "lw no fight after the wipe (bar, fog, first fight)", BOSS_START + r"|cutscene 34000020", up, up + win)
+    none_of(v, L, "lw the host stays at the lamp (no stage warp 3402807)", r"warp 3402807", up, up + win, insts=(0, 1))
+    # the report's false banner: a boss defeat (2003[12]) while Ludwig lives, on any game, at any time after the load
+    none_of(v, L, "lw no boss defeat / PREY SLAUGHTERED while Ludwig lives (2003[12])",
+            r"boss defeat processing 2003\[12\]|boss clear of boss", up, 1e9, insts=(0, 1))
+    # (walk mode: the walk to z -700 does not reach the re-fight's fog region 3402801 (position unknown), so no bar is
+    # required; the BB_PARTY_BOSS_HP_LOG probe lines tell what Ludwig's HP did meanwhile)
     check_common(v, L, "lw")
 
 
