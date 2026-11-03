@@ -146,6 +146,7 @@ struct RosterEntry {
     std::uint32_t map_id = 0;
     std::uint32_t ping_ms = 0;  // as measured by the host
     std::string lost_why;       // host, on_member_left: why the connection went ("connection reset"...)
+    bool invader = false;       // 0.7.8, host side only: this member joined as an invader (party_invade_rules.h)
 };
 
 // Party HUD (party_hud.h): one member's health and whereabouts, as its own game reads them.
@@ -197,6 +198,7 @@ enum class RejectCode : std::uint8_t {
     Protocol = 6,
     Shutdown = 7,  // host ended the party (BYE)
     Kicked = 8,
+    Invasion = 9,  // 0.7.8: an invader the host does not admit now (the reason names why: party_invade_rules.h)
 };
 
 enum class LinkState : std::uint8_t {
@@ -268,7 +270,18 @@ struct LinkConfig {
     // Host with no password: whether this peer (network order) may join with the key of no password and no secret
     // (the open party, party_open_rules.h). Asked only for a proof made with that key. Unset: code only.
     std::function<bool(std::uint32_t ip)> open_peer_allowed;
+    // 0.7.8 invasions (docs/party/invasions.md). Guest: join as an invader (HELLO role 1): no password, the invader
+    // key, hostile to the host's party; an invader never becomes a cooperator and the host sends it nothing of the
+    // party's progress. Host: asked for every HELLO with role invader (after the identity check; final_check false: the
+    // attempt is counted) and again at AUTH (final_check true) with the name and the peer address (network order); returns "" to admit or the named reason (REJECT Invasion). Unset: refused.
+    bool invader = false;
+    std::function<std::string(const std::string& name, std::uint32_t ip, bool final_check)> invader_gate;
 };
+
+// 0.7.8: the only EVENTs an invader may send to the host, and the only ones the host sends it (the link drops the
+// rest on both sides: progress, items, gathers, votes, world actions, lamps never cross to or from an invader).
+bool invader_event_from_ok(const std::string& name);
+bool invader_event_to_ok(const std::string& name);
 
 // What differs between the host's and a guest's game (bbport build, eboot.bin, game params,
 // gameplay patches, gameplay mods, party hooks, party rules), one clause each with what to do,
@@ -382,6 +395,8 @@ public:
     // Host: the address and port (network order) member `slot` is connected from (its UDP stream's
     // endpoint for a link over UDP); false when not connected.
     bool member_endpoint(int slot, std::uint32_t* ip, std::uint16_t* port_nbo) const;
+    // Host: member `slot` joined as an invader (false for a cooperator, the host or an empty slot).
+    bool is_invader(int slot) const;
     RejectCode reject_code() const;
     std::string reject_reason() const;
     /// 0.7.8: the host's options a Mismatch refusal carried (party_options.h options_parse), or empty.

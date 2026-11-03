@@ -735,6 +735,7 @@ struct PartyLink::Impl {
         Nonce hn{}, gn{};
         Key pending_tx{}, pending_rx{};  // guest: keys derived at AUTH, armed at WELCOME
         bool password_only = false;      // host: the guest proved the password with a plain address (no code secret)
+        bool invader = false;            // host: HELLO role invader (the invader key, no password)
         Clock::time_point created, last_rx, last_ping;
         bool dead = false;
         bool close_after_flush = false;
@@ -795,6 +796,7 @@ struct PartyLink::Impl {
         std::uint32_t ping_ms = 0;
         EventStream ev;
         bool restored = false;  // from restore_members: the previous host process's member
+        bool invader = false;   // 0.7.8: joined as an invader (never a cooperator; its slot is not kept)
         MemberVitals vitals;    // party HUD: the member's last VITALS (has_vitals)
         bool has_vitals = false;
         Clock::time_point vitals_at{};
@@ -815,6 +817,10 @@ struct PartyLink::Impl {
     // Host with a password: the key of a guest that joined by plain host:port (no code, so no
     // secret: party_code.h "the password alone then keys the party"). Zero when no password.
     Key password_key{};
+    // 0.7.8: the invader's key: public, BLAKE2b-256("bbport invader key v1"). It carries no secret and no password; what it
+    // gives is the fresh nonces of the handshake (no replay) and an invader-only role: a proof under it never admits a
+    // cooperator, and a cooperator's party key never admits an invader.
+    Key invader_key = crypto::blake2b256("bbport invader key v1", 21);
     bool host = false;
 
     mutable std::mutex mu;
@@ -1287,6 +1293,12 @@ struct PartyLink::Impl {
                 auto it = members.find(c->slot);
                 if (it != members.end() && it->second.conn == c) {
                     Member& m = it->second;
+                    if (m.invader) {  // an invasion does not outlive its connection: no slot kept, no resume
+                        m.conn = nullptr;
+                        log("party link: lost the invader " + m.name + " (slot " + std::to_string(m.slot) + "): " + why);
+                        release_member(m.slot, false, RejectCode::Invasion, why);
+                        return;
+                    }
                     m.conn = nullptr;
                     m.lost_at = Clock::now();
                     log("party link: lost " + m.name + " (slot " + std::to_string(m.slot) + "): " + why +
@@ -1303,6 +1315,12 @@ struct PartyLink::Impl {
         gconn = nullptr;
         fail_pending("connection to the host lost");
         if (stopping || state == LinkState::Rejected || state == LinkState::Stopped) return;
+        if (cfg.invader) {  // an invasion does not reconnect: the invader goes home (party_invade.cpp)
+            reject = RejectCode::Invasion;
+            reject_text = was_open ? "the connection to the host was lost" : "the host cannot be reached (" + why + ")";
+            set_state(LinkState::Rejected, reject_text);
+            return;
+        }
         if (was_open) note_host_gone();
         if (was_open || backoff_ms == 0) backoff_ms = cfg.backoff_initial_ms;
         int wait = backoff_ms;
@@ -1343,6 +1361,7 @@ struct PartyLink::Impl {
         e.connected = m.conn != nullptr;
         e.map_id = m.map_id;
         e.ping_ms = m.ping_ms;
+        e.invader = m.invader;
         return e;
     }
     std::vector<RosterEntry> host_roster() const {
@@ -1373,7 +1392,7 @@ struct PartyLink::Impl {
         w.u64(e.cursor).str16(e.name).str32(e.json);
         send(c, kEvent, w);
     }
-    void on_event_frame(Conn* c, EventStream& es, int from_slot, Reader& r) {
+    void on_event_frame(Conn* c, EventStream& es, int from_slot, Reader& r, bool from_invader = false) {
         std::uint64_t cursor = r.u64();
         std::string name = r.str16();
         std::string json = r.str32();
@@ -1382,6 +1401,8 @@ struct PartyLink::Impl {
             es.rx_last = cursor;
             if (!valid_event_name(name))
                 log("party link: dropped an event with an invalid name from slot " + std::to_string(from_slot));
+            else if (from_invader && !invader_event_from_ok(name))
+                log("party link: dropped the event '" + name + "' from the invader in slot " + std::to_string(from_slot));
             else if (cb.on_event)
                 post_peer(c, [this, from_slot, cursor, name = std::move(name), json = std::move(json)] {
                     cb.on_event(from_slot, cursor, name, json);
@@ -1510,7 +1531,10 @@ struct PartyLink::Impl {
                 r.bytes(theirs.hooks_hash.data(), 32);
                 theirs.hook_names = split_names(r.str16());
             }
+            std::uint8_t role = 0;  // 0.7.8: 1 = invader; absent from older builds (they join as cooperators)
+            if (r.ok && r.n) role = r.u8();
             if (!r.ok) return lose(c, "short HELLO");
+            if (role > 1) return lose(c, "unknown HELLO role");
             const std::string mismatch = identity_mismatch(cfg, theirs);
             if (!mismatch.empty()) {
                 HostOptions ho;
@@ -1519,6 +1543,16 @@ struct PartyLink::Impl {
             }
             if (!valid_member_name(c->name))
                 return reject_conn(c, RejectCode::Name, "invalid name (1-16 of A-Z a-z 0-9 _ -)");
+            if (role == 1) {
+                // An invader: no password, the invader key, hostile; the host's gate decides now (and the admission
+                // is decided again at AUTH: the host's moment can change within the handshake).
+                std::uint32_t ip = 0;
+                std::memcpy(&ip, c->peer_ip.data(), 4);
+                if (banned.count(c->name)) return reject_conn(c, RejectCode::Invasion, "the host blocked you for this session");
+                const std::string why = cfg.invader_gate ? cfg.invader_gate(c->name, ip, false) : "the host does not allow invaders";
+                if (!why.empty()) return reject_conn(c, RejectCode::Invasion, why);
+                c->invader = true;
+            }
             crypto::random_bytes(c->hn.data(), c->hn.size());
             Writer w;
             w.bytes(c->hn.data(), c->hn.size());
@@ -1532,6 +1566,19 @@ struct PartyLink::Impl {
             r.bytes(c->gn.data(), c->gn.size());
             r.bytes(proof, 32);
             if (!r.ok) return lose(c, "short AUTH");
+            if (c->invader) {
+                // The invader path: the proof under the public invader key over this connection's fresh nonces. A
+                // cooperator's key never passes here and this never passes as a cooperator (admit() marks the member).
+                const Key inv = crypto::auth_proof(invader_key, c->hn, c->gn);
+                if (!crypto::equal32(inv.data(), proof))
+                    return reject_conn(c, RejectCode::Invasion, "the invasion handshake failed");
+                std::uint32_t ip = 0;
+                std::memcpy(&ip, c->peer_ip.data(), 4);
+                const std::string why = cfg.invader_gate ? cfg.invader_gate(c->name, ip, true) : "the host does not allow invaders";
+                if (!why.empty()) return reject_conn(c, RejectCode::Invasion, why);
+                admit(c);
+                return;
+            }
             Key expect = crypto::auth_proof(party_key, c->hn, c->gn);
             if (!crypto::equal32(expect.data(), proof)) {
                 const Key by_password = crypto::auth_proof(password_key, c->hn, c->gn);
@@ -1635,6 +1682,12 @@ struct PartyLink::Impl {
             std::string kind = r.str16();
             std::string json = r.str32();
             if (!r.ok) break;
+            if (m.invader) {  // the host's world actions, items and services are not for an invader
+                Writer w;
+                w.u32(id).u8(0).str32("{\"ResKind\":8,\"Error\":\"not allowed for an invader\"}");
+                send(c, kRpcResp, w);
+                break;
+            }
             int slot = m.slot;
             std::uint64_t conn_id = c->id;
             post_peer(c, [this, slot, conn_id, id, kind = std::move(kind), json = std::move(json)] {
@@ -1649,13 +1702,13 @@ struct PartyLink::Impl {
             });
             break;
         }
-        case kEvent: on_event_frame(c, m.ev, m.slot, r); break;
+        case kEvent: on_event_frame(c, m.ev, m.slot, r, m.invader); break;
         case kEventAck: on_event_ack(m.ev, r); break;
         case kPartyCmd: {
             std::string cmd = r.str16();
             std::string json = r.str32();
             int slot = m.slot;
-            if (r.ok && cb.on_party_cmd)
+            if (r.ok && cb.on_party_cmd && !m.invader)
                 post_peer(c, [this, slot, cmd = std::move(cmd), json = std::move(json)] {
                     cb.on_party_cmd(slot, cmd, json);
                 });
@@ -1664,7 +1717,7 @@ struct PartyLink::Impl {
         case kProgress: {
             std::string blob = r.str32();
             int slot = m.slot;
-            if (r.ok && cb.on_progress)
+            if (r.ok && cb.on_progress && !m.invader)
                 post_peer(c, [this, slot, b = std::vector<std::uint8_t>(blob.begin(), blob.end())] {
                     cb.on_progress(slot, b);
                 });
@@ -1685,7 +1738,7 @@ struct PartyLink::Impl {
         bool resumed = false;
         if (banned.count(c->name)) return reject_conn(c, RejectCode::Kicked, "kicked by the host");
         for (auto& [slot, mm] : members) {
-            if (!is_zero(c->token) && mm.token == c->token) {
+            if (!c->invader && !mm.invader && !is_zero(c->token) && mm.token == c->token) {
                 m = &mm;
                 break;
             }
@@ -1696,7 +1749,7 @@ struct PartyLink::Impl {
         const auto silent = std::chrono::milliseconds(2 * cfg.ping_interval_ms);
         if (!m)
             for (auto& [slot, mm] : members)
-                if (mm.name == c->name &&
+                if (!c->invader && !mm.invader && mm.name == c->name &&
                     (!mm.conn || (mm.conn->peer_ip == c->peer_ip && Clock::now() - mm.conn->last_rx > silent))) {
                     m = &mm;
                     break;
@@ -1732,6 +1785,7 @@ struct PartyLink::Impl {
             Member nm;
             nm.slot = slot;
             nm.name = c->name;
+            nm.invader = c->invader;
             crypto::random_bytes(nm.token.data(), nm.token.size());
             m = &members.emplace(slot, std::move(nm)).first->second;
         }
@@ -1739,7 +1793,7 @@ struct PartyLink::Impl {
         m->conn = c;
         m->state = MemberState::Joining;
         c->slot = m->slot;
-        const Key& key = c->password_only ? password_key : party_key;
+        const Key& key = c->invader ? invader_key : c->password_only ? password_key : party_key;
         c->tx.init(crypto::session_key(key, "bbp-h2g", c->hn, c->gn));
         c->rx.init(crypto::session_key(key, "bbp-g2h", c->hn, c->gn));
         c->phase = Phase::Open;
@@ -1822,13 +1876,14 @@ struct PartyLink::Impl {
             r.bytes(c->hn.data(), c->hn.size());
             if (!r.ok) return lose(c, "short CHALLENGE");
             crypto::random_bytes(c->gn.data(), c->gn.size());
-            Key proof = crypto::auth_proof(party_key, c->hn, c->gn);
+            const Key& akey = cfg.invader ? invader_key : party_key;
+            Key proof = crypto::auth_proof(akey, c->hn, c->gn);
             Writer w;
             w.bytes(c->gn.data(), c->gn.size()).bytes(proof.data(), proof.size());
             send(c, kAuth, w);
             // The host answers with the first encrypted frame: arm the receive key now.
-            c->rx.init(crypto::session_key(party_key, "bbp-h2g", c->hn, c->gn));
-            c->pending_tx = crypto::session_key(party_key, "bbp-g2h", c->hn, c->gn);
+            c->rx.init(crypto::session_key(akey, "bbp-h2g", c->hn, c->gn));
+            c->pending_tx = crypto::session_key(akey, "bbp-g2h", c->hn, c->gn);
             c->phase = Phase::WaitWelcome;
             return;
         }
@@ -2128,6 +2183,7 @@ struct PartyLink::Impl {
         w.str16(cfg.rules);
         w.str16(cfg.build_id).bytes(cfg.params_sha256.data(), 32).bytes(cfg.hooks_hash.data(), 32);
         w.str16(join_names(cfg.hook_names));
+        w.u8(cfg.invader ? 1 : 0);  // 0.7.8: the role (1 = invader); an older host reads no more than the names
         send(c, kHello, w);
     }
 
@@ -2731,8 +2787,10 @@ std::uint64_t PartyLink::Impl::send_event_locked(int slot, const std::string& na
         return push(I.gev, I.gconn);
     }
     std::uint64_t last = 0;
-    for (auto& [s, m] : I.members)
+    for (auto& [s, m] : I.members) {
+        if (m.invader && !invader_event_to_ok(name)) continue;  // an invader is told nothing of the party's world
         if (slot == kBroadcast || slot == s) last = push(m.ev, m.conn);
+    }
     return last;
 }
 
@@ -2748,7 +2806,7 @@ bool PartyLink::send_party_cmd(int slot, const std::string& cmd, const std::stri
     }
     bool any = false;
     for (auto& [s, m] : I.members)
-        if ((slot == kBroadcast || slot == s) && m.conn && m.conn->phase == Impl::Phase::Open) {
+        if (!m.invader && (slot == kBroadcast || slot == s) && m.conn && m.conn->phase == Impl::Phase::Open) {
             I.send(m.conn, kPartyCmd, w);
             any = true;
         }
@@ -2767,7 +2825,7 @@ bool PartyLink::send_progress(int slot, const std::vector<std::uint8_t>& blob) {
     }
     bool any = false;
     for (auto& [s, m] : I.members)
-        if ((slot == kBroadcast || slot == s) && m.conn && m.conn->phase == Impl::Phase::Open) {
+        if (!m.invader && (slot == kBroadcast || slot == s) && m.conn && m.conn->phase == Impl::Phase::Open) {
             I.send(m.conn, kProgress, w);
             any = true;
         }
@@ -2871,6 +2929,19 @@ void PartyLink::restore_members(const std::vector<KeptMember>& members) {
 bool PartyLink::last_welcome_resumed() const {
     std::lock_guard<std::mutex> lk(impl_->mu);
     return impl_->last_resumed;
+}
+
+bool invader_event_from_ok(const std::string& name) {
+    return name == "invade_fell" || name == "party_chat";
+}
+bool invader_event_to_ok(const std::string& name) {
+    return name == "invade" || name == "party_chat" || name == "host_session_end";
+}
+
+bool PartyLink::is_invader(int slot) const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    const auto it = impl_->members.find(slot);
+    return impl_->host && it != impl_->members.end() && it->second.invader;
 }
 
 bool PartyLink::kick(int slot, const std::string& reason) {
