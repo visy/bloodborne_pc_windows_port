@@ -245,7 +245,8 @@ struct InvaderState {
     u64 chr = 0;
     u32 entity = 0;
     int from = 0;
-    u32 from_type = 0;     // the chr's phantom type before the look was changed (0: not changed)
+    bool added_look = false;    // SpEffect 9026 (the red phantom look) was applied to the chr by this code
+    bool removed_coop = false;  // SpEffect 9006 (the cooperator look) was taken off the chr by this code
     Clock::time_point scan_at{};
     bool failed = false;
     bool logged_chr = false;
@@ -421,26 +422,56 @@ void SpareScan(u64 wcm, const std::vector<u64>& players) {
 }
 
 constexpr int kEnemyTeam = 23;  // the map's enemies: what the invader's team is copied from
-constexpr u32 kInvaderChrType = 2;  // the black / red phantom (chr +0x78; 1 is the white phantom a cooperator is)
-bool InvaderLook() {  // BB_PARTY_INVADE_LOOK=1: the chr type as a black phantom's (off: it showed no red look in a live run)
+// The red phantom look is the game's own mechanism, a SpEffect (party_invade_rules.h): 9006 (cooperator, SFX 211, blue) on the
+// invader's chr on the other games is swapped for 9026 (the invader's, SFX 212), and its own chr gets 9026. Per chr, undone at the end.
+bool InvaderLook() {  // BB_PARTY_INVADE_LOOK=0 turns it off
     static const bool on = [] {
         const char* v = std::getenv("BB_PARTY_INVADE_LOOK");
-        return v && v[0] == '1';
+        return !(v && v[0] == '0');
     }();
     return on;
 }
 
+bool ChrSpEffectNode(u64 chr, int id, u64* node_out = nullptr) {
+    u64 node = Field<u64>(Field<u64>(chr, 0x1c8), 8);
+    for (int guard = 0; node && guard < 256; ++guard) {
+        if (Field<int>(node, 0x40, -1) == id) {
+            if (node_out) *node_out = node;
+            return true;
+        }
+        node = Field<u64>(node, 0x58);
+    }
+    return false;
+}
+bool ChrApplySpEffect(u64 chr, int id) {
+    u64 vt = 0, fn = 0;
+    if (!chr || !SafeGet(chr, &vt) || !vt || !SafeGet(vt + 0x3f0, &fn) || !fn) return false;
+    using Fn = void(BB_COOP_SYSV*)(u64, u64, u64, u64, u64, u64, u64, float, float, float, float, float);
+    reinterpret_cast<Fn>(fn)(chr, u64(id), chr, 0, 1, 0, 0, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+    return true;
+}
+bool ChrRemoveSpEffect(u64 chr, int id) {  // the game's RemoveSpEffect 0x17E1D90(list, node, 1)
+    u64 node = 0;
+    const u64 list = Field<u64>(chr, 0x1c8);
+    if (!list || !ChrSpEffectNode(chr, id, &node)) return false;
+    using Fn = void(BB_COOP_SYSV*)(u64, u64, u32);
+    reinterpret_cast<Fn>(Guest(0x17e1d90))(list, node, 1);
+    return true;
+}
+
 void InvaderRestoreChr(const char* why) {
     InvaderState& iv = IV();
-    if (iv.chr && Field<u32>(iv.chr, 0x1f0, 0) == iv.entity && Field<u32>(iv.chr, kChrTeam, 0) == u32(iv.team)) {
-        const u32 t = u32(iv.from);
-        if (SafeWrite(iv.chr + kChrTeam, &t, 4)) Log("invader: its chr is back on team %d (%s)", iv.from, why);
-        if (iv.from_type && Field<u32>(iv.chr, kChrType, 0) == kInvaderChrType) {
-            const u32 ty = iv.from_type;
-            if (SafeWrite(iv.chr + kChrType, &ty, 4)) Log("invader: its phantom type is back to %u", ty);
+    if (iv.chr && Field<u32>(iv.chr, 0x1f0, 0) == iv.entity) {
+        if (Field<u32>(iv.chr, kChrTeam, 0) == u32(iv.team)) {
+            const u32 t = u32(iv.from);
+            if (SafeWrite(iv.chr + kChrTeam, &t, 4)) Log("invader: its chr is back on team %d (%s)", iv.from, why);
         }
+        const invade::LookBack b = invade::LookEnd(iv.added_look, iv.removed_coop, ChrSpEffectNode(iv.chr, invade::kInvaderLookEffect),
+                                                    ChrSpEffectNode(iv.chr, invade::kCoopLookEffect));
+        if (b.remove_invader && ChrRemoveSpEffect(iv.chr, invade::kInvaderLookEffect)) Log("invader: its red look (SpEffect %d) is off", invade::kInvaderLookEffect);
+        if (b.add_coop && ChrApplySpEffect(iv.chr, invade::kCoopLookEffect)) Log("invader: its cooperator look (SpEffect %d) is back", invade::kCoopLookEffect);
     }
-    iv.from_type = 0;
+    iv.added_look = iv.removed_coop = false;
     iv.chr = 0;
     iv.logged_chr = false;
 }
@@ -548,12 +579,15 @@ void InvaderTick(bool active, u64 player) {
         last_player = player;
         last_hp = hp;
     }
-    if (InvaderLook()) {  // the red phantom's look: the chr type as a black phantom's
-        const u32 ty = Field<u32>(chr, kChrType, 0);
-        if (ty != kInvaderChrType && ty != 0) {
-            if (!iv.from_type) iv.from_type = ty;
-            const u32 w = kInvaderChrType;
-            if (SafeWrite(chr + kChrType, &w, 4)) Log("invader: chr %x phantom type %u -> %u (the invader's look)", ent, ty, w);
+    if (InvaderLook()) {  // the red phantom's look: SpEffect 9026 in place of the cooperator's 9006
+        const invade::LookStep st = invade::LookNow(ChrSpEffectNode(chr, invade::kCoopLookEffect), ChrSpEffectNode(chr, invade::kInvaderLookEffect));
+        if (st.remove_coop && ChrRemoveSpEffect(chr, invade::kCoopLookEffect)) {
+            iv.removed_coop = true;
+            Log("invader: chr %x cooperator look (SpEffect %d) off", ent, invade::kCoopLookEffect);
+        }
+        if (st.add_invader && ChrApplySpEffect(chr, invade::kInvaderLookEffect)) {
+            iv.added_look = true;
+            Log("invader: chr %x red look (SpEffect %d) on (%s)", ent, invade::kInvaderLookEffect, local ? "this game's own" : "a remote member's");
         }
     }
     if (Field<u32>(chr, kChrTeam, 0) != u32(iv.team)) {

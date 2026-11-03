@@ -431,7 +431,9 @@ before anyone is in the game):
   `party_invaders`, off by default, live) lets other players join a game from the launcher's lists as a hostile phantom
   (**Invade**, next to Join, no password): you and your guests are told, fight it, and it goes home when it dies or when the host
   dies. One at a time, never in a boss fight, a loading screen or a cutscene, never into a full (4 player) game; you can block it
-  for the session (*System -> Party -> Block the invader*). See docs/party/invasions.md.
+  for the session (*System -> Party -> Block the invader*). The invader is drawn with the game's red phantom glow, and the game's own
+  rewards are paid on each player's own game: an invader that defeats the host gets Blood Echoes and +1 Insight, the host and
+  guests get Blood Echoes for defeating it. See docs/party/invasions.md.
 - **Stay in my world.** As a guest you can pause the automatic joining without leaving the party, e.g. for your own
   Chalice ritual or shopping: *System -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
   `party_stay`, off by default, live). You ring no bell, are not gathered and not asked to vote; the host does not wait

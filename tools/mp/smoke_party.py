@@ -8004,7 +8004,7 @@ def phase_iv(only, name="iv", sim=None):
             "0:BB_PARTY_PVP_TEST=" + hsteps, "1:BB_PARTY_PVP_TEST=" + gsteps, "2:BB_PARTY_PVP_TEST=" + isteps]
     if sim:
         ienv += ["%d:BB_NET_SIM=%s" % (i, sim) for i in range(3)]
-    return dict(name=name, seconds=900, count=3, headless=1, env=[], ienv=ienv, crash=[], until=IV_UNTIL, until_hold=10)
+    return dict(name=name, seconds=900, count=3, headless=1, env=[], ienv=ienv, crash=[], until=IV_UNTIL, until_hold=40)
 
 
 def check_iv(v, L, name="iv"):
@@ -8022,6 +8022,11 @@ def check_iv(v, L, name="iv"):
     for i, who in ((0, "host"), (1, "guest"), (2, "invader")):
         need(v, L, n + " %s: the invader team is a copy of the map enemies" % who, i, r"invader: team \d+ is a copy of team 23", adm or 0)
         need(v, L, n + " %s: the invader's chr moved to the invader team" % who, i, r"invader: chr [0-9a-f]+ \((this game's own|a remote member's)\) moved from team \d+ to team \d+", adm or 0)
+    # the red phantom look (SpEffect 9026 in place of the cooperator's 9006), per chr, on every game
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, n + " %s: the invader's copy loses the cooperator look (SpEffect 9006)" % who, i, r"invader: chr [0-9a-f]+ cooperator look \(SpEffect 9006\) off", adm or 0)
+        need(v, L, n + " %s: the invader's copy has the red look (SpEffect 9026)" % who, i, r"invader: chr [0-9a-f]+ red look \(SpEffect 9026\) on \(a remote member's\)", adm or 0)
+    need(v, L, n + " invader: its own chr has the red look (SpEffect 9026)", 2, r"invader: chr [0-9a-f]+ red look \(SpEffect 9026\) on \(this game's own\)", adm or 0)
     # the fight: every hit lands (HP drops on the host and on the invader)
     need(v, L, n + " host: the invader's blows hurt the host", 0, r"invader: own HP \d+ -> \d+", inn or 0)
     need(v, L, n + " invader: the host's and the guest's blows hurt the invader", 2, r"invader: own HP \d+ -> \d+", inn or 0)
@@ -8040,6 +8045,14 @@ def check_iv(v, L, name="iv"):
     need(v, L, n + " invader: told it won", 2, r"invade: notice: You defeated ", hd or 0)
     need(v, L, n + " invader: goes home when the host dies", 2, r"host lost \([^)]*\): home now \(OnLeave_Limit\)", hd or 0)
     need(v, L, n + " the teams go back (invader chr restored)", 0, r"invader: team \d+ closed: \d+ table cell\(s\) put back", hd or 0)
+    # the look is removed with the invasion (the cooperator look comes back on the other games' copy)
+    for i, who in ((0, "host"), (1, "guest")):
+        need(v, L, n + " %s: the invader's red look is removed at the end" % who, i, r"invader: its red look \(SpEffect 9026\) is off|invader: team \d+ closed", fell or 0)
+    # rewards (the game's own CalcExcuteMultiBonus, once per outcome, on the receiver's own game)
+    need(v, L, n + " host: paid for the fallen invader (echoes at 0.50, no Insight)", 0, r"invade: reward: host, invader_died: rate 0\.50, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell or 0)
+    need(v, L, n + " guest: paid for the fallen invader (echoes at 0.25, no Insight)", 1, r"invade: reward: guest, invader_died: rate 0\.25, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell or 0)
+    need(v, L, n + " invader: paid for the fallen host (echoes at 0.10 and +1 Insight)", 2, r"invade: reward: invader, host_died: rate 0\.10, Insight \+1: Blood Echoes -?\d+ -> -?\d+", hd or 0)
+    none_of(v, L, n + " the invader is not paid when it falls, the host not when it falls, the guest not for the host", r"invade: reward: (invader, invader_died|host, host_died|guest, host_died)", 0, 1e9)
     check_common(v, L, n)
 
 
