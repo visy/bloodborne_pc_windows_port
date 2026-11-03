@@ -59,6 +59,9 @@ bool IsSupported();
 bool IsActive();
 Mode CurrentMode();
 void SetMode(Mode mode, uint32_t minimum_interval_us = 0);
+/// The frame limit as the driver's sleep interval (us per frame, 0 = none): the sleep then paces the simulation at the
+/// rate the presenter holds, so frames do not queue. BB_REFLEX_INTERVAL_US overrides. No-op without Reflex.
+void SetFrameInterval(uint32_t interval_us);
 
 /// Swapchain creation pNext chain setup (attaches VkSwapchainLatencyCreateInfoNV when active/supported)
 void PrepareSwapchainCreateInfo(vk::SwapchainCreateInfoKHR& create_info,

@@ -73,7 +73,7 @@ thread_local uint64_t t_recording_frame_id = 0;
 
 Mode parse_settings_or_env_mode() {
     // bbport.ini reflex / BB_REFLEX (BbSettings::Load); this start's choice.
-    const int s_val = BbSettings::Get().startup_reflex;
+    const int s_val = BbSettings::Get().reflex_resolved;
     if (s_val == BbSettings::ReflexBoost) return Mode::Boost;
     if (s_val == BbSettings::ReflexOn) return Mode::On;
     return Mode::Off;
@@ -252,6 +252,16 @@ void SetMode(Mode mode, uint32_t minimum_interval_us) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_mode = mode;
     if (minimum_interval_us) g_min_interval_us = minimum_interval_us;
+    apply_mode_under_wsi_locked();
+}
+
+void SetFrameInterval(uint32_t interval_us) {
+    if (!Tracking() || std::getenv("BB_REFLEX_INTERVAL_US")) return;
+    std::lock_guard<std::mutex> sleep_lk(g_sleep_mu);
+    std::lock_guard<std::mutex> wsi_lk(g_wsi_mu);
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (g_min_interval_us == interval_us) return;
+    g_min_interval_us = interval_us;
     apply_mode_under_wsi_locked();
 }
 

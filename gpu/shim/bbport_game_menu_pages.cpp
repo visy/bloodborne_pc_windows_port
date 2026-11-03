@@ -924,9 +924,9 @@ void DefineAll() {
                Kind::List, [](const Values& v) { return v.reflex.load(); },
                [](int i) { BbSettings::Get().reflex = std::clamp(i, 0, BbSettings::ReflexModeCount - 1); }),
            "NVIDIA Reflex", "NVIDIA Reflex",
-           "After a restart. Lower latency on NVIDIA GPUs; Boost keeps clocks up",
-           "После перезапуска. Меньше задержка на NVIDIA; Boost держит частоты",
-           {off, on, AddText("On + Boost", "Вкл + Boost")}, Kind::List);
+           "After a restart. Lower latency on NVIDIA GPUs; Boost keeps clocks up. Auto: on for NVIDIA GPUs",
+           "После перезапуска. Меньше задержка на NVIDIA; Boost держит частоты. Auto: вкл на NVIDIA",
+           {off, on, AddText("On + Boost", "Вкл + Boost"), AddText("Auto", "Auto")}, Kind::List);
 
     // ---- Live FPS (Mrsuss60's live FPS patching, a7cbfae6): the clock on/off after a restart, the target live. ----
     AddPage("Live FPS", "Живой FPS", "In-game frame clock and delta time patching, switchable without a restart (bbport)",
@@ -951,6 +951,28 @@ void DefineAll() {
            {AddText("30", "30"), AddText("60", "60"), AddText("90", "90"), AddText("120", "120"), AddText("144", "144"),
             AddText("Uncapped (240)", "Без лимита (240)")},
            Kind::List);
+
+    // ---- Latency (0.7.8): fresh gamepad read live; VRR and Anti-Lag 2 after a restart. ----
+    AddPage("Latency", "Задержка", "Input lag: fresh gamepad read, variable refresh rate, AMD Anti-Lag 2 (bbport)",
+            "Задержка ввода: свежее чтение геймпада, переменная частота, AMD Anti-Lag 2 (bbport)");
+    AddRow(Flag(&Values::pad_fresh), "Fresh gamepad read", "Свежее чтение геймпада",
+           "Reads the pad at the moment the game asks, not up to 2 ms older. Live; default on",
+           "Геймпад читается в момент запроса игры, не со сдвигом до 2 мс. Сразу; по умолчанию вкл", toggle,
+           Kind::Toggle);
+    AddRow(Flag(&Values::ll_pacing), "Low-latency frame pacing", "Задержка: темп кадров",
+           "Frames no longer pile up before the display (up to 3 frames of lag). Live; default on",
+           "Кадры не копятся перед выводом (до 3 кадров задержки). Сразу; по умолчанию вкл", toggle, Kind::Toggle);
+    AddRow(Flag(&Values::vrr), "Variable refresh rate", "Переменная частота",
+           "After a restart. G-Sync / FreeSync: no vblank sync, rate held just under the refresh",
+           "После перезапуска. G-Sync / FreeSync: без vblank, частота чуть ниже частоты дисплея",
+           toggle, Kind::Toggle);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return v.anti_lag.load(); },
+               [](int i) { BbSettings::Get().anti_lag = std::clamp(i, 0, BbSettings::AntiLagModeCount - 1); }),
+           "AMD Anti-Lag 2", "AMD Anti-Lag 2",
+           "After a restart. Lower latency on AMD GPUs (VK_AMD_anti_lag). Auto: on for AMD GPUs",
+           "После перезапуска. Меньше задержка на AMD (VK_AMD_anti_lag). Auto: вкл на AMD",
+           {off, on, AddText("Auto", "Auto")}, Kind::List);
 
     // ---- HDR output (bbport_hdr.h, I4): on/off after a restart, the curve live. ----
     AddPage("HDR", "HDR", "HDR10 output: peak brightness, paper white, highlights, calibration (bbport)",

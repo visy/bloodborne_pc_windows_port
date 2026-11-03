@@ -1206,7 +1206,21 @@ static void ping_combo(PadData *d) {
  * the name, Insert/L3+R3) stays held, and must not reach the game as a new press. Buttons are
  * held neutral until everything is released (from Supermedo/bloodborne_pc 1.4). */
 static int hold_after_capture;
+/* The state SDL holds is as old as the window thread's last event pump (it runs every ~2 ms), so the game
+ * would read input up to that much behind the device. At the game's read the gamepads are updated again, on
+ * this thread (SDL locks the joystick list; the events it makes are drained by the window thread as before).
+ * bbport.ini pad_fresh, BB_PAD_FRESH; default on. Rate limited: two reads closer than 0.25 ms share an update. */
+static void fresh_pad_update(void) {
+    bbgpu_latency_pad_read(); /* BB_LATENCY_LOG: the age the state had, before the update */
+    if (!bbgpu_pad_fresh() || !SDL_WasInit(SDL_INIT_GAMEPAD)) return;
+    static uint64_t last_us;
+    const uint64_t now=now_us();
+    if (now-last_us<250) return;
+    last_us=now;
+    SDL_UpdateGamepads();
+}
 static void sample(PadData *d) {
+    fresh_pad_update();
     /* Read first: the file's key= steps also drive the open settings menu (live tests). */
     read_inject();
     sample_host(d);
