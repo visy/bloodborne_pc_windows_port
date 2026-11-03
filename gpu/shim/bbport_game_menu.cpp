@@ -819,7 +819,157 @@ BB_SYSV void* GiveClone(void* self, void* dst) {
     Game<Copy>(CopyContext)(static_cast<u8*>(dst) + 8, static_cast<const u8*>(self) + 8);
     return dst;
 }
-BB_SYSV void* GiveClone0(void* self) { return GiveClone(self, nullptr); }
+// ---- The pickers: native command menus of our own (target member, amount) ----
+/// Is `obj` a polymorphic object whose vtable slots 0 (clone) and 4 (delete) are readable code pointers? (Every native
+/// call below is behind this guard: a failure leaves the menu without the Give entry or closes the picker.)
+bool VtableOk(const void* obj) {
+    u64 vt = 0, s0 = 0, s4 = 0;
+    return obj && bbnet::guest_read(reinterpret_cast<std::uintptr_t>(obj), &vt, 8) && vt &&
+           bbnet::guest_read(vt, &s0, 8) && s0 && bbnet::guest_read(vt + 0x20, &s4, 8) && s4;
+}
+constexpr u64 BuilderCtor = 0x1be8a30, BuilderDtor = 0x1b4cbb0, GameFree = 0x2bbe588;
+constexpr std::size_t BuilderSize = 0x1400;  // the game's builder struct is 0x1190 bytes
+struct PickState {
+    void* finalizer = nullptr;  ///< a clone of the item menu's finalizer functor (owns the item context)
+    u64 owner = 0;              ///< the builder's +0x1180 field (the item menu's owner)
+    u32 item = 0;               ///< type bits | goods id
+    int slot = -1;              ///< the chosen member
+} pick;
+enum PickKind : u32 { PickMember = 1, PickAmount = 2 };
+std::array<void*, 12> pick_vtable{};
+
+BB_SYSV void* PickClone(void* self, void* dst) {
+    using New = void*(BB_SYSV*)(u64);
+    if (!dst) {
+        dst = Game<New>(GameNew)(GiveObjectSize);
+        if (!dst) return nullptr;
+    }
+    std::memcpy(dst, self, GiveObjectSize);  // no refcounted members: a plain copy
+    return dst;
+}
+BB_SYSV void PickDtor(void*) {}
+BB_SYSV void PickDelete(void* self, char dealloc) {
+    using Free = void(BB_SYSV*)(void*);
+    if (dealloc) Game<Free>(GameFree)(self);
+}
+void BuildPickVtable();
+BB_SYSV void* PickInvoke(void* out, void* self, void* event);
+
+/// A picker functor object (kind, a, b stored at +0x78 / +0x7c / +0x80); null when the game's allocator fails.
+u8* MakePickObject(PickKind kind, u32 a, u32 b) {
+    using New = void*(BB_SYSV*)(u64);
+    BuildPickVtable();
+    u8* o = static_cast<u8*>(Game<New>(GameNew)(GiveObjectSize));
+    if (!o) return nullptr;
+    std::memset(o, 0, GiveObjectSize);
+    *reinterpret_cast<void**>(o) = pick_vtable.data();
+    std::memcpy(o + 0x78, &kind, 4);
+    std::memcpy(o + 0x7c, &a, 4);
+    std::memcpy(o + 0x80, &b, 4);
+    return o;
+}
+
+struct PickEntry {
+    u32 text;
+    PickKind kind;
+    u32 a, b;
+};
+/// Builds a command menu of `entries` the way the item menu does (builder, AddCommandItem per entry, the item menu's
+/// own finalizer) and returns it in `out` (a ref-counted menu pointer). False: nothing built (out untouched or null).
+bool BuildCommandMenu(void* out, const std::vector<PickEntry>& entries) {
+    using Ctor = void(BB_SYSV*)(void*, void*);
+    using Dtor = void(BB_SYSV*)(void*);
+    if (!out || !VtableOk(pick.finalizer) || !finalize_original || !command_original || entries.empty()) return false;
+    alignas(16) u8 builder[BuilderSize] = {};
+    alignas(16) u32 zero[4] = {};
+    Game<Ctor>(BuilderCtor)(builder, zero);
+    static const char16_t layout[] = u"CommandList";
+    *reinterpret_cast<const char16_t**>(builder + 8) = layout;
+    *reinterpret_cast<u64*>(builder + 0x1180) = pick.owner;
+    builder[0x1188] = 0;
+    for (const PickEntry& e : entries) {
+        u8* object = MakePickObject(e.kind, e.a, e.b);
+        if (!object) continue;
+        alignas(16) u8 pair[2 * TextSize] = {};
+        MakeTexts(pair, e.text, P::GiveCommandHelp());
+        alignas(16) u8 function[FunctionSize] = {};
+        *reinterpret_cast<void**>(function + 0x20) = object;
+        command_original(builder, pair, function, nullptr);
+        DestroyFunction(function);
+        DestroyTexts(pair);
+    }
+    // the finalizer: a fresh clone of the item menu's (it holds the item context the menu view needs)
+    void* proto = pick.finalizer;
+    using Clone = void*(BB_SYSV*)(void*, void*);
+    void* fin_object = (*reinterpret_cast<Clone**>(proto))[0](proto, nullptr);
+    alignas(16) u8 fin[FunctionSize] = {};
+    *reinterpret_cast<void**>(fin + 0x20) = fin_object;
+    finalize_original(out, builder, fin);
+    DestroyFunction(fin);
+    Game<Dtor>(BuilderDtor)(builder);
+    std::printf("Game menu: Give picker built (%zu entries)\n", entries.size());
+    return true;
+}
+
+/// The Give command was chosen: the member picker.
+void OpenMemberPicker(void* out, u32 item) {
+    const auto members = coop::give::MenuMembers();
+    std::vector<PickEntry> entries;
+    pick.item = item;
+    for (std::size_t i = 0; i < members.size() && i < 4; ++i) {
+        P::SetPickerText(int(i), members[i].second);
+        entries.push_back({P::PickerText(int(i)), PickMember, u32(members[i].first), 0});
+    }
+    if (!BuildCommandMenu(out, entries)) *static_cast<void**>(out) = nullptr;
+}
+void OpenAmountPicker(void* out, int slot) {
+    const std::vector<int> amounts = coop::give::MenuAmounts(pick.item);
+    std::vector<PickEntry> entries;
+    pick.slot = slot;
+    for (std::size_t i = 0; i < amounts.size() && i < 7; ++i) {
+        const bool all = i + 1 == amounts.size() && amounts.size() > 1;
+        P::SetPickerText(int(i), all ? "All (" + std::to_string(amounts[i]) + ")" : std::to_string(amounts[i]));
+        entries.push_back({P::PickerText(int(i)), PickAmount, u32(amounts[i]), 0});
+    }
+    if (!BuildCommandMenu(out, entries)) *static_cast<void**>(out) = nullptr;
+}
+/// The game calls a command's operator() twice for one press (seen in the logs: same millisecond); the second call of
+/// the same command within 0.5 s does nothing (and returns no menu), so a pick never opens two menus or gives twice.
+bool RepeatedInvoke(u32 kind, u32 a) {
+    static u64 last_key = 0;
+    static std::chrono::steady_clock::time_point last_at{};
+    const auto now = std::chrono::steady_clock::now();
+    const u64 key = (u64(kind) << 32) | a;
+    const bool again = key == last_key && now - last_at < std::chrono::milliseconds(500);
+    last_key = key;
+    if (!again) last_at = now;
+    return again;
+}
+BB_SYSV void* PickInvoke(void* out, void* self, void* /*event*/) {
+    if (!out) return out;
+    *static_cast<void**>(out) = nullptr;
+    u32 kind = 0, a = 0;
+    std::memcpy(&kind, static_cast<const u8*>(self) + 0x78, 4);
+    std::memcpy(&a, static_cast<const u8*>(self) + 0x7c, 4);
+    if (RepeatedInvoke(kind, a)) return out;
+    if (kind == PickMember) {
+        OpenAmountPicker(out, int(a));
+    } else if (kind == PickAmount && pick.slot >= 0) {
+        coop::give::MenuGive(pick.item, int(a), pick.slot);
+    }
+    return out;
+}
+void BuildPickVtable() {
+    if (pick_vtable[0]) return;
+    const void* const* src = reinterpret_cast<const void* const*>(image_base + DiscardCommandVtable);
+    for (std::size_t i = 0; i < pick_vtable.size(); ++i) pick_vtable[i] = const_cast<void*>(src[i]);
+    pick_vtable[0] = reinterpret_cast<void*>(&PickClone);
+    pick_vtable[1] = reinterpret_cast<void*>(&PickClone);
+    pick_vtable[2] = reinterpret_cast<void*>(&PickInvoke);
+    pick_vtable[4] = reinterpret_cast<void*>(&PickDelete);
+    pick_vtable[5] = reinterpret_cast<void*>(&PickDtor);
+}
+
 /// operator(): the player chose Give. Returns the menu object to show in `out` (a ref-counted pointer): none yet.
 BB_SYSV void* GiveInvoke(void* out, void* self, void* /*event*/) {
     const u8* o = static_cast<const u8*>(self);
@@ -827,14 +977,16 @@ BB_SYSV void* GiveInvoke(void* out, void* self, void* /*event*/) {
     std::memcpy(&item, o + 0x54, 4);
     std::memcpy(&index, o + 0x50, 4);
     if (out) *static_cast<void**>(out) = nullptr;
+    if (RepeatedInvoke(0, item)) return out;
     coop::give::MenuChosen(item, index);
+    if (out) OpenMemberPicker(out, item);
     return out;
 }
 void BuildGiveVtable() {
     if (give_vtable[0]) return;
     const void* const* src = reinterpret_cast<const void* const*>(image_base + DiscardCommandVtable);
     for (std::size_t i = 0; i < give_vtable.size(); ++i) give_vtable[i] = const_cast<void*>(src[i]);
-    give_vtable[0] = reinterpret_cast<void*>(&GiveClone0);
+    give_vtable[0] = reinterpret_cast<void*>(&GiveClone);
     give_vtable[1] = reinterpret_cast<void*>(&GiveClone);
     give_vtable[2] = reinterpret_cast<void*>(&GiveInvoke);
 }
@@ -843,6 +995,16 @@ void BuildGiveVtable() {
 BB_SYSV void* FinalizeHook(void* out, void* list, void* fin) {
     u8* object = give_pending;
     if (object && InItemMenuBuilder(__builtin_return_address(0))) {
+        // The picker menus reuse this menu's finalizer (a clone of it) and owner.
+        void* fobj = nullptr;
+        bbnet::guest_read(reinterpret_cast<std::uintptr_t>(fin) + 0x20, &fobj, 8);
+        if (VtableOk(fobj)) {
+            using Clone = void*(BB_SYSV*)(void*, void*);
+            using Del = void(BB_SYSV*)(void*, char);
+            if (pick.finalizer) (*reinterpret_cast<Del**>(pick.finalizer))[4](pick.finalizer, 1);
+            pick.finalizer = (*reinterpret_cast<Clone**>(fobj))[0](fobj, nullptr);
+            pick.owner = *reinterpret_cast<const u64*>(static_cast<const u8*>(list) + 0x1180);
+        }
         give_pending = nullptr;
         alignas(16) u8 pair[2 * TextSize] = {};
         MakeTexts(pair, P::GiveCommandText(), P::GiveCommandHelp());

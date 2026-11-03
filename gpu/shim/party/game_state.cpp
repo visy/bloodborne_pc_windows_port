@@ -431,31 +431,6 @@ std::vector<std::pair<std::uint32_t, int>> KeySectionItems() {
     return out;
 }
 
-std::vector<std::pair<std::uint32_t, int>> InventoryGoodsList() {
-    std::vector<std::pair<std::uint32_t, int>> out;
-    const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
-    if (!rec) {
-        return out;
-    }
-    const std::uint64_t list = rec + kRecInventory;
-    const std::int32_t last = Field<std::int32_t>(list, 0x88, -1);
-    const std::uint32_t split = Field<std::uint32_t>(list, 0x24, 0);
-    const std::uint64_t second = Field<std::uint64_t>(list, 0x48, 0);
-    if (last < 0 || last > 4096 || split > 4096 || !second) {
-        return out;
-    }
-    for (std::uint32_t i = split; i <= std::uint32_t(last); ++i) {
-        const std::uint64_t entry = second + 16ull * (i - split);
-        std::uint32_t handle = 0, item = 0;
-        std::int32_t count = 0;
-        if (SafeGet(entry, &handle) && handle != 0 && SafeGet(entry + 4, &item) && SafeGet(entry + 8, &count) &&
-            count > 0 && (item & 0xf0000000u) == 0x40000000u) {
-            out.emplace_back(item & 0x0fffffffu, count);
-        }
-    }
-    return out;
-}
-
 int ItemStacks(std::uint32_t type_bits, std::uint32_t id) {
     const std::uint64_t rec = Field<std::uint64_t>(Slot(kGameDataMan), 8, 0);
     if (!rec) {

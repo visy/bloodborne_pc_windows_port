@@ -436,10 +436,10 @@ before anyone is in the game):
   companion), hides the name tags above the companions and cuts party messages to errors. *Party messages* (same
   page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
 - **Give items to a party member.** *Give items to the party* (*System -> My party: Your items*, the launcher's My Party
-  tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give items* to the
-  Insert menu's Party tab: an item, a count, a hunter, *Give*. Consumables and materials only, never key, unique or
-  story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only when
-  the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
+  tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give* to the command menu of an
+  item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials only, never
+  key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
+  when the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
   ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My

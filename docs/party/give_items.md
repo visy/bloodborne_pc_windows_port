@@ -7,15 +7,38 @@ half of the inventory work is `ReadGiveFacts` / `GiveGoodsToOwn` / `TakeGoodsFro
 
 ## 1. Player view
 
-* Switch `party_give_items` (System > My party: Your items, the launcher's My Party tab, bbport.ini, the overlay's Party
-  tab). **Off by default.** It is per player and has two meanings: with it on you see the give rows and can send; with it
-  off other hunters' gives are refused ("does not take gifts") - the consent. `BB_PARTY_GIVE_ITEMS=1` forces it on (tests).
-* Insert menu > Party tab > *Give: item / how many / to* and *Give*. A compact list built from the inventory's normal
-  section (`InventoryGoodsList`), refreshed by the game tick every 0.5 s while the tab is open (the render thread only
-  reads a copy). The game's own inventory screen is not hooked.
+* Switch `party_give_items` (System > My party: Your items, the launcher's My Party tab, bbport.ini, the Insert menu's Party
+  tab). **Off by default.** It is per player and has two meanings: with it on, an item's command menu in the inventory has a
+  *Give* entry and you can send; with it off other hunters' gives are refused ("does not take gifts") - the consent.
+  `BB_PARTY_GIVE_ITEMS=1` forces it on (tests).
+* The player opens the inventory, an item, and its command menu reads *Use / Discard / Give* (the game's own menu). *Give*
+  opens a native command menu of the other connected hunters (shown names go through `bbname::Display`), then a native
+  amount menu (1, 2, 5, 10, 20, 50 below the most that can be given, then "All (n)"), and the give is requested. *Give* is
+  absent for items the rules deny (keys, unique and story items, equipped / quick-slot last copy) and outside a party.
 * Notices (the party notice corner): giver "Gave Blood Vial x3 to *name*", receiver "Blood Vial x3 from *name*",
-  refusals "Give Blood Vial to *name*: *reason*". Names go through `bbname::Display` (name filter). The receiver also
-  gets the game's item-get dialog.
+  refusals "Give Blood Vial to *name*: *reason*". The receiver also gets the game's item-get dialog.
+
+### 1.1 How the native menu is extended (bbport_game_menu.cpp)
+
+RE (Ghidra, `deps/ghidra-export`; `tools/re/ghidra_scripts/FindScalar.java` finds code by an FMG text id): the item command
+menu is `FUN_01ba0e70`, which builds a "CommandList" with `AddCommandItem` (0x1b4c9a0; Use 102010, Discard 102011) and
+finishes it with `FUN_01bea630` (builder, finalizer functor) which returns the ref-counted menu object. A command's functor is a
+polymorphic object (vtable: 0/1 clone, 2 operator(), 4/5 destructors) with the item context copied at +8 (inventory index at
++0x50, type | id at +0x54). `operator()(out, self, event)` returns the next menu object in `*out`.
+
+* At Discard's `AddCommandItem` (caller checked inside the builder) a Give functor is made from Discard's (context copied with
+  the game's own copy constructor 0x1c5da00, vtable = a copy of Discard's with slots 0/1/2 ours) when `MenuOffers(item)` says
+  so; the finalize call (hooked) adds the entry just before the menu is finished, so Discard's own set-up is untouched, and
+  keeps a clone of the finalizer (it carries the item context) and the owner field for the pickers.
+* The pickers are fresh builders (`FUN_01be8a30` constructor, layout "CommandList", owner = the item menu's) with our own
+  functors (a 0x88-byte object with no refcounted members: kind, member slot / amount at +0x78..) finished with a clone of the
+  item menu's finalizer; their `operator()` returns the amount menu, or requests the give and returns no menu. Texts are
+  run-time port texts (`Pages::PickerText`, 8 slots).
+* The game calls a command's `operator()` twice for one press (seen in the logs); a repeat of the same command within 0.5 s is
+  ignored.
+* Every call into the game is behind `VtableOk` (readable vtable slots); a failure leaves the entry out or closes the picker
+  (null menu object), never a crash. `BB_PARTY_GIVE_MENU_OFF=1` installs nothing.
+* Known: after a give the inventory list shows the old count until the cursor moves (the list is not told to refresh).
 
 ## 2. What may be given (`GoodsAllowed`, `GiverVerdict`, `ReceiverVerdict`)
 
@@ -86,5 +109,7 @@ leave both with the items (needs the link down for 90 s exactly in that window).
   `give_netsim` = `gvn`): `gv` host to guest and back, a refused badge, both switches (giver off, receiver off), storage
   overflow, a give of more than held, and conservation of both inventories; `gvg` guest to guest through the relay;
   `gvr` the receiver ignores COMMIT and ABORT (timeout roll-back); `gvl` the giver drops its link right after COMMIT
-  (whatever happens, both inventories sum to the same); `gvn` = `gv` under `BB_NET_SIM=dsl`.
+  (whatever happens, both inventories sum to the same); `gvn` = `gv` under `BB_NET_SIM=dsl`; `gvm` the native item menu: the
+  director presses Options > Inventory > Pebble > Give > Hunter1 > 2 and the transfer runs; `gvs` opens and closes the item
+  menu 14 times and the pickers 6 times, then gives once (group `give_menu`).
 * Test aids: `BB_PARTY_GIVE_TEST`, `BB_PARTY_GIVE_FAULT`, `BB_PARTY_GIVE_WATCH` (DEBUG_SWITCHES.md).

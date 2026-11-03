@@ -26,7 +26,6 @@
 #include "party/party_display_name.h"
 #include "party/party_splitscreen_rules.h"
 #include "party/party_balance_rules.h"
-#include "party/party_give.h"
 #include "party/party_gather.h"
 #include "party/party_npctalk.h"
 #include "party/party_ping.h"
@@ -1688,75 +1687,6 @@ struct PartyUiState {
 };
 PartyUiState party_ui;
 
-/// 0.7.8 (party_give.h): the give rows - an item among the own consumables, a count, a member, then Give. The list is
-/// refreshed by the game's tick while this tab is up; nothing here touches the game's memory.
-void GiveRows(bool on) {
-    coop::give::UiWanted();
-    const coop::give::UiView v = coop::give::UiSnapshot();
-    static std::uint32_t sel_id = 0;
-    static int sel_n = 1, sel_slot = -1;
-    static std::string label_item, label_count, label_member;
-    if (!v.available) {
-        Note(T("Give items: join a party first (the world has to be up).",
-               "Передача предметов: сначала вступите в группу (мир должен быть загружен)."),
-             Dim());
-        return;
-    }
-    if (v.items.empty() || v.members.empty()) {
-        Note(v.members.empty() ? T("Give items: no other hunter is connected.", "Передача предметов: других охотников нет.")
-                                : T("Give items: nothing to give (key, unique and story items never can be).",
-                                    "Передача предметов: нечего передавать (ключевые, уникальные и сюжетные предметы нельзя)."),
-             Dim());
-        if (!v.status.empty()) Note(v.status.c_str(), Dim());
-        return;
-    }
-    int ii = 0, mi = 0;
-    for (int i = 0; i < int(v.items.size()); ++i)
-        if (v.items[i].id == sel_id) ii = i;
-    for (int i = 0; i < int(v.members.size()); ++i)
-        if (v.members[i].slot == sel_slot) mi = i;
-    sel_id = v.items[ii].id;
-    sel_slot = v.members[mi].slot;
-    const coop::give::UiItem& it = v.items[ii];
-    sel_n = std::clamp(sel_n, 1, it.max_give);
-    Choice("give_item", T("Give: item", "Передать: предмет"), ii, int(v.items.size()),
-           [&](int i) {
-               label_item = v.items[i].name + " x" + std::to_string(v.items[i].held);
-               return label_item.c_str();
-           },
-           [](int) { return true; },
-           T("An item you hold and may give (consumables and materials; never key, unique or story items). A quick-slot "
-             "item keeps one.",
-             "Предмет, который у вас есть и который можно передать (расходники и материалы; не ключевые, не уникальные, "
-             "не сюжетные). В быстром слоте остаётся один."),
-           on && !v.busy, [&](int i) { sel_id = v.items[i].id; });
-    Choice("give_count", T("Give: how many", "Передать: сколько"), sel_n - 1, it.max_give,
-           [&](int i) {
-               label_count = std::to_string(i + 1);
-               return label_count.c_str();
-           },
-           [](int) { return true; }, T("How many to give.", "Сколько передать."), on && !v.busy,
-           [&](int i) { sel_n = i + 1; });
-    Choice("give_to", T("Give: to", "Передать: кому"), mi, int(v.members.size()),
-           [&](int i) {
-               label_member = v.members[i].name;
-               return label_member.c_str();
-           },
-           [](int) { return true; },
-           T("The hunter who gets it. They need Give items on as well (their consent).",
-             "Охотник, который получит предмет. У него тоже должна быть включена передача предметов."),
-           on && !v.busy, [&](int i) { sel_slot = v.members[i].slot; });
-    if (ActionRow("give_go", T("Give", "Передать"), v.busy ? T("waiting for the answer…", "ожидание ответа…") : "",
-                  T("Gives the items. You lose them only once the other hunter has them; if the link breaks they come "
-                    "back to you.",
-                    "Передаёт предметы. Вы теряете их, только когда другой охотник их получил; при обрыве связи они "
-                    "возвращаются."),
-                  on && !v.busy)) {
-        coop::give::RequestGive(it.id, sel_n, sel_slot);
-    }
-    if (!v.status.empty()) Note(v.status.c_str(), Dim());
-}
-
 void PartyTab() {
     namespace ps = party::status;
     const ps::Board b = ps::Snapshot();
@@ -1784,12 +1714,6 @@ void PartyTab() {
          : b.role == ps::Role::Guest ? T("Guest", "Гость")
                                      : T("None", "Нет"),
          on ? Plain() : Dim());
-
-    // 0.7.8: give items to a party member (party_give.h), above the codes so the rows are in view.
-    if (BbSettings::Get().party_give_items.load() || coop::give::Enabled()) {
-        GiveRows(on);
-        ImGui::Spacing();
-    }
 
     // Party code + copy. A host has two when it knows its public address: the Internet code
     // (friends elsewhere) and the LAN code (same network: most routers cannot loop back to their
@@ -1976,7 +1900,7 @@ void PartyTab() {
              "или руна переданы группе. Не для обычных предметов."),
            on);
     Toggle("party_give_items", T("Give items to the party", "Передача предметов группе"), s.party_give_items,
-           T("Give consumables to a hunter in your party and receive theirs (rows below). Your switch shows the list; "
+           T("Give consumables to a hunter in your party and receive theirs (Give in an item's menu in the inventory). Your switch shows it; "
              "theirs is their consent. Never key, unique or story items. Default: off.",
              "Передача расходников охотникам группы и получение от них (строки ниже). Ваш переключатель показывает "
              "список; их - согласие. Никогда ключевые, уникальные и сюжетные предметы. По умолчанию: выкл."),
@@ -3771,22 +3695,6 @@ void TextPrompt() {
 
 /// BB_MENU_KEYS_FILE=<file> (scripted tests): tokens toggle up down left right enter back l1 r1,
 /// consumed when the file appears (it is removed), one key press per frame.
-/// Test aid BB_OVERLAY_OPEN_PARTY_AT=<s>: opens the menu on the Party tab that many seconds after the first frame (a
-/// screenshot of the give rows, 0.7.8).
-void OpenPartyTabTest() {
-    static const char* at = std::getenv("BB_OVERLAY_OPEN_PARTY_AT");
-    static bool done = false;
-    static std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    if (!at || done) {
-        return;
-    }
-    if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= std::atof(at)) {
-        done = true;
-        Ui::state.tab = 5;
-        SetOpen(true);
-    }
-}
-
 void ScriptedKeys() {
     static const char* path = std::getenv("BB_MENU_KEYS_FILE");
     static std::chrono::steady_clock::time_point last_check{};
@@ -4275,9 +4183,8 @@ bool Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent, b
         frame_history_next = (frame_history_next + 1) % FrameHistory;
     }
     Telemetry::wanted.store(initialized && BbSettings::Get().show_hud, std::memory_order_relaxed);
-    if ((std::getenv("BB_MENU_KEYS_FILE") || std::getenv("BB_OVERLAY_OPEN_PARTY_AT")) && initialized) {
+    if (std::getenv("BB_MENU_KEYS_FILE") && initialized) {
         std::scoped_lock lock{imgui_mutex};
-        OpenPartyTabTest();
         ScriptedKeys();
     }
     if (initialized) {
