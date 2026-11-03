@@ -638,6 +638,18 @@ BB_COOP_SYSV void BlockClear2Hook(u64 state, u64 ctx, u64 args) {
             return;
         }
     }
+    if (g_on.load()) {
+        // 0.7.8 (Ludwig wipe report: "PREY SLAUGHTERED" at the fog with the boss alive): every boss clear that runs
+        // on a party game is logged, with the game that runs it, so a false banner shows which game's defeat event
+        // started it, how long after its last load, and whether a boss bar was up.
+        static std::atomic<int> runs{0};
+        if (runs.fetch_add(1) < 12) {
+            const double at = g_load_end_at.load();
+            Log("boss clear of boss %u runs on this game (%s, %.1f s after its last load, boss bar %s)",
+                Field<u32>(args, 0x14), Role() == RoleClient ? "guest" : "host", at < 0 ? -1.0 : Now() - at,
+                BossBarShown() ? "up" : "down");
+        }
+    }
     using Fn = void(BB_COOP_SYSV*)(u64, u64, u64);
     reinterpret_cast<Fn>(g_block_clear_orig)(state, ctx, args);
 }
