@@ -143,6 +143,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         if (v.fg_backend == FgFsr && v.frame_generation > 2) v.frame_generation = 2;
     } else if (key == "reflex") {
         v.reflex = ParseReflex(value.c_str());
+    } else if (key == "key_ramp") {
+        v.key_ramp = i != 0;
     } else if (key == "prompt_style") {
         v.prompt_style = ParsePromptStyle(value.c_str());
     } else if (key == "upscaler") {
@@ -352,6 +354,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.target_fps = (value == "uncap" || i == 0) ? 0 : std::clamp(i, 30, 239);
     } else if (key == "max_dt_hz") {
         v.max_dt_hz = std::clamp(i, 10, 240);
+    } else if (key == "texture_quality") {
+        for (int q = 0; q < TqCount; ++q) {
+            if (value == TextureQualityName(q)) v.texture_quality = q;
+        }
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {
@@ -448,7 +454,8 @@ void Load() {
     }
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FG_BACKEND", "fg_backend"},          {"BB_FRAME_GENERATION", "frame_generation"},
-        {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"},
+        {"BB_REFLEX", "reflex"},                  {"BB_PROMPT_STYLE", "prompt_style"}, {"BB_KEY_RAMP", "key_ramp"},
+        {"BB_TEXTURE_QUALITY", "texture_quality"},
         {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
         {"BB_PARTY_HIDE_BAD_NAMES", "party_hide_bad_names"}, {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"},
         {"BB_PARTY_SPLITSCREEN", "party_splitscreen"}, {"BB_PARTY_STAY", "party_stay"}, {"BB_PARTY_MESSAGES", "party_messages"},
@@ -527,6 +534,7 @@ void Load() {
         v.startup_effects[e] = v.effects[e];
     }
     v.startup_model_lod = v.model_lod;
+    v.startup_texture_quality = v.texture_quality;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
     v.startup_gpl = v.gpl;
@@ -644,6 +652,7 @@ bool ResolutionNeedsRestart() {
 bool RestartNeeded() {
     const auto& s = Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
+                   s.texture_quality != s.startup_texture_quality ||
                    s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl ||
                    s.frame_generation != s.startup_frame_generation ||
                    (s.frame_generation >= 2 && s.fg_backend != s.startup_fg_backend) ||
@@ -779,6 +788,7 @@ void Save() {
     put("mk_wheel", flag(v.mk_wheel));
     put("mk_direct_camera", flag(v.mk_direct_camera));
     put("prompt_style", PromptStyleName(v.prompt_style));
+    put("key_ramp", flag(v.key_ramp));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
     put("compile_indicator", flag(v.compile_indicator));
@@ -835,6 +845,7 @@ void Save() {
         put(Effects[e].key, flag(v.effects[e]));
     }
     put("model_lod", std::to_string(v.model_lod.load()));
+    put("texture_quality", TextureQualityName(v.texture_quality.load()));
     put("volumetric_res", std::to_string(v.volumetric_res.load()));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));
@@ -899,7 +910,7 @@ void ReloadMouseTuning() {
     // the other keys are the menu's (a full re-read would undo its unsaved changes).
     static constexpr const char* tuning[] = {"mk_sens_x", "mk_sens_y", "mk_invert_x", "mk_invert_y",
                                              "mk_deadzone", "mk_smoothing", "mk_wheel",
-                                             "mk_direct_camera", "prompt_style"};
+                                             "mk_direct_camera", "prompt_style", "key_ramp"};
     auto& v = Get();
     if (FILE* file = std::fopen(Path(), "r")) {
         char line[256];

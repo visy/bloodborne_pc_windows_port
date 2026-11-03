@@ -36,6 +36,8 @@ int bbgpu_mouse_keyboard(BbMouseState *state, int consume_motion) {
 int bbgpu_test_key(const char *name) { (void)name; return 1; }
 static int prompt_style_setting; /* bbport.ini prompt_style (PROMPT_STYLE_*) */
 int bbgpu_prompt_style(void) { return prompt_style_setting; }
+static int key_ramp_setting; /* keyboard movement ramp (bbport.ini key_ramp) */
+int bbgpu_key_ramp(void) { return key_ramp_setting; }
 
 /* Button prompts (src/pad_prompts.h): the pad type's set, the prompt_style override, SDL's letters
  * (Nintendo: the bottom button is B), short key names. */
@@ -207,6 +209,75 @@ static void test_walk_key(void) {
     load_bindings(0);
 }
 
+/* The keyboard stick's analog ramp (after Mrsuss60/bloodborne_pc_windows_port 94388d59): the size
+ * rises over 70 ms, falls over 45 ms, keeps the direction (and the square gate) of
+ * key_stick_step, an idle start begins at the first sample, and the gamepad's own stick is never
+ * replaced while no key is down (the drift Mrsuss60 fixed: a resting gamepad's offset must not
+ * leak into keyboard movement, and keys drive both axes). */
+static void test_key_ramp(void) {
+    KeyRampState r; memset(&r,0,sizeof(r));
+    uint64_t t=5000000; int x=0, y=0;
+    /* W held from t: the first sample starts the ramp (no stick yet), then 16.7 ms steps. */
+    assert(!key_ramp_step(&r,1,0,-127,t,&x,&y));
+    int last=0;
+    for (int i=1;i<=4;++i) {
+        t+=16667;
+        const int on=key_ramp_step(&r,1,0,-127,t,&x,&y);
+        assert(on && x==0 && y<=0);
+        assert(-y>=last); /* rising only */
+        last=-y;
+    }
+    /* 66.7 ms in: 95% of 70 ms, not yet all the way; one more read arrives. */
+    assert(last>=110 && last<127);
+    t+=16667; assert(key_ramp_step(&r,1,0,-127,t,&x,&y) && y==-127 && x==0);
+    /* Diagonal (the square's corner): both axes ramp together, the same share; no unit-circle round. */
+    KeyRampState c; memset(&c,0,sizeof(c));
+    t=9000000; key_ramp_step(&c,1,127,-127,t,&x,&y);
+    t+=35000; assert(key_ramp_step(&c,1,127,-127,t,&x,&y) && x==64 && y==-64);
+    t+=35000; assert(key_ramp_step(&c,1,127,-127,t,&x,&y) && x==127 && y==-127);
+    /* Released: the held direction falls to 0 in 45 ms (and the stick is then gone), same direction. */
+    t+=22500; assert(key_ramp_step(&c,0,0,0,t,&x,&y) && x==64 && y==-64);
+    t+=22500; assert(!key_ramp_step(&c,0,0,0,t,&x,&y));
+    /* Pressed again after idle: starts from nothing, not from a stale clock (no jump to 71%). */
+    t+=2000000; assert(!key_ramp_step(&c,1,-127,0,t,&x,&y));
+    t+=16667; assert(key_ramp_step(&c,1,-127,0,t,&x,&y) && x<0 && x>-50);
+    /* A direction change while the stick is up keeps its size (key_stick_step turns the angle). */
+    t+=16667; key_ramp_step(&c,1,-127,0,t,&x,&y); const int before=x;
+    t+=16667; assert(key_ramp_step(&c,1,0,127,t,&x,&y) && x==0 && y>0 && y>=-before);
+    /* A frozen game (huge gap) counts for 50 ms at most: the full rise is 70 ms. */
+    KeyRampState g; memset(&g,0,sizeof(g));
+    key_ramp_step(&g,1,0,127,1000,&x,&y);
+    assert(key_ramp_step(&g,1,0,127,1000+10000000,&x,&y) && y>80 && y<127);
+
+    /* Through apply_keyboard with key_ramp on: W eases in from neutral and out again; off = jumps. */
+    static bool k[SDL_SCANCODE_COUNT];
+    PadData d;
+    load_bindings(0);
+    memset(&key_move_stick,0,sizeof(key_move_stick));
+    memset(&key_move_ramp,0,sizeof(key_move_ramp));
+    key_ramp_setting=1;
+    memset(&d,0,sizeof(d)); d.left_x=d.left_y=d.right_x=d.right_y=128;
+    k[SDL_SCANCODE_W]=true; apply_keyboard(&d,k);
+    assert(d.left_x==128 && d.left_y==128); /* the first read: nothing yet */
+    usleep(25000); d.left_x=d.left_y=128; apply_keyboard(&d,k);
+    assert(d.left_x==128 && d.left_y<128 && d.left_y>0); /* on the way up, x centered: no sideways drift */
+    usleep(120000); d.left_x=d.left_y=128; apply_keyboard(&d,k);
+    assert(d.left_x==128 && d.left_y==0);
+    /* A gamepad's drift (x offset 140) does not leak: both axes belong to the keys. */
+    d.left_x=140; d.left_y=128; apply_keyboard(&d,k);
+    assert(d.left_x==128 && d.left_y==0);
+    k[SDL_SCANCODE_W]=false;
+    apply_keyboard(&d,k); /* the release starts key_stick_step's 60 ms hold */
+    usleep(300000); d.left_x=200; d.left_y=30; apply_keyboard(&d,k); /* long idle: pad passes through */
+    assert(d.left_x==200 && d.left_y==30);
+    key_ramp_setting=0;
+    memset(&key_move_stick,0,sizeof(key_move_stick));
+    k[SDL_SCANCODE_W]=true; d.left_x=d.left_y=128; apply_keyboard(&d,k);
+    assert(d.left_y==0); /* off: the old instant stick */
+    k[SDL_SCANCODE_W]=false;
+    memset(&key_move_stick,0,sizeof(key_move_stick));
+}
+
 /* Xbox pads: Back + d-pad left/right clicks the touchpad halves (after Supermedo/bloodborne_pc
  * a04e1e95, parsifal295's PR #39); Back alone clicks the left half for 150 ms on release. */
 static int combo_yes(void) { return 1; }
@@ -262,6 +333,7 @@ int main(void) {
     load_bindings(0);
     test_keyboard_sticks();
     test_walk_key();
+    test_key_ramp();
     test_back_combo();
     test_back_click_combo();
     const int created=bb_test_temp_file(path,sizeof(path),"bbport-pad-test-");

@@ -2035,6 +2035,16 @@ def prompt_style_label(ini: dict) -> str:
     return next((label for label, v in PROMPT_STYLE_CHOICES if v == value), PROMPT_STYLE_CHOICES[0][0])
 
 
+# Texture quality (Mrsuss60/bloodborne_pc_windows_port 8841db5b, after deadinside28/bloodborne_pc):
+# bbport.ini texture_quality, a game setting (also in game: Textures page, Insert > Effects), next start.
+TEXTURE_QUALITY_CHOICES = [("Auto", "auto"), ("Full", "full"), ("Half", "half"), ("Quarter", "quarter")]
+
+
+def texture_quality_label(ini: dict) -> str:
+    value = str(ini.get("texture_quality", "auto")).strip().lower()
+    return next((label for label, v in TEXTURE_QUALITY_CHOICES if v == value), TEXTURE_QUALITY_CHOICES[0][0])
+
+
 def reflex_label(ini: dict) -> str:
     value = str(ini.get("reflex", "off")).lower()
     value = {"1": "on", "2": "boost"}.get(value, value)
@@ -2192,6 +2202,8 @@ INI_FLAG_SETTINGS = [
     ("feat_save_commit_async", "save_commit_async", False, "BB_SAVE_COMMIT_ASYNC"),
     # Live FPS clock (Mrsuss60's live FPS patching, a7cbfae6): replaces the frame rate hooks / FPS++ patches.
     ("feat_live_fps", "live_fps", True, "BB_LIVE_FPS"),
+    # Keyboard movement ramp (Mrsuss60 94388d59): WASD ease in / out like an analog stick; live in game.
+    ("feat_key_ramp", "key_ramp", True, "BB_KEY_RAMP"),
 ]
 # Every BB_* variable the launcher no longer sets because its setting lives in bbport.ini.
 GAME_SETTING_ENVS = ["BB_UPSCALER", "BB_VOLUMETRIC_RES"] + [env for *_, env in INI_FLAG_SETTINGS]
@@ -3160,6 +3172,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
         self.feat_hud = self.ini_flag_vars["show_hud"]
         self.feat_mouse_keyboard = self.ini_flag_vars["mk_enabled"]
+        self.feat_key_ramp = self.ini_flag_vars["key_ramp"]
 
         # Party co-op (BB_PARTY_*)
         party_mode = str(self.settings.get("party_mode", "") or "")
@@ -3176,6 +3189,7 @@ class BloodborneLauncher(tk.Tk):
         self.frame_generation_var = tk.StringVar(value=frame_generation_label(read_ini(bbport_ini_path())))
         self.reflex_var = tk.StringVar(value=reflex_label(read_ini(bbport_ini_path())))
         self.prompt_style_var = tk.StringVar(value=prompt_style_label(read_ini(bbport_ini_path())))
+        self.texture_quality_var = tk.StringVar(value=texture_quality_label(read_ini(bbport_ini_path())))
         # HDR output: game settings too (bbport.ini hdr / hdr_peak_nits / hdr_paper_white).
         _ini = read_ini(bbport_ini_path())
         self.hdr_var = tk.BooleanVar(value=str(_ini.get("hdr", "0")).strip() not in ("", "0"))
@@ -3443,6 +3457,15 @@ class BloodborneLauncher(tk.Tk):
         reflex_combo = self._combo(sec, "NVIDIA Reflex:", self.reflex_var, [c[0] for c in REFLEX_CHOICES],
                                    reflex_tip, width=14)
         reflex_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
+        texture_combo = self._combo(
+            sec, "Texture quality:", self.texture_quality_var, [c[0] for c in TEXTURE_QUALITY_CHOICES],
+            "Loads big block-compressed textures (512x512 and up, with 3+ mip levels) without their largest "
+            "mip levels: Half uses about a quarter of the video memory for those textures, Quarter about a "
+            "sixteenth, at a softer close-up. Never touches render targets or depth. Auto (default): Half on "
+            "cards with 3 GB of video memory or less, Full on bigger ones. A game setting (bbport.ini "
+            "texture_quality, BB_TEXTURE_QUALITY; also in game: Textures page), used at the next start.",
+            width=14)
+        texture_combo.bind("<<ComboboxSelected>>", lambda e: self.save_texture_quality())
         self._check(sec, "HDR output (HDR10)", self.hdr_var,
                     "An HDR10 picture (PQ, Rec.2020) for an HDR display: the game's SDR picture keeps its "
                     "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
@@ -3587,6 +3610,12 @@ class BloodborneLauncher(tk.Tk):
                     "switched in game (Insert > Controls). A game setting (bbport.ini mk_enabled). "
                     "Default: off.",
                     command=lambda: self.save_game_settings("mk_enabled"))
+        self._check(sec, "Keyboard stick ramp", self.feat_key_ramp,
+                    "WASD movement eases in over 70 ms and out over 45 ms like a thumb on an analog stick, "
+                    "instead of jumping to full speed (after Mrsuss60/bloodborne_pc_windows_port 94388d59). "
+                    "Only keyboard movement; a gamepad is untouched. Also in game (Insert > Controls). "
+                    "A game setting (bbport.ini key_ramp). Default: on.",
+                    command=lambda: self.save_game_settings("key_ramp"))
         prompt_combo = self._combo(
             sec, "Button prompts:", self.prompt_style_var, [c[0] for c in PROMPT_STYLE_CHOICES],
             "The icons in the game's button prompts and key guides. Auto (default): keys after "
@@ -4272,6 +4301,7 @@ class BloodborneLauncher(tk.Tk):
         self.frame_generation_var.set(frame_generation_label(ini))
         self.reflex_var.set(reflex_label(ini))
         self.prompt_style_var.set(prompt_style_label(ini))
+        self.texture_quality_var.set(texture_quality_label(ini))
         if hasattr(self, "party_vpn_combo"):
             self.party_vpn_var.set(vpn_choice_label(ini.get("party_vpn", "auto")))
             self.update_vpn_address()
@@ -4326,6 +4356,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), values)
         except OSError as ex:
             self.log(f"[GRAPHICS] Could not save the frame generation setting to bbport.ini: {ex}")
+
+    def save_texture_quality(self):
+        """The Texture quality choice: bbport.ini texture_quality (next start)."""
+        try:
+            update_ini(bbport_ini_path(),
+                       {"texture_quality": dict(TEXTURE_QUALITY_CHOICES).get(self.texture_quality_var.get(), "auto")})
+        except OSError as ex:
+            self.log(f"[GRAPHICS] Could not save the texture quality setting to bbport.ini: {ex}")
 
     def save_prompt_style(self):
         """The Button prompts choice: bbport.ini prompt_style (a running game picks it up within a
