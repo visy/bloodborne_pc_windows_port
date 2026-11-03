@@ -280,10 +280,9 @@ if "%BB_COPY_GPU_BUFFERS%"=="" set "BB_COPY_GPU_BUFFERS=1"
 if "%BB_GPU_WRITE_TWINS%"=="" set "BB_GPU_WRITE_TWINS=1"
 if "%BB_GPU_WRITE_TWINS_MAX%"=="" set "BB_GPU_WRITE_TWINS_MAX=65536"
 
+REM Live FPS uses the same vblank as the presets (60 -> 60 Hz, 90 -> 90 Hz, others 480 Hz): the game's pacer waits in
+REM vblank ticks, and at 480 Hz a target of 60 ran at 49 steps a second (measured), at 60 Hz exactly 60.
 REM Frame rate: uncap = delta-time patch, vblank 480 Hz (frames shown at once); 60/90 fixed.
-REM Live FPS (BB_LIVE_FPS=1, or live_fps in bbport.ini; not at BB_FPS=30): the live clock paces the game
-REM and the presenter, so the vblank runs at the uncapped rate whatever the target.
-if "%BB_VBLANK_HZ%"=="" if "%BB_LIVE_FPS%"=="1" if not "%fps%"=="30" set "BB_VBLANK_HZ=480"
 if "%BB_VBLANK_HZ%"=="" (
     if "%fps%"=="uncap" (
         set "BB_VBLANK_HZ=480"
