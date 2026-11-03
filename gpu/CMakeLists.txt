@@ -752,6 +752,11 @@ add_executable(party-splitscreen-test EXCLUDE_FROM_ALL ../tests/test_party_split
 target_compile_options(party-splitscreen-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-splitscreen-test PRIVATE shim)
 set_target_properties(party-splitscreen-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Invasions into open public games (party_invade_rules.h). ninja -C out/gpu party-invade-test
+add_executable(party-invade-test EXCLUDE_FROM_ALL ../tests/test_party_invade.cpp)
+target_compile_options(party-invade-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-invade-test PRIVATE shim)
+set_target_properties(party-invade-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # "Stay in my world" (party_stayhome_rules.h). ninja -C out/gpu party-stayhome-test
 add_executable(party-stayhome-test EXCLUDE_FROM_ALL ../tests/test_party_stayhome.cpp)
 target_compile_options(party-stayhome-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

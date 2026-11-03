@@ -12,6 +12,7 @@
 
 #include "bbport_settings.h"
 #include "party/party_balance_rules.h"
+#include "party/party_invade.h"
 #include "party/party_link.h"  // kMaxPartyPlayers
 #include "party/party_npctalk.h"
 #include "party/party_status.h"
@@ -672,6 +673,22 @@ void DefineBuiltinPartyRows() {
     stay.toggle_set = [](bool on) { BbSettings::Get().party_stay = on; };
     party_rows.push_back({stay});
 
+    // 0.7.8 (CL-4cc63c): the host blocks the invader for the session (docs/party/invasions.md). Shown only while one is there.
+    PartyRow block;
+    block.order = 38;
+    block.name = [](const B&) { return T2("Block the invader", "Заблокировать захватчика"); };
+    block.value = [](const B&) { return T2("Block", "Блок"); };
+    block.help = [](const B&) {
+        return T2("Press twice: send the invader home and refuse it for this session",
+                  "Нажмите дважды: отправить захватчика домой и не пускать до конца сессии");
+    };
+    block.visible = [](const B& b) { return Running(b) && b.role == ps::Role::Host && !coop::invade::InvaderName().empty(); };
+    block.press = PartyRow::Press::Confirm;
+    block.run = [](const B& b) {
+        if (Active(b)) coop::invade::RequestBlock();
+    };
+    party_rows.push_back({block});
+
     PartyRow leave;
     leave.order = 40;
     leave.name = [](const B&) { return T2("Leave the party", "Покинуть группу"); };
@@ -1265,6 +1282,12 @@ void DefineAll() {
     AddRow(Flag(&Values::party_open), AddText("Open party (no password)", "Открытая группа"),
            AddText("No password: players on your LAN or VPN join by plain address. You trust that network",
                    "Без пароля: игроки из вашей LAN или VPN входят по адресу. Вы доверяете этой сети"),
+           toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
+    // 0.7.8 (CL-4cc63c): invasions into open public games (party/party_invade_rules.h, docs/party/invasions.md): the host lets
+    // other players join its world as hostile phantoms from the public lists. Live, the host's value only, off by default.
+    AddRow(Flag(&Values::party_invaders), AddText("Allow invaders", "Разрешить вторжения"),
+           AddText("Listed games only: other players may invade your world as hostile phantoms (one at a time). Off: never",
+                   "Только в списке игр: другие игроки могут вторгаться в ваш мир (по одному). Выкл.: никогда"),
            toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
     AddRow(Info(), AddText("Host's access", "Доступ хоста"),
            AddText("The host decides who joins without a party code (Open party, Nightwatch VPN lobby)",

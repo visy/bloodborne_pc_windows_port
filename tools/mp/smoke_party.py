@@ -7982,17 +7982,110 @@ def check_gg(v, L):
     check_common(v, L, "gg")
 
 
-PHASES = {"ah": phase_ah, "pc": phase_pc, "vm": phase_vm, "yj": phase_yj, "s1": phase_s1, "sh": phase_sh, "gg": phase_gg, "s2": phase_s2, "rules": phase_rules, "ss": phase_ss, "sc": phase_sc, "summonfail": phase_summonfail,
+
+# Phase iv (CL-4cc63c invasions into open public games, ~9 min, 3 players, group `invade`): the host (Allow invaders on) and a
+# guest are in the world; the invader (BB_PARTY_INVADE=1, no password) dials at its title first (the host is not in a world
+# yet: refused with a named reason), dials again from its own world and joins as a hostile phantom: its chr is on the invader
+# team on all three games, the host and the guest hit it and it hits the host (HP drops), then it dies (the game's own
+# send-home, not a revive at a lamp), asks again, joins, and the HOST dies: the invader goes home. The invader instance is
+# headless (the machine allows two rendered clients).
+IV_UNTIL = [r"2:invade: notice: You defeated"]
+
+
+def phase_iv(only, name="iv", sim=None):
+    # BB_PARTY_INVADE_TEST (party_invade_rules.h ParseTest): the host dies 40 s into the invader's second stay; the invader asks
+    # again 25 s after the refusal at its title, falls 45 s into the first stay, asks again 15 s after getting home.
+    hsteps = "log@5,invader@4,face=22@2,hit=3@1,log@3"
+    gsteps = "log@5,invader@8,face=22@2,hit=3@1,log@3"
+    isteps = "log@5,invader@4,face=19@2,hit=4@1,log@3"
+    ienv = ["0:BB_PARTY_INVADERS=1", "2:BB_PARTY_INVADE=1",
+            "0:BB_PARTY_INVADE_TEST=die@40?in#2",
+            "2:BB_PARTY_INVADE_TEST=rejoin@25?home,die@45?in,rejoin@15?home",
+            "0:BB_PARTY_PVP_TEST=" + hsteps, "1:BB_PARTY_PVP_TEST=" + gsteps, "2:BB_PARTY_PVP_TEST=" + isteps]
+    if sim:
+        ienv += ["%d:BB_NET_SIM=%s" % (i, sim) for i in range(3)]
+    return dict(name=name, seconds=900, count=3, headless=1, env=[], ienv=ienv, crash=[], until=IV_UNTIL, until_hold=10)
+
+
+def check_iv(v, L, name="iv"):
+    n = name
+    first = need(v, L, n + " invader: the first dial (host not in a world) is refused with a named reason", 2,
+                 r"refused by the host: (the host is not in a world you can enter now|the host is on a loading screen)")
+    gate = need(v, L, n + " host: the gate passes the invader (final)", 0, r"invade: gate: invader \(name hidden\) \(final\): none", first or 0)
+    adm = need(v, L, n + " host: an invader is admitted (pending)", 0, r"invade: an invader is admitted into slot \d+ \(pending\)", gate or 0)
+    inn = need(v, L, n + " host: the invader is in the world", 0, r"invade: invader slot \d+: in the world", adm or 0)
+    need(v, L, n + " guest: told of the invader", 1, r"invade: notice: (An invader is coming|Invader .* has entered)", adm or 0)
+    need(v, L, n + " invader: told it invades", 2, r"invade: notice: You invade ", adm or 0)
+    need(v, L, n + " invader: no shared progress or items arrive (the host's rules are not sent)", 2,
+         r"invade: this game invades the host's world", 0)
+    # teams: the invader's chr is on its own team (a copy of the map enemies) on every game
+    for i, who in ((0, "host"), (1, "guest"), (2, "invader")):
+        need(v, L, n + " %s: the invader team is a copy of the map enemies" % who, i, r"invader: team \d+ is a copy of team 23", adm or 0)
+        need(v, L, n + " %s: the invader's chr moved to the invader team" % who, i, r"invader: chr [0-9a-f]+ \((this game's own|a remote member's)\) moved from team \d+ to team \d+", adm or 0)
+    # the fight: every hit lands (HP drops on the host and on the invader)
+    need(v, L, n + " host: the invader's blows hurt the host", 0, r"invader: own HP \d+ -> \d+", inn or 0)
+    need(v, L, n + " invader: the host's and the guest's blows hurt the invader", 2, r"invader: own HP \d+ -> \d+", inn or 0)
+    need(v, L, n + " guest: nothing else changes: no friendly fire between host and guest", 1, r"pvp: rule: friendly fire off|rule: friendly fire", 0)
+    none_of(v, L, n + " no friendly-fire cell opened between the host and the guest", r"friendly fire applied", 0, 1e9, (0, 1))
+    # the invader falls: tells the host, goes home through the game's own send-home
+    fell = need(v, L, n + " invader: it falls and goes home", 2, r"invade: the invader fell: going home", inn or 0)
+    need(v, L, n + " host: the invasion ends (invader died)", 0, r"invasion of slot \d+ ends: invader_died|ends: .*invader", fell or 0)
+    need(v, L, n + " host+guest: told the invader was defeated", 1, r"invade: notice: The invader .* was defeated", fell or 0)
+    home = need(v, L, n + " invader: home through the game's own leave (no lamp revive)", 2, r"host lost \([^)]*\): home now \(OnLeave_Limit\)", fell or 0)
+    # asks again; the host dies; the invader goes home again
+    again = need(v, L, n + " invader: asks again", 2, r"test: script step \d+: rejoin -> ", home or 0)
+    inn2 = need(v, L, n + " host: the invader is in the world again", 0, r"invade: invader slot \d+: in the world", again or 0)
+    hd = need(v, L, n + " host: dies", 0, r"test: script step \d+: this player dies now", inn2 or 0)
+    need(v, L, n + " host: the invasion ends (host died)", 0, r"invasion of slot \d+ ends: host_died", hd or 0)
+    need(v, L, n + " invader: told it won", 2, r"invade: notice: You defeated ", hd or 0)
+    need(v, L, n + " invader: goes home when the host dies", 2, r"host lost \([^)]*\): home now \(OnLeave_Limit\)", hd or 0)
+    need(v, L, n + " the teams go back (invader chr restored)", 0, r"invader: team \d+ closed: \d+ table cell\(s\) put back", hd or 0)
+    check_common(v, L, n)
+
+
+# Phase ivx (CL-4cc63c, ~8 min, 2 players, group `invade_refuse`): the refusals. One host with a world and one invader that
+# dials again after each change of the host's moment: Allow invaders off (refused: the host does not allow invaders), on with
+# a boss fight (refused), a cutscene (refused), 4 players in the world (refused: no free slot), and finally nothing in the way
+# (admitted). The host's moment is forced with own_rule=invade_view:<word>; the 4-player case is also a unit test and is live
+# here as the host's world_players forced to 4 (a real fourth player needs 5 instances).
+IVX_UNTIL = [r"0:invade: invader slot \d+: in the world"]
+
+
+def phase_ivx(only, name="ivx", sim=None):
+    # The host's moment, relative to its world coming up: Allow invaders off (1 s), on (+70), boss view (+45), cutscene (+45),
+    # 4 players (+45), none (+45). The invader dials at +40 (off), +140 (boss), +185 (cutscene), +230 (4 players), +275 (in).
+    host = "allow=0@1,allow=1@70,view=boss@45,view=cutscene@45,view=full@45,view=none@45"
+    invader = "rejoin@40?home,rejoin@100?home,rejoin@45?home,rejoin@45?home,rejoin@45?home"
+    ienv = ["1:BB_PARTY_INVADE=1", "0:BB_PARTY_INVADERS=0", "0:BB_PARTY_INVADE_TEST=" + host, "1:BB_PARTY_INVADE_TEST=" + invader]
+    if sim:
+        ienv += ["%d:BB_NET_SIM=%s" % (i, sim) for i in range(2)]
+    return dict(name=name, seconds=900, count=2, headless=1, env=[], ienv=ienv, crash=[], until=IVX_UNTIL, until_hold=10)
+
+
+def check_ivx(v, L, name="ivx"):
+    n = name
+    off = need(v, L, n + " invader: Allow invaders off -> refused, named", 1, r"refused by the host: the host does not allow invaders")
+    on = need(v, L, n + " host: the switch goes on", 0, r"test: script step \d+: Allow invaders -> 1", 0)
+    boss = need(v, L, n + " invader: boss fight -> refused, named", 1, r"refused by the host: a boss fight is on in the host's world", on or 0)
+    cut = need(v, L, n + " invader: cutscene -> refused, named", 1, r"refused by the host: a cutscene is playing in the host's world", boss or 0)
+    full = need(v, L, n + " invader: 4 players -> refused, named", 1, r"refused by the host: no free slot in the host's world \(4 players\)", cut or 0)
+    inn = need(v, L, n + " host: nothing in the way -> the invader is admitted and in", 0, r"invade: invader slot \d+: in the world", full or 0)
+    need(v, L, n + " host: a host with the switch off was never invadable (announced flag)", 0, r"gate: invader \(name hidden\)", 0)
+    none_of(v, L, n + " the invader never stood in the world before the last dial", r"cooperators 0 -> 1", 0, (inn or 1e9) - 5, (0,))
+    check_common(v, L, n)
+
+
+PHASES = {"iv": phase_iv, "ivn": lambda only: phase_iv(only, "ivn", "dsl"), "ivx": phase_ivx, "ah": phase_ah, "pc": phase_pc, "vm": phase_vm, "yj": phase_yj, "s1": phase_s1, "sh": phase_sh, "gg": phase_gg, "s2": phase_s2, "rules": phase_rules, "ss": phase_ss, "sc": phase_sc, "summonfail": phase_summonfail,
           "s3": phase_s3, "sk": phase_sk, "lg": phase_lg, "lv": phase_lv, "ga": phase_ga, "gl": phase_gl, "lf": phase_lf, "lfx": phase_lfx, "lfa": phase_lfa, "lfw": phase_lfw, "lfwc": phase_lfwc, "lfws": phase_lfws, "lfwcs": phase_lfwcs, "lfwf": phase_lfwf, "lfwcf": phase_lfwcf, "lfwbs": phase_lfwbs, "lfwcbs": phase_lfwcbs, "lu": phase_lu, "mk": phase_mk, "kd": phase_kd, "kg": phase_kg, "fdr": phase_fdr, "kw": phase_kw, "fl": phase_fl, "fd": phase_fd, "fdj": phase_fdj, "cd": phase_cd, "iw": phase_iw, "iwn": phase_iwn, "an": phase_an, "anl": phase_anl, "ld": phase_ld, "cl": phase_cl, "cy": phase_cy, "cyn": lambda only: phase_cy(only, "cyn", True), "clg": phase_clg, "clw": phase_clw, "cla": phase_cla, "caa": phase_caa, "cam": phase_cam, "camo": lambda only: phase_cam(only, "offline"), "cpr": phase_cpr, "chc": phase_chc, "chn": lambda only: phase_chc(only, "chn", True), "chw": phase_chw, "cpa": phase_cpa, "cae": phase_cae, "cao": phase_cao, "cgt": phase_cgt, "cgp": phase_cgp, "cgu": phase_cgu, "cab": phase_cab, "caq": phase_caq, "caw": phase_caw, "el": phase_el, "lt": phase_lt, "bf": phase_bf, "bv": phase_bv, "bw": phase_bw, "ch": phase_ch, "md": phase_md, "mds": phase_mds, "svl": phase_svl, "rh": phase_rh, "rs": phase_rs, "fw": phase_fw, "fwg": phase_fwg, "fwb": phase_fwb, "fwe": phase_fwe, "fh": phase_fh, "lp": phase_lp, "gd": phase_gd, "gh": phase_gh, "gm": phase_gm, "gr": phase_gr, "gr2": phase_gr2, "gr3": phase_gr3, "gr4": phase_gr4, "mp": phase_mp, "mpg": phase_mpg, "mph": phase_mph, "gro": lambda only: phase_gr(only, "gro", False), "gr2o": lambda only: phase_gr2(only, "gr2o", False), "gr3o": lambda only: phase_gr3(only, "gr3o", False), "gr4o": lambda only: phase_gr4(only, "gr4o", False), "jl": phase_jl, "ml": phase_ml, "mg": phase_mg, "ll": phase_ll, "hs": phase_hs, "ngj": phase_ngj, "nl": phase_nl, "ff": phase_ff, "lk": phase_lk, "lkc": phase_lkc, "rt": phase_rt, "br": phase_br, "rf": phase_rf, "rj": phase_rj, "em": phase_em, "bd": phase_bd, "bdo": phase_bdo, "sm": phase_sm, "ef": phase_ef, "ngp": phase_ngp, "mb": phase_mb, "gb": phase_gb, "mbs": phase_mbs, "gbs": phase_gbs, "da": phase_da, "cv": phase_cv, "cvs": phase_cvs, "cvo": lambda only: phase_cvs(only, False), "cvr": phase_cvr, "cvm": phase_cvm, "cvc": phase_cvc, "cva": phase_cva, "cvf": phase_cvf, "cvt": phase_cvt, "cvh": lambda only: phase_cvt(only, "host"), "ie": phase_ie, "il": phase_il, "rw": phase_rw, "rwe": phase_rwe, "rwt": phase_rwt, "gag": phase_gag, "gv": phase_gv, "gvg": phase_gvg, "gvr": phase_gvr, "gvl": phase_gvl, "gvn": lambda only: phase_gv(only, "gvn", "dsl"), "gvm": phase_gvm, "gvs": phase_gvs, "rwl": phase_rwl, "tv": phase_tv, "nf": phase_nf, "nfa": phase_nfa, "nfe": phase_nfe, "nfw": phase_nfw, "npi": phase_npi, "npa": phase_npa, "npd": phase_npd, "pvd": phase_pvd, "pvh": phase_pvh, "pvn": phase_pvn, "npf": phase_npf, "eh": phase_eh, "bl": phase_bl, "mw": phase_mw, "px": phase_px, "pxg": lambda only: phase_px(only, True), "sj": phase_sj, "ou": phase_ou, "mesh": phase_mesh, "oum": lambda only: phase_ou(only, "oum", VPN_MTU_SIM), "meshm": lambda only: phase_mesh(only, "meshm", VPN_MTU_SIM), "fp": phase_fp, "fp5": phase_fp5, "oj": phase_oj, "lo": phase_lo, "po": phase_po, "pos": phase_pos, "sg": phase_sg, "sg2": phase_sg2, "sgb": phase_sgb, "sgb2": phase_sgb2, "sgb3": phase_sgb3, "sgp": phase_sgp, "csh": phase_csh, "csh2": phase_csh2, "csh3": phase_csh3, "cis": phase_cis, "ba": phase_ba, "bh": phase_bh, "bk": phase_bk, "hg": phase_hg, "bg": phase_bg, "lr": phase_lr, "lw": phase_lw, "amp": phase_amp, "la": phase_la, "lb": phase_lb, "lc": phase_lc}
 # --only groups (a smaller run for repeat cycles): the phase each needs and the verdict rows it keeps
-GROUPS = {"auto_hud": "ah", "party_chat": "pc", "version_options": "vm", "yahargul_join": "yj", "join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
+GROUPS = {"invade": "iv", "invade_sim": "ivn", "invade_refuse": "ivx", "auto_hud": "ah", "party_chat": "pc", "version_options": "vm", "yahargul_join": "yj", "join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "splitscreen": "ss", "stay_home": "sh", "guest_gather": "gg", "savecopy": "sc", "summonfail": "summonfail",
           "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "leave_gap": "lv", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "lifts2": "lfx", "lift_apart": "lfa", "lift_walk": "lfw,lfwc", "lift_walk_far": "lfwf,lfwcf", "lift_walk_slow": "lfws,lfwcs,lfwbs,lfwcbs", "lift_down": "lu", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd,kg", "drop_far": "fdr", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_layers": "cy,cyn", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_enter": "cae,cao", "chalice_boss": "cab", "chalice_queen": "caq,caw", "chalice_wipe": "clw", "chalice_alias": "cla,caa,cam,camo", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "guest_rest": "gr,gr2,gr3,gr4", "atlas": "mp,mpg,mph", "guest_rest_off": "gro,gr2o,gr3o,gr4o", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "lecture_lamp": "ll", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
 
           "rot": "rt", "boss_rooms": "br", "rom_fog": "rf", "rom_jump": "rj", "emissary": "em", "boss_drops": "bd", "boss_drops_off": "bdo", "scene_mirror": "sm", "ending_flow": "ef", "ngplus_ending": "ngp", "moon_music": "mb", "gehrman_music": "gb", "moon_music_stop": "mbs", "gehrman_music_stop": "gbs", "dream_apart": "da", "covenant": "cv",
           "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "covenant_seq": "cvs,cvo", "covenant_runes": "cvr", "covenant_measure": "cvm", "covenant_chalice": "cvc", "covenant_annalise": "cva", "covenant_alfred": "cvf", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "guest_gates": "gag", "give_items": "gv,gvg", "give_rollback": "gvr,gvl", "give_netsim": "gvn", "give_menu": "gvm,gvs", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_eileen": "nfe", "npc_alfred_ward": "nfw", "npc_invader": "npi", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "npc_fog": "npf", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "death_poison": "px,pxg", "seam_rejoin": "sj", "outage_short": "ou", "guest_mesh": "mesh", "vpn_mtu": "oum,meshm", "fourp_nat": "fp", "fivep": "fp5", "open_party": "oj", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "shop_badge": "sgb", "shop_badge_sync": "sgb2", "badge_guard": "sgb3", "sgive_owner": "sgp", "chalice_shop": "csh,csh2", "chalice_shop3": "csh3", "chalice_insight": "cis", "chalice_glyph": "cgt,cgp,cgu", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_guest": "bg", "boss_laurence_wipe": "lr", "boss_visible": "bv,bw", "ludwig_wipe": "lw", "amelia_phase": "amp", "lone_ai": "la,lc"}
-GROUP_ROWS = {"auto_hud": r"^ah ", "party_chat": r"^pc ", "version_options": r"^vm ", "yahargul_join": r"^yj ", "join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
+GROUP_ROWS = {"invade": r"^iv ", "invade_sim": r"^ivn ", "invade_refuse": r"^ivx ", "auto_hud": r"^ah ", "party_chat": r"^pc ", "version_options": r"^vm ", "yahargul_join": r"^yj ", "join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
@@ -8009,6 +8102,9 @@ GROUP_ROWS = {"auto_hud": r"^ah ", "party_chat": r"^pc ", "version_options": r"^
 # --only ends once the chosen groups' lines are all seen, so the steps after them never run.
 GROUP_UNTIL = {
     "stay_home": SH_UNTIL,
+    "invade": IV_UNTIL,
+    "invade_sim": IV_UNTIL,
+    "invade_refuse": IVX_UNTIL,
     "guest_gather": GG_UNTIL,
     "join": ["0:cooperators [01] -> 2"],
     # the host's second "cooperators 1 -> 2": the first is guest 2's first join, the second the rejoin
@@ -11667,7 +11763,7 @@ def check_ngj(v, L):
     check_common(v, L, "ngj")
 
 
-CHECKS = {"ah": check_ah, "pc": check_pc, "vm": check_vm, "yj": check_yj, "s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
+CHECKS = {"iv": lambda v, L, d: check_iv(v, L), "ivn": lambda v, L, d: check_iv(v, L, "ivn"), "ivx": lambda v, L, d: check_ivx(v, L), "ah": check_ah, "pc": check_pc, "vm": check_vm, "yj": check_yj, "s1": lambda v, L, d: check_s1(v, L), "s2": check_s2, "rules": lambda v, L, d: check_rules(v, L),
           "sc": check_sc, "sh": lambda v, L, d: check_sh(v, L), "gg": lambda v, L, d: check_gg(v, L), "ss": lambda v, L, d: check_ss(v, L), "summonfail": lambda v, L, d: check_summonfail(v, L),
           "s3": lambda v, L, d: check_s3(v, L), "sk": lambda v, L, d: check_sk(v, L), "lg": lambda v, L, d: check_lg(v, L), "lv": lambda v, L, d: check_lv(v, L),
           "ga": lambda v, L, d: check_ga(v, L), "gl": lambda v, L, d: check_gl(v, L), "lf": lambda v, L, d: check_lf(v, L), "lfx": lambda v, L, d: check_lf(v, L), "lfa": lambda v, L, d: check_lfa(v, L), "lfw": lambda v, L, d: check_lfw(v, L, "yh", "lfw"), "lfwc": lambda v, L, d: check_lfw(v, L, "ca", "lfwc"), "lfws": lambda v, L, d: check_lfw(v, L, "yh", "lfws"), "lfwcs": lambda v, L, d: check_lfw(v, L, "ca", "lfwcs"), "lfwbs": lambda v, L, d: check_lfw(v, L, "ybs", "lfwbs"), "lfwcbs": lambda v, L, d: check_lfw(v, L, "cbs", "lfwcbs"), "lu": lambda v, L, d: check_ld(v, L, "lu"), "lfwf": lambda v, L, d: check_lfw(v, L, "yh", "lfwf"), "lfwcf": lambda v, L, d: check_lfw(v, L, "ca", "lfwcf"), "el": lambda v, L, d: check_el(v, L), "lt": lambda v, L, d: check_lt(v, L), "ch": lambda v, L, d: check_ch(v, L), "md": check_md, "mds": check_mds, "svl": check_svl, "rh": lambda v, L, d: check_rh(v, L), "rs": lambda v, L, d: check_rs(v, L), "fw": lambda v, L, d: check_fw(v, L), "fwg": lambda v, L, d: check_fw(v, L, "fwg", (1,)), "fwb": lambda v, L, d: check_fw(v, L, "fwb", (0, 1)), "fwe": lambda v, L, d: check_fw(v, L, "fwe", (0, 1)), "fh": lambda v, L, d: check_fw(v, L, "fh", (0, 1), FH_POS, FH_BUSY, "1", "0x16000000", (-211.25, 542.1), -20.3),
@@ -11977,7 +12073,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only and a.lane_id < 0:  # (a lane child keeps the one phase it was given)
-        a.phase = ",".join(p for p in ("pc", "vm", "yj", "s1", "s2", "rules", "ss", "sh", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cgt", "cgp", "cgu", "caa", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
+        a.phase = ",".join(p for p in ("pc", "vm", "yj", "s1", "s2", "rules", "ss", "sh", "iv", "ivn", "ivx", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cgt", "cgp", "cgu", "caa", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
                                      "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "mp", "mpg", "mph", "jl", "ml", "mg", "ll", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvm", "cvc", "cva", "cvf", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "gv", "gvg", "gvr", "gvl", "gvn", "gvm", "gvs", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "mesh", "oum", "meshm", "fp", "fp5", "oj", "lo", "po", "pos", "sg", "sg2", "sgb", "sgb2", "sgb3", "sgp", "csh", "csh2", "csh3", "cis", "ba", "bh", "bk", "hg", "bg", "lw", "amp", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
