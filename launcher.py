@@ -1906,6 +1906,8 @@ def settings_env(s: dict) -> dict:
     env["BB_ARRIVAL_LOG"] = "1" if on("feat_arrival_log", False) else "0"
     # Party frame cost log (BB_PARTY_PERF): per-zone cost of the party code, for freeze reports
     env["BB_PARTY_PERF"] = "1" if on("feat_party_perf", False) else "0"
+    # GPU crash detail (BB_BREADCRUMBS_TRANSFERS): a device-lost report names the copy that was running
+    env["BB_BREADCRUMBS_TRANSFERS"] = "1" if on("feat_gpu_crash_detail", False) else "0"
     # Party spectate camera log: camera resets and jumps while a dead player spectates a boss fight
     # Online-heap watch: which game parts hold the memory of the online code, every 20 s, and each failed request
     env["BB_HEAP_WATCH_LOG"] = "1" if on("feat_heap_watch_log", False) else "0"
@@ -3151,6 +3153,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_net_rxgap_log = tk.BooleanVar(value=self.settings.get("feat_net_rxgap_log", False))
         self.feat_arrival_log = tk.BooleanVar(value=self.settings.get("feat_arrival_log", False))
         self.feat_party_perf = tk.BooleanVar(value=self.settings.get("feat_party_perf", False))
+        self.feat_gpu_crash_detail = tk.BooleanVar(value=self.settings.get("feat_gpu_crash_detail", False))
         self.feat_heap_watch_log = tk.BooleanVar(value=self.settings.get("feat_heap_watch_log", False))
         self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
         self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
@@ -3679,6 +3682,11 @@ class BloodborneLauncher(tk.Tk):
                     "For reports of freezes or stutter in a party: every 10 s, how long the party code took per "
                     "frame (typical and worst), by part, plus any single step over 1 ms. Use with the frame "
                     "stats of the game log. Default: off (BB_PARTY_PERF).")
+        self._check(sec, "GPU crash detail (transfers)", self.feat_gpu_crash_detail,
+                    "For reports of a GPU crash (device lost): the crash report in out\device_lost_*.log "
+                    "also names the buffer copy, fill, image upload or clear that was running, with its "
+                    "target and size. Costs a little GPU time on every copy. Default: off "
+                    "(BB_BREADCRUMBS_TRANSFERS).")
         self._check(sec, "Online memory watch (crash)", self.feat_heap_watch_log,
                     "Every 20 s: which parts of the game hold the memory the online code uses (server "
                     "requests, the other players' character sync), and each request that fails. For reports of "
@@ -5779,6 +5787,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_net_rxgap_log": self.feat_net_rxgap_log.get(),
             "feat_arrival_log": self.feat_arrival_log.get(),
             "feat_party_perf": self.feat_party_perf.get(),
+            "feat_gpu_crash_detail": self.feat_gpu_crash_detail.get(),
             "feat_heap_watch_log": self.feat_heap_watch_log.get(),
             "feat_spectate_log": self.feat_spectate_log.get(),
             "feat_hostdead_log": self.feat_hostdead_log.get(),
