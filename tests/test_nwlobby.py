@@ -476,9 +476,9 @@ class ModsLabel(unittest.TestCase):
         self.assertEqual(lob.handle(nw.encode_list2(), C, 3)[3], nw.T_REPLY2)
 
     def test_label_charset_and_length(self):
-        for good in ["nocturne@1.0", "mods:3f9a12c0", "a", "x" * 32, "a-b_c.d+e:f@0"]:
+        for good in ["nocturne@1.0", "mods:3f9a12c0", "a", "x" * 255, "a-b_c.d+e:f@0"]:
             self.assertEqual(nw.parse_announce_mods(nw.encode_announce_mods(good)[4:]), good)
-        for bad in ["", "Nocturne@1.0", "x" * 33, "a b", "a/b", "../x", "a\\b", "é"]:
+        for bad in ["", "Nocturne@1.0", "x" * 256, "a b", "a/b", "../x", "a\\b", "é"]:
             raw = bad.encode("utf-8")
             body = bytes([len(raw) & 255]) + raw
             self.assertIsNone(nw.parse_announce_mods(body), bad)
@@ -513,19 +513,19 @@ class ModsLabel(unittest.TestCase):
         for i in range(30):
             ip = f"10.8.0.{20 + i}"
             lob.handle(ann(name="H" * 16, pw=False, build="b" * 32), ip, 0)
-            lob.handle(nw.encode_announce_mods(f"mods:{i:027d}"), ip, 0)
+            lob.handle(nw.encode_announce_mods(f"mods:{i:0250d}"), ip, 0)
         seen, off = 0, 0
-        for _ in range(10):
-            raw = lob.handle(nw.encode_list3(off), C, 1)
+        for k in range(40):
+            raw = lob.handle(nw.encode_list3(off), C, 1 + k)
             self.assertLessEqual(len(raw), nw.MAX_REPLY)
             total, _, ents = nw.parse_reply3(raw)
             if not ents:
                 break
-            self.assertTrue(all(len(e["mods"]) == 32 for e in ents))
+            self.assertTrue(all(len(e["mods"]) == 255 for e in ents))
             seen += len(ents)
             off += len(ents)
         self.assertEqual(seen, 30)
-        good = lob.handle(nw.encode_list3(), C, 2)
+        good = lob.handle(nw.encode_list3(), C, 100)
         self.assertIsNone(nw.parse_reply3(good[:-1]))
         self.assertIsNone(nw.parse_reply3(good + b"x"))
         self.assertIsNone(nw.parse_reply2(good))
