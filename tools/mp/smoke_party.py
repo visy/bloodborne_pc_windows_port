@@ -5239,6 +5239,7 @@ BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCK
 # by the stick, then on to the altar spot (BR_SIGNAL). Never a teleport into the arena (the boss repro rule).
 BR_LAMP_CLEAR = "13407870,13407871,73400203"
 BR_SIGNAL_XZ = "-434.55:-264.25"
+BR_ALTAR_XZ = "-433.09:-261.57"   # the lamp spot inside the altar region 3402855: the host must stand there for the skull (4 m off: no fight)
 
 
 def _laurence_enter(who, first_delay, warp=False):
