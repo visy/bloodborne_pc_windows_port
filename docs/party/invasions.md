@@ -107,6 +107,32 @@ then *Joining the host's world...*, and if the quick way fails *Invading: the qu
 Placement: the invader arrives like a summoned guest, beside the host's arrival point (the vanilla invader appears away from
 the host; not changed in 0.7.9, a placement apart from the host is a separate item).
 
+## The level range (0.7.9)
+
+An invader is refused when its level is outside the host's range, the vanilla invasion formula with both bounds **rounded
+down**: `floor(host * 0.8 - 20) <= invader <= floor(host * 1.1 + 10)` (host 100: 60..120; host 55: 24..70; host 4: 1..14, the
+lower bound clamped at 1). Integer math (`LevelLower`, `LevelUpper` in `party_invade_rules.h`, unit tested against the float
+formula for every level 1..999). Levels are the Blood Echoes level (PlayerGameData +0x90, the same as `MemberVitals::level`).
+* **HELLO.** The invader's HELLO carries its level (a u16 after the role byte; every guest sends it, 0 = unknown); the host passes
+  it to `invader_gate` and `Admit` returns `Deny::LevelRange`. The level check comes right after the host's switch and the block
+  list, before the knock counter and the rate limit: a refused level never counts against `kRateMax` or `kSpamMax`.
+* **Recheck.** The level is self-reported, so the host checks the invader's vitals level as soon as it is known and for as long as
+  the invasion lasts; outside the range the invasion ends (`End::LevelRange`, the same sentence). A level the HELLO did not know
+  (an invader that dialled at its title, level 0) is covered by this.
+* **Unknown host level (0)**: no check; the gate logs it.
+* **Words** (the host's display name is masked like everywhere): *Can't invade NAME: your level 150 is outside their range
+  (60-120)*, shown on the refused game as the persistent party status line and a toast (the same place the other refusals show
+  and the launcher's result). The host gets a log line only.
+* Test aid: `BB_PARTY_INVADE_LEVEL=N` makes this game claim level N in the HELLO and in its vitals. Smoke phase `ivl` (group
+  `invade_level`).
+
+The open-party join (no password, a plain address; `open_party.md`) has the **same range with the vanilla co-op upper bound**:
+`floor(X*0.8-20) .. floor(X*1.2+20)` (host 100: 60..140; host 55: 24..86; host 4: 1..24), refused with *Can't join NAME: your
+level 150 is outside their range (60-140)* (`RejectCode::Level`). A password or a party code ignores the range, as in the game.
+The range is checked for a NEW member only; a member that resumes (same token or name on its kept slot) is not asked again, and
+a guest that levels up inside the party is never removed for that. A new member's vitals level is rechecked (removed with the
+same sentence, name not banned). Smoke phase `ojl` (group `open_level`).
+
 ## Rewards and win / lose
 
 Winning or losing an invasion gives **no Echoes, Insight or items**. The session is a co-op session, not the game's invasion
