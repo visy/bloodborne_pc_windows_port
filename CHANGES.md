@@ -2,7 +2,7 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
-## 0.7.8 (unreleased)
+## 0.7.8 (2026-11-04)
 
 - **Fixed: flowers and plants shaking with Live FPS on** (plantwind078). With the Live FPS clock (the default) the plants' wind was bent by the length of each frame, so every longer or shorter frame made the grass and flowers jump; the wind force is now fixed at the authored 1/30 s as in the frame-rate-by-hooks mode (and the 30 FPS game), while the wind's wave time still follows the live clock. Plants sway smoothly at 60, 120 and any other target (`docs/LIVE_FPS.md`).
 
