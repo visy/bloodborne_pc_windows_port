@@ -289,7 +289,31 @@ bool HostAllows() {
     return BbSettings::Get().party_invaders.load();
 }
 
-std::string Gate(const std::string& name, std::uint32_t ip, bool final_check) {
+std::atomic<int> g_own_level{0};
+std::mutex g_host_name_mu;
+std::string g_host_name_shown = "the host";  // the host's display name (masked), set by the host's tick, read by the gates
+std::string HostShown() {
+    std::lock_guard<std::mutex> lk(g_host_name_mu);
+    return g_host_name_shown;
+}
+std::string OpenGate(int level) {
+    const int host = g_own_level.load();
+    if (OpenLevelOk(host, level)) {
+        if (host <= 0) Log("gate: the host's level is not known: no level check for an open-party join");
+        return {};
+    }
+    Log("gate: open-party join level %d refused (host level %d: range %d-%d)", level, host, LevelLower(host), OpenLevelUpper(host));
+    return LevelText(HostShown(), host, level, false, LevelLower(host), OpenLevelUpper(host));
+}
+int OwnLevel() {
+    if (const char* e = std::getenv("BB_PARTY_INVADE_LEVEL")) {  // test aid: the level the HELLO says
+        const int v = std::atoi(e);
+        if (v > 0) return v;
+    }
+    return g_own_level.load();
+}
+
+std::string Gate(const std::string& name, std::uint32_t ip, bool final_check, int invader_level) {
     Shared& g = G();
     std::lock_guard<std::mutex> lk(g.mu);
     const double now = Now();
@@ -306,8 +330,11 @@ std::string Gate(const std::string& name, std::uint32_t ip, bool final_check) {
     v.invaders += extra;
     const std::string addr = IpText(ip);
     const bool blocked = g.blocks.Blocked(name, addr);
-    const bool knocking = !final_check && !g.spam.Allow(addr, now, kSpamMax);
-    Deny d = Admit(v, blocked, knocking, false);
+    // 0.7.9: a level-range refusal comes before the knock counter and never counts against the rate limit.
+    const bool level_ok = LevelOk(v.host_level, invader_level);
+    if (v.host_level <= 0) Log("gate: the host's level is not known: no level check");
+    const bool knocking = level_ok && !final_check && !g.spam.Allow(addr, now, kSpamMax);
+    Deny d = Admit(v, blocked, knocking, false, invader_level);
     // The abuse limit counts invasions started: an invader that was let in kRateMax times in the window waits.
     if (d == Deny::None && g.rate.Limited(addr, now)) d = Deny::RateLimited;
     if (d == Deny::None && final_check) {
@@ -320,6 +347,7 @@ std::string Gate(const std::string& name, std::uint32_t ip, bool final_check) {
     // The log names the reason, never the address.
     Log("gate: invader %s%s: %s%s", name.empty() ? "?" : "(name hidden)", final_check ? " (final)" : "", DenyWord(d),
         d == Deny::None ? "" : (" - " + DenyText(d)).c_str());
+    if (d == Deny::LevelRange) return LevelText(HostShown(), v.host_level, invader_level, true);
     return DenyText(d);
 }
 
@@ -458,6 +486,7 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
     const double now = Now();
     if (!link) return;
     const bool in_world = s.world_up && !s.loading && s.player;
+    if (s.level > 0) g_own_level.store(s.level);
     if (host) {
         // ---- the view the gate reads, and the numbers the lists announce ----
         HostView v;
@@ -471,6 +500,12 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
         v.alive = b2::LocalHp() > 0;
         v.travelling = b2::HostRejoinRunning() || b2::RejoinRunning();
         v.party_max = link->max_players();
+        v.host_level = s.level;
+        for (const party::RosterEntry& e : link->roster())
+            if (e.slot == party::kHostSlot) {
+                std::lock_guard<std::mutex> lk(g_host_name_mu);
+                g_host_name_shown = Shown(e.name);
+            }
         int world_players = 1, invaders = 0;
         for (const party::RosterEntry& e : link->roster()) {
             if (e.slot == party::kHostSlot || !e.connected) continue;
@@ -500,6 +535,21 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
             g.view = v;
             g.view_at = now;
             g.where = w;
+        }
+        // 0.7.9: a member that came in through the open-party level gate: its level from its vitals is checked as soon as it is
+        // known (the HELLO value is self-reported). A resumed member is never gated (a guest that levelled up inside the
+        // party stays), only the first admission and this recheck of it.
+        if (s.level > 0) {
+            party::MemberVitals mv[party::kMaxVitals];
+            const int n = link->vitals(mv, party::kMaxVitals);
+            for (int i = 0; i < n; ++i) {
+                if (!(mv[i].flags & party::kVitalsValid) || mv[i].level == 0 || !link->joined_open(mv[i].slot)) continue;
+                if (OpenLevelOk(s.level, mv[i].level)) continue;
+                Log("open-party member in slot %d: its vitals say level %d, outside the host's range %d-%d: removed", mv[i].slot,
+                    int(mv[i].level), LevelLower(s.level), OpenLevelUpper(s.level));
+                link->drop_member(mv[i].slot, party::RejectCode::Level,
+                                  LevelText(HostShown(), s.level, mv[i].level, false, LevelLower(s.level), OpenLevelUpper(s.level)));
+            }
         }
         // ---- the invasion in progress ----
         std::vector<int> fell;
@@ -567,11 +617,22 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
         const bool went_home = g_inv.away_since >= 0 && now - g_inv.away_since > 3.0;
         // The invader's own HP, from its vitals (the host's copy of it): 0 means it fell.
         bool invader_alive = !g_inv.fell;
+        bool level_bad = false;
+        int level_seen = 0;
         {
             party::MemberVitals mv[party::kMaxVitals];
             const int n = link->vitals(mv, party::kMaxVitals);
-            for (int i = 0; i < n; ++i)
-                if (mv[i].slot == slot && (mv[i].flags & party::kVitalsValid) && mv[i].hp == 0 && arrived) invader_alive = false;
+            for (int i = 0; i < n; ++i) {
+                if (mv[i].slot != slot || !(mv[i].flags & party::kVitalsValid)) continue;
+                if (mv[i].hp == 0 && arrived) invader_alive = false;
+                // 0.7.9: the invader's level from its vitals (self-reported too, but the HELLO value could be a lie): the range
+                // is checked again as soon as it is known and for as long as the invasion lasts.
+                if (mv[i].level > 0 && !LevelOk(v.host_level, mv[i].level)) {
+                    level_bad = true;
+                    Log("invader slot %d: its vitals say level %d, outside the host's range %d-%d", slot, int(mv[i].level),
+                        LevelLower(v.host_level), LevelUpper(v.host_level));
+                }
+            }
         }
         Live l;
         l.allow = v.allow;
@@ -584,6 +645,7 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
         l.boss_fight = v.boss_fight;
         l.link_up = ent.connected;
         End end = CheckEnd(l);
+        if (end == End::None && level_bad) end = End::LevelRange;
         if (end == End::None && went_home) end = End::HostGone;  // it left the host's world by itself
         // Before the invader stands in the world, a moment that turned bad refuses it (boss fog, a cutscene, a travel ...).
         std::string refusal;
@@ -595,7 +657,9 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
             if (d != Deny::None && d != Deny::NoSlot) refusal = RefusedText(DenyText(d));
         }
         if (!refusal.empty() || end != End::None) {
-            const std::string why = !refusal.empty() ? refusal : EndTextForInvader(end, Shown(link->roster().empty() ? "the host" : link->roster()[0].name));
+            const std::string why = !refusal.empty() ? refusal
+                                : end == End::LevelRange ? LevelText(HostShown(), v.host_level, level_seen, true)
+                                                         : EndTextForInvader(end, Shown(link->roster().empty() ? "the host" : link->roster()[0].name));
             Msg m{0, ent.name, end};
             link->post_event(party::kBroadcast, kEventName, Encode(m));
             Notice(!refusal.empty() ? "Invader " + Shown(ent.name) + " turned away: " + refusal : EndTextForHost(end, Shown(ent.name)));
