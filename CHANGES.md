@@ -2,6 +2,10 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.7.9 (unreleased)
+
+- **Fixed: game freezes of several seconds when whatever reads the game's output is slow** (freeze079, CL-7fc9fe). The game printed every log line on the thread that had something to log, straight into the pipe to the launcher (or the log file) and with no buffer, so a launcher or an antivirus that stopped reading for a moment, or just a full 4 KiB pipe, froze whichever game thread printed next: in a test the guest's frame stopped for 10 s while the reader paused for 15 s, on a machine with a fast disk and a smooth solo game. The log lines now go into a 4 MiB buffer that a background thread writes out, so the game thread never waits for the reader; the end of the game and a crash wait for the buffer to be written (up to 3 s, 10 s at a normal end). Setting *Log output through a background thread* (launcher *Advanced / Debug*, bbport.ini `log_async`, `BB_LOG_ASYNC=0` turns it off), on by default; the new diagnostics checkbox *Log output stall report* (`BB_LOG_STALL_MS`, off) logs each time the reader took 100 ms or more.
+
 ## 0.7.8 (2026-11-04)
 
 - **Fixed: flowers and plants shaking with Live FPS on** (plantwind078). With the Live FPS clock (the default) the plants' wind was bent by the length of each frame, so every longer or shorter frame made the grass and flowers jump; the wind force is now fixed at the authored 1/30 s as in the frame-rate-by-hooks mode (and the 30 FPS game), while the wind's wave time still follows the live clock. Plants sway smoothly at 60, 120 and any other target (`docs/LIVE_FPS.md`).
