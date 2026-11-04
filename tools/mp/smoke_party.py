@@ -12013,8 +12013,22 @@ def sweep_main(a, only):
 # a failed run is repeated up to FLAKY_TRIES times in all and the run with the fewest failed rows is kept, so a
 # one-off stall no longer fails a release smoke while a real fault (it fails every time) still does.
 # BB_SMOKE_NO_RETRY=1 turns it off. Retried runs are listed in the output dir's retries.txt.
-FLAKY_PHASES = {"cae", "cao", "cgt", "cgp", "cgu", "cab", "cis", "caq", "caw", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
-                "lt", "lf", "s2", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
+# Why each is here (0.7.9 audit of the 0.7.8 runs: smoke_stats.py over smoke..smoke7). A phase that passes only on a retry
+# is listed as FLAKY in verdict.txt / flaky.txt; one that fails the same rows twice is deterministic and is not repeated.
+FLAKY_PHASES = {
+    # the Ritual Altar's menu walk: the first Cross at the altar often finds no prompt (cao: 1 clean entry in 5 runs; cae and
+    # cgt each timed out in 0.7.8 with "the autopilot answered the prompts" missing). Root cause not found.
+    "cae", "cao", "cgt", "cgp", "cgu", "cab", "cis", "caq", "caw",
+    # the lift walk-ins: the car's build / the ride's start races the walker (0.7.8: lfwcs "no fall", lfwf "host does not ride"
+    # and lfwcf "copy does not freeze" each failed once, green on the retry). Root cause not found.
+    "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
+    # failed on retry in releases up to 0.7.5 (docs/RELEASE_CHECKLIST.md: s3, lt, lf); green first time in 0.7.8, kept until
+    # three clean full runs show they no longer flake
+    "lt", "lf", "s2", "gd", "la", "ngp", "npf", "pvd", "sj", "kd", "s3",
+    # nfw: "(before) Alfred friendly on both games" failed twice in a row and passed on the 3rd/4th run (an NPC spawn race)
+    "nfw",
+}
+# (cl and ml left the set: they failed the same rows on every try, a harness / fixture fault that a retry cannot cure)
 FLAKY_TRIES = 3
 
 
@@ -12382,6 +12396,12 @@ def main():
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
+    try:  # a phase that passed only on a retry is flaky, even in a green run
+        flaky = (out / "flaky.txt").read_text(encoding="utf-8").strip()
+        if flaky:
+            text += "FLAKY (passed only on a retry; see FLAKY_PHASES in tools/mp/smoke_party.py):\n" + flaky + "\n"
+    except OSError:
+        pass
     if not a.check_only or lanes_used:
         text += "wall time %.0f s (queue wait included%s)" % (
             time.time() - t_all, ", %d lanes" % a.lanes if lanes_used else "") + chr(10)
