@@ -830,7 +830,7 @@ def run(a):
     except ValueError:
         parent_pid = 0
     parent_check = 0.0
-    watch = StuckWatch(a.count, a.stuck) if a.stuck > 0 and any(expects_steps) and not want_crash else None  # (a crash plan restarts games: its own timing)
+    stuck_watch = StuckWatch(a.count, a.stuck) if a.stuck > 0 and any(expects_steps) and not want_crash else None  # (a crash plan restarts games: its own timing)
     while any(p.poll() is None for _, p, _ in procs) and time.time() - t0 < a.seconds + 90:
         if parent_pid > 0 and time.time() - parent_check > 2:
             parent_check = time.time()
@@ -861,13 +861,13 @@ def run(a):
             chains_open = False
             for i in range(a.count):
                 txt = log_text(i, starts[i])
-                watch.feed(i, txt)
+                stuck_watch.feed(i, txt)
                 if expects_steps[i]:
                     last = step_rx.findall(txt)
                     chains_open = chains_open or not (last and last[-1][0] == last[-1][1])
             if not chains_open:
-                watch.at, watch.dead_at = time.time(), None  # the chains are done: the markers' own quiet wait applies
-            elif (v := watch.verdict()):
+                stuck_watch.at, stuck_watch.dead_at = time.time(), None  # the chains are done: the markers' own quiet wait applies
+            elif (v := stuck_watch.verdict()):
                 verdict = verdict or v
                 print(verdict, flush=True)
                 break
