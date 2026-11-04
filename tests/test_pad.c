@@ -276,6 +276,20 @@ static void test_key_ramp(void) {
     apply_keyboard(&d,k); /* the release starts key_stick_step's 60 ms hold */
     usleep(300000); d.left_x=200; d.left_y=30; apply_keyboard(&d,k); /* long idle: pad passes through */
     assert(d.left_x==200 && d.left_y==30);
+    /* A <-> D with the ramp on (Mrsuss60 8ea9aa37): the newer key takes over at once and the half
+     * turn runs through the centre along the new axis: no sweep through forward, y stays centred. */
+    memset(&key_move_stick,0,sizeof(key_move_stick)); memset(&key_move_ramp,0,sizeof(key_move_ramp));
+    k[SDL_SCANCODE_A]=true; apply_keyboard(&d,k); usleep(50000); d.left_x=d.left_y=128; apply_keyboard(&d,k);
+    usleep(50000); d.left_x=d.left_y=128; apply_keyboard(&d,k);
+    assert(d.left_x==0 && d.left_y==128);
+    k[SDL_SCANCODE_D]=true; d.left_x=d.left_y=128; apply_keyboard(&d,k); /* D pressed while A is held */
+    assert(d.left_y==128 && d.left_x>=128); /* centre, then right: never left, never forward */
+    for (int i=0;i<6;++i) { usleep(20000); d.left_x=d.left_y=128; apply_keyboard(&d,k); assert(d.left_y==128 && d.left_x>=128); }
+    assert(d.left_x>128);
+    k[SDL_SCANCODE_D]=false; d.left_x=d.left_y=128; apply_keyboard(&d,k); /* D up, A still down: A again */
+    usleep(30000); d.left_x=d.left_y=128; apply_keyboard(&d,k);
+    assert(d.left_x<128 && d.left_y==128);
+    k[SDL_SCANCODE_A]=false;
     key_ramp_setting=0;
     memset(&key_move_stick,0,sizeof(key_move_stick));
     k[SDL_SCANCODE_W]=true; d.left_x=d.left_y=128; apply_keyboard(&d,k);
