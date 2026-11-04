@@ -1525,8 +1525,12 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
     if (ui_phase && !color && depth && depth != ui_depth && ui_color) {
         const auto& depth_image = texture_cache.GetImage(depth);
         const auto& ui_target = texture_cache.GetImage(ui_color);
-        if (depth_image.info.size.width == ui_target.info.size.width &&
-            depth_image.info.size.height == ui_target.info.size.height) {
+        // A depth within 8 px of the UI target's size is the UI's (PR #190 by HatsyRei, via
+        // Mrsuss60 574f1336: at outputs other than 1080p the masks come in a slightly other size).
+        const auto& d = depth_image.info.size;
+        const auto& c = ui_target.info.size;
+        if (d.width + 8 > c.width && c.width + 8 > d.width && d.height + 8 > c.height &&
+            c.height + 8 > d.height) {
             EnsureUiResources(ui_width, ui_height, ui_format, depth_image.info.pixel_format);
             PrepareUiDepth(depth);
             ui_depth = depth;
