@@ -4313,7 +4313,8 @@ def check_hg(v, L):
 # (default 8) away and passive. The boss must turn to the guest in turn (BossAttentionTick) and really hit it: the
 # guest's HP falls from the boss's hits (both games log it), both boss bars are up. BB_BG_ORDER=guest: the guest
 # walks through the fog first. BB_PARTY_AI_LOG / BB_PARTY_TARGET_ANIM logs.
-BG_UNTIL = [r"1:travel step (\d+)/\1: guest_press 0x0"]
+# The mortal guest killed by the boss ends it too: its test chain then waits on a dead character until the timeout
+BG_UNTIL = [r"1:(?:travel step (\d+)/\1: guest_press 0x0|guest: own death in the host's world held)"]
 
 
 def phase_bg(only):
