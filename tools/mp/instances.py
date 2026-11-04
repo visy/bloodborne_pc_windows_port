@@ -868,7 +868,7 @@ def run(a):
             if verdict:
                 print(verdict, flush=True)
                 break
-        if watch:
+        if stuck_watch:
             chains_open = False
             for i in range(a.count):
                 txt = log_text(i, starts[i])
