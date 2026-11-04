@@ -4368,7 +4368,7 @@ def phase_bg(only):
         "host_press=0x0@%d%%m34_00" % lap,
     ])
     g1 = ",".join((["god"] if os.environ.get("BB_BG_GUESTGOD") == "1" else []) + [
-        *_laurence_enter("guest", 12),                              # in through his fog, to the altar spot
+        *_laurence_enter("guest", 40),                              # in through his fog, to the altar spot
         "guest_press=0x0@22%m34_00!",                               # the scene
         "guest_chr=3400850:%s@2%%m34_00" % gdist,                   # in the arena, away from the boss
         "guest_press=0x0@%d%%m34_00" % lap,
@@ -4433,7 +4433,7 @@ def phase_lr(only):
     ])
     g1 = ",".join([
         "log_pos=2",
-        *_laurence_enter("guest", 12),                               # in through his fog, to the altar spot
+        *_laurence_enter("guest", 40),                               # in through his fog, to the altar spot
         "guest_press=0x0@22%s!" % m,                                 # the scene
         "guest_chr=3400850:%s@2%s" % (dist, m),
         "guest_die@4%s?host=spec" % m,                               # the host is down: the wipe
@@ -5242,7 +5242,7 @@ BR_SIGNAL_XZ = "-434.55:-264.25"
 BR_ALTAR_XZ = "-433.09:-261.57"   # the lamp spot inside the altar region 3402855: the host must stand there for the skull (4 m off: no fight)
 
 
-def _laurence_enter(who, first_delay, warp=False):
+def _laurence_enter(who, first_delay, warp=False):  # the guest starts after the host: two bodies in the fog doorway jam (bg: nav GAVE UP, 15 stalls)
     """The steps of `who` (host / guest) from outside Laurence's fog to the altar spot inside; the host also travels first."""
     m = "%m34_00"
     return (["host_warp=3402950@8^1"] if warp else []) + [
@@ -5274,7 +5274,7 @@ def phase_br(only):
     ])
     g1 = ",".join([
         "god",
-        *_laurence_enter("guest", 12),                               # in through his fog (the way a player comes)
+        *_laurence_enter("guest", 40),                               # in through his fog (the way a player comes)
         "guest_obj=3401850@10%m34_00",                               # at Laurence's fog (inside, by the lamp)
         "guest_press=0x4@1%m34_00!", "guest_press=0@1%m34_00!",       # R3
         "guest_stick=obj:3401850:4:180:%s@2%%m34_00" % BR_WALK,       # through it
