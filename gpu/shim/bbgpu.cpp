@@ -1,4 +1,5 @@
 #include "bbport_write_log.h"
+#include "../../src/runtime_logdrain.h"
 #include "bbport_boot_watch.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
@@ -314,6 +315,7 @@ extern "C" void bbgpu_save_caches(void) {
     std::fflush(stdout);
     std::fflush(stderr);
 #ifdef _WIN32
+    runtime_logdrain_flush(3000);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
 #endif
     std::_Exit(code);
@@ -356,6 +358,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
 #ifdef _WIN32
         // Not _Exit/ExitProcess: unloading the Vulkan driver while GPU threads are inside it can
         // hang the process for good.
+        runtime_logdrain_flush(3000);
         TerminateProcess(GetCurrentProcess(), 0);
 #endif
         std::_Exit(0);
