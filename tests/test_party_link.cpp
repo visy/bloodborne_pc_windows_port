@@ -1198,6 +1198,26 @@ static void test_kick() {
 }
 
 
+// 0.7.9: the invader's direct summon needs two b2 bodies, matched whole; nothing else of b2 passes either way.
+static void test_invader_b2_filter() {
+    CHECK(invader_event_from_ok("b2", "{\"op\":\"dsum_req\"}"));
+    CHECK(invader_event_from_ok("b2", "{\"op\":\"dsum_done\",\"ok\":1}"));
+    CHECK(invader_event_from_ok("b2", "{\"op\":\"dsum_done\",\"ok\":0}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"dsum_req\",\"x\":\"title_req\"}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"title_req\",\"a\":\"dsum_req\"}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"dsum_stuck\"}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"travel\"}"));
+    CHECK(!invader_event_from_ok("b2", ""));
+    CHECK(!invader_event_from_ok("flags", "{\"op\":\"dsum_req\"}"));
+    CHECK(invader_event_from_ok("invade_fell", "{}"));
+    CHECK(invader_event_to_ok("b2", "{\"op\":\"dsum_room\",\"room\":\"\"}"));
+    CHECK(invader_event_to_ok("b2", "{\"op\":\"dsum_busy\",\"wait\":\"boss\"}"));
+    CHECK(!invader_event_to_ok("b2", "{\"op\":\"travel\"}"));
+    CHECK(!invader_event_to_ok("b2", "{\"op\":\"gather\"}"));
+    CHECK(!invader_event_to_ok("progress", "{}"));
+    CHECK(invader_event_to_ok("invade", "{}"));
+}
+
 // ---- 0.7.8 invasions: the invader admission path (docs/party/invasions.md) ----
 static void test_invader() {
     Recorder hr, ir, ar;
@@ -1996,6 +2016,7 @@ int main() {
     test_kick();
     std::printf("invasions: the invader admission path and its role limits\n");
     test_invader();
+    test_invader_b2_filter();
     std::printf("host gone: wait for it, not the NAT advice\n");
     test_host_no_answer_hint();
     std::printf("four players (host + 3 guests), game rules\n");
