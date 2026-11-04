@@ -2077,6 +2077,8 @@ def settings_env(s: dict) -> dict:
     env["BB_PARTY_SPECTATE_LOG"] = "1" if on("feat_spectate_log", False) else "0"
     # Party host-death lock log for frozen-guest reports: the HostDead locks every 0.25 s on a guest
     env["BB_HOSTDEAD_LOG"] = "1" if on("feat_hostdead_log", False) else "0"
+    if on("feat_log_stall", False):
+        env["BB_LOG_STALL_MS"] = "100"
     # Boot freeze dump: thread states when the game's start stands still for 20 s
     env["BB_BOOT_WATCHDOG"] = "20" if on("feat_boot_watchdog", False) else "0"
     # Mute the game while its window is in the background
@@ -2372,6 +2374,9 @@ INI_FLAG_SETTINGS = [
     ("feat_gpl", "gpl", False, "BB_GPL"),
     ("feat_compile_indicator", "compile_indicator", True, "BB_COMPILE_INDICATOR"),
     ("feat_save_commit_async", "save_commit_async", False, "BB_SAVE_COMMIT_ASYNC"),
+    # 0.7.9 (CL-7fc9fe): the log output goes through a background thread, so a slow reader of the game's output
+    # (this launcher, an antivirus) cannot freeze the game thread that printed a log line.
+    ("feat_log_async", "log_async", True, "BB_LOG_ASYNC"),
     # Live FPS clock (Mrsuss60's live FPS patching, a7cbfae6): replaces the frame rate hooks / FPS++ patches.
     ("feat_live_fps", "live_fps", True, "BB_LIVE_FPS"),
     # Keyboard movement ramp (Mrsuss60 94388d59): WASD ease in / out like an analog stick; live in game.
@@ -3338,6 +3343,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_heap_watch_log = tk.BooleanVar(value=self.settings.get("feat_heap_watch_log", False))
         self.feat_spectate_log = tk.BooleanVar(value=self.settings.get("feat_spectate_log", False))
         self.feat_hostdead_log = tk.BooleanVar(value=self.settings.get("feat_hostdead_log", False))
+        self.feat_log_stall = tk.BooleanVar(value=self.settings.get("feat_log_stall", False))
         self.feat_boot_watchdog = tk.BooleanVar(value=self.settings.get("feat_boot_watchdog", False))
         _lvl = str(self.settings.get("party_log_level", "") or "")
         self.party_log_level_var = tk.StringVar(
@@ -3352,6 +3358,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_gpl = self.ini_flag_vars["gpl"]
         self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
         self.feat_save_commit_async = self.ini_flag_vars["save_commit_async"]
+        self.feat_log_async = self.ini_flag_vars["log_async"]
         self.feat_live_fps = self.ini_flag_vars["live_fps"]
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
         self.feat_hud = self.ini_flag_vars["show_hud"]
@@ -3962,6 +3969,15 @@ class BloodborneLauncher(tk.Tk):
                     "out\boot_hang_<time>.log and the log. For reports of a game that stays on a gray or "
                     "black screen at start. Default: off (BB_BOOT_WATCHDOG).")
 
+        self._check(sec, "Log output through a background thread", self.feat_log_async,
+                    "The game's log lines are handed to a background thread that writes them to this launcher "
+                    "(or the log file), so a slow reader cannot freeze the game for seconds. A game setting "
+                    "(bbport.ini log_async; BB_LOG_ASYNC=0 turns it off). Restart required. Default: on.",
+                    command=lambda: self.save_game_settings("log_async"))
+        self._check(sec, "Log output stall report (game freezes)", self.feat_log_stall,
+                    "Logs a line when the reader of the game's output (this launcher, a log file) took "
+                    "100 ms or more to accept a block of log lines. For reports of freezes of a few seconds. "
+                    "Default: off (BB_LOG_STALL_MS).")
         self._check(sec, "Background save writes (experimental)", self.feat_save_commit_async,
                     "May reduce the freezes of a few seconds some guests see when the game saves. Closing a save file hands the flush to disk and the rename to a background thread, so a slow "
                     "or synced save folder cannot freeze the game for seconds. Experimental. A game setting "
@@ -6238,6 +6254,7 @@ class BloodborneLauncher(tk.Tk):
             "feat_heap_watch_log": self.feat_heap_watch_log.get(),
             "feat_spectate_log": self.feat_spectate_log.get(),
             "feat_hostdead_log": self.feat_hostdead_log.get(),
+            "feat_log_stall": self.feat_log_stall.get(),
             "feat_boot_watchdog": self.feat_boot_watchdog.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
