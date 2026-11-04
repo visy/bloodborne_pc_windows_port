@@ -449,6 +449,105 @@ class OverUdp(unittest.TestCase):
             self.assertNotIn(bad, src, bad)
 
 
+class ModsLabel(unittest.TestCase):
+    """0.7.8: the mods label (types 10-12): relayed as-is, strict charset, compatible with type 8/9 and 2/3 clients."""
+
+    def lobby(self):
+        lob = nw.Lobby()
+        lob.handle(ann(name="Alice", pw=False), A, 0)
+        lob.handle(ann(name="Bob", pw=False), B, 0)
+        lob.handle(nw.encode_announce_ext(True, False, 0x1C010000, 4, 1), A, 0)
+        lob.handle(nw.encode_announce_mods("nocturne@1.0"), A, 0)
+        return lob
+
+    def test_reply3_carries_the_label(self):
+        raw = self.lobby().handle(nw.encode_list3(), C, 1)
+        self.assertEqual(raw[3], nw.T_REPLY3)
+        total, off, (a, b) = nw.parse_reply3(raw)
+        self.assertEqual((total, off), (2, 0))
+        self.assertEqual((a["name"], a["mods"], a["invaders"], a["area"]), ("Alice", "nocturne@1.0", True, 0x1C010000))
+        self.assertEqual((b["name"], b["mods"]), ("Bob", ""))   # no type 10: no label
+
+    def test_older_clients_unchanged(self):
+        lob = self.lobby()
+        e2 = nw.parse_reply2(lob.handle(nw.encode_list2(), C, 1))[2]
+        self.assertTrue(all("mods" not in e for e in e2))
+        self.assertIsNotNone(nw.parse_reply(lob.handle(nw.encode_list(), C, 2)))
+        self.assertEqual(lob.handle(nw.encode_list2(), C, 3)[3], nw.T_REPLY2)
+
+    def test_label_charset_and_length(self):
+        for good in ["nocturne@1.0", "mods:3f9a12c0", "a", "x" * 32, "a-b_c.d+e:f@0"]:
+            self.assertEqual(nw.parse_announce_mods(nw.encode_announce_mods(good)[4:]), good)
+        for bad in ["", "Nocturne@1.0", "x" * 33, "a b", "a/b", "../x", "a\\b", "é"]:
+            raw = bad.encode("utf-8")
+            body = bytes([len(raw) & 255]) + raw
+            self.assertIsNone(nw.parse_announce_mods(body), bad)
+        self.assertIsNone(nw.parse_announce_mods(b"\x05abc"))      # length beyond the datagram
+        self.assertIsNone(nw.parse_announce_mods(b"\x01ab"))       # trailing byte
+
+    def test_bad_label_not_stored_and_needs_a_live_entry(self):
+        lob = nw.Lobby()
+        lob.handle(nw.encode_announce_mods("nocturne@1.0"), A, 0)   # no type 1 yet
+        self.assertEqual(lob.mods, {})
+        lob.handle(ann(), A, 1)
+        lob.handle(nw.MAGIC + bytes([1, nw.T_ANNOUNCE_MODS, 3]) + b"A/B", A, 2)
+        self.assertEqual(lob.mods, {})
+        lob.handle(nw.encode_announce_mods("mods:00ff00ff"), A, 3)
+        self.assertEqual(lob.mods[A][1], "mods:00ff00ff")
+
+    def test_label_expires_and_bye_clears_it(self):
+        lob = self.lobby()
+        self.assertEqual(nw.parse_reply3(lob.handle(nw.encode_list3(), C, nw.TTL + 1))[2], [])
+        self.assertEqual(lob.mods, {})
+        lob = self.lobby()
+        lob.handle(nw.encode_bye(), A, 1)
+        self.assertEqual(lob.mods, {})
+
+    def test_latest_label_wins(self):
+        lob = self.lobby()
+        lob.handle(nw.encode_announce_mods("nocturne@1.1"), A, 5)
+        self.assertEqual(nw.parse_reply3(lob.handle(nw.encode_list3(), C, 6))[2][0]["mods"], "nocturne@1.1")
+
+    def test_reply3_parser_strict_and_paging_with_long_labels(self):
+        lob = nw.Lobby()
+        for i in range(30):
+            ip = f"10.8.0.{20 + i}"
+            lob.handle(ann(name="H" * 16, pw=False, build="b" * 32), ip, 0)
+            lob.handle(nw.encode_announce_mods(f"mods:{i:027d}"), ip, 0)
+        seen, off = 0, 0
+        for _ in range(10):
+            raw = lob.handle(nw.encode_list3(off), C, 1)
+            self.assertLessEqual(len(raw), nw.MAX_REPLY)
+            total, _, ents = nw.parse_reply3(raw)
+            if not ents:
+                break
+            self.assertTrue(all(len(e["mods"]) == 32 for e in ents))
+            seen += len(ents)
+            off += len(ents)
+        self.assertEqual(seen, 30)
+        good = lob.handle(nw.encode_list3(), C, 2)
+        self.assertIsNone(nw.parse_reply3(good[:-1]))
+        self.assertIsNone(nw.parse_reply3(good + b"x"))
+        self.assertIsNone(nw.parse_reply2(good))
+
+    def test_the_0_7_8_invasion_server_ignores_type_10_and_11(self):
+        """The server with types 7-9 only (git history) drops the new datagrams and keeps the host listed."""
+        import subprocess, types
+        try:
+            src = subprocess.run(["git", "show", "9f7f64bb:tools/vpn/lobby/nwlobby.py"], cwd=ROOT, capture_output=True,
+                                 check=True).stdout.decode("utf-8")
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("git history not available")
+        old = types.ModuleType("nwlobby_078")
+        exec(compile(src, "nwlobby_078", "exec"), old.__dict__)
+        lob = old.Lobby()
+        lob.handle(ann(), A, 0)
+        self.assertIsNone(lob.handle(nw.encode_announce_mods("nocturne@1.0"), A, 1))
+        self.assertIsNone(lob.handle(nw.encode_list3(), C, 1))      # no answer: the client falls back to type 8
+        self.assertEqual(len(lob.entries), 1)
+        self.assertIsNotNone(nw.parse_reply2(lob.handle(nw.encode_list2(), C, 2)))
+
+
 if __name__ == "__main__":
     unittest.main()
 
