@@ -3522,6 +3522,18 @@ ML_LAMP = ("2602950", ["12607810", "12607811", "72600200"])
 ML_OBJ = "2601950"
 
 
+def _light_lamp(who, obj, flag, mapname, first_delay):
+    """Chain steps that light the lamp object `obj` (its lit flag `flag`) on the player's own game: stand 1.2 m from it and
+    press Cross twice, each side of the lamp in turn until the flag rises (a lamp's approach side is not known and a wrong
+    side finds no prompt: ml / mg never lit the Mensis lamp from side 0 in 0.7.8 and waited 240 s for its flag; hlq does the
+    same). The tries after the success wait on a flag that stays 1 and never run."""
+    steps = ["god"]
+    for ang in (0, 180, 90, 270):
+        steps += ["%s_obj=%s:1.2:%d@%d%%%s?%s=0" % (who, obj, ang, first_delay if ang == 0 else 4, mapname, flag),
+                  "%s_press=0x4000@3%%%s!" % (who, mapname), "%s_press=0x4000@4%%%s!" % (who, mapname)]
+    return ",".join(steps)
+
+
 def _ml_env(host, guest):
     return dict(
         count=2, headless=0, seconds=300,
@@ -3535,7 +3547,7 @@ def _ml_env(host, guest):
 
 
 def phase_ml(only):
-    ph = _ml_env("god,host_obj=%s:1.2:0@6%%m26_00,host_press=0x4000@3%%m26_00!,host_press=0x4000@4%%m26_00!" % ML_OBJ,
+    ph = _ml_env(_light_lamp("host", ML_OBJ, ML_LAMP[1][2], "m26_00", 6),
                  "god,guest_die@4%%m26_00?%s=1" % ML_LAMP[1][2])
     ph.update(name="ml", until=[r"1:guest: died alone: revived|1:test: FAILED"], until_hold=10,
               watch=["--watch", r"guest death redirect: host's last lamp %s=mlredir@1,3" % ML_LAMP[0],
@@ -3545,7 +3557,7 @@ def phase_ml(only):
 
 def phase_mg(only):
     ph = _ml_env("god,host_die@6%%m26_00?%s=1" % ML_LAMP[1][2],
-                 "god,guest_obj=%s:1.2:0@25%%m26_00,guest_press=0x4000@3%%m26_00!,guest_press=0x4000@4%%m26_00!" % ML_OBJ)
+                 _light_lamp("guest", ML_OBJ, ML_LAMP[1][2], "m26_00", 25))
     ph.update(name="mg", until=[r"0:host death taken: .*revive at lamp|0:test: FAILED"], until_hold=12,
               watch=["--watch", r"host death taken: =mgdie@1,4"])
     return ph
@@ -4350,13 +4362,13 @@ def phase_bg(only):
     lap = int(os.environ.get("BB_BG_LAP", "70"))            # passive seconds in the fight
     host = ",".join([
         "god", "goods=4014:0",
-        "host_warp=3402953@8^1",                                   # the party to the cathedral lamp
+        *_laurence_enter("host", 10, True),                        # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,            # the guest is inside: the skull, the fight starts
         "host_chr=3400850:%s@20%%m34_00" % hdist,                   # after the scene: beside the boss, passive
         "host_press=0x0@%d%%m34_00" % lap,
     ])
     g1 = ",".join((["god"] if os.environ.get("BB_BG_GUESTGOD") == "1" else []) + [
-        "guest_move=%s@6%%m34_00" % BR_SIGNAL,                      # inside, by the lamp
+        *_laurence_enter("guest", 40),                              # in through his fog, to the altar spot
         "guest_press=0x0@22%m34_00!",                               # the scene
         "guest_chr=3400850:%s@2%%m34_00" % gdist,                   # in the arena, away from the boss
         "guest_press=0x0@%d%%m34_00" % lap,
@@ -4364,7 +4376,7 @@ def phase_bg(only):
     ])
     return dict(
         name="bg", seconds=420, count=2, headless=0, until_hold=4,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LAMP_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         crash=[], until=BG_UNTIL,
     )
@@ -4409,7 +4421,7 @@ def phase_lr(only):
     m = "%m34_00"
     host = ",".join([
         "log_pos=2", "goods=4014:0",
-        "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
+        *_laurence_enter("host", 10, True),                          # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,             # the guest is inside: the skull
         "host_die@25%s?member=bar" % m,                              # try 1: after the scene, the guest in the fight: the host dies
         # try 2 (after the wipe's load): the fog is up, a player walk to it
@@ -4421,7 +4433,7 @@ def phase_lr(only):
     ])
     g1 = ",".join([
         "log_pos=2",
-        "guest_move=%s@6%s" % (BR_SIGNAL, m),                        # inside, by the lamp
+        *_laurence_enter("guest", 40),                               # in through his fog, to the altar spot
         "guest_press=0x0@22%s!" % m,                                 # the scene
         "guest_chr=3400850:%s@2%s" % (dist, m),
         "guest_die@4%s?host=spec" % m,                               # the host is down: the wipe
@@ -4433,7 +4445,7 @@ def phase_lr(only):
         "guest_press=0x0@%d%s" % (win, m),
         "guest_press=0x0@2%s" % m,
     ])
-    env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"]
+    env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LAMP_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"]
     if os.environ.get("BB_LR_NET"):
         env.append("BB_NET_SIM=" + os.environ["BB_LR_NET"])
     if os.environ.get("BB_LR_ENV"):
@@ -5372,6 +5384,25 @@ BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCK
             r"0:travel step (\d+)/\1: host_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)"]
 
 
+# The Grand Cathedral lamp 3402953 is lit by beating Laurence (CL-b457f5); the test save had it lit with Laurence alive, so
+# the phases warped a party straight into his room, which no player can do. Now the fixture clears the lamp's flags (lit 13407870 /
+# 13407871, name 73400203: lamp_travel_rules.h, n = 3 of block 340) and the party enters the real way: the party travels to
+# the Hunter's Nightmare lamp 3402950, each player is put OUTSIDE his fog 3401850 (6 m on its outer side: angle 0; angle 180 is the arena side, measured br 2026-11-04) and walks in through it
+# by the stick, then on to the altar spot (BR_SIGNAL). Never a teleport into the arena (the boss repro rule).
+BR_LAMP_CLEAR = "13407870,13407871,73400203"
+BR_SIGNAL_XZ = "-434.55:-264.25"
+BR_ALTAR_XZ = "-433.09:-261.57"   # the lamp spot inside the altar region 3402855: the host must stand there for the skull (4 m off: no fight)
+
+
+def _laurence_enter(who, first_delay, warp=False):  # the guest starts after the host: two bodies in the fog doorway jam (bg: nav GAVE UP, 15 stalls)
+    """The steps of `who` (host / guest) from outside Laurence's fog to the altar spot inside; the host also travels first."""
+    m = "%m34_00"
+    return (["host_warp=3402950@8^1"] if warp else []) + [
+        "%s_obj=3401850:6:0@%s%s" % (who, first_delay, m),
+        "%s_stick=obj:3401850:4:180:%s@2%s" % (who, BR_WALK, m),        # in through the fog (open: the rule under test)
+        "%s_stick=%s:1.0:200@2%s" % (who, BR_ALTAR_XZ if who == "host" else BR_SIGNAL_XZ, m)]  # on to the altar spot
+
+
 def phase_br(only):
     # The reward item box after each kill holds the stick (run 1: both screens showed Beast's Embrace
     # + Guidance with an OK row through the walks): Cross twice closes it. R3 (0x4) after each
@@ -5380,7 +5411,7 @@ def phase_br(only):
     # the walk itself changes the map (run 1: the host's next step waited for m34_00 for good).
     host = ",".join([
         "god", "goods=4014:0",                                       # no Laurence's Skull yet
-        "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
+        *_laurence_enter("host", 10, True),                          # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,              # the guest walked out and in: the skull
         "host_kill=3400850@8%m34_00~",                               # Laurence, 8 s after his scene
         "host_press=0x4000@8%m34_00!", "host_press=0x4000@2%m34_00!",  # OK on the reward box
@@ -5395,6 +5426,7 @@ def phase_br(only):
     ])
     g1 = ",".join([
         "god",
+        *_laurence_enter("guest", 40),                               # in through his fog (the way a player comes)
         "guest_obj=3401850@10%m34_00",                               # at Laurence's fog (inside, by the lamp)
         "guest_press=0x4@1%m34_00!", "guest_press=0@1%m34_00!",       # R3
         "guest_stick=obj:3401850:4:180:%s@2%%m34_00" % BR_WALK,       # through it
@@ -5409,7 +5441,7 @@ def phase_br(only):
     ])
     return dict(
         name="br", seconds=720, count=2, headless=0, pads=(0, 1),
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR + "," + BR_LAMP_CLEAR],
         # 0.7.7 (bossrunes): the Holy Moonlight Sword's award spot lot 43211 (the weapon is shared with every member)
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "0:BB_PARTY_ITEMS_HOST_TEST=43211"],
         watch=["--watch", r"test: (?:host|guest)_stick: object 340(?:1850|1801) found=brdoor@0.5,4"],
@@ -8978,6 +9010,29 @@ def measured_summary(sub, entry):
 CLEAR_ENEMY_PHASES = {"lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs"}
 
 
+# Fail fast (smoke 0.7.9, instances.py --stuck): a scripted run whose chains are unfinished and in which nothing moved
+# (no step, load, join, boss event) for this long is over; a chain step waiting for a dead own chr ends it after 90 s.
+# Default: 150 s, or 1.5 x the chain's longest step delay + 90 s. These phases have longer quiet stretches by design
+# (measured on the 0.7.8 logs: the longest progress-free gap of a passing run; the values keep 1.4x or more of it).
+STUCK_S = {"ngp": 520, "rules": 450, "ivx": 420, "ml": 300, "ou": 220, "oum": 220, "ah": 200, "lfwcf": 200, "gv": 180, "gvn": 180,
+           "mesh": 180, "meshm": 180, "il": 180, "gvl": 180}
+
+
+def stuck_seconds(ph):
+    """The --stuck value of a phase (0 = off): its own `stuck`, else STUCK_S, else from its chains' longest step delay."""
+    if "stuck" in ph:
+        return ph["stuck"]
+    if ph["name"] in STUCK_S:
+        return min(STUCK_S[ph["name"]], ph["seconds"])
+    top = 0.0
+    for e in list(ph["env"]) + list(ph["ienv"]):
+        m = re.match(r"(?:\d:)?BB_PARTY_DIRECTOR_TEST=(.*)", e)
+        for it in (m.group(1).split(",") if m else ()):
+            d = re.search(r"@([\d.]+)", it)
+            top = max(top, float(d.group(1)) if d else 0.0)
+    return min(max(150.0, 1.5 * top + 90.0), ph["seconds"])
+
+
 def run_phase(a, ph, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     root = Path(a.root)
@@ -9041,6 +9096,8 @@ def run_phase(a, ph, out: Path):
         cmd += ["--ienv", f"{i}:BB_PAD_FILE=" + str(root / f"pad{i}.txt")]
     if ph.get("until_hold"):
         cmd += ["--until-hold", str(ph["until_hold"])]
+    if not os.environ.get("BB_SMOKE_NO_STUCK") and stuck_seconds(ph) > 0:
+        cmd += ["--stuck", "%.0f" % stuck_seconds(ph)]
     for c in ph["crash"]:
         cmd += ["--crash-plan", c]
     for u in ph.get("until", []):
@@ -12394,15 +12451,36 @@ def sweep_main(a, only):
 # a failed run is repeated up to FLAKY_TRIES times in all and the run with the fewest failed rows is kept, so a
 # one-off stall no longer fails a release smoke while a real fault (it fails every time) still does.
 # BB_SMOKE_NO_RETRY=1 turns it off. Retried runs are listed in the output dir's retries.txt.
-FLAKY_PHASES = {"cae", "cao", "cgt", "cgp", "cgu", "cab", "cis", "caq", "caw", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
-                "lt", "lf", "s2", "gd", "ml", "la", "ngp", "npf", "nfw", "pvd", "sj", "kd", "s3", "cl"}
+# Why each is here (0.7.9 audit of the 0.7.8 runs: smoke_stats.py over smoke..smoke7). A phase that passes only on a retry
+# is listed as FLAKY in verdict.txt / flaky.txt; one that fails the same rows twice is deterministic and is not repeated.
+FLAKY_PHASES = {
+    # the Ritual Altar's menu walk: the first Cross at the altar often finds no prompt (cao: 1 clean entry in 5 runs; cae and
+    # cgt each timed out in 0.7.8 with "the autopilot answered the prompts" missing). Root cause not found.
+    "cae", "cao", "cgt", "cgp", "cgu", "cab", "cis", "caq", "caw",
+    # the lift walk-ins: the car's build / the ride's start races the walker (0.7.8: lfwcs "no fall", lfwf "host does not ride"
+    # and lfwcf "copy does not freeze" each failed once, green on the retry). Root cause not found.
+    "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
+    # failed on retry in releases up to 0.7.5 (docs/RELEASE_CHECKLIST.md: s3, lt, lf); green first time in 0.7.8, kept until
+    # three clean full runs show they no longer flake
+    "lt", "lf", "s2", "gd", "la", "ngp", "npf", "pvd", "sj", "kd", "s3",
+    # nfw: "(before) Alfred friendly on both games" failed twice in a row and passed on the 3rd/4th run (an NPC spawn race)
+    "nfw",
+}
+# (cl and ml left the set: they failed the same rows on every try, a harness / fixture fault that a retry cannot cure)
 FLAKY_TRIES = 3
 
 
 def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
-    """run_phase + check; returns the Verdict rows of the best run (check(verdict, Logs, dir))."""
+    """run_phase + check; the run with the fewest failed rows is kept (check(verdict, Logs, dir)).
+
+    A phase in FLAKY_PHASES is repeated up to FLAKY_TRIES times, except that a repeat which fails the SAME rows as the run
+    before is a deterministic failure (a real fault or a harness bug, not a flake): it stops there (0.7.8 repeated cl and
+    ml three times with the same two rows each). A phase that failed and then passed is FLAKY: it is written to
+    <out>/flaky.txt and listed in the verdict, so a green run never hides it."""
     best = None
     tries = (4 if name in ("cao",) else FLAKY_TRIES) if name in FLAKY_PHASES and not os.environ.get("BB_SMOKE_NO_RETRY") else 1
+    prev_rows = None
+    failed_before = []
     for k in range(tries):
         if k:
             import shutil
@@ -12412,13 +12490,21 @@ def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
         run_phase(a, ph, out_dir)
         lv = Verdict(only)
         check(lv, Logs(out_dir), out_dir)
-        nfail = sum(1 for r in lv.rows if not r[1])
+        failed = [r[0] for r in lv.rows if not r[1]]
+        nfail = len(failed)
         print("[smoke] %s try %d: %d failed rows" % (name, k + 1, nfail), flush=True)
         if nfail == 0:
+            if k:
+                with open(out_dir.parent / "flaky.txt", "a", encoding="utf-8") as f:
+                    f.write("%s passed on try %d (failed before: %s)\n" % (name, k + 1, "; ".join(failed_before)[:300]))
             break
         if k + 1 < tries:
             with open(out_dir.parent / "retries.txt", "a", encoding="utf-8") as f:
-                f.write("%s try %d failed %d rows: %s\n" % (name, k + 1, nfail, "; ".join(r[0] for r in lv.rows if not r[1])[:300]))
+                f.write("%s try %d failed %d rows: %s\n" % (name, k + 1, nfail, "; ".join(failed)[:300]))
+        if prev_rows is not None and failed == prev_rows:
+            print("[smoke] %s: the same %d rows failed twice: deterministic, no more tries" % (name, nfail), flush=True)
+            break
+        prev_rows, failed_before = failed, failed
     return
 
 
@@ -12430,6 +12516,15 @@ def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
 #   full     every phase in PHASES (also what --release asks for: no hidden subset)
 # A tier only chooses WHICH phases run; every phase keeps all of its checks and runs to the same verdict.
 QUICK_PHASES = ("s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,lfw,lfwc,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
+
+# fast (smoke 0.7.9): ONE representative phase per feature area, about 40 min on one lane: the gate for a merge or a daily
+# check. It is the cheapest phase that proves the area's core claim, with all of its checks. Area -> phase:
+#   join / death / travel / boss / wipe s1 | items, kill, itembox, host crash s2 | gather ga | lifts + ladders lf | two riders on a lift
+#   lt | deep fall fd | story warp kw | chalice progress cpr | fight load bf | boss rooms + fog walls br | boss drops bd |
+#   travel vote tv | NPC fights nfa | host lamp hlq | Rom's fog rf | poison px | chalice shop csh | give menu gvm | echo hold eh
+# The areas it leaves out (chalice dungeon entry, lift walk-ins, covenants, NPC quests, PvP, shops, music, ...) are in the
+# release tier; `--changed-since TAG` picks them by the files a change touched.
+FAST_PHASES = "s1,s2,ga,lf,lt,fd,kw,cpr,bf,br,bd,tv,nfa,hlq,rf,px,csh,gvm,eh,gdr"
 
 # Phases the release tier leaves out: a variant of a phase that stays in (same map and mechanism, other lift / rule
 # value / actor), kept in `full`. Each value names what covers it.
@@ -12474,8 +12569,8 @@ def phases_changed_since(tag):
     chosen, notes = set(), []
     for f in files:
         if f.startswith("tools/mp/"):
-            chosen |= set(QUICK_PHASES.split(","))
-            notes.append("%s: harness changed -> quick tier" % f)
+            chosen |= set(FAST_PHASES.split(","))
+            notes.append("%s: harness changed -> fast tier" % f)
             continue
         if NO_GAME_CODE.match(f):
             continue
@@ -12500,7 +12595,9 @@ def phase_list_for(a):
         label = "changed since %s" % a.changed_since
     else:
         tier = "full" if a.release else (a.tier or "quick")
-        if tier == "quick":
+        if tier == "fast":
+            names = FAST_PHASES.split(",")
+        elif tier == "quick":
             names = [p for p in QUICK_PHASES.split(",")]
         elif tier == "release":
             names = [p for p in PHASES if p not in RELEASE_SKIP]
@@ -12589,14 +12686,14 @@ def main():
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
     ap.add_argument("--phase", default=None, help="comma list of phases (wins over --tier / --release / --changed-since)")
-    ap.add_argument("--tier", choices=("quick", "release", "full"), default=None,
-                    help="which phases: quick = the old 41-phase default (default); release = every phase except the variants in "
+    ap.add_argument("--tier", choices=("fast", "quick", "release", "full"), default=None,
+                    help="which phases: fast = one phase per feature area, about 40 min (docs/SMOKE_TIERS.md); quick = the old 41-phase default (default); release = every phase except the variants in "
                          "RELEASE_SKIP; full = every phase")
     ap.add_argument("--release", action="store_true",
                     help="the release gate: the FULL phase list (no hidden subset), as --tier full; pair with --lanes auto")
     ap.add_argument("--changed-since", default=None, metavar="TAG",
                     help="only the phases that exercise the files changed since TAG (git diff TAG; CHANGED_MAP; an unmapped game "
-                         "file runs the quick tier)")
+                         "file runs the quick tier, a harness change the fast tier)")
     ap.add_argument("--no-mem-guard", action="store_true",
                     help="with --lanes > 1: do not let the lanes' game runs exceed the machine-wide client limit (memory guard off; "
                          "the lanes then take turns)")
@@ -12736,6 +12833,12 @@ def main():
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))
+    try:  # a phase that passed only on a retry is flaky, even in a green run
+        flaky = (out / "flaky.txt").read_text(encoding="utf-8").strip()
+        if flaky:
+            text += "FLAKY (passed only on a retry; see FLAKY_PHASES in tools/mp/smoke_party.py):\n" + flaky + "\n"
+    except OSError:
+        pass
     if not a.check_only or lanes_used:
         text += "wall time %.0f s (queue wait included%s)" % (
             time.time() - t_all, ", %d lanes" % a.lanes if lanes_used else "") + chr(10)
