@@ -6,6 +6,8 @@ The steps for a coop/port release (`X.Y.Z`), revised after 0.7.7. Push only with
 
 - [ ] Every item of the version in Iosefka is `done`, `dropped` or moved on: `cl list --track coop --version X.Y.Z`.
 - [ ] All agent branches for the release are merged into master and `python -m pytest tests -q` passes.
+- [ ] `python tools/mp/smoke_party.py --tier fast` is green on master's build (19 phases, one per feature area, about 40 min of
+      run time): the cheap gate before the long one. Tiers and when to use which: `docs/SMOKE_TIERS.md`.
 - [ ] Upstreams checked (Mrsuss60 `origin`, deadinside28 `upstream`, Supermedo `supermedo`): crash and VRAM fixes ported or
       queued, the rest moved to the next version (`agents/upstream_<date>.md`).
 
@@ -24,6 +26,10 @@ The steps for a coop/port release (`X.Y.Z`), revised after 0.7.7. Push only with
         picks 1 lane (2 only with 40 GB free). The game queue's memory guard (`game_queue.py`, only for guarded jobs) is
         what allows 2; it never goes over 6 clients, keeps 3 GB free and waits for other agents' runs first.
         Never start more lanes by hand: 2 lanes x 3 games ran out of memory in 0.7.4.
+      - Which tier when: `--tier fast` for every merge into master and before this release gate; `--tier release` or
+        `--release` once per release (this step); `--changed-since <tag>` to rerun only what a late fix touched; a phase
+        that ends `STUCK` / `DEAD` / `UNTIL NOT MET` failed fast on purpose (docs/SMOKE_TIERS.md). A phase listed in
+        `flaky.txt` / `verdict.txt` under FLAKY passed only on a retry: it counts as flaky, not as a pass.
       - A smaller run: `--tier release` (every feature, no variants), `--changed-since <tag>` (only the phases that
         exercise the files changed since the tag; docs/tests run nothing, a game file with no mapping runs the quick tier),
         `--tier quick` (the 40-phase core, the default), `--phase a,b,c` or `--only <group>`.
