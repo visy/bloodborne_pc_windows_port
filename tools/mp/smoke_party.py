@@ -12368,7 +12368,7 @@ QUICK_PHASES = ("s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,
 #   travel vote tv | NPC fights nfa | host lamp hlq | Rom's fog rf | poison px | chalice shop csh | give menu gvm | echo hold eh
 # The areas it leaves out (chalice dungeon entry, lift walk-ins, covenants, NPC quests, PvP, shops, music, ...) are in the
 # release tier; `--changed-since TAG` picks them by the files a change touched.
-FAST_PHASES = "s1,s2,ga,lf,lt,fd,kw,cpr,bf,br,bd,tv,nfa,hlq,rf,px,csh,gvm,eh"
+FAST_PHASES = "s1,s2,ga,lf,lt,fd,kw,cpr,bf,br,bd,tv,nfa,hlq,rf,px,csh,gvm,eh,gdr,ivl"
 
 # Phases the release tier leaves out: a variant of a phase that stays in (same map and mechanism, other lift / rule
 # value / actor), kept in `full`. Each value names what covers it.
