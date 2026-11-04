@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include <cpuid.h>
 #include "runtime.h"
+#include "runtime_logdrain.h"
 #include "gpu/bbgpu.h"
 #include "gpu/bbnet.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
@@ -132,7 +133,7 @@ static void fail(const char *message) {
     fprintf(stderr, "ERROR: %s\n", message);
     fflush(stderr);
 #ifdef _WIN32
-    TerminateProcess(GetCurrentProcess(), 1);
+    BB_TERMINATE_PROCESS(1);
 #else
     exit(1);
 #endif
@@ -387,6 +388,7 @@ static __attribute__((noreturn)) void unresolved_stop(uint32_t id, uint64_t argu
     puts(entered_game ? "Original guest entry instructions executed; game initialization is incomplete." :
                         "Native libc initialization is incomplete; game entry has not run.");
     fflush(NULL);
+    runtime_logdrain_flush(3000);
     _exit(20); /* no destructors: GPU, audio and guest threads are still running */
 }
 
@@ -1148,7 +1150,7 @@ static DWORD WINAPI timeout_worker(LPVOID param) {
         /* TerminateProcess, not ExitProcess: ExitProcess unloads the Vulkan driver DLLs under the
          * loader lock while GPU threads are still inside the driver, which can hang the process
          * for good (it then keeps its guest memory and the next start fails). */
-        TerminateProcess(GetCurrentProcess(), 0);
+        BB_TERMINATE_PROCESS(0);
     }
     return 0;
 }
@@ -1243,7 +1245,7 @@ static DWORD WINAPI crash_reaper(LPVOID param) {
     (void)param;
     WaitForSingleObject(g_crash_event, INFINITE);
     Sleep(5000);
-    TerminateProcess(GetCurrentProcess(), (UINT)g_crash_exit_code);
+    BB_TERMINATE_PROCESS((UINT)g_crash_exit_code);
     return 0;
 }
 
@@ -1472,7 +1474,7 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
             write_crash_dump(ep, fault_addr, rip, code);
             veh_write("The game stopped itself (its panic abort at +0x20b56d2); the last panic is in the crash log\n");
             if (g_crash_test_hang) Sleep(INFINITE);
-            TerminateProcess(GetCurrentProcess(), 141);
+            BB_TERMINATE_PROCESS(141);
         }
 
         unsigned char *ip = (unsigned char *)rip;
@@ -1628,7 +1630,7 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
         veh_write(line);
         if (gpu_enabled) bbgpu_dump_guest_writes(ep);
         if (g_crash_test_hang) Sleep(INFINITE);
-        TerminateProcess(GetCurrentProcess(), (UINT)g_crash_exit_code);
+        BB_TERMINATE_PROCESS((UINT)g_crash_exit_code);
     } else if (code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_PRIV_INSTRUCTION ||
                code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_STACK_OVERFLOW ||
                code == 0xC0000409 /* STATUS_STACK_BUFFER_OVERRUN */ ||
@@ -1644,7 +1646,7 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
         else
             snprintf(line, sizeof(line), "Fatal exception 0x%08lx at RIP %p, address %p\n", (unsigned long)code, (void *)rip, (void *)rip);
         veh_write(line);
-        TerminateProcess(GetCurrentProcess(), 128 + 4);
+        BB_TERMINATE_PROCESS(128 + 4);
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -1864,7 +1866,7 @@ void runtime_restart(void) {
         /* TerminateProcess, not ExitProcess: ExitProcess unloads the Vulkan driver DLLs under the
          * loader lock while GPU threads are still inside the driver, which can hang the process
          * for good (it then keeps its guest memory and the next start fails). */
-        TerminateProcess(GetCurrentProcess(), 0);
+        BB_TERMINATE_PROCESS(0);
     } else {
         fail("runtime_restart: CreateProcess failed");
     }
@@ -1888,7 +1890,7 @@ void runtime_relaunch(int exit_code) {
     print_exit_summary();
     fflush(stdout); fflush(stderr);
 #ifdef _WIN32
-    TerminateProcess(GetCurrentProcess(), (UINT)exit_code); /* as runtime_restart: no ExitProcess */
+    BB_TERMINATE_PROCESS((UINT)exit_code); /* as runtime_restart: no ExitProcess */
 #else
     _exit(exit_code);
 #endif
@@ -1899,6 +1901,7 @@ void runtime_relaunch(int exit_code) {
 #endif
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    runtime_logdrain_start();
     if (argc == 2 && (!strcmp(argv[1], "--version") || !strcmp(argv[1], "-V"))) {
         printf("bbport %s (Bloodborne Windows port)\n", BBPORT_VERSION);
         return 0;
