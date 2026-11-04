@@ -193,6 +193,20 @@ static void Wire() {
     CHECK(Decode(Encode({1, "Bob", End::None}), &m) && m.state == 1);
     CHECK(Decode(Encode({0, "Bob", End::HostDied}), &m) && m.state == 0 && m.why == End::HostDied);
     CHECK(Decode(Encode({0, "Bob", End::None}), &m) && m.state == 0 && m.why == End::None);
+    // 0.7.9: the host's phantom health for the invasion ("h"); a 0.7.8 message without it reads as -1
+    {
+        Msg h{2, "Bob", End::None};
+        h.full_hp = 1;
+        CHECK(Encode(h) == "{\"s\":2,\"n\":\"Bob\",\"h\":1}");
+        CHECK(Decode(Encode(h), &m) && m.state == 2 && m.full_hp == 1);
+        h.state = 1, h.full_hp = 0;
+        CHECK(Decode(Encode(h), &m) && m.state == 1 && m.full_hp == 0);
+        CHECK(Decode("{\"s\":2,\"n\":\"Bob\"}", &m) && m.full_hp == -1);
+        CHECK(!Decode("{\"s\":2,\"n\":\"Bob\",\"h\":2}", &m));
+        CHECK(!Decode("{\"s\":0,\"n\":\"Bob\",\"h\":1}", &m));  // only pending / in carry it
+        h.state = 0, h.why = End::HostDied, h.full_hp = 1;
+        CHECK(Encode(h) == "{\"s\":0,\"n\":\"Bob\",\"w\":\"host_died\"}");
+    }
     CHECK(!Decode("", &m));
     CHECK(!Decode("{\"s\":3,\"n\":\"Bob\"}", &m));
     CHECK(!Decode("{\"s\":2,\"n\":\"\"}", &m));
