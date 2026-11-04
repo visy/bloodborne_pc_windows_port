@@ -5235,7 +5235,7 @@ BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCK
 # The Grand Cathedral lamp 3402953 is lit by beating Laurence (CL-b457f5); the test save had it lit with Laurence alive, so
 # the phases warped a party straight into his room, which no player can do. Now the fixture clears the lamp's flags (lit 13407870 /
 # 13407871, name 73400203: lamp_travel_rules.h, n = 3 of block 340) and the party enters the real way: the party travels to
-# the Hunter's Nightmare lamp 3402950, each player is put OUTSIDE his fog 3401850 (6 m on its far side) and walks in through it
+# the Hunter's Nightmare lamp 3402950, each player is put OUTSIDE his fog 3401850 (6 m on its outer side: angle 0; angle 180 is the arena side, measured br 2026-11-04) and walks in through it
 # by the stick, then on to the altar spot (BR_SIGNAL). Never a teleport into the arena (the boss repro rule).
 BR_LAMP_CLEAR = "13407870,13407871,73400203"
 BR_SIGNAL_XZ = "-434.55:-264.25"
@@ -5245,8 +5245,8 @@ def _laurence_enter(who, first_delay, warp=False):
     """The steps of `who` (host / guest) from outside Laurence's fog to the altar spot inside; the host also travels first."""
     m = "%m34_00"
     return (["host_warp=3402950@8^1"] if warp else []) + [
-        "%s_obj=3401850:6:180@%s%s" % (who, first_delay, m),
-        "%s_stick=obj:3401850:4:0:%s@2%s" % (who, BR_WALK, m),          # in through the fog (open: the rule under test)
+        "%s_obj=3401850:6:0@%s%s" % (who, first_delay, m),
+        "%s_stick=obj:3401850:4:180:%s@2%s" % (who, BR_WALK, m),        # in through the fog (open: the rule under test)
         "%s_stick=%s:1.5:200@2%s" % (who, BR_SIGNAL_XZ, m)]              # on to the altar spot
 
 
@@ -12368,7 +12368,7 @@ QUICK_PHASES = ("s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,
 #   travel vote tv | NPC fights nfa | host lamp hlq | Rom's fog rf | poison px | chalice shop csh | give menu gvm | echo hold eh
 # The areas it leaves out (chalice dungeon entry, lift walk-ins, covenants, NPC quests, PvP, shops, music, ...) are in the
 # release tier; `--changed-since TAG` picks them by the files a change touched.
-FAST_PHASES = "s1,s2,ga,lf,lt,fd,kw,cpr,bf,br,bd,tv,nfa,hlq,rf,px,csh,gvm,eh,gdr,ivl"
+FAST_PHASES = "s1,s2,ga,lf,lt,fd,kw,cpr,bf,br,bd,tv,nfa,hlq,rf,px,csh,gvm,eh,gdr"
 
 # Phases the release tier leaves out: a variant of a phase that stays in (same map and mechanism, other lift / rule
 # value / actor), kept in `full`. Each value names what covers it.
