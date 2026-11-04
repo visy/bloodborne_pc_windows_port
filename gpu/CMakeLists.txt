@@ -1086,6 +1086,12 @@ if(WIN32)
     target_link_libraries(savecommit-test PRIVATE ws2_32 bcrypt)
 endif()
 set_target_properties(savecommit-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Log drain (src/runtime_logdrain.c; in bbport through RUNTIME_SOURCES): the game's log output through a
+# background thread. ninja -C out/gpu logdrain-test
+add_executable(logdrain-test EXCLUDE_FROM_ALL ../tests/test_logdrain.c ../src/runtime_logdrain.c)
+target_compile_options(logdrain-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(logdrain-test PRIVATE ../src)
+set_target_properties(logdrain-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Save policy (C5, src/runtime_savepolicy.c; in bbport through RUNTIME_SOURCES): party save folder,
 # rotating backups, save check, on temporary folders. ninja -C out/gpu save-policy-test
 add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../src/runtime_savepolicy.c)
