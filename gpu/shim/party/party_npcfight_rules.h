@@ -76,6 +76,14 @@ inline constexpr GuestRun kGuestRuns[] = {
     {12700905, 0, Gate::ChrTypeHost, 2700, "Valtr turns hostile (Forbidden Woods, 2700912)"},
     {13400920, 0, Gate::ChrTypeHost, 3400, "a Hunter's Nightmare hunter turns hostile (3400902 / 3400903)"},
     {13500920, 0, Gate::ChrTypeHost, 3500, "the Research Hall hunter turns hostile (3500900)"},
+    // The Insight madness spirits ("Mad Ones", CL-20d595 / NW-44497f9): the spawn event waits for the local player's
+    // Insight, the night, 22 m of the spirit AND chr type 0, so a guest (type 1) standing alone near one never saw
+    // it appear on either game (it only appeared when the host came near). The guest's copy now enables it too.
+    {12204000, 9, Gate::ChrTypeHost, 2200, "a Mad One appears (Hemwick Charnel Lane, 2200500-2200508)"},
+    {12414000, 3, Gate::ChrTypeHost, 2401, "a Mad One appears (Central Yharnam B)"},
+    {12504000, 3, Gate::ChrTypeHost, 2500, "a Mad One appears (Cainhurst)"},
+    {12604000, 3, Gate::ChrTypeHost, 2600, "a Mad One appears (Forbidden Woods road)"},
+    {12905406, 3, Gate::ChrTypeHost, 2900, "a Mad One appears (Chalice Dungeon)"},
 };
 
 inline const GuestRun* GuestRunFor(std::int32_t event) {
