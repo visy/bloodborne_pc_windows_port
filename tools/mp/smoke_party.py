@@ -2999,7 +2999,7 @@ def check_camh(v, L):
 def phase_cas(only):
     d = phase_cae(only)
     d["name"] = "cas"
-    for who in os.environ.get("CAS_WHO", "1").split(","):  # which instances get the late answer (0 host, 1 guest)
+    for who in os.environ.get("CAS_WHO", "0,1").split(","):  # which instances get the late answer (0 host, 1 guest)
         d["ienv"] = d["ienv"] + [who + ":BB_HTTP_DELAY_SSINFO_MS=" + os.environ.get("CAS_DELAY_MS", "17000")]
         if os.environ.get("CAS_HOLD") == "0":
             d["ienv"] = d["ienv"] + [who + ":BB_PARTY_SIGNIN_HOLD=0"]
@@ -3009,7 +3009,7 @@ def phase_cas(only):
 
 def check_cas(v, L):
     check_common(v, L, "cas")
-    need(v, L, "cas the first ss.info answer was delayed (test knob)", int(os.environ.get("CAS_WHO", "1").split(",")[0]), r"http: test: delaying the first ss\.info answer")
+    need(v, L, "cas the first ss.info answer was delayed (test knob)", int(os.environ.get("CAS_WHO", "0,1").split(",")[0]), r"http: test: delaying the first ss\.info answer")
     t = need(v, L, "cas guest: the sign-in finished (ss.info answered late, game online: FrpgNetMan net up)", 1,
              r"online: FrpgNetMan net 1 online 1 .*user \d+ session [1-9]\d* chars")
     need(v, L, "cas host: the dungeon load started", 0, r"altar: the party's dungeon is loading")
