@@ -25,7 +25,12 @@ bool JoinAsInvader();
 bool HostAllows();
 
 /// Any thread, host: the link's invader gate (party_link.h LinkConfig::invader_gate). "" admits, else the named reason.
-std::string Gate(const std::string& name, std::uint32_t ip_network_order, bool final_check);
+std::string Gate(const std::string& name, std::uint32_t ip_network_order, bool final_check, int invader_level = 0);
+/// Invader side: this game's Blood Echoes level for the HELLO (0.7.9; 0 unknown; BB_PARTY_INVADE_LEVEL overrides it for tests).
+int OwnLevel();
+/// Any thread, host: an open-party join (no password) of a new member that said `level`: "" admits, else the refusal text
+/// (the vanilla co-op range, party_invade_rules.h OpenLevelOk). The host's level is the one its tick last read.
+std::string OpenGate(int level);
 
 /// The link callback thread: EVENT "invade" (a guest or the invader, from the host) / "invade_fell" (the host, from the
 /// invader).
