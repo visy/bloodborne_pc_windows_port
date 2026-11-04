@@ -2,6 +2,10 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.7.9 (unreleased)
+
+- **Test tools: a guest that dies, ends its game and restarts gets back into the host's world** (CL-8c879b, player report over a VPN). New smoke phases `gdr` / `gdrd` / `gdrb` / `gdrf` (group `guest_restart`): two players, the guest dies in the host's world, its game is killed 8 s later, restarts, and must be back in the host's room with no failed title join and nobody kicked, on the clean link, under simulated internet (`dsl`, `bad`) and with *Fast rejoin* off. The report's own logs showed the host never heard the guest's game traffic over the VPN (fixed in 0.7.8: the VPN address is always used, the packet size limit) and the *Fast rejoin* timers undone by another patch list (also fixed in 0.7.8); the phases found nothing else wrong (about 15 s from kill to back in the room on every link).
+
 ## 0.7.8 (2026-11-04)
 
 - **Fixed: flowers and plants shaking with Live FPS on** (plantwind078). With the Live FPS clock (the default) the plants' wind was bent by the length of each frame, so every longer or shorter frame made the grass and flowers jump; the wind force is now fixed at the authored 1/30 s as in the frame-rate-by-hooks mode (and the 30 FPS game), while the wind's wave time still follows the live clock. Plants sway smoothly at 60, 120 and any other target (`docs/LIVE_FPS.md`).
