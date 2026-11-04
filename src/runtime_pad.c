@@ -599,7 +599,9 @@ static int key_direction(KeyAxisState *s, int negative, int positive) {
 #define KEY_STICK_MAX_STEP (30.0*3.14159265358979323846/180.0)
 #define KEY_STICK_HALF_TURN (170.0*3.14159265358979323846/180.0)
 #define KEY_STICK_RELEASE_US 60000u
-typedef struct { double angle; uint64_t at, released_at; int active, held_x, held_y; } KeyStickState;
+/* snap_half: a half turn takes the new direction at once (no sweep through forward) and sets
+ * `reversed`, which the analog ramp reads to run the stick through its centre (Mrsuss60 8ea9aa37). */
+typedef struct { double angle; uint64_t at, released_at; int active, held_x, held_y; int snap_half, reversed; } KeyStickState;
 static KeyStickState key_move_stick;
 static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *ox, int *oy) {
     const double pi=3.14159265358979323846;
@@ -617,6 +619,9 @@ static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *o
         const double diff=fmod(target-s->angle+3.0*pi,2.0*pi)-pi; /* -pi..pi, shortest way round */
         const double step=fmin(KEY_STICK_TURN_RATE*pi/180.0*(double)(now-s->at)/1e6,KEY_STICK_MAX_STEP);
         double dir=diff>0 ? 1.0 : -1.0;
+        if (fabs(diff)>KEY_STICK_HALF_TURN && s->snap_half) {
+            s->angle=target; s->reversed=1;
+        } else {
         if (fabs(diff)>KEY_STICK_HALF_TURN) {
             /* Half way round counter-clockwise is angle+pi/2; forward is y < 0. */
             const double hy=sin(s->angle+pi/2.0), hx=cos(s->angle+pi/2.0);
@@ -624,6 +629,7 @@ static int key_stick_step(KeyStickState *s, int dx, int dy, uint64_t now, int *o
         }
         if (fabs(diff)<=step) s->angle=target;
         else s->angle=atan2(sin(s->angle+dir*step),cos(s->angle+dir*step));
+        }
     } else {
         s->angle=target;
     }
@@ -690,8 +696,12 @@ static void apply_keyboard(PadData *d, const bool *k) {
     const int ly=key_direction(&key_axes[1],key_down(k,IN_MOVE_UP),key_down(k,IN_MOVE_DOWN));
     int sx, sy;
     const uint64_t now=now_us();
+    const int ramp=bbgpu_key_ramp();
+    key_move_stick.snap_half=ramp; key_move_stick.reversed=0;
     int moving=key_stick_step(&key_move_stick,lx,ly,now,&sx,&sy);
-    if (bbgpu_key_ramp()) moving=key_ramp_step(&key_move_ramp,moving,sx,sy,now,&sx,&sy);
+    /* A 180-degree turn ramps straight through the centre: no sideways drift on the way round. */
+    if (ramp && key_move_stick.reversed) key_move_ramp.size=0.0;
+    if (ramp) moving=key_ramp_step(&key_move_ramp,moving,sx,sy,now,&sx,&sy);
     if (moving) {
         if (key_down(k,IN_WALK)) { sx=key_stick_walk(sx); sy=key_stick_walk(sy); }
         /* All the way is 0 / 255, as key_axis gives the other sticks. */
