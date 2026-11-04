@@ -90,6 +90,13 @@ class StuckTests(unittest.TestCase):
         ph["ienv"] = ["0:BB_PARTY_DIRECTOR_TEST=host_press=0@3"]
         self.assertEqual(smoke.stuck_seconds(ph), 150)
 
+    def test_instances_run_uses_the_stuck_watch_under_its_own_name(self):
+        # 0.7.9: `watch` is the crash plan's loop variable in run(); a clash crashed every scripted run (s2, twice)
+        import re
+        src = (MP / "instances.py").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"^\s+if watch:", src, re.M))
+        self.assertNotIn("watch.feed(", src.replace("stuck_watch.feed(", ""))
+
     def test_watch_progress_dead_and_stuck(self):
         import instances
         w = instances.StuckWatch(2, 100, 50)
