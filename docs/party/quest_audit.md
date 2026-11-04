@@ -149,8 +149,8 @@ The ten things most likely to go wrong in the next ~5 hours, and what to do in g
       can neither see, hit nor be hit by them (hits are decided on the victim's game); their kill
       echoes go to the host only (the guest's game has no such enemy to see die), as in vanilla. Only 12905406 is ever started
       (chalice layout m29_01_00_56); the m24_01 / m25 / m26 ones are cut content (no
-      InitializeEvent anywhere). Nothing to fix: no enemy whose existence or HP differs while both
-      can fight it.
+      InitializeEvent anywhere). Fixed 0.7.9 (CL-20d595): a guest's copy of the spawn events now passes
+      the chr type gate (party_npcfight_rules.h kGuestRuns, smoke `scb`), so a guest alone near one makes it appear for everyone.
     * *Insight gains:* every host source reaches the guests present: 9350 boss kills (N - 1 on top
       of the native +1) and first encounters / story (N), the kidnap's +1 (9422) and the Chalice
       Dungeon boss events (12901588/589/591, 12901708/712/718/722), which give Insight with a bare
