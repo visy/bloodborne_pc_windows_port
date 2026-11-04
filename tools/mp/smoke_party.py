@@ -3883,7 +3883,8 @@ def check_jl(v, L, d: Path):
     own = L.find(1, r"test: start lamp %s \(from" % GM_OWN)
     v.step("jl the guest started in its own world", bool(own), own[1][:150] if own else "no start-lamp line")
     w = need(v, L, "jl the host's lamp is written into the guest's own save", 1,
-             r"written into the own save \(shared lamps; lamps.* %s" % JL_LAMP[0], 0,
+             r"written into the own save \(shared lamps; lamps.* %s|lamp repair: lamp %s had its lamp-lit flag"
+             % (JL_LAMP[0], JL_LAMP[0]), 0,  # the lamp repair can set it first (0.7.8)
              what="the host's lamp never reached the guest's save (0.7.6 report)")
     need(v, L, "jl the lamp shows lit in the host's world for the guest", 1, r"listonly: lamp %s is lit on this game" % JL_LAMP[0], 0)
     need(v, L, "jl the guest's list opens at the lamp", 1, r"test: warp menu up \(listonly\)", j or 0)
@@ -6807,6 +6808,9 @@ def check_eh(v, L):
     need(v, L, "eh its kill pays them (the game), the party stain goes", 1,
          r"party stain: the game paid its \d+ Blood Echoes", held or 0)
     pays = L.all(1, r"party stain: recovered \d+ Blood Echoes|party stain: the game paid its \d+ Blood Echoes")
+    # A frail guest can die again after the payment: that new stain pays on its own, so count up to it
+    deaths = L.all(1, r"party stain \(death in the host's world\)")
+    pays = [p for p in pays if len(deaths) < 2 or p[0] < deaths[1][0]]
     v.step("eh the echoes are paid exactly once", len(pays) == 1,
            "; ".join("+%.1f s %s" % (t, l[:110]) for t, l in pays) or "never paid")
     check_common(v, L, "eh")
