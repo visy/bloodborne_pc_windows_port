@@ -7332,6 +7332,10 @@ def prep_sgp(root: Path):
         sys.exit("sgp: the fixture %s is missing (docs/party/test_saves.md)" % SGP_FIXTURE)
     _cl_saves(root, SGP_FIXTURE, 1)
     user = root / "inst1" / "user"
+    # The instance folder outlives the phases: a party_characters.txt of an earlier phase's character in slot 0 makes
+    # the start purge (runtime_savepolicy_side_files) drop every slot-0 line of the list below as "another
+    # character's" before the game reads it (smoke6: "3 party side file entries dropped"). Start with no record.
+    (user / "party_characters.txt").unlink(missing_ok=True)
     # A save last written as a summoned guest carries the phantom mark (chr type 1): the own world of such a save
     # does not load. The test copy has it cleared (the launcher's save editor does the same: repair_phantom_mark).
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
