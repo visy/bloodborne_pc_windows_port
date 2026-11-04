@@ -41,7 +41,7 @@ only ever set from the host's own type 7 sent in the last TTL seconds: a host wi
 here. A client asks type 8 first and falls back to type 2 when the lobby does not answer (an older lobby drops type 8).
 Mods label (0.7.8): what the host's game loaded, so a guest sees it before joining.
   type 10 announce mods  (host -> lobby, right after type 1/7; only when mods are loaded; ignored without a live entry)
-                   label: u8 len + ASCII, 1..32 characters of a-z 0-9 @ . _ : + - (e.g. "nocturne@1.0", "mods:3f9a12c0")
+                   label: u8 len + ASCII, 1..255 characters of a-z 0-9 @ . _ : + - (e.g. "nocturne@1.0", "mods:3f9a12c0")
   type 11 list3    offset u16                      (as type 8, asks for the reply with labels)
   type 12 reply3   as type 9, each entry followed by label: u8 len + ASCII (0 = no label)
 The lobby only stores and relays the label (it never interprets it); it lives as long as the entry, like type 7. A
@@ -78,8 +78,8 @@ TTL = 30.0                  # seconds an entry lives without a new announce
 NAME_MAX_CHARS = 16
 NAME_MAX_BYTES = 48
 BUILD_MAX = 32
-LABEL_MAX = 32
-LABEL_RE = re.compile(rb"[a-z0-9@._:+-]{1,32}")   # the mods label (type 10), whole match only
+LABEL_MAX = 255
+LABEL_RE = re.compile(rb"[a-z0-9@._:+-]{1,255}")   # the mods label (type 10), whole match only
 RATE_PER_SEC = 2.0          # per source address, token bucket
 RATE_BURST = 8.0
 DEFAULT_NET = "10.8.0.0/22"   # 0.7.8: room for 1021 players (the server pool may still be /24)
@@ -205,7 +205,7 @@ def encode_announce_ext(invaders: bool, boss: bool, area: int, phase: int, ng: i
 
 
 def parse_announce_mods(body: bytes):
-    """The label string or None. Strict: u8 len + exactly that many bytes, all of a-z 0-9 @ . _ : + -, 1..32."""
+    """The label string or None. Strict: u8 len + exactly that many bytes, all of a-z 0-9 @ . _ : + -, 1..255."""
     if len(body) < 2 or body[0] != len(body) - 1 or body[0] > LABEL_MAX:
         return None
     label = body[1:]
