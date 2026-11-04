@@ -297,11 +297,15 @@ inline End CheckEnd(const Live& l) {
 
 // ---- the wire: EVENT "invade", host -> every member ----
 // {"s":<0 leave, 1 pending, 2 in>,"n":"<name>","w":"<end word>"}  `n` is a link member name (A-Za-z0-9_-, <= 16).
+// 0.7.9: a pending / in message carries ,"h":<0|1>: the host's phantom health for the invasion (1 full health, 0 the
+// game's cut), decided by the host's rules (party_levelsync_rules.h PhantomCutOn with the invasion as PvP). The
+// invader's game gets no host rules, so it follows this. A message without "h" (0.7.8) is still read (full_hp -1).
 
 struct Msg {
     int state = 0;      ///< 0 over, 1 pending (admitted, on the way), 2 in the world
     std::string name;
     End why = End::None;
+    int full_hp = -1;   ///< 0.7.9, state 1/2: 1 full health, 0 the game's cut, -1 not said
 };
 
 inline bool NameOk(const std::string& n) {
@@ -315,6 +319,8 @@ inline std::string Encode(const Msg& m) {
     char b[160];
     if (m.state == 0 && m.why != End::None)
         std::snprintf(b, sizeof b, "{\"s\":0,\"n\":\"%s\",\"w\":\"%s\"}", m.name.c_str(), EndWord(m.why));
+    else if (m.state != 0 && m.full_hp >= 0)
+        std::snprintf(b, sizeof b, "{\"s\":%d,\"n\":\"%s\",\"h\":%d}", m.state, m.name.c_str(), m.full_hp ? 1 : 0);
     else
         std::snprintf(b, sizeof b, "{\"s\":%d,\"n\":\"%s\"}", m.state, m.name.c_str());
     return b;
@@ -337,6 +343,14 @@ inline bool Decode(const std::string& body, Msg* out) {
         body[static_cast<std::size_t>(end)] == '\0') {
         if (s < 0 || s > 2 || !NameOk(name)) return false;
         *out = Msg{s, name, End::None};
+        return true;
+    }
+    end = 0;
+    int h = -1;
+    if (std::sscanf(body.c_str(), "{\"s\":%d,\"n\":\"%32[^\"]\",\"h\":%d}%n", &s, name, &h, &end) == 3 && end > 0 &&
+        body[static_cast<std::size_t>(end)] == '\0') {
+        if (s < 1 || s > 2 || !NameOk(name) || (h != 0 && h != 1)) return false;
+        *out = Msg{s, name, End::None, h};
         return true;
     }
     return false;

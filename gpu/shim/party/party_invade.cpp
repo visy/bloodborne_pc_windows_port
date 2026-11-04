@@ -10,6 +10,7 @@
 #include "party_director.h"
 #include "party_display_name.h"
 #include "party_hud.h"
+#include "party_levelsync_rules.h"
 #include "party_link.h"
 #include "party_runtime.h"
 #include "party_status.h"
@@ -66,6 +67,7 @@ struct Shared {
     Where where;
     std::string invader_name;  // real member name; "" none
     int invader_state = 0;     // 0 none, 1 pending, 2 in
+    int host_full_hp = -1;     // invader side: the host's phantom health for this invasion (Msg::full_hp), -1 not said
     std::string host_name;     // guest side: the host's name (display)
     std::string end_name;      // guest side: an invasion that just ended (name, why), shown by the tick
     End end_why = End::None;
@@ -335,9 +337,11 @@ void OnEvent(int from_slot, const std::string& name, const std::string& body) {
         if (m.why != End::None) g.end_name = m.name, g.end_why = m.why;
         g.invader_name.clear();
         g.invader_state = 0;
+        g.host_full_hp = -1;
     } else {
         g.invader_name = m.name;
         g.invader_state = m.state;
+        if (m.full_hp >= 0) g.host_full_hp = m.full_hp;
     }
     // The notice itself is shown by the tick (main thread), from the same fields.
 }
@@ -360,6 +364,12 @@ std::string InvaderName() {
 
 bool LocalIsInvader() {
     return JoinAsInvader();
+}
+
+int HostFullHp() {
+    Shared& g = G();
+    std::lock_guard<std::mutex> lk(g.mu);
+    return g.invader_state ? g.host_full_hp : -1;
 }
 
 Where Announced() {
@@ -601,6 +611,11 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
         const int state = arrived ? 2 : 1;
         if (g_inv.announced != state || now - g_inv.sent_at >= kReportEveryS) {
             Msg m{state, ent.name, End::None};
+            // 0.7.9: the host's rules decide the phantom cut in an invasion (it is PvP); the invader follows this.
+            m.full_hp = levelsync::PhantomCutOn(party::status::HostRuleOn(party::status::HostRule::PhantomHp), true,
+                                                party::status::HostRuleOn(party::status::HostRule::PvpFullHp))
+                            ? 0
+                            : 1;
             link->post_event(party::kBroadcast, kEventName, Encode(m));
             if (g_inv.announced != state) {
                 Notice(state == 2 ? "Invader " + Shown(ent.name) + " has entered your world: fight!"
