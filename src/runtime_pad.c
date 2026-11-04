@@ -952,6 +952,10 @@ static volatile uint32_t director_buttons;
 void runtime_pad_director_press(uint32_t buttons) { director_buttons=buttons; }
 /* runtime_pad_director_sticks: the sticks the director holds (0..255; -1 leaves that axis to the
  * player): the world warper's camera sweeps and walk loops (gpu/shim/party/world_warper.h). */
+/* runtime_pad_director_mask: buttons held back from the player (the title's Cross while the FROM sign-in runs:
+ * a Continue pressed meanwhile leaves the game offline). The director's own presses and the pad file's pass. */
+static volatile uint32_t director_mask;
+void runtime_pad_director_mask(uint32_t buttons) { director_mask=buttons; }
 static volatile int director_stick[4]={-1,-1,-1,-1};
 void runtime_pad_director_sticks(int lx, int ly, int rx, int ry) {
     director_stick[0]=lx; director_stick[1]=ly; director_stick[2]=rx; director_stick[3]=ry;
@@ -1232,6 +1236,7 @@ static void sample(PadData *d) {
     }
     record_sample(d);
     replay_sample(d);
+    d->buttons&=~(director_mask & ~(injected.buttons|director_buttons));
     d->buttons|=injected.buttons|director_buttons;
     if ((d->buttons & BTN_CROSS) && !(last_sample_buttons & BTN_CROSS)) cross_presses=cross_presses+1;
     last_sample_buttons=d->buttons;

@@ -4,6 +4,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.7.9 (unreleased)
 
+- **Fixed: a slow sign-in at the title no longer leaves the game offline for the whole session** (signin079, CL-4b4614, player report: a guest kicked home when the host started a Chalice Dungeon, then the load failed). The game's online sign-in (ss.info, login, ...) runs after the title's first press and a Continue pressed before it ends loads the world offline, where no Chalice summon works. In a party the title now waits for the sign-in: the automatic Continue counts an unanswered ss.info request as the sign-in running, and when you press Continue by hand the button is held back until the sign-in is over (30 s at most; `BB_PARTY_SIGNIN_HOLD=0` turns it off). New smoke phase `cas` (a 17 s late ss.info answer, then a Chalice summon) and the test knob `BB_HTTP_DELAY_SSINFO_MS`.
+
 - **Test tools: a guest that dies, ends its game and restarts gets back into the host's world** (CL-8c879b, player report over a VPN). New smoke phases `gdr` / `gdrd` / `gdrb` / `gdrf` (group `guest_restart`): two players, the guest dies in the host's world, its game is killed 8 s later, restarts, and must be back in the host's room with no failed title join and nobody kicked, on the clean link, under simulated internet (`dsl`, `bad`) and with *Fast rejoin* off. The report's own logs showed the host never heard the guest's game traffic over the VPN (fixed in 0.7.8: the VPN address is always used, the packet size limit) and the *Fast rejoin* timers undone by another patch list (also fixed in 0.7.8); the phases found nothing else wrong (about 15 s from kill to back in the room on every link).
 
 ## 0.7.8 (2026-11-04)
