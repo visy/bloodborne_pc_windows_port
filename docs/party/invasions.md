@@ -57,8 +57,8 @@ The host's link drops, on both sides:
 
 | Direction | Allowed for an invader | Dropped |
 |---|---|---|
-| invader -> host | EVENT `invade_fell`, EVENT `party_chat` (masked and rate limited like every member's), pong, roster, vitals | every other EVENT (progress, flags, items, give items, gather, travel votes, stay home, world actions ...), PARTY_CMD, PROGRESS, every RPC except the game's own session API (`http`, the room and signaling calls: the bell and the summon need them; `kick_member` and anything else is answered "not allowed for an invader") |
-| host -> invader | EVENT `invade`, `party_chat`, `host_session_end`; roster; vitals | every other EVENT, PARTY_CMD and PROGRESS: it never receives the party's shared progress, flags or items |
+| invader -> host | EVENT `invade_fell`, EVENT `party_chat` (masked and rate limited like every member's), EVENT `b2` with exactly the body `{"op":"dsum_req"}` or `{"op":"dsum_done","ok":0|1}` (0.7.9: the direct summon, see below; matched whole, never as a substring), pong, roster, vitals | every other EVENT (every other `b2` body included) (progress, flags, items, give items, gather, travel votes, stay home, world actions ...), PARTY_CMD, PROGRESS, every RPC except the game's own session API (`http`, the room and signaling calls: the bell and the summon need them; `kick_member` and anything else is answered "not allowed for an invader") |
+| host -> invader | EVENT `invade`, `party_chat`, `host_session_end`; EVENT `b2` `dsum_room` (the answer to its room request) and `dsum_busy` (boss / cutscene hold text); roster; vitals | every other EVENT, PARTY_CMD and PROGRESS: it never receives the party's shared progress, flags or items |
 
 So an invader cannot write the host's world progress or items, and its own save is not changed by the party.
 An invader's slot is never kept: a lost link releases it at once (no 130 s resume), and the invader's link does not reconnect
@@ -87,6 +87,25 @@ Abuse limits: the rate limit above (per address), **Block the invader** (the nam
 the session, the link also refuses the name), at most one invader, hateful names are masked everywhere they are shown
 (`bbname::Display`; the log names no one), and the usual Argon2/AUTH throttles are not involved (an invader has no password to
 guess).
+
+## One load in: the direct summon (0.7.9)
+
+Before 0.7.9 the host's link dropped the invader's `b2` event (`dsum_req`), so the host never answered, the invader waited
+4 s for nothing, then took the old gather / bell sign path (a load into the host's map in its own world, bell polling rounds,
+then the summon: about 90 s from admission, two loads, a silent wait in the Hunter's Dream and a silent move). Now the
+invader asks for the host's room exactly like a co-op guest (`BB_PARTY_GATHER_DSUM`, default on: it rings where it stands, the
+host's answer carries the room, K6 holds the game's own summon load and the load goes straight into the host's map and
+world: one loading screen). The host answers only after the invader gate has admitted it (the request needs an admitted
+slot, the HELLO / AUTH gate ran: boss fight, cutscene, loading, full, ...) and answers only that slot. The invader gets no
+other `b2` action (no travel, gather, progress, item or flag). The host's `HostRefusal` checks (boss / cutscene /
+prologue / travelling) apply to the room request as to a guest's.
+
+What the invader sees while it waits: *Invading: waiting to be let in* (persistent line and toast) until the room comes,
+then *Joining the host's world...*, and if the quick way fails *Invading: the quick way failed, taking the slower way in* /
+*going to the host's area first*; nothing happens silently.
+
+Placement: the invader arrives like a summoned guest, beside the host's arrival point (the vanilla invader appears away from
+the host; not changed in 0.7.9, a placement apart from the host is a separate item).
 
 ## Rewards and win / lose
 

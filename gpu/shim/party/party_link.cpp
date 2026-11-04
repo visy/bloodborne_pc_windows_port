@@ -1401,7 +1401,7 @@ struct PartyLink::Impl {
             es.rx_last = cursor;
             if (!valid_event_name(name))
                 log("party link: dropped an event with an invalid name from slot " + std::to_string(from_slot));
-            else if (from_invader && !invader_event_from_ok(name))
+            else if (from_invader && !invader_event_from_ok(name, json))
                 log("party link: dropped the event '" + name + "' from the invader in slot " + std::to_string(from_slot));
             else if (cb.on_event)
                 post_peer(c, [this, from_slot, cursor, name = std::move(name), json = std::move(json)] {
@@ -2788,7 +2788,7 @@ std::uint64_t PartyLink::Impl::send_event_locked(int slot, const std::string& na
     }
     std::uint64_t last = 0;
     for (auto& [s, m] : I.members) {
-        if (m.invader && !invader_event_to_ok(name)) continue;  // an invader is told nothing of the party's world
+        if (m.invader && !invader_event_to_ok(name, json)) continue;  // an invader is told nothing of the party's world
         if (slot == kBroadcast || slot == s) last = push(m.ev, m.conn);
     }
     return last;
@@ -2931,11 +2931,17 @@ bool PartyLink::last_welcome_resumed() const {
     return impl_->last_resumed;
 }
 
-bool invader_event_from_ok(const std::string& name) {
-    return name == "invade_fell" || name == "party_chat";
+bool invader_event_from_ok(const std::string& name, const std::string& json) {
+    if (name == "invade_fell" || name == "party_chat") return true;
+    // 0.7.9: the invader's one-load direct summon needs exactly two b2 messages, matched whole (never a substring: the
+    // b2 handler dispatches on substrings, so anything looser would let a hostile body carry another op).
+    return name == "b2" && (json == "{\"op\":\"dsum_req\"}" || json == "{\"op\":\"dsum_done\",\"ok\":1}" ||
+                            json == "{\"op\":\"dsum_done\",\"ok\":0}");
 }
-bool invader_event_to_ok(const std::string& name) {
-    return name == "invade" || name == "party_chat" || name == "host_session_end";
+bool invader_event_to_ok(const std::string& name, const std::string& json) {
+    if (name == "invade" || name == "party_chat" || name == "host_session_end") return true;
+    // 0.7.9: the host's answer to the invader's room request (and the boss / cutscene hold notice), nothing else of b2.
+    return name == "b2" && (json.rfind("{\"op\":\"dsum_room\"", 0) == 0 || json.rfind("{\"op\":\"dsum_busy\"", 0) == 0);
 }
 
 bool invader_rpc_ok(const std::string& kind) {

@@ -280,8 +280,8 @@ struct LinkConfig {
 
 // 0.7.8: the only EVENTs an invader may send to the host, and the only ones the host sends it (the link drops the
 // rest on both sides: progress, items, gathers, votes, world actions, lamps never cross to or from an invader).
-bool invader_event_from_ok(const std::string& name);
-bool invader_event_to_ok(const std::string& name);
+bool invader_event_from_ok(const std::string& name, const std::string& json);
+bool invader_event_to_ok(const std::string& name, const std::string& json);
 // 0.7.8: the RPCs an invader may make: the game's own session API (the FROM server emulation "http" and the room calls it needs to
 // ring the bell and be summoned). Everything else, e.g. "kick_member", is refused.
 bool invader_rpc_ok(const std::string& kind);
