@@ -369,7 +369,8 @@ before anyone is in the game):
   every screen. The DLC bosses work the same way. Ebrietas, Lady Maria and Laurence start only with
   what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
   until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
-  starts with anyone's hit.
+  starts with anyone's hit. The Celestial Emissary's small emissaries appear on every screen, whoever
+  goes through the fog first.
 - **Guests can hit NPCs.** A guest's blows land on the host world's NPCs as the host's do (the friendly
   hunters and the others the host could hurt): they take damage and a killing blow counts for
   everyone. An NPC that turns hostile after a few hits (Alfred) does so on a guest's blows too.
