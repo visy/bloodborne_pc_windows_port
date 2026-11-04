@@ -8464,7 +8464,8 @@ def phase_ojl(only):
 
 def check_ojl(v, L):
     need(v, L, "ojl guest: refused with the level range sentence", 1, r"Can't join .*: your level 900 is outside their range \(\d+-\d+\)")
-    none_of(v, L, "ojl the guest never joined the host's world", r"cooperators 0 -> 1", insts=(0,))
+    # The guest dials while the host's level is still unknown (no world yet): admitted, then removed by the vitals recheck.
+    need(v, L, "ojl host: the guest is removed (HELLO gate or the vitals recheck)", 0, r"outside the host's range \d+-\d+: removed|open-party join level 900 refused")
     check_common(v, L, "ojl")
 
 
@@ -12477,7 +12478,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only and a.lane_id < 0:  # (a lane child keeps the one phase it was given)
-        a.phase = ",".join(p for p in ("pc", "vm", "yj", "s1", "s2", "rules", "ss", "sh", "iv", "ivn", "ivx", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cgt", "cgp", "cgu", "caa", "cas", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
+        a.phase = ",".join(p for p in ("pc", "vm", "yj", "s1", "s2", "rules", "ss", "sh", "iv", "ivn", "ivx", "ivl", "ojl", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cgt", "cgp", "cgu", "caa", "cas", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
                                      "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "mp", "mpg", "mph", "jl", "ml", "mg", "ll", "hlq", "hlr", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "emf", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvm", "cvc", "cva", "cvf", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "gv", "gvg", "gvr", "gvl", "gvn", "gvm", "gvs", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "gdr", "gdrd", "gdrb", "gdrf", "mesh", "oum", "meshm", "fp", "fp5", "oj", "lo", "po", "pos", "sg", "sg2", "sgb", "sgb2", "sgb3", "sgp", "csh", "csh2", "csh3", "cis", "ba", "bh", "bk", "hg", "bg", "lr", "mi", "mig", "lw", "amp", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
