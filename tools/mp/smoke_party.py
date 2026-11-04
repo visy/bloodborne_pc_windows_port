@@ -3495,6 +3495,18 @@ ML_LAMP = ("2602950", ["12607810", "12607811", "72600200"])
 ML_OBJ = "2601950"
 
 
+def _light_lamp(who, obj, flag, mapname, first_delay):
+    """Chain steps that light the lamp object `obj` (its lit flag `flag`) on the player's own game: stand 1.2 m from it and
+    press Cross twice, each side of the lamp in turn until the flag rises (a lamp's approach side is not known and a wrong
+    side finds no prompt: ml / mg never lit the Mensis lamp from side 0 in 0.7.8 and waited 240 s for its flag; hlq does the
+    same). The tries after the success wait on a flag that stays 1 and never run."""
+    steps = ["god"]
+    for ang in (0, 180, 90, 270):
+        steps += ["%s_obj=%s:1.2:%d@%d%%%s?%s=0" % (who, obj, ang, first_delay if ang == 0 else 4, mapname, flag),
+                  "%s_press=0x4000@3%%%s!" % (who, mapname), "%s_press=0x4000@4%%%s!" % (who, mapname)]
+    return ",".join(steps)
+
+
 def _ml_env(host, guest):
     return dict(
         count=2, headless=0, seconds=300,
@@ -3508,7 +3520,7 @@ def _ml_env(host, guest):
 
 
 def phase_ml(only):
-    ph = _ml_env("god,host_obj=%s:1.2:0@6%%m26_00,host_press=0x4000@3%%m26_00!,host_press=0x4000@4%%m26_00!" % ML_OBJ,
+    ph = _ml_env(_light_lamp("host", ML_OBJ, ML_LAMP[1][2], "m26_00", 6),
                  "god,guest_die@4%%m26_00?%s=1" % ML_LAMP[1][2])
     ph.update(name="ml", until=[r"1:guest: died alone: revived|1:test: FAILED"], until_hold=10,
               watch=["--watch", r"guest death redirect: host's last lamp %s=mlredir@1,3" % ML_LAMP[0],
@@ -3518,7 +3530,7 @@ def phase_ml(only):
 
 def phase_mg(only):
     ph = _ml_env("god,host_die@6%%m26_00?%s=1" % ML_LAMP[1][2],
-                 "god,guest_obj=%s:1.2:0@25%%m26_00,guest_press=0x4000@3%%m26_00!,guest_press=0x4000@4%%m26_00!" % ML_OBJ)
+                 _light_lamp("guest", ML_OBJ, ML_LAMP[1][2], "m26_00", 25))
     ph.update(name="mg", until=[r"0:host death taken: .*revive at lamp|0:test: FAILED"], until_hold=12,
               watch=["--watch", r"host death taken: =mgdie@1,4"])
     return ph
@@ -4323,13 +4335,13 @@ def phase_bg(only):
     lap = int(os.environ.get("BB_BG_LAP", "70"))            # passive seconds in the fight
     host = ",".join([
         "god", "goods=4014:0",
-        "host_warp=3402953@8^1",                                   # the party to the cathedral lamp
+        *_laurence_enter("host", 10, True),                        # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,            # the guest is inside: the skull, the fight starts
         "host_chr=3400850:%s@20%%m34_00" % hdist,                   # after the scene: beside the boss, passive
         "host_press=0x0@%d%%m34_00" % lap,
     ])
     g1 = ",".join((["god"] if os.environ.get("BB_BG_GUESTGOD") == "1" else []) + [
-        "guest_move=%s@6%%m34_00" % BR_SIGNAL,                      # inside, by the lamp
+        *_laurence_enter("guest", 12),                              # in through his fog, to the altar spot
         "guest_press=0x0@22%m34_00!",                               # the scene
         "guest_chr=3400850:%s@2%%m34_00" % gdist,                   # in the arena, away from the boss
         "guest_press=0x0@%d%%m34_00" % lap,
@@ -4337,7 +4349,7 @@ def phase_bg(only):
     ])
     return dict(
         name="bg", seconds=420, count=2, headless=0, until_hold=4,
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LAMP_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
         crash=[], until=BG_UNTIL,
     )
@@ -4382,7 +4394,7 @@ def phase_lr(only):
     m = "%m34_00"
     host = ",".join([
         "log_pos=2", "goods=4014:0",
-        "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
+        *_laurence_enter("host", 10, True),                          # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,             # the guest is inside: the skull
         "host_die@25%s?member=bar" % m,                              # try 1: after the scene, the guest in the fight: the host dies
         # try 2 (after the wipe's load): the fog is up, a player walk to it
@@ -4394,7 +4406,7 @@ def phase_lr(only):
     ])
     g1 = ",".join([
         "log_pos=2",
-        "guest_move=%s@6%s" % (BR_SIGNAL, m),                        # inside, by the lamp
+        *_laurence_enter("guest", 12),                               # in through his fog, to the altar spot
         "guest_press=0x0@22%s!" % m,                                 # the scene
         "guest_chr=3400850:%s@2%s" % (dist, m),
         "guest_die@4%s?host=spec" % m,                               # the host is down: the wipe
@@ -4406,7 +4418,7 @@ def phase_lr(only):
         "guest_press=0x0@%d%s" % (win, m),
         "guest_press=0x0@2%s" % m,
     ])
-    env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"]
+    env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LAMP_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_PARTY_AI_LOG=1", "BB_BOSS_LOG=1"]
     if os.environ.get("BB_LR_NET"):
         env.append("BB_NET_SIM=" + os.environ["BB_LR_NET"])
     if os.environ.get("BB_LR_ENV"):
@@ -5080,6 +5092,24 @@ BR_UNTIL = [r"1:travel step (\d+)/\1: guest_stick[\s\S]*approach: (arrived|BLOCK
             r"0:travel step (\d+)/\1: host_stick[\s\S]*approach: (arrived|BLOCKED|GAVE UP)"]
 
 
+# The Grand Cathedral lamp 3402953 is lit by beating Laurence (CL-b457f5); the test save had it lit with Laurence alive, so
+# the phases warped a party straight into his room, which no player can do. Now the fixture clears the lamp's flags (lit 13407870 /
+# 13407871, name 73400203: lamp_travel_rules.h, n = 3 of block 340) and the party enters the real way: the party travels to
+# the Hunter's Nightmare lamp 3402950, each player is put OUTSIDE his fog 3401850 (6 m on its far side) and walks in through it
+# by the stick, then on to the altar spot (BR_SIGNAL). Never a teleport into the arena (the boss repro rule).
+BR_LAMP_CLEAR = "13407870,13407871,73400203"
+BR_SIGNAL_XZ = "-434.55:-264.25"
+
+
+def _laurence_enter(who, first_delay, warp=False):
+    """The steps of `who` (host / guest) from outside Laurence's fog to the altar spot inside; the host also travels first."""
+    m = "%m34_00"
+    return (["host_warp=3402950@8^1"] if warp else []) + [
+        "%s_obj=3401850:6:180@%s%s" % (who, first_delay, m),
+        "%s_stick=obj:3401850:4:0:%s@2%s" % (who, BR_WALK, m),          # in through the fog (open: the rule under test)
+        "%s_stick=%s:1.5:200@2%s" % (who, BR_SIGNAL_XZ, m)]              # on to the altar spot
+
+
 def phase_br(only):
     # The reward item box after each kill holds the stick (run 1: both screens showed Beast's Embrace
     # + Guidance with an OK row through the walks): Cross twice closes it. R3 (0x4) after each
@@ -5088,7 +5118,7 @@ def phase_br(only):
     # the walk itself changes the map (run 1: the host's next step waited for m34_00 for good).
     host = ",".join([
         "god", "goods=4014:0",                                       # no Laurence's Skull yet
-        "host_warp=3402953@8^1",                                     # the party to the cathedral lamp
+        *_laurence_enter("host", 10, True),                          # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,              # the guest walked out and in: the skull
         "host_kill=3400850@8%m34_00~",                               # Laurence, 8 s after his scene
         "host_press=0x4000@8%m34_00!", "host_press=0x4000@2%m34_00!",  # OK on the reward box
@@ -5103,6 +5133,7 @@ def phase_br(only):
     ])
     g1 = ",".join([
         "god",
+        *_laurence_enter("guest", 12),                               # in through his fog (the way a player comes)
         "guest_obj=3401850@10%m34_00",                               # at Laurence's fog (inside, by the lamp)
         "guest_press=0x4@1%m34_00!", "guest_press=0@1%m34_00!",       # R3
         "guest_stick=obj:3401850:4:180:%s@2%%m34_00" % BR_WALK,       # through it
@@ -5117,7 +5148,7 @@ def phase_br(only):
     ])
     return dict(
         name="br", seconds=720, count=2, headless=0, pads=(0, 1),
-        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR],
+        env=["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LUDWIG_CLEAR + "," + BR_LAMP_CLEAR],
         # 0.7.7 (bossrunes): the Holy Moonlight Sword's award spot lot 43211 (the weapon is shared with every member)
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "0:BB_PARTY_ITEMS_HOST_TEST=43211"],
         watch=["--watch", r"test: (?:host|guest)_stick: object 340(?:1850|1801) found=brdoor@0.5,4"],
