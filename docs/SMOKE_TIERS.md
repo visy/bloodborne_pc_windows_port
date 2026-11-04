@@ -4,7 +4,7 @@
 
 | Tier | Flag | Phases | Time (one lane, no queue wait) | Use |
 |---|---|---|---|---|
-| fast | `--tier fast` | 19, one per feature area (`FAST_PHASES`) | see "Measured" | every merge into master, every agent before handing back, a changed test harness |
+| fast | `--tier fast` | 21, one per feature area (`FAST_PHASES`) | see "Measured" | every merge into master, every agent before handing back, a changed test harness |
 | quick | `--tier quick` (default) | 40, the core party flow | about 1.5 to 2.8 h | a game-code change with no `CHANGED_MAP` entry |
 | changed | `--changed-since TAG` | the phases the changed files map to | varies | a release candidate, to find what to rerun |
 | release | `--tier release` | every phase but the variants in `RELEASE_SKIP` | about 5 h | the release gate (docs/RELEASE_CHECKLIST.md) |
@@ -17,7 +17,7 @@ A tier only chooses which phases run. Every phase keeps all of its checks.
 One phase per area, the cheapest that proves the area's core claim: `s1` join / death / travel / boss / wipe, `s2` items
 and kills, `ga` gather, `lf` lifts and ladders, `lt` two riders on a lift, `fd` deep fall, `kw` story warp, `cpr` chalice
 progress, `bf` fight load, `br` boss rooms and fog walls, `bd` boss drops, `tv` travel vote, `nfa` NPC fights, `hlq` host
-lamp, `rf` Rom's fog, `px` poison, `csh` chalice shop, `gvm` give menu, `eh` echo hold. Areas it skips (chalice dungeon entry, lift walk-ins, covenants, NPC quests, PvP,
+lamp, `rf` Rom's fog, `px` poison, `csh` chalice shop, `gvm` give menu, `eh` echo hold, `gdr` guest restart, `ivl` invader level (the invasion level-range rule). Areas it skips (chalice dungeon entry, lift walk-ins, covenants, NPC quests, PvP,
 shops, music, ...) are in the release tier and are picked by `--changed-since`.
 
 ## Fail fast
