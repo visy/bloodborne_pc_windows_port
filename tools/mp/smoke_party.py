@@ -5247,7 +5247,7 @@ def _laurence_enter(who, first_delay, warp=False):
     return (["host_warp=3402950@8^1"] if warp else []) + [
         "%s_obj=3401850:6:0@%s%s" % (who, first_delay, m),
         "%s_stick=obj:3401850:4:180:%s@2%s" % (who, BR_WALK, m),        # in through the fog (open: the rule under test)
-        "%s_stick=%s:1.5:200@2%s" % (who, BR_SIGNAL_XZ, m)]              # on to the altar spot
+        "%s_stick=%s:1.0:200@2%s" % (who, BR_ALTAR_XZ if who == "host" else BR_SIGNAL_XZ, m)]  # on to the altar spot
 
 
 def phase_br(only):
