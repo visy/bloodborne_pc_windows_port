@@ -57,5 +57,9 @@ void RequestBlock();
 std::string InvaderName();
 /// This game is the invader and stands in the host's world (its own chr is the invader's).
 bool LocalIsInvader();
+/// Any thread, the invader's game: the host's phantom health for this invasion (1 full health, 0 the game's cut), -1
+/// before the host said or with no invasion on. The host's rules decide it (an invasion is PvP); the invader gets no
+/// host rules, so seamless_rules ApplyPhantomHp follows this.
+int HostFullHp();
 
 }  // namespace coop::invade
