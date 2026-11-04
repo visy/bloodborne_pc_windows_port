@@ -39,6 +39,14 @@ The extension lives as long as the entry (TTL) and is replaced by the next type 
 older build, or "Allow invaders" off and no extension) is listed with flags bit2 clear and area 0. The bit2 flag is
 only ever set from the host's own type 7 sent in the last TTL seconds: a host with invasions off is never invadable
 here. A client asks type 8 first and falls back to type 2 when the lobby does not answer (an older lobby drops type 8).
+Mods label (0.7.8): what the host's game loaded, so a guest sees it before joining.
+  type 10 announce mods  (host -> lobby, right after type 1/7; only when mods are loaded; ignored without a live entry)
+                   label: u8 len + ASCII, 1..32 characters of a-z 0-9 @ . _ : + - (e.g. "nocturne@1.0", "mods:3f9a12c0")
+  type 11 list3    offset u16                      (as type 8, asks for the reply with labels)
+  type 12 reply3   as type 9, each entry followed by label: u8 len + ASCII (0 = no label)
+The lobby only stores and relays the label (it never interprets it); it lives as long as the entry, like type 7. A
+client asks 11, then 8, then 2. A client uses a label only as a key (a curated mod's id and version looked up in its own
+built-in list); it never builds a path or an address from it.
 The area id is a map id and nothing else (no coordinates); the client turns it into words (scripts/party_where.py
 holds the table the launcher uses: "Currently in: Yahar'gul (Blood Moon), NG").
 An announce is not answered; a list request is answered with one reply page. Anything malformed is
@@ -58,6 +66,7 @@ MAGIC = b"\xfaL"
 VERSION = 1
 T_ANNOUNCE, T_LIST, T_REPLY, T_BYE, T_STATS, T_STATS_REPLY = 1, 2, 3, 4, 5, 6
 T_ANNOUNCE_EXT, T_LIST2, T_REPLY2 = 7, 8, 9
+T_ANNOUNCE_MODS, T_LIST3, T_REPLY3 = 10, 11, 12
 F_PASSWORD, F_SELF = 1, 2
 F_INVADERS, F_BOSS = 4, 8   # type 9 only; type 3 never carries them
 
@@ -69,6 +78,8 @@ TTL = 30.0                  # seconds an entry lives without a new announce
 NAME_MAX_CHARS = 16
 NAME_MAX_BYTES = 48
 BUILD_MAX = 32
+LABEL_MAX = 32
+LABEL_RE = re.compile(rb"[a-z0-9@._:+-]{1,32}")   # the mods label (type 10), whole match only
 RATE_PER_SEC = 2.0          # per source address, token bucket
 RATE_BURST = 8.0
 DEFAULT_NET = "10.8.0.0/22"   # 0.7.8: room for 1021 players (the server pool may still be /24)
@@ -193,6 +204,23 @@ def encode_announce_ext(invaders: bool, boss: bool, area: int, phase: int, ng: i
             area.to_bytes(4, "big") + bytes([phase, ng]))
 
 
+def parse_announce_mods(body: bytes):
+    """The label string or None. Strict: u8 len + exactly that many bytes, all of a-z 0-9 @ . _ : + -, 1..32."""
+    if len(body) < 2 or body[0] != len(body) - 1 or body[0] > LABEL_MAX:
+        return None
+    label = body[1:]
+    return label.decode("ascii") if LABEL_RE.fullmatch(label) else None
+
+
+def encode_announce_mods(label: str) -> bytes:
+    b = label.encode("ascii")
+    return MAGIC + bytes([VERSION, T_ANNOUNCE_MODS, len(b)]) + b
+
+
+def encode_list3(offset: int = 0) -> bytes:
+    return MAGIC + bytes([VERSION, T_LIST3, (offset >> 8) & 255, offset & 255])
+
+
 def encode_list2(offset: int = 0) -> bytes:
     return MAGIC + bytes([VERSION, T_LIST2, (offset >> 8) & 255, offset & 255])
 
@@ -260,10 +288,21 @@ def parse_reply(data: bytes):
     return total, offset, out
 
 
+def parse_reply3(data: bytes):
+    """(total, offset, [entry dict]) of a type 12 reply or None. Entry: as parse_reply2 plus mods (the label, "" for none)."""
+    if len(data) < 9 or data[:2] != MAGIC or data[2] != VERSION or data[3] != T_REPLY3:
+        return None
+    return _parse_rows2(data, labels=True)
+
+
 def parse_reply2(data: bytes):
     """(total, offset, [entry dict]) of a type 9 reply or None. Entry: as parse_reply plus invaders, boss, area, phase, ng."""
     if len(data) < 9 or data[:2] != MAGIC or data[2] != VERSION or data[3] != T_REPLY2:
         return None
+    return _parse_rows2(data, labels=False)
+
+
+def _parse_rows2(data: bytes, labels: bool):
     total, offset, count = (data[4] << 8) | data[5], (data[6] << 8) | data[7], data[8]
     pos = 9
     out = []
@@ -286,9 +325,19 @@ def parse_reply2(data: bytes):
             return None
         build = data[pos:pos + b].decode("ascii", "replace")
         pos += b
-        out.append({"ip": ip, "port": port, "password": bool(flags & F_PASSWORD), "own": bool(flags & F_SELF),
-                    "invaders": bool(flags & F_INVADERS), "boss": bool(flags & F_BOSS), "players": players,
-                    "max": maxp, "area": area, "phase": phase, "ng": ng, "name": name, "build": build})
+        row = {"ip": ip, "port": port, "password": bool(flags & F_PASSWORD), "own": bool(flags & F_SELF),
+               "invaders": bool(flags & F_INVADERS), "boss": bool(flags & F_BOSS), "players": players,
+               "max": maxp, "area": area, "phase": phase, "ng": ng, "name": name, "build": build}
+        if labels:
+            if pos >= len(data) or pos + 1 + data[pos] > len(data):
+                return None
+            n = data[pos]
+            label = data[pos + 1:pos + 1 + n]
+            pos += 1 + n
+            if n and not LABEL_RE.fullmatch(label):
+                return None
+            row["mods"] = label.decode("ascii")
+        out.append(row)
     if pos != len(data):
         return None
     return total, offset, out
@@ -305,6 +354,7 @@ class Lobby:
         self.entries = {}   # ip -> (expiry, flags, port, players, max, build, name)
         self.buckets = {}   # ip -> (tokens, last)
         self.ext = {}       # ip -> (expiry, flags, area, phase, ng): the 0.7.8 extension (type 7)
+        self.mods = {}      # ip -> (expiry, label): the mods label (type 10)
 
     def allowed(self, ip: str) -> bool:
         try:
@@ -330,6 +380,8 @@ class Lobby:
             del self.entries[ip]
         for ip in [k for k, e in self.ext.items() if e[0] <= now or k not in self.entries]:
             del self.ext[ip]
+        for ip in [k for k, e in self.mods.items() if e[0] <= now or k not in self.entries]:
+            del self.mods[ip]
         # forget idle rate buckets (full again anyway)
         if len(self.buckets) > 2 * self.max_entries:
             self.buckets = {k: v for k, v in self.buckets.items() if now - v[1] < 10.0}
@@ -365,15 +417,22 @@ class Lobby:
             if p is not None and ip in self.entries:   # only a host that announced (type 1) and is alive
                 self.ext[ip] = (now + self.ttl,) + p
             return None
+        if kind == T_ANNOUNCE_MODS:
+            label = parse_announce_mods(body)
+            self.expire(now)
+            if label is not None and ip in self.entries:   # only a live host; the label is relayed, never interpreted
+                self.mods[ip] = (now + self.ttl, label)
+            return None
         if kind == T_BYE:
             if len(body) == 0:
                 self.entries.pop(ip, None)
                 self.ext.pop(ip, None)
+                self.mods.pop(ip, None)
             return None
-        if kind in (T_LIST, T_LIST2):
+        if kind in (T_LIST, T_LIST2, T_LIST3):
             if len(body) != 2:
                 return None
-            return self.page((body[0] << 8) | body[1], ip, now, extended=kind == T_LIST2)
+            return self.page((body[0] << 8) | body[1], ip, now, extended=kind != T_LIST, labels=kind == T_LIST3)
         return None
 
     def stats(self, data: bytes, now: float):
@@ -395,7 +454,7 @@ class Lobby:
              "free_slots": sum(max(0, e[4] - e[3]) for e in open_rows), "sizes": sizes, "builds": top}
         return MAGIC + bytes([VERSION, T_STATS_REPLY]) + json.dumps(d, separators=(",", ":"), sort_keys=True).encode()
 
-    def page(self, offset: int, requester: str, now: float, extended: bool = False) -> bytes:
+    def page(self, offset: int, requester: str, now: float, extended: bool = False, labels: bool = False) -> bytes:
         self.expire(now)
         rows = sorted(self.entries.items(), key=lambda kv: (kv[1][6].casefold(), kv[0]))
         total = len(rows)
@@ -410,6 +469,10 @@ class Lobby:
                 ent = (bytes(int(x) for x in ip.split(".")) + bytes([port >> 8, port & 255,
                        flags | own | (F_INVADERS if xf & 1 else 0) | (F_BOSS if xf & 2 else 0), players, maxp]) +
                        area.to_bytes(4, "big") + bytes([phase, ng, len(nb)]) + nb + bytes([len(bb)]) + bb)
+                if labels:
+                    m = self.mods.get(ip)
+                    lb = m[1].encode("ascii") if m else b""
+                    ent += bytes([len(lb)]) + lb
             else:   # the v1 row: an old client's strict parser accepts only the password and own bits
                 ent = (bytes(int(x) for x in ip.split(".")) + bytes([port >> 8, port & 255,
                        flags | own, players, maxp, len(nb)]) + nb + bytes([len(bb)]) + bb)
@@ -417,7 +480,8 @@ class Lobby:
                 break
             chunk += ent
             count += 1
-        return (MAGIC + bytes([VERSION, T_REPLY2 if extended else T_REPLY, total >> 8, total & 255, (offset >> 8) & 255, offset & 255,
+        kind = T_REPLY3 if labels else T_REPLY2 if extended else T_REPLY
+        return (MAGIC + bytes([VERSION, kind, total >> 8, total & 255, (offset >> 8) & 255, offset & 255,
                                count]) + bytes(chunk))
 
 
