@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <set>
+#include <tuple>
 
 namespace coop::gamedata {
 namespace {
@@ -308,6 +310,14 @@ Cat FlagCategories::Lookup(std::int64_t f) const {
     return Scan(Structural(), f);
 }
 
+std::vector<std::int64_t> FlagCategories::FlagsOf(Cat cat) const {
+    std::vector<std::int64_t> out;
+    for (const auto& [f, s] : spec_) {
+        if (s.cat == cat && Lookup(f) == cat) out.push_back(f);
+    }
+    return out;
+}
+
 std::vector<FlagCatRow> FlagCategories::Rows() const {
     std::vector<FlagCatRow> out = Covenant();
     out.insert(out.end(), Overrides().begin(), Overrides().end());
@@ -335,6 +345,69 @@ std::vector<FlagCatRow> FlagCategories::Rows() const {
     }
     out.insert(out.end(), Structural().begin(), Structural().end());
     return out;
+}
+
+namespace {
+// The Hunter's Dream headstones' menus (talk scripts t210000..t210003, t210721): the groups in the order the
+// headstones list them, and for each the maps (AAB = area * 10 + block) in listing order. Our own layout of the
+// warp menu; which lamps exist comes from the game. Map 320 is split between two headstones by lamp index.
+struct Headstone {
+    int group;
+    std::vector<int> maps;
+};
+const std::vector<Headstone>& Headstones() {
+    static const std::vector<Headstone> h = {
+        {1, {241, 240, 242, 230}},  // Yharnam: Central Yharnam, Cathedral Ward, Upper Cathedral Ward, Old Yharnam
+        {2, {220, 270, 320}},       // Frontier: Hemwick, Forbidden Woods, Byrgenwerth (lamps 0 and 2 of 320)
+        {3, {280, 250, 211}},       // Unseen: Yahar'gul, Cainhurst, Abandoned Old Workshop
+        {4, {320, 330, 260}},       // Nightmare: Lecture Building (lamps 1 and 3 of 320), Nightmare Frontier, Mensis
+        {5, {340, 350, 360}},       // The Old Hunters
+    };
+    return h;
+}
+}  // namespace
+
+Sections DeriveLamps(const FlagCategories& cats) {
+    struct L {
+        int aab, n, group, order;
+    };
+    std::vector<L> lamps;
+    for (const std::int64_t f : cats.FlagsOf(Cat::lamp_unlocked)) {
+        const std::int64_t area = FMod(FDiv(f, 100000), 100);
+        if (!(70000000 <= f && f < 80000000) || FMod(FDiv(f, 100), 100) != 2 || area == 29 || area >= 40) continue;
+        L l{static_cast<int>(FMod(FDiv(f, 10000), 1000)), static_cast<int>(FMod(f, 100)), 1, 1000};
+        int order = 0;
+        for (const Headstone& h : Headstones()) {
+            for (const int m : h.maps) {
+                ++order;
+                if (m != l.aab) continue;
+                if (m == 320 && ((h.group == 2) != (l.n % 2 == 0))) continue;  // 0, 2: Frontier; 1, 3: Nightmare
+                l.group = h.group;
+                l.order = order;
+            }
+        }
+        lamps.push_back(l);  // a lamp of a map not listed: the first headstone, after the listed ones
+    }
+    std::sort(lamps.begin(), lamps.end(), [](const L& a, const L& b) {
+        return std::tie(a.order, a.aab, a.n) < std::tie(b.order, b.aab, b.n);
+    });
+    Sections s;
+    auto& rows = s["lamps"];
+    for (const L& l : lamps) rows.push_back({std::to_string(l.aab), std::to_string(l.n), std::to_string(l.group)});
+    return s;
+}
+
+Sections DeriveHostOnlyEvents(const std::vector<FileEvents>& events) {
+    std::set<std::int64_t> ids;
+    for (const FileEvents& fe : events) {
+        for (const bbdata::EventRec& r : fe.recs) {
+            if (r.name.find("ヒートアップ") != std::string::npos && r.event > 0 && r.event < 4294967296LL) ids.insert(r.event);
+        }
+    }
+    Sections s;
+    auto& rows = s["hostOnlyEvents"];
+    for (const std::int64_t id : ids) rows.push_back({std::to_string(id)});
+    return s;
 }
 
 Sections DeriveFlagRows(const FlagCategories& cats) {

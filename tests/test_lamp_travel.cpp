@@ -36,11 +36,11 @@ int main() {
 
     // Every lamp of the table is a ReturnPointParam row the game has, listed once.
     std::set<std::uint32_t> seen;
-    for (const Lamp& l : kLamps) {
+    for (const Lamp& l : Lamps()) {
         CHECK(coop::ids::ReturnPointKnown(ReturnPoint(l)));
         CHECK(seen.insert(ReturnPoint(l)).second);
     }
-    CHECK(kLampCount == 44);
+    CHECK(Lamps().size() == 44);
     CHECK(coop::ids::ReturnPointKnown(kDreamReturnPoint));
 
     // Only the lamps' "Return to the Hunter's Dream?" question is replaced.
@@ -96,7 +96,7 @@ int main() {
     // at the Great Bridge lamp: the physics position names the lamp the player stands at.
     {
         std::vector<Spot> real;
-        for (const Lamp& l : kLamps) {
+        for (const Lamp& l : Lamps()) {
             float sp[4];
             if (coop::ids::ReturnSpot(ReturnPoint(l), sp)) real.push_back({ReturnPoint(l), sp[0], sp[1], sp[2]});
         }

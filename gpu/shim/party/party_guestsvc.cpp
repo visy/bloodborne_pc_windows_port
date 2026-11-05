@@ -1828,7 +1828,7 @@ void HostLampRepairTick(const GameSnapshot& s) {
     std::string fixed;
     int n_fixed = 0;
     bool wrote = false;
-    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+    for (const lamptravel::Lamp& l : lamptravel::Lamps()) {
         const std::vector<std::uint32_t> missing = lampshare::HalfLitRepair(l.aab, l.n, is_set);
         if (missing.empty()) {
             continue;
@@ -1954,7 +1954,7 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
     };
     std::string held, kept;
     const bool bring = lampshare::SendOwnLamps(rule);
-    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+    for (const lamptravel::Lamp& l : lamptravel::Lamps()) {
         std::vector<std::uint32_t> add = lampshare::Missing(l.aab, l.n, mine, theirs);
         const std::uint32_t boss = lampshare::BlockBossFlag(l.aab);
         if (!add.empty() && !bring) {
@@ -1993,7 +1993,7 @@ void GuestOwnLampsTick(const GameSnapshot& s) {
     // kindled" to its object and as lit to its kindle event, so lighting it does nothing. Set the two
     // list flags in the visible tree too.
     std::string shown;
-    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+    for (const lamptravel::Lamp& l : lamptravel::Lamps()) {
         const std::vector<std::uint32_t> f = lampshare::LitFlags(l.aab, l.n);
         bool lit7 = false, lit10 = true;
         if (progress::ReadFlag(f[2], &lit7) && lit7 && progress::ReadFlag(f[0], &lit10) && !lit10 &&
@@ -2923,7 +2923,7 @@ void LastLampGuardTick(const GameSnapshot& s) {
         return;
     }
     next = now + 0.2;
-    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+    for (const lamptravel::Lamp& l : lamptravel::Lamps()) {
         const std::uint32_t rp = lamptravel::ReturnPoint(l);
         if (lamptravel::MapOf(rp) != (s.map_id & 0xffff0000u)) {
             continue;

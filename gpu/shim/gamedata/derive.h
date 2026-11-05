@@ -45,6 +45,8 @@ public:
     FlagCategories(const std::vector<FileEvents>& events, const ParamSet& params);
     /// Cat::none when no row covers the flag.
     Cat Lookup(std::int64_t flag) const;
+    /// The flags the scripts and params file under `cat` that the table also files there (nothing before them).
+    std::vector<std::int64_t> FlagsOf(Cat cat) const;
     /// The whole ordered table (the flagRows section).
     std::vector<FlagCatRow> Rows() const;
 
@@ -60,6 +62,11 @@ private:
 /// itemLotFlag, itemLedger, itemAwardSpot, itemUnshared, itemSharedTreasure, itemBossDrop, itemRequireShared,
 /// itemPerPlayer, itemKillAward.
 Sections DeriveItems(const ParamSet& params, const std::vector<FileEvents>& events, const FlagCategories& cats);
+/// lamps: every world lamp (lit flag 7AAB02nn of the lamp_unlocked rows, areas below 40, not the chalice area 29)
+/// as {AAB, n, headstone group, order}, in the order the Hunter's Dream headstones list them.
+Sections DeriveLamps(const FlagCategories& cats);
+/// hostOnlyEvents: the id of every event whose name (EMELD) is a boss's HP-driven phase change ("ヒートアップ").
+Sections DeriveHostOnlyEvents(const std::vector<FileEvents>& events);
 /// flagRows.
 Sections DeriveFlagRows(const FlagCategories& cats);
 /// warperRight, warperLeft, warperArmor.

@@ -3,6 +3,7 @@
 
 #include "container.h"
 #include "derive_ids.h"
+#include "fmg.h"
 #include "party/party_gamedata.h"
 
 #include <algorithm>
@@ -168,6 +169,15 @@ Scan ScanGame(const std::string& game_root) {
     sc.has_param = true;
     sc.fixed.push_back({pb, fs::file_size(pb, ec), Mtime(pb)});
     if (fs::is_regular_file(db, ec)) sc.fixed.push_back({db, fs::file_size(db, ec), Mtime(db)});
+    if (fs::is_directory(sc.root / "msg", ec)) {  // the item names (gesture names) of every language
+        std::vector<fs::path> langs;
+        for (const auto& e : fs::directory_iterator(sc.root / "msg", ec)) langs.push_back(e.path());
+        std::sort(langs.begin(), langs.end());
+        for (const fs::path& l : langs) {
+            const fs::path m = l / "item.msgbnd.dcx";
+            if (fs::is_regular_file(m, ec)) sc.fixed.push_back({m, fs::file_size(m, ec), Mtime(m)});
+        }
+    }
     sc.events = ListFiles(sc.root / "event", [](const std::string&) { return true; });
     sc.msbs = ListFiles(sc.root / "map/mapstudio", [](const std::string& n) { return Contains(n, ".msb"); });
     if (fs::is_directory(sc.root / "map", ec)) {
@@ -393,6 +403,8 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
                     const FlagCategories cats(allrec, params);
                     out[0] = DeriveItems(params, allrec, cats);
                     out[4] = DeriveFlagRows(cats);
+                    for (auto& [name, rows] : DeriveLamps(cats)) out[4][name] = std::move(rows);
+                    for (auto& [name, rows] : DeriveHostOnlyEvents(allrec)) out[4][name] = std::move(rows);
                     break;
                 }
                 case 4: break;
@@ -403,6 +415,18 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
         });
     }
     prog.Add(4096);
+    {
+        // gestureNames: the game's own names of the 23 gestures (goods 800 .. 822)
+        StepTimer st(timings, "  gesture names");
+        const auto names = bbdata::ReadGoodsNames(root.string());
+        auto& rows = out[0]["gestureNames"];
+        for (std::int32_t id = 800; id <= 822; ++id) {
+            const auto it = names.find(id);
+            if (it != names.end() && !it->second.empty() && it->second.find_first_of("\t\n") == std::string::npos) {
+                rows.push_back({std::to_string(id), it->second});
+            }
+        }
+    }
     Sections all;
     for (Sections& s : out) {
         for (auto& [name, rows] : s) all[name] = std::move(rows);
@@ -547,6 +571,7 @@ void StartBackground(const std::string& app0, const std::string& user_dir) {
     }
     if (game.empty()) return;
     const std::string cache = (fs::path(user_dir.empty() ? "user" : user_dir) / "party_tables.txt").string();
+    SetGameDir(GameRoot(game));
     BeginBuild();
     std::thread([game, cache] {
         const auto t0 = std::chrono::steady_clock::now();

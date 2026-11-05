@@ -72,6 +72,14 @@ struct NpcFogRow {
     float x, y, z, yaw;
 };
 
+/// A world lamp: AAB = area * 10 + block (241 = m24_01), n = its index in the block, group = the Hunter's Dream
+/// headstone that lists it (lamptravel::Group), in the order the headstones list them.
+struct LampRow {
+    std::uint16_t aab;
+    std::uint8_t n;
+    std::uint8_t group;
+};
+
 /// One event-flag category row {first id, last id, category name, note}; rows keep file order (first match wins).
 struct FlagRow {
     std::uint32_t first, last;
@@ -101,6 +109,9 @@ struct Tables {
     std::vector<KillAward> kill_awards;
     // event-flag categories (party_progress.cpp resolves the names)
     std::vector<FlagRow> flag_rows;
+    std::vector<LampRow> lamps;
+    std::vector<std::pair<std::uint32_t, std::string>> gesture_names;  // goods id -> the game's name (message files)
+    std::vector<std::uint32_t> host_only_events;  // sorted: boss phase events only the host's copy decides
 };
 
 namespace detail {
@@ -256,6 +267,15 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
             ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && !f[2].empty() &&
                  u[0] <= u[1];
             if (ok) t.flag_rows.push_back({u[0], u[1], f[2], f.size() > 3 ? f[3] : std::string()});
+        } else if (section == "lamps") {
+            ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && detail::ToU32(f[2], &u[2]) &&
+                 u[0] < 65536 && u[1] < 256 && u[2] < 256;
+            if (ok) t.lamps.push_back({static_cast<std::uint16_t>(u[0]), static_cast<std::uint8_t>(u[1]), static_cast<std::uint8_t>(u[2])});
+        } else if (section == "gestureNames") {
+            ok = f.size() >= 2 && detail::ToU32(f[0], &u[0]) && !f[1].empty();
+            if (ok) t.gesture_names.emplace_back(u[0], f[1]);
+        } else if (section == "hostOnlyEvents") {
+            ok = u32row(t.host_only_events, f);
         } else if (section == "itemLotFlag") {
             ok = f.size() >= 2 && detail::ToI32(f[0], &a) && detail::ToI32(f[1], &b);
             if (ok) t.lot_flags.push_back({a, b});
@@ -290,7 +310,7 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
         return fail("party tables: file is cut short");
     }
     // The consumers binary-search these: keep the contract even for a hand-edited file.
-    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror}) {
+    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror, &t.host_only_events}) {
         std::sort(v->begin(), v->end());
         v->erase(std::unique(v->begin(), v->end()), v->end());
     }
@@ -363,6 +383,17 @@ inline Async& A() {
 }
 }  // namespace detail
 
+namespace detail {
+inline std::string& GameDirStore() {
+    static std::string d;
+    return d;
+}
+}  // namespace detail
+/// The game folder (dvdroot_ps4) the tables were built from, set by the builder; "" when unknown. For code that
+/// reads other texts of the player's own game at run time (message files).
+inline std::string GameDir() { return detail::GameDirStore(); }
+inline void SetGameDir(const std::string& d) { detail::GameDirStore() = d; }
+
 /// The builder (gamedata/build.cpp) marks the start; Get() then waits for FinishBuild().
 inline void BeginBuild() { detail::A().state.store(1); }
 inline void SetBuildProgress(int percent, const std::string& label) {
@@ -415,6 +446,21 @@ inline const Tables& Get() {
 
 inline bool Loaded() {
     return Get().loaded;
+}
+
+/// A gesture's name as the player's game spells it (goods id 800 ..; read from the message files when the tables are
+/// built), "Gesture <n>" when the tables have none. The pointer stays valid for the program's life.
+inline const char* GestureText(std::uint32_t goods) {
+    static std::mutex mu;
+    static std::map<std::uint32_t, std::string> cache;
+    std::lock_guard<std::mutex> lk(mu);
+    const auto it = cache.find(goods);
+    if (it != cache.end()) return it->second.c_str();
+    std::string name = "Gesture " + std::to_string(goods);
+    for (const auto& g : Get().gesture_names) {
+        if (g.first == goods) name = g.second;
+    }
+    return cache.emplace(goods, std::move(name)).first->second.c_str();
 }
 
 /// Replaces the tables (tests, or a caller that built them itself). Not thread safe with Get().

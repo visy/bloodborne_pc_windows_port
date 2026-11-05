@@ -274,11 +274,7 @@ int main() {
     {
         // Host-only events a host's mods add (out/party_host_only.txt): the fixed list stays as it is, the mods'
         // ids join it, and a missing, empty or broken file changes nothing.
-        static const std::uint32_t kFixed[] = {
-            12104807u, 12204807u, 12304707u, 12304807u, 12304808u, 12404807u, 12414707u, 12424980u, 12704806u,
-            12704812u, 12804870u, 12804871u, 12904028u, 12904735u, 12904868u, 12904884u, 12904889u, 12906766u,
-            12906767u, 12906863u, 12906869u, 12906870u, 13204807u, 13304807u, 13304808u, 13404820u, 13404821u,
-            13404822u, 13404823u, 13404824u, 13404825u, 13604820u};
+        static const std::uint32_t kFixed[] = {12404807u, 12414707u, 13404820u, 13404824u, 13404825u};
         std::size_t fixed = 0;
         for (std::uint32_t id = 12000000u; id < 13700000u; ++id) {
             fixed += HostOnlyBossEvent(id);
