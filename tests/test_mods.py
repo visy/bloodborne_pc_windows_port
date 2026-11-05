@@ -362,3 +362,73 @@ class PartyModSetTests(unittest.TestCase):
         self.assertIn(f'hash {digest}', text)
         self.assertIn('mod Params (1 files)', text)
         self.assertIn('# cosmetic Shaders', text)
+
+
+class PartyHostOnlyTests(unittest.TestCase):
+    """out/party_host_only.txt: boss phase events the enabled mods add under ids of their own."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.out = self.root / 'out'
+
+    def mod(self, name, host_only=None):
+        root = self.root / 'mods' / name
+        (root / 'dvdroot_ps4' / 'event').mkdir(parents=True, exist_ok=True)
+        (root / 'dvdroot_ps4' / 'event' / 'm24_01_00_00.emevd.dcx').write_bytes(b'events ' + name.encode())
+        if host_only is not None:
+            (root / mods.PARTY_HOST_ONLY_FILE).write_text(host_only, encoding='utf-8')
+        return (name, root)
+
+    def written(self):
+        path = self.out / mods.PARTY_HOST_ONLY_FILE
+        if not path.is_file():
+            return None
+        return [line for line in path.read_text(encoding='utf-8').splitlines() if not line.startswith('#')]
+
+    def test_lists_merge_sorted_without_duplicates(self):
+        a = self.mod('nocturne', '# copies of phase events\n12345678\n  12345679  # second body\n')
+        b = self.mod('second', '\ufeff12345678\r\n13000001\r\n')
+        plain = self.mod('plain')
+        self.assertEqual(mods.write_party_host_only_file(self.out, [a, plain, b]), [12345678, 12345679, 13000001])
+        self.assertEqual(self.written(), ['12345678', '12345679', '13000001'])
+        # The list is outside dvdroot_ps4: it never reaches the game's files or the party hash.
+        self.assertEqual([r.as_posix() for r, _ in mods.mod_files(a[1])], ['dvdroot_ps4/event/m24_01_00_00.emevd.dcx'])
+
+    def test_no_list_or_an_empty_one_writes_no_file(self):
+        self.out.mkdir()
+        (self.out / mods.PARTY_HOST_ONLY_FILE).write_text('12345678\n')
+        self.assertEqual(mods.write_party_host_only_file(self.out, [self.mod('plain')]), [])
+        self.assertIsNone(self.written())
+        self.assertEqual(mods.write_party_host_only_file(self.out, [self.mod('empty', '# none yet\n\n')]), [])
+        self.assertIsNone(self.written())
+
+    def test_a_bad_list_is_left_out(self):
+        good = self.mod('good', '12345678\n')
+        for text in ['12345679\nx\n', '-5\n', '0\n', '4294967296\n', '12345679 12345680\n', '0x12\n', '\u0661\n']:
+            bad = self.mod('bad', text)
+            self.assertEqual(mods.write_party_host_only_file(self.out, [good, bad]), [12345678], text)
+            self.assertEqual(self.written(), ['12345678'])
+        self.assertEqual(mods.write_party_host_only_file(self.out, [bad]), [])
+        self.assertIsNone(self.written())
+
+    def test_bounded(self):
+        full = self.mod('full', ''.join(f'{20000000 + i}\n' for i in range(mods.PARTY_HOST_ONLY_MAX)))
+        self.assertEqual(len(mods.write_party_host_only_file(self.out, [full])), mods.PARTY_HOST_ONLY_MAX)
+        more = self.mod('more', '30000000\n')
+        self.assertEqual(mods.write_party_host_only_file(self.out, [full, more]), [])
+        self.assertIsNone(self.written())
+
+    def test_main_removes_a_stale_file(self):
+        self.mod('nocturne', '12345678\n')
+        game = self.root / 'game'
+        (game / 'dvdroot_ps4').mkdir(parents=True)
+        (game / 'eboot.bin').write_bytes(b'eboot')
+        self.out.mkdir()
+        (self.out / mods.PARTY_HOST_ONLY_FILE).write_text('12345678\n')
+        env = dict(os.environ, BB_DREAM_MIRROR='0')
+        subprocess.run([sys.executable, str(ROOT / 'scripts/mods.py'), str(game), '--out', str(self.out),
+                        '--mods-dir', str(self.root / 'mods'), '--enabled', '0'], check=True, capture_output=True,
+                       env=env)
+        self.assertIsNone(self.written())

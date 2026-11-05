@@ -239,6 +239,61 @@ def write_party_mods_file(out, layers):
     return digest, items
 
 
+# Boss phase events that only the host's game decides (gpu/shim/party/party_bossfog_rules.h
+# HostOnlyBossEvent). A mod that adds or copies a boss's phase events under ids of its own lists
+# them in party_host_only.txt in its folder (beside dvdroot_ps4): one decimal event id per line,
+# `#` comments. The enabled mods' lists go into out/party_host_only.txt (none: no file).
+PARTY_HOST_ONLY_FILE = 'party_host_only.txt'
+PARTY_HOST_ONLY_MAX = 4096  # party_bossfog_rules.h kMaxModHostOnlyEvents
+
+
+def mod_host_only_events(name, folder):
+    """The event ids of `folder`'s party_host_only.txt ([] without one; ValueError for a bad line)."""
+    path = Path(folder) / PARTY_HOST_ONLY_FILE
+    if not path.is_file():
+        return []
+    ids = []
+    for number, line in enumerate(path.read_text(encoding='utf-8-sig').splitlines(), 1):
+        text = line.split('#', 1)[0].strip(' \t\r')
+        if not text:
+            continue
+        if not text.isascii() or not text.isdigit() or not 0 < int(text) <= 0xFFFFFFFF:
+            raise ValueError(f'{name}: {PARTY_HOST_ONLY_FILE} line {number} is not an event id: {line.strip()}')
+        ids.append(int(text))
+    return ids
+
+
+def write_party_host_only_file(out, layers):
+    """out/party_host_only.txt from the layers' lists (a mod with a bad list is left out, with why).
+    Returns the ids written."""
+    out = Path(out)
+    ids, names = set(), []
+    for name, root in layers:
+        try:
+            own = mod_host_only_events(name, root)
+        except (OSError, ValueError) as error:
+            print(f'Mods: {error}: its host-only events are not used', file=sys.stderr)
+            continue
+        if own:
+            ids.update(own)
+            names.append(name)
+    path = out / PARTY_HOST_ONLY_FILE
+    if not ids:
+        if path.exists():
+            path.unlink()
+        return []
+    if len(ids) > PARTY_HOST_ONLY_MAX:
+        print(f'Mods: {len(ids)} host-only events, more than {PARTY_HOST_ONLY_MAX}: none are used', file=sys.stderr)
+        if path.exists():
+            path.unlink()
+        return []
+    out.mkdir(parents=True, exist_ok=True)
+    lines = ['# Boss phase events only the party host decides (scripts/mods.py), from: ' + ', '.join(names)]
+    lines += [str(i) for i in sorted(ids)]
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return sorted(ids)
+
+
 def make_link(link_path, target_path, target_is_directory=False):
     # Windows: files are hard links (copies across volumes), never symlinks. The runtime's UCRT
     # _stat64 and FindFirstFileA report a file symlink's own size (0), not its target's, and the
@@ -435,9 +490,9 @@ def main():
     parser.add_argument('--config', type=Path)
     parser.add_argument('--enabled', choices=('0', '1'), default='1')
     args = parser.parse_args()
-    stale = args.out / PARTY_MODS_FILE  # a failed run leaves none: the game then runs without mods
-    if stale.exists():
-        stale.unlink()
+    for stale in (args.out / PARTY_MODS_FILE, args.out / PARTY_HOST_ONLY_FILE):
+        if stale.exists():  # a failed run leaves none: the game then runs without mods
+            stale.unlink()
     layers = []
     if args.enabled == '1':
         # shadPS4's loose overlay convention, beside the original game.
@@ -463,6 +518,9 @@ def main():
             layers.insert(0, (dream_mirror.LAYER_NAME, mirror))
     game = build_view(args.game, args.out, layers)
     digest, items = write_party_mods_file(args.out, layers)
+    host_only = write_party_host_only_file(args.out, layers)
+    if host_only:
+        print(f'Mods: {len(host_only)} host-only boss events', file=sys.stderr)
     if items:
         print(f'Mods: party version check: {", ".join(items)} ({digest[:12]})', file=sys.stderr)
     print(game)
