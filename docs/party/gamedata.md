@@ -63,6 +63,9 @@ Python derivation took 18.9 s on the same machine. Cache hit: key + parse, a few
 | hostOnlyEvents | `DeriveHostOnlyEvents` | `party_bossfog_rules.h` |
 | bossGates gateRules | `derive_worldact.cpp` `DeriveWorldAct` | `party_worldact.cpp` `BossGates()` / `GateRules()` |
 | bossEntities | `DeriveBossEntities` | `party_balance.cpp` (the boss chrs of a pass) |
+| shopGates | `derive_shop.cpp` `DeriveShopGates` | `party_items.cpp` `ShopGateWeapon` / `ShopGatesToRepair` |
+| bossArenas firstFightSpots | `derive_spots.cpp` `DeriveSpots` (MSB points and parts) | `world_warper_rules.h` `BossArenaSpot`, `party_worldact.cpp` `FirstFightSpotFor` |
+| stateIds runtimeIds | `derive_progress.cpp` `DeriveProgressIds` | `party_progress.cpp` `ModeFor` / `HostCandidate` |
 | gestureNames | `build.cpp` (the item-name FMG, `fmg.cpp`) | `party_gamedata.h` `GestureText` |
 | item* (lot flags, ledger, award spots, unshared, shared treasure, boss drops, audit rows, kill awards) | `derive_items.cpp` + the flag category table (`derive_flags.cpp`, `flag_category_rows.inc`) | `party_items.cpp` |
 
@@ -83,6 +86,44 @@ events (the chalice dungeon boss events of `m29.emevd` are expanded once more wi
 them, `chalice` = 1); equal to the former arrays (34 + 66 entities) on 1.09.
 `cpp-only`: the Python oracle has no counterpart, `tests/test_party_tables.py` leaves them out of its comparison;
 `gamedata-test` covers them with made-up event records. Without the sections no gate, fog gate or rule applies.
+
+shopGates (`flag weapon`): the Messenger shop's per-player weapon gates. A shop row (ShopLineupParam, weapons) gates a weapon
+behind an event flag (`qwcId`) that only means "this player got the weapon": the pickup flag of an item lot that gives
+exactly that weapon (the Chalice dungeons' Uncanny / Lost weapons, 5100-5282 on 1.09), or the completion flag
+`5500 + slot` of common event 5500, whose 3[4] (player holds item) names the weapon the shop gates on that flag (the Old
+Hunters ones, 5500-5521). Flags that gate several weapons, lots with several items and progress gates (boss / NPC
+events, 5090 / 5091, 59xx) are not in it. On 1.09 the 52 rows equal the `kShopGates` array that was typed into
+`party_items.cpp` (30 lot rows + 22 event rows). Without the section the shop-gate repair decides nothing and does not mark
+the save.
+
+bossArenas (`entity x y z`) and firstFightSpots (`event x y z chained scene`) are read from the MSBs of the maps of the
+boss gates (`derive_spots.cpp`; file header has the rules). bossArenas: per gate, the arena's entry floor is the POINT named
+"warp target when stuck in the fog wall" (`霧壁埋まりワープ先`) within 5 m of the fog object, else the nearest "room entry
+target" POINT within 40 m; it is given to the boss characters the gate's boss-defeat event waits on or marks, and to the
+character parts of the map whose entity id differs from one of those only in the last digit. On 1.09: 46 rows; the 24
+typed ones (`kBossArenas`, world warper) are all there and 23 of them equal (within the typed rounding); Rom (3200800) differs: the
+typed spot was a corner of the boss room (a hand pick), the derivation takes the stuck-warp point just inside her fog
+(96 m higher than the typed spot). The 22 extra rows are other characters of the same fights (Micolash,
+the Living Failures, the Orphan's second phase and so on) that the warper never asks for (it asks for boss entities
+only). firstFightSpots: the host's first-fight event of a gate (its `intro` event) has one position condition: 3[2] (player in a
+region) gives the region's POINT raised 0.5 m, 3[3] (player near a character) the character's part raised 0.5 m and
+moved 2 m along z; `scene` = the event plays a cutscene (2002), `chained` = its name says second half (`後半`). Events with
+no such condition (Ebrietas, Rom, Lady Maria: the fight starts by an action) have no row. On 1.09 the 17 rows equal the typed
+array in `party_worldact.cpp`, flags included.
+
+stateIds / runtimeIds (`flag`): flags the progress sync treats specially, scanned from the map scripts (`derive_progress.cpp`).
+stateIds: every shortcut_door / world_state flag a map script (not common) writes to 0 or toggles (elevators, gates, bridges
+that the game moves back and forth): the sync copies the host's current state instead of only turning flags on. runtimeIds:
+the flags in those two categories the scripts count or randomise (value operations, RandomlySetEventFlagInRange): never
+synced. The typed lists these replace were the result of the same scan plus a hand review. On 1.09 the scan finds 69 state
+flags (43 of the 45 typed ones, the other two are our own list; the 26 more are runtime flags that stay excluded by `kExcluded` or `runtimeIds`, an area 29 chalice flag
+that is never writable, and the DLC clean-up's flag in `common`, which is not read) and 23 runtime flags. The effective result,
+computed over all 243,577 flags of the candidate categories, is identical to the old typed `kStateIds` + `kExcluded`:
+`kExcluded` shrank from 22 to 10 ranges (the personal blocks 6000-8999 and the nine runtime / fight-state ranges that are our
+own decision about flags the category table cannot tell from a door) and `kOwnStateIds` keeps the two elevator events'
+own flags (12400147 / 12400148, which the scripts do not write). The guards for endings, area gate flags, 9180 and the
+time of day went: the category table's own never_sync / time_of_day rows already cover them. Without the tables the category
+table is empty too, so nothing is shared at all.
 
 Adding a table: derive it in a new `derive_*.cpp` (or extend one), add it to `DeriveAll` in `build.cpp`, parse it in
 `Parse` of `party_gamedata.h`, bump `kDerivationVersion`, and add it to the Python oracle if it has a counterpart.

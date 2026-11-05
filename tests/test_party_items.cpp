@@ -1705,7 +1705,34 @@ static void test_audit() {
     }
 }
 
+// The shop gates come from the tables (derived from the shop params, item lots and common event 5500+slot): none
+// without them (the repair decides nothing and does not mark the save), exactly the installed rows with made-up ones.
+static void test_shop_gates_from_tables() {
+    gamedata::Install(gamedata::Tables{});
+    std::set<std::uint32_t> save = {5600, 5601};
+    auto is_set = [&save](std::uint32_t id) { return save.count(id) != 0; };
+    std::set<std::int32_t> held = {99010000 + 100 * 3};
+    auto owns = [&held](std::int32_t base) {
+        for (int lvl = 0; lvl <= kShopWeaponMaxLevel; ++lvl) {
+            if (held.count(base + 100 * lvl)) return 1;
+        }
+        return 0;
+    };
+    CHECK(ShopGateWeapon(5600) == 0);
+    ShopGateRepair r = ShopGatesToRepair(is_set, owns);
+    CHECK(!r.done && !r.complete && r.clear.empty());
+    gamedata::Tables t;
+    t.loaded = true;
+    t.shop_gates = {{5600, 99010000}, {5601, 99020000}, {5602, 99030000}};
+    gamedata::Install(t);
+    CHECK(ShopGateWeapon(5600) == 99010000 && ShopGateWeapon(5602) == 99030000 && ShopGateWeapon(5599) == 0);
+    r = ShopGatesToRepair(is_set, owns);
+    CHECK(!r.done && r.complete && r.clear == std::vector<std::int32_t>{5601});  // 5600 is owned, 5602 not set
+    gamedata::Install(gamedata::Tables{});
+}
+
 int main() {
+    test_shop_gates_from_tables();
     if (!coop::test::UseGameTables("party-items-test")) return 0;
     test_goods_limits();
     test_tables();

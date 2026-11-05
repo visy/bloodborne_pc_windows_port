@@ -596,7 +596,7 @@ bool ChrYaw(u64 chr, float* yaw) {
     return true;
 }
 
-/// Stands the player at boss candidate spot `i` (0: the arena's entry floor, kBossArenas; 1..4:
+/// Stands the player at boss candidate spot `i` (0: the arena's entry floor, BossArenaSpot; 1..4:
 /// BossSpot round the boss, in front first, where an idle boss looks into its arena), facing the
 /// boss. `spot`: where it was put. False: no such spot (no arena entry known for spot 0).
 bool PlaceAtBoss(u64 player, const EnemyTarget& t, int i, float boss_pos[3], float spot[3]) {

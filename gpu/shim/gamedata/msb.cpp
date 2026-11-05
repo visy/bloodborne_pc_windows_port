@@ -55,6 +55,37 @@ std::vector<MsbPoint> ReadMsbPoints(Span data, const std::vector<std::int64_t>& 
     return out;
 }
 
+std::vector<MsbPart> ReadMsbParts(Span data, const std::vector<std::int64_t>& entries) {
+    std::vector<MsbPart> out;
+    out.reserve(entries.size());
+    for (const std::int64_t r : entries) {
+        MsbPart p;
+        if (data.Has(r, 0xB8)) {
+            p.type = data.Le<std::int32_t>(r + 0x14);
+            p.x = data.Le<float>(r + 0x28);
+            p.y = data.Le<float>(r + 0x2c);
+            p.z = data.Le<float>(r + 0x30);
+            const std::int64_t ent = data.Le<std::int64_t>(r + 0xB0);
+            if (0 < ent && data.Has(r + ent, 4)) {
+                p.entity = data.Le<std::int32_t>(r + ent);
+                p.has_entity = true;
+            }
+        }
+        out.push_back(p);
+    }
+    return out;
+}
+
+std::vector<std::string> ReadMsbNames(Span data, const std::vector<std::int64_t>& entries) {
+    std::vector<std::string> out;
+    out.reserve(entries.size());
+    for (const std::int64_t r : entries) {
+        const std::int64_t off = data.Has(r, 8) ? data.Le<std::int64_t>(r) : 0;
+        out.push_back(off > 0 && data.Has(r + off, 2) ? Utf16z(data, r + off) : std::string());
+    }
+    return out;
+}
+
 void ScanMsbEntities(Span data, std::int64_t lo, std::vector<std::int32_t>* out) {
     if (!data.Tag(0, "MSB ")) {
         throw FormatError("not an MSB");
