@@ -122,8 +122,10 @@ The scan reads the player's own files, so a mod that changes a script or a param
 Other consumers of the same derivation, none of them committed data:
 - `scripts/saveedit/flagsdata.py` `derive(game)` (the save editor is Python): the boss kill flags (`boss_defeated` rows
   of the form 1AAB1800 / 1AAB1850, areas below 40, not 29) and lit-lamp flags (`lamp_unlocked` rows 7AAB02nn, same area
-  rule), plus each boss's NPC param id (the entity named by its boss-defeat marker -> the MSB character part -> the
-  param id at +8 of the part's enemy block) for the name lookup. `names.Catalogue` caches the result (`progress`) with
+  rule), plus each boss's name id for the name lookup: the name its health bar shows, 2003[11] DisplayBossHealthBar
+  (on, entity, slot, name id) of the entity its boss-defeat marker names (a defeat event that names another entity than
+  the bar, m26's, is found by the bar's own event, kill event + 3002), the key of its text in the NPC name list. All 19
+  bosses get their name (the NPC param id route, MSB part -> param id at +8, named only 14 of them). `names.Catalogue` caches the result (`progress`) with
   the item names and the launcher hands it to `party_session.check` for the after-session save comparison. Same lists
   as the old typed ones: 19 bosses, 44 lamps (equal on vanilla).
 - Tools (`save_check.py`, `save_decode.py`, `shop_gates.py`, `flag_tool.py dump / diff`) read the section from a cache
