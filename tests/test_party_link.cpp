@@ -1259,6 +1259,18 @@ static void test_invader_b2_filter() {
     CHECK(invader_event_to_ok("b2", "{\"op\":\"dsum_busy\",\"wait\":\"boss\"}"));
     CHECK(!invader_event_to_ok("b2", "{\"op\":\"travel\"}"));
     CHECK(!invader_event_to_ok("b2", "{\"op\":\"gather\"}"));
+    // 0.7.9: the cross-map arrival re-join: rejoin (plain form), arrived, and the host's dest, matched whole
+    CHECK(invader_event_from_ok("b2", "{\"op\":\"rejoin\",\"pos\":[-193.500,-28.600,68.000]}"));
+    CHECK(invader_event_from_ok("b2", "{\"op\":\"arrived\"}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"rejoin\",\"pos\":[1.000,2.000,3.000],\"rest\":2412951}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"rejoin\",\"pos\":[1.000,2.000]}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"rejoin\",\"pos\":[nan,2.000,3.000]}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"rejoin\",\"pos\":[1,2,3]}x"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"respawn\",\"pos\":[1.000,2.000,3.000]}"));
+    CHECK(!invader_event_from_ok("b2", "{\"op\":\"arrived\",\"op2\":\"travel\"}"));
+    CHECK(invader_event_to_ok("b2", "{\"op\":\"dest\",\"stage\":402718720,\"pos\":[1.0000,2.0000,3.0000,1.0000],\"rot\":[0.000000,0.500000,0.000000,0.000000]}"));
+    CHECK(!invader_event_to_ok("b2", "{\"op\":\"dest\",\"stage\":1,\"pos\":[1.0,2.0,3.0],\"rot\":[0.0,0.0,0.0,0.0]}"));
+    CHECK(!invader_event_to_ok("b2", "{\"op\":\"dest\",\"stage\":1,\"pos\":[1.0,2.0,3.0,1.0],\"rot\":[0.0,0.0,0.0,0.0],\"x\":1}"));
     CHECK(!invader_event_to_ok("progress", "{}"));
     CHECK(invader_event_to_ok("invade", "{}"));
     CHECK(invader_event_to_ok("room_member_joined", "{}") && invader_event_to_ok("room_member_left", "{}"));  // 0.7.9: the room's membership

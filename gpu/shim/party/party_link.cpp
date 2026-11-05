@@ -2950,8 +2950,39 @@ bool PartyLink::last_welcome_resumed() const {
     return impl_->last_resumed;
 }
 
+namespace {
+// A strict walk over a fixed b2 body: literal text, '@' = an unsigned integer, '~' = a plain decimal number ([-]digits[.digits], no
+// exponent). Neither character occurs in the bodies. Anything else (an extra key, a longer body, another op) fails the whole match.
+bool b2_shape(const std::string& s, const char* shape) {
+    size_t i = 0;
+    for (const char* p = shape; *p; ++p) {
+        if (*p == '@' || *p == '~') {
+            if (*p == '~' && i < s.size() && s[i] == '-') ++i;
+            size_t d = 0;
+            while (i < s.size() && s[i] >= '0' && s[i] <= '9' && d < 12) ++i, ++d;
+            if (!d) return false;
+            if (*p == '~' && i < s.size() && s[i] == '.') {
+                ++i;
+                size_t f = 0;
+                while (i < s.size() && s[i] >= '0' && s[i] <= '9' && f < 12) ++i, ++f;
+                if (!f) return false;
+            }
+        } else {
+            if (i >= s.size() || s[i] != *p) return false;
+            ++i;
+        }
+    }
+    return i == s.size();
+}
+} // namespace
+
 bool invader_event_from_ok(const std::string& name, const std::string& json) {
     if (name == "invade_fell" || name == "party_chat") return true;
+    // 0.7.9 (cross-map invasion): an invader whose own world is in another map block than the host's loads into the host's map by
+    // the A5 arrival re-join, which is exactly two b2 messages from the invader: "rejoin" (the host sends it the world snapshot again;
+    // the plain form only, never the "rest" a guest can carry: that would start a rest load on the host) and "arrived" (the host
+    // re-creates its chr). Matched whole.
+    if (name == "b2" && (b2_shape(json, "{\"op\":\"rejoin\",\"pos\":[~,~,~]}") || json == "{\"op\":\"arrived\"}")) return true;
     // 0.7.9: the invader's one-load direct summon needs exactly two b2 messages, matched whole (never a substring: the
     // b2 handler dispatches on substrings, so anything looser would let a hostile body carry another op).
     return name == "b2" && (json == "{\"op\":\"dsum_req\"}" || json == "{\"op\":\"dsum_done\",\"ok\":1}" ||
@@ -2964,6 +2995,8 @@ bool invader_event_to_ok(const std::string& name, const std::string& json) {
     // in never completes its join (the invader's game never accepts it). They hold what the join_room reply gave the invader already
     // (the members' names and endpoints), nothing of the party's progress.
     if (name == "room_member_joined" || name == "room_member_left") return true;
+    // 0.7.9: the host's destination (where it stands) after the re-join of a cross-map arrival: the stage and two vectors, nothing else.
+    if (name == "b2" && b2_shape(json, "{\"op\":\"dest\",\"stage\":@,\"pos\":[~,~,~,~],\"rot\":[~,~,~,~]}")) return true;
     // 0.7.9: the host's answer to the invader's room request (and the boss / cutscene hold notice), nothing else of b2.
     return name == "b2" && (json.rfind("{\"op\":\"dsum_room\"", 0) == 0 || json.rfind("{\"op\":\"dsum_busy\"", 0) == 0);
 }
