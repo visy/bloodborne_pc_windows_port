@@ -58,6 +58,10 @@ Python derivation took 18.9 s on the same machine. Cache hit: key + parse, a few
 | npcMirror | `DeriveIds` | `party_npc_mirror.h` |
 | npcFog | `DeriveNpcFog` | `party_npcfight_rules.h` |
 | warperRight warperLeft warperArmor | `DeriveWarper` | `world_warper_rules.h` |
+| flagRows | `derive_flags.cpp` `DeriveFlagRows` (the port of `flag_tool.category_rows`) | `party_progress.cpp` |
+| lamps | `DeriveLamps` | `lamp_travel_rules.h` `Lamps()` |
+| hostOnlyEvents | `DeriveHostOnlyEvents` | `party_bossfog_rules.h` |
+| gestureNames | `build.cpp` (the item-name FMG, `fmg.cpp`) | `party_gamedata.h` `GestureText` |
 | item* (lot flags, ledger, award spots, unshared, shared treasure, boss drops, audit rows, kill awards) | `derive_items.cpp` + the flag category table (`derive_flags.cpp`, `flag_category_rows.inc`) | `party_items.cpp` |
 
 The ledger bit of a flagless award is `60009000 + index` in the player's own save, so an index must never change:
@@ -74,7 +78,7 @@ Adding a table: derive it in a new `derive_*.cpp` (or extend one), add it to `De
   edit that the next build follows, cache reuse, no game data). `cmake --build out/gpu --target gamedata-test`.
 * `party-gamedata-test` checks the cache parser with made-up numbers.
 * `tests/test_party_tables.py` builds the tables with `party-tables-cli` (`tests/party_tables_cli.cpp`) and with the
-  Python oracle (`scripts/partydata/oracle.py`, dev only, not shipped: the former derivation, kept as the reference)
+  Python oracle (`scripts/partydata/oracle.py`, dev only, never run by the game: the former derivation, kept as the reference; the save editor still imports `flag_tool` from the same folder)
   on `BB_GAME_DIR` (else the clone's `../game`) and requires the cache text to be byte-identical (the key line
   aside); a second test does the same on a temporary mod view whose param file has one pickup flag edited, and
   requires the tables to follow it. Skipped without a game folder or the built CLI.
@@ -92,7 +96,7 @@ every id is never_sync, so nothing is shared (progress, doors, lamps, NPC quests
 `Rows()` is built on first use, so tests install their tables (`tests/party_tables_test.h`) before the first lookup.
 
 Derivation, in match order (reference implementation: `flag_tool.category_rows`, prints with
-`python -I scripts/partydata/flag_tool.py table GAME`; a C++ port must reproduce its rows exactly):
+`python -I scripts/partydata/flag_tool.py table GAME`; the C++ port `DeriveFlagRows` reproduces its rows exactly: on 1.09 the 2761 rows, notes included, equal the former `party_flags.inc`, and the whole cache text equals the oracle's):
 
 1. Covenant rows (`COVENANT_ROWS`, 15 ranges) and override rows (`OVERRIDE_ROWS`, 87 ranges: the area-gate flags, endings,
    cutscene / time-of-day flags, per-player Doll / messenger / badge flags). Hand rules with our own notes, no game scan.
@@ -124,3 +128,18 @@ Other consumers of the same derivation, none of them committed data:
   as the old typed ones: 19 bosses, 44 lamps (equal on vanilla).
 - Tools (`save_check.py`, `save_decode.py`, `shop_gates.py`, `flag_tool.py dump / diff`) read the section from a cache
   file (`--tables`, default `BB_PARTY_TABLES` or `user/party_tables.txt`) or derive it from the game folder.
+
+## Lamps, boss phase events, gesture names (no typed tables)
+
+* `lamps` (`AAB<TAB>n<TAB>group`): every lamp whose lit flag 7AAB02nn the category table files under `lamp_unlocked`
+  (areas below 40, not the chalice area 29): 44 on 1.09, group and set equal to the former typed `kLamps`. The
+  Hunter's Dream headstones' menu layout (`Headstones()` in `derive_flags.cpp`: which maps each headstone lists, in
+  order; map 320 splits by lamp index) is our own layout of the warp menu, the talk scripts are not read; a lamp of an
+  unlisted map goes last under the first headstone. Within Upper Cathedral Ward, Cainhurst, Yahar'gul and Nightmare
+  of Mensis the lamps are now listed by lamp index (the old table had them in the talk script's order: 9 of the 44 swap
+  places in the warp menu).
+* `hostOnlyEvents`: the id of every event whose EMELD name holds `ヒートアップ` (a boss's HP-driven phase change): the 32
+  ids of the former typed list on 1.09, Ludwig's included.
+* `gestureNames`: the 23 gesture names (goods 800 .. 822) from the item-name FMG of `msg/<language>/item.msgbnd.dcx`
+  (English folders first), read while the tables are built; the rest of the code shows `Gesture <goods id>` when the
+  section is missing. `item.msgbnd.dcx` of every language is part of the cache key.

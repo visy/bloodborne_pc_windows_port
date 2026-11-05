@@ -112,7 +112,7 @@ int main() {
         CHECK(g.host_flag / 1000 == g.guest_flag / 1000);
         CHECK(!FightStateFlag(g.boss_flag));
         CHECK(g.intro_flag == 0 || !FightStateFlag(g.intro_flag));
-        CHECK(pg::CategoryOf(g.host_flag) == pg::Category::boss_area);
+        CHECK(coop::gamedata::Get().flag_rows.empty() || pg::CategoryOf(g.host_flag) == pg::Category::boss_area);  // the category table is derived from the game
         CHECK(!GuardRestores(g.host_flag / 1000, true, true));
         CHECK(GuardRestores(g.boss_flag / 1000, true, true));
         // the vanilla snapshot alone carries them (the world mirror leaves them out)
@@ -266,6 +266,10 @@ int main() {
 
     {
         // The host takes no peer's state for a boss's HP-driven phase events (Ludwig's latter-half scene 13404825)
+        coop::gamedata::Tables ht;  // the list comes from the game's event names (party tables): made-up tables here
+        ht.loaded = true;
+        ht.host_only_events = {12404807u, 12414707u, 13404820u, 13404824u, 13404825u};
+        coop::gamedata::Install(std::move(ht));
         CHECK(HostOnlyBossEvent(13404824) && HostOnlyBossEvent(13404825) && HostOnlyBossEvent(12404807));
         CHECK(!HostOnlyBossEvent(13404802) && !HostOnlyBossEvent(13404801) && !HostOnlyBossEvent(13401802));
         CHECK(!HostOnlyBossEvent(7200) && !HostOnlyBossEvent(12107000) && !HostOnlyBossEvent(0));
