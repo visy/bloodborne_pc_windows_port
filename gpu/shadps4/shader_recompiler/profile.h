@@ -58,6 +58,11 @@ struct Profile {
     bool supports_depth_clip_control{};
     /// bbport BB_LAYER_MEMORY: guest buffers of IsPagedBuffer size go through the page table.
     bool paged_buffers{};
+    /// bbport (nan_guard, off by default): a pixel shader's float colour outputs lose NaN / Inf
+    /// (written as 0). Sits in the padding before buffer_copy_shader_hash: off = the bytes of every
+    /// older cache header. nan_guard_mark writes the channel's marker (R=1 G=0 B=1 A=1) instead.
+    bool nan_guard{};
+    bool nan_guard_mark{};
     /// bbport: the game's buffer copy compute shader (its GCN program hash, from the game's profile;
     /// 0 = none): its paged stores go through to the game's memory as well.
     u64 buffer_copy_shader_hash{};

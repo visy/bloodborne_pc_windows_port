@@ -308,6 +308,16 @@ void EmitSetAttribute(EmitContext& ctx, IR::Attribute attr, Id value, u32 elemen
             // Emulates GCN's factor-scaled min/max blend: min/max(src*src, dst*dst).
             value = ctx.OpFMul(ctx.F32[1], value, value);
         }
+        if (ctx.profile.nan_guard && !OutputAttrComponentType(ctx, attr).second) {
+            // bbport nan_guard: bits of a non-finite float (exponent all ones), so a driver that
+            // assumes no NaN / Inf cannot fold the test away.
+            const Id bits = ctx.OpBitcast(ctx.U32[1], value);
+            const Id expo = ctx.OpBitwiseAnd(ctx.U32[1], bits, ctx.ConstU32(0x7f800000u));
+            const Id bad = ctx.OpIEqual(ctx.U1[1], expo, ctx.ConstU32(0x7f800000u));
+            const float marker = (element == 1) ? 0.0f : 1.0f;
+            value = ctx.OpSelect(ctx.F32[1], bad, ctx.ConstF32(ctx.profile.nan_guard_mark ? marker : 0.0f),
+                                 value);
+        }
         if (info.num_components == 1) {
             return op_store(info.id);
         } else {

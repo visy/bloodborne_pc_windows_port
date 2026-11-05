@@ -337,7 +337,11 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .support_fp16_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat16),
         .support_fp16_round_to_zero = bool(vk12_props.shaderRoundingModeRTZFloat16),
         .support_fp32_denorm_preserve = bool(vk12_props.shaderDenormPreserveFloat32),
-        .support_fp32_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat32),
+        // bbport: BB_FP32_DENORM_FLUSH=0 acts as a GPU without float32 denorm flushing (Pascal): the
+        // shader keeps denormals where GCN flushes them (a test aid for the white-out flash).
+        .support_fp32_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat32) &&
+                                     !(std::getenv("BB_FP32_DENORM_FLUSH") &&
+                                       std::getenv("BB_FP32_DENORM_FLUSH")[0] == '0'),
         .support_fp32_round_to_zero = bool(vk12_props.shaderRoundingModeRTZFloat32),
         .support_fp64_denorm_preserve = bool(vk12_props.shaderDenormPreserveFloat64),
         .support_fp64_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat64),
@@ -381,6 +385,9 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .supports_depth_clip_control = instance_.IsDepthClipControlSupported(),
         // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
         .paged_buffers = VideoCore::BufferCache::LayerPagedActive(),
+        // bbport nan_guard (read at start, rebuilds the shaders when changed).
+        .nan_guard = BbSettings::Get().nan_guard.load(),
+        .nan_guard_mark = BbSettings::Get().nan_guard && BbSettings::Get().nan_guard_mark.load(),
         // The game's buffer copy shader, from its profile (games/).
         .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
@@ -405,6 +412,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
     pipeline_cache = std::move(cache);
     driver_cache_owner.store(this);
 
+    if (profile.nan_guard) {
+        std::printf("NaN guard: on, a pixel shader's NaN / Inf colour is written as %s (nan_guard)\n",
+                    profile.nan_guard_mark ? "a magenta marker" : "black");
+    }
     if (instance.IsGraphicsPipelineLibrarySupported()) {
         gpl = std::make_unique<GplLibraryCache>(instance.GetDevice());
     }

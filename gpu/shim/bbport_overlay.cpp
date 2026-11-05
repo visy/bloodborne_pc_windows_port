@@ -1611,6 +1611,13 @@ void AdvancedTab() {
              "Собирает конвейеры из готовых частей (VK_EXT_graphics_pipeline_library): новые "
              "сочетания известных шейдеров связываются почти мгновенно, оптимизированная версия "
              "заменяет их в фоне. Нужна поддержка драйвером. Применяется после перезапуска игры."));
+    Toggle("nan_guard", T("NaN guard", "Защита от NaN"), s.nan_guard,
+           T("Pixel shaders write black for a NaN / Inf colour, so one bad pixel cannot be spread by "
+             "bloom into a white-out frame. Off by default. Applies after restarting the game "
+             "(shaders are built again once).",
+             "Пиксельные шейдеры пишут чёрный вместо NaN / Inf, чтобы один битый пиксель не "
+             "растекался блумом в белую вспышку. По умолчанию выключено. Применяется после "
+             "перезапуска игры (шейдеры пересобираются один раз)."));
     Toggle("compile_indicator", T("Shader compilation indicator", "Индикатор компиляции шейдеров"),
            s.compile_indicator,
            T("Shows the progress of shader compilation in the bottom right corner.",

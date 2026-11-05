@@ -2385,6 +2385,9 @@ INI_FLAG_SETTINGS = [
     ("feat_mouse_keyboard", "mk_enabled", False, "BB_MOUSE_KEYBOARD"),
     ("feat_async_pipelines", "async_pipelines", True, "BB_ASYNC_SHADERS"),
     ("feat_gpl", "gpl", False, "BB_GPL"),
+    # 0.7.9 (CL-75c935): NaN / Inf pixels written as black, against the bloom white-out flash.
+    ("feat_nan_guard", "nan_guard", False, "BB_NAN_GUARD"),
+    ("feat_nan_guard_mark", "nan_guard_mark", False, "BB_NAN_GUARD_MARK"),
     ("feat_compile_indicator", "compile_indicator", True, "BB_COMPILE_INDICATOR"),
     ("feat_save_commit_async", "save_commit_async", False, "BB_SAVE_COMMIT_ASYNC"),
     # 0.7.9 (CL-7fc9fe): the log output goes through a background thread, so a slow reader of the game's output
@@ -3374,6 +3377,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_mute_unfocused = tk.BooleanVar(value=self.settings.get("feat_mute_unfocused", True))
         self.feat_async_shaders = self.ini_flag_vars["async_pipelines"]
         self.feat_gpl = self.ini_flag_vars["gpl"]
+        self.feat_nan_guard = self.ini_flag_vars["nan_guard"]
+        self.feat_nan_guard_mark = self.ini_flag_vars["nan_guard_mark"]
         self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
         self.feat_save_commit_async = self.ini_flag_vars["save_commit_async"]
         self.feat_log_async = self.ini_flag_vars["log_async"]
@@ -3781,6 +3786,13 @@ class BloodborneLauncher(tk.Tk):
                     "required. A game setting (bbport.ini gpl; in game: System > Shaders > Pipeline "
                     "libraries). Default: off.",
                     command=lambda: self.save_game_settings("gpl"))
+        self._check(sec, "NaN guard (white flash from bloom)", self.feat_nan_guard,
+                    "Pixel shaders write black instead of a NaN / Inf colour, so one bad pixel cannot be "
+                    "spread by bloom into a white-out frame (seen for a frame or two in the Forbidden "
+                    "Woods). Costs nothing measurable. Shaders are built again once. A game setting "
+                    "(bbport.ini nan_guard; in game: System > Advanced > NaN guard). Restart required. "
+                    "Default: off.",
+                    command=lambda: self.save_game_settings("nan_guard"))
         self._check(sec, "Precompile shaders at startup", self.feat_shader_precompile,
                     "Before the intro logos, builds every pipeline in the shader cache (and rebuilds the "
                     "cache for a new GPU) with a progress screen, so areas already in the cache never "
@@ -3990,6 +4002,11 @@ class BloodborneLauncher(tk.Tk):
                     "out\boot_hang_<time>.log and the log. For reports of a game that stays on a gray or "
                     "black screen at start. Default: off (BB_BOOT_WATCHDOG).")
 
+        self._check(sec, "NaN guard: mark bad pixels (diagnostic)", self.feat_nan_guard_mark,
+                    "With the NaN guard on, a NaN / Inf pixel is drawn magenta-ish instead of black, so a "
+                    "screenshot shows where the white flash started. Diagnostic. Shaders are built again "
+                    "once. A game setting (bbport.ini nan_guard_mark). Restart required. Default: off.",
+                    command=lambda: self.save_game_settings("nan_guard_mark"))
         self._check(sec, "Log output through a background thread", self.feat_log_async,
                     "The game's log lines are handed to a background thread that writes them to this launcher "
                     "(or the log file), so a slow reader cannot freeze the game for seconds. A game setting "

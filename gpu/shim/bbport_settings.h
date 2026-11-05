@@ -206,6 +206,12 @@ struct Values {
     std::atomic<bool> async_shaders{true};
     /// Graphics pipelines linked from VK_EXT_graphics_pipeline_library parts (BB_GPL). On restart.
     std::atomic<bool> gpl{false};
+    /// Pixel shaders write 0 for a NaN / Inf colour (stops one bad pixel being spread by bloom into
+    /// a white frame; BB_NAN_GUARD, ini nan_guard). Off by default. On restart (shaders rebuilt).
+    std::atomic<bool> nan_guard{false};
+    /// Diagnostic: guarded pixels get a magenta marker instead of 0 (BB_NAN_GUARD_MARK, ini
+    /// nan_guard_mark; launcher Advanced / Debug). Needs nan_guard. On restart.
+    std::atomic<bool> nan_guard_mark{false};
     /// "Compiling shaders: N%" in the bottom right corner (BB_COMPILE_INDICATOR). Live.
     std::atomic<bool> compile_indicator{true};
     /// Party mode: short join / leave / travel notices in a top corner (ini party_toasts). Live.
@@ -466,6 +472,8 @@ struct Values {
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
     bool startup_gpl = false;
+    bool startup_nan_guard = false;
+    bool startup_nan_guard_mark = false;
     int startup_frame_generation = 0;
     int startup_fg_backend = FgDlss;
     int startup_reflex = ReflexAuto;
