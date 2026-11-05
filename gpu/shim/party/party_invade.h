@@ -66,5 +66,8 @@ bool LocalIsInvader();
 /// before the host said or with no invasion on. The host's rules decide it (an invasion is PvP); the invader gets no
 /// host rules, so seamless_rules ApplyPhantomHp follows this.
 int HostFullHp();
+/// Any thread, the invader's game: the lamp (return point id) the host named for the invader to appear at, away from the host
+/// (party_invade_rules.h PickApart); 0 none, no invasion, or BB_PARTY_INVADE_APART=0.
+std::uint32_t ApartLamp();
 
 }  // namespace coop::invade

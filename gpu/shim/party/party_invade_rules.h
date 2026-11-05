@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -342,6 +343,7 @@ struct Msg {
     std::string name;
     End why = End::None;
     int full_hp = -1;   ///< 0.7.9, state 1/2: 1 full health, 0 the game's cut, -1 not said
+    std::uint32_t apart = 0;  ///< 0.7.9, state 1/2: the lamp (return point id) the invader appears at, away from the host; 0 none
 };
 
 inline bool NameOk(const std::string& n) {
@@ -355,6 +357,8 @@ inline std::string Encode(const Msg& m) {
     char b[160];
     if (m.state == 0 && m.why != End::None)
         std::snprintf(b, sizeof b, "{\"s\":0,\"n\":\"%s\",\"w\":\"%s\"}", m.name.c_str(), EndWord(m.why));
+    else if (m.state != 0 && m.full_hp >= 0 && m.apart)
+        std::snprintf(b, sizeof b, "{\"s\":%d,\"n\":\"%s\",\"h\":%d,\"a\":%u}", m.state, m.name.c_str(), m.full_hp ? 1 : 0, m.apart);
     else if (m.state != 0 && m.full_hp >= 0)
         std::snprintf(b, sizeof b, "{\"s\":%d,\"n\":\"%s\",\"h\":%d}", m.state, m.name.c_str(), m.full_hp ? 1 : 0);
     else
@@ -387,6 +391,14 @@ inline bool Decode(const std::string& body, Msg* out) {
         body[static_cast<std::size_t>(end)] == '\0') {
         if (s < 1 || s > 2 || !NameOk(name) || (h != 0 && h != 1)) return false;
         *out = Msg{s, name, End::None, h};
+        return true;
+    }
+    end = 0;
+    unsigned a = 0;
+    if (std::sscanf(body.c_str(), "{\"s\":%d,\"n\":\"%32[^\"]\",\"h\":%d,\"a\":%u}%n", &s, name, &h, &a, &end) == 4 && end > 0 &&
+        body[static_cast<std::size_t>(end)] == '\0') {
+        if (s < 1 || s > 2 || !NameOk(name) || (h != 0 && h != 1) || a == 0 || a > 99999999u) return false;
+        *out = Msg{s, name, End::None, h, a};
         return true;
     }
     return false;
@@ -467,6 +479,33 @@ inline bool ParseTest(const char* text, std::vector<TestStep>* out, std::string*
     return true;
 }
 
+
+// ---- 0.7.9: where the invader appears ----
+// Vanilla places an invader away from the host. The direct summon lands it beside the host (like a co-op guest), so once it is in
+// the world the host names a LAMP of the same map block to put it at: a lamp the HOST has lit (a spot it has stood at: never inside a
+// wall, never in a boss arena whose boss is alive: its lamp is only lit after the fight), at least kApartMinM and at most kApartMaxM
+// metres from the host on the ground plane, the nearest such one (the shortest way back into the fight). No such lamp: the invader
+// stays beside the host (today's behaviour). BB_PARTY_INVADE_APART=0 turns it off.
+constexpr float kApartMinM = 30.0f;
+constexpr float kApartMaxM = 250.0f;
+struct ApartSpot {
+    std::uint32_t id = 0;   ///< the lamp's return point
+    float x = 0, y = 0, z = 0;
+};
+inline std::uint32_t PickApart(const float host[3], const std::vector<ApartSpot>& spots, float min_m = kApartMinM, float max_m = kApartMaxM,
+                               float* dist = nullptr) {
+    std::uint32_t best = 0;
+    float best_d = 0;
+    for (const ApartSpot& s : spots) {
+        if (!s.id) continue;
+        const float dx = s.x - host[0], dz = s.z - host[2];
+        const float d = std::sqrt(dx * dx + dz * dz);
+        if (!(d >= min_m && d <= max_m)) continue;
+        if (!best || d < best_d || (d == best_d && s.id < best)) best = s.id, best_d = d;
+    }
+    if (best && dist) *dist = best_d;
+    return best;
+}
 
 // ---- the invader's look (SpEffects) ----
 // The phantom look is a SpEffect: the chr's effect update plays SpEffectVfxParam row `stateInfo` of every SpEffect that has

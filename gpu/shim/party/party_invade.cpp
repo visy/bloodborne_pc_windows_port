@@ -7,9 +7,12 @@
 #include "game_state.h"
 #include "party_async_io.h"
 #include "party_b2.h"
+#include "party_balance.h"
 #include "party_director.h"
 #include "party_display_name.h"
 #include "party_hud.h"
+#include "party_ids.h"
+#include "lamp_travel_rules.h"
 #include "party_levelsync_rules.h"
 #include "party_link.h"
 #include "party_runtime.h"
@@ -22,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -68,6 +72,7 @@ struct Shared {
     std::string invader_name;  // real member name; "" none
     int invader_state = 0;     // 0 none, 1 pending, 2 in
     int host_full_hp = -1;     // invader side: the host's phantom health for this invasion (Msg::full_hp), -1 not said
+    std::uint32_t apart = 0;   // invader side: the lamp the host named to appear at, away from it (Msg::apart), 0 none
     std::string host_name;     // guest side: the host's name (display)
     std::string end_name;      // guest side: an invasion that just ended (name, why), shown by the tick
     End end_why = End::None;
@@ -289,6 +294,22 @@ bool HostAllows() {
     return BbSettings::Get().party_invaders.load();
 }
 
+bool ApartAnyLamp() {  // test aid BB_PARTY_INVADE_APART_ANY=1: every lamp of the block counts as lit (a save that lit none)
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_INVADE_APART_ANY");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
+
+bool ApartOn() {  // BB_PARTY_INVADE_APART=0: the invader stays beside the host (the 0.7.9 direct-summon placement)
+    static const bool on = [] {
+        const char* v = std::getenv("BB_PARTY_INVADE_APART");
+        return !(v && v[0] == '0');
+    }();
+    return on;
+}
+
 std::atomic<int> g_own_level{0};
 std::mutex g_host_name_mu;
 std::string g_host_name_shown = "the host";  // the host's display name (masked), set by the host's tick, read by the gates
@@ -366,10 +387,12 @@ void OnEvent(int from_slot, const std::string& name, const std::string& body) {
         g.invader_name.clear();
         g.invader_state = 0;
         g.host_full_hp = -1;
+        g.apart = 0;
     } else {
         g.invader_name = m.name;
         g.invader_state = m.state;
         if (m.full_hp >= 0) g.host_full_hp = m.full_hp;
+        g.apart = m.apart;
     }
     // The notice itself is shown by the tick (main thread), from the same fields.
 }
@@ -398,6 +421,13 @@ int HostFullHp() {
     Shared& g = G();
     std::lock_guard<std::mutex> lk(g.mu);
     return g.invader_state ? g.host_full_hp : -1;
+}
+
+std::uint32_t ApartLamp() {
+    if (!ApartOn()) return 0;
+    Shared& g = G();
+    std::lock_guard<std::mutex> lk(g.mu);
+    return g.invader_state ? g.apart : 0;
 }
 
 Where Announced() {
@@ -457,6 +487,31 @@ void GuestNotices(party::PartyLink* link) {
 
 namespace {
 void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host);
+
+/// Host: the lamp the invader appears at (party_invade_rules.h PickApart): a lamp of this map block that the host has lit,
+/// 30..250 m from the host. 0: none (the invader stays beside the host), the placement off, or the host's spot unknown.
+std::uint32_t ApartLampForInvader(const GameSnapshot& s) {
+    if (!ApartOn() || !s.player || !s.world_up) return 0;
+    float host[3];
+    if (!balance::ChrPosition(s.player, host)) return 0;
+    std::vector<ApartSpot> spots;
+    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+        const std::uint32_t rp = lamptravel::ReturnPoint(l);
+        float sp[4];
+        bool lit = false;
+        if ((lamptravel::MapOf(rp) >> 16) != (s.map_id >> 16) || !ids::ReturnSpot(rp, sp)) continue;
+        if (!ApartAnyLamp() && (!ReadEventFlag(lamptravel::LitFlag(l), &lit) || !lit)) continue;
+        spots.push_back({rp, sp[0], sp[1], sp[2]});
+    }
+    float dist = 0;
+    const std::uint32_t id = PickApart(host, spots, kApartMinM, kApartMaxM, &dist);
+    static std::uint32_t logged = 0;
+    if (id != logged) {
+        logged = id;
+        Log("apart: %u lit lamp(s) in this block: the invader appears at lamp %u (%.0f m from the host)", unsigned(spots.size()), id, double(dist));
+    }
+    return id;
+}
 }
 
 void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
@@ -675,6 +730,7 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
         const int state = arrived ? 2 : 1;
         if (g_inv.announced != state || now - g_inv.sent_at >= kReportEveryS) {
             Msg m{state, ent.name, End::None};
+            m.apart = ApartLampForInvader(s);
             // 0.7.9: the host's rules decide the phantom cut in an invasion (it is PvP); the invader follows this.
             m.full_hp = levelsync::PhantomCutOn(party::status::HostRuleOn(party::status::HostRule::PhantomHp), true,
                                                 party::status::HostRuleOn(party::status::HostRule::PvpFullHp))
@@ -700,6 +756,29 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
     if (link->state() == party::LinkState::Connected && !g_logged_join) {
         g_logged_join = true;
         Log("this game invades the host's world (hostile; no password, no shared progress)");
+    }
+    // 0.7.9: how far this invader stands from the host while the invasion is on (the placement's evidence), every 5 s.
+    {
+        static double dist_at = 0;
+        int st = 0;
+        {
+            std::lock_guard<std::mutex> lk(g.mu);
+            st = g.invader_state;
+        }
+        if (st == 2 && in_world && s.player && now - dist_at >= 5.0) {
+            dist_at = now;
+            float me[3];
+            party::MemberVitals mv[party::kMaxVitals];
+            const int n = link->vitals(mv, party::kMaxVitals);
+            for (int i = 0; i < n; ++i) {
+                if (mv[i].slot != party::kHostSlot || !(mv[i].flags & party::kVitalsHasPos) || mv[i].age_ms > 3000) continue;
+                if (!balance::ChrPosition(s.player, me)) break;
+                const float dx = mv[i].pos[0] - me[0], dz = mv[i].pos[2] - me[2];
+                Log("apart: %.0f m from the host (host at %.1f, %.1f, %.1f; this game at %.1f, %.1f, %.1f)", double(std::sqrt(dx * dx + dz * dz)),
+                    double(mv[i].pos[0]), double(mv[i].pos[1]), double(mv[i].pos[2]), double(me[0]), double(me[1]), double(me[2]));
+                break;
+            }
+        }
     }
     // The invader falls: tell the host and go home at once (the vanilla send-home), not a revive at a lamp.
     if (in_world && link->state() == party::LinkState::Connected && b2::LocalHp() <= 0 && !g_fell_sent) {
