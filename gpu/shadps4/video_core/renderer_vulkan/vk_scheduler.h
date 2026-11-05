@@ -596,11 +596,22 @@ struct SubmissionBatch {
     }
 };
 
+/// A recorded command that is not a valid command slot of its chunk (the intrusive list was
+/// overwritten or the slot memory reused). Logs the first few; `chunk` is the chunk storage,
+/// `chunk_used` its high water mark. Ported from Mrsuss60 3e600386 / 6efb5ac1.
+void ReportCommandOutsideChunk(const void* chunk, size_t chunk_used, const void* command,
+                               const char* reason) noexcept;
+
 /// bbport: a block of deferred Vulkan commands. Commands are closures placed in
 /// fixed storage (no allocation per command) and run in order on the recording thread.
 class RecordChunk {
 public:
     static constexpr size_t Capacity = 128 * 1024;
+
+    /// Stamp of a live command slot. Command storage is bump-allocated, so a slot is only written
+    /// once; a stamp that no longer matches means the chunk memory was reused under a live command
+    /// list (one load, catches what the address check cannot).
+    static constexpr std::uint32_t CommandMagic = 0x4242434Du; // "BBCM"
 
     /// Returns false (and leaves `func` untouched) when the chunk has no room.
     template <typename Func>
@@ -646,6 +657,17 @@ public:
 
     void Execute(vk::CommandBuffer cmdbuf) {
         for (CommandBase* command = first; command;) {
+            /* bbport (3e600386): a command outside this chunk's storage, or with a slot stamp that
+             * no longer matches, means the list was overwritten: drop the rest of the chunk instead
+             * of reading a vtable from data. Integer comparisons on validated memory only. */
+            if (!InChunk(command)) {
+                ReportCommandOutsideChunk(storage, used, command, "outside the chunk storage");
+                break;
+            }
+            if (command->magic != CommandMagic) {
+                ReportCommandOutsideChunk(storage, used, command, "command stamp overwritten");
+                break;
+            }
             CommandBase* const next = command->next;
             command->Execute(cmdbuf);
             command->~CommandBase();
@@ -684,6 +706,9 @@ private:
     struct CommandBase {
         virtual ~CommandBase() = default;
         virtual void Execute(vk::CommandBuffer cmdbuf) = 0;
+        /// Checked before the virtual call; see CommandMagic.
+        std::uint32_t magic = CommandMagic;
+        std::uint32_t reserved = 0;
         CommandBase* next{};
     };
     template <typename Func>
@@ -695,6 +720,14 @@ private:
         }
         Func func;
     };
+
+    /// Whether `command` points at a command slot inside this chunk (its fixed block or a
+    /// AllocateLarge block): the loop in Execute() is about to read its vtable.
+    [[nodiscard]] bool InChunk(const CommandBase* command) const noexcept {
+        const auto base = reinterpret_cast<std::uintptr_t>(storage);
+        const auto addr = reinterpret_cast<std::uintptr_t>(command);
+        return addr >= base && addr + sizeof(CommandBase) <= base + used;
+    }
 
     alignas(64) std::byte storage[Capacity];
     size_t used = 0;
@@ -897,8 +930,8 @@ public:
         if (!IsRecordingDeferred()) {
             return;
         }
-        const bool fits = bytes + 1024 <= RecordChunk::Capacity;
-        if (RecordChunk::Capacity - CurrentChunk().Size() < (fits ? bytes + 1024 : 1024)) {
+        const bool fits = bytes + RecordCommandHeadroom <= RecordChunk::Capacity;
+        if (RecordChunk::Capacity - CurrentChunk().Size() < (fits ? bytes + RecordCommandHeadroom : RecordCommandHeadroom)) {
             RetireChunk();
         }
         record_reserved = !fits;
@@ -917,11 +950,11 @@ public:
         // beside the chunk and lives as long as it.
         const size_t bytes = data.size_bytes();
         T* dst = nullptr;
-        if (bytes + alignof(T) + 1024 <= RecordChunk::Capacity) {
+        if (bytes + alignof(T) + RecordCommandHeadroom <= RecordChunk::Capacity) {
             if (!record_reserved) {
                 ReserveRecordData(bytes + alignof(T));
             }
-            if (RecordChunk::Capacity - CurrentChunk().Size() >= bytes + alignof(T) + 1024) {
+            if (RecordChunk::Capacity - CurrentChunk().Size() >= bytes + alignof(T) + RecordCommandHeadroom) {
                 dst = static_cast<T*>(CurrentChunk().Allocate(bytes, alignof(T)));
             }
         }
@@ -1072,6 +1105,11 @@ public:
     static std::mutex submit_mutex;
 
 private:
+    /// Room kept behind a batch's RecordData() for the Record() calls that read it (3e600386: 1 KiB
+    /// did not cover the commands EmitVertexBuffers pushes after its data; a command that no longer
+    /// fits goes to the next chunk and would read data from the one already executed and recycled).
+    static constexpr size_t RecordCommandHeadroom = 4096;
+
     static constexpr u32 MaxSegments = SubmissionBatch::MaxSegments;
 
     /// A recording thread. It owns a command pool (worker 0: the scheduler's) and records the
