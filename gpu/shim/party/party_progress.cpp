@@ -9,6 +9,7 @@
 #include "party_perf.h"
 #ifndef BB_PARTY_PROGRESS_NO_GAME
 #include "party_director.h"  // PartyPrologueHold (#19)
+#include "party_balance.h"
 #endif
 
 #include "../net/json.h"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -2557,6 +2559,79 @@ void GuestCovenantTick(const FlagStore& store) {
     }
 }
 
+/// Guest, main thread, load mode 1 (0.7.9, covenant079; CL-95dee9): Annalise's two proximity flags for the GUEST. In the Queen's
+/// Chamber (m25_00) the events that raise them (12500011: 72500330 inside the 1 m cylinder of region 2502501, the "Kneel" action
+/// spot; 12500021: 72500331 inside the box 2502500, which starts her greeting) all begin with `End if Client` (1003[06]), so a
+/// guest in the host's world never got her greeting or the Kneel prompt: her ESD t250307 reads both flags. The guest's own game
+/// tests its own position here and writes the two bits into the overlay (covenant bits, own per player; GuestCovenantTick keeps
+/// them with the own pool). The kneel itself (72500329) is set by her ESD when the guest presses the action button in the cylinder.
+/// Kill switch BB_PARTY_GUEST_ANNALISE=0.
+void GuestAnnaliseRegionTick(const FlagStore& store, u64 player, u32 map_id) {
+    static const bool enabled = [] {
+        const char* e = std::getenv("BB_PARTY_GUEST_ANNALISE");
+        return !(e && e[0] == '0');
+    }();
+    static int last330 = -1, last331 = -1;
+    if (!enabled || !CovenantPerPlayer() || !player || map_id != 0x19000000u) {
+        last330 = last331 = -1;
+        return;
+    }
+    float p[4] = {};  // the chr's physics position (+0xc0 is the drawn spot, which stays at the lamp for a guest)
+    if (!balance::ChrPosition(player, p) || !std::isfinite(p[0]) || !std::isfinite(p[2])) {
+        return;
+    }
+    // region 2502501: cylinder radius 1, height 2 at (127.7, 129.95, -464.5); region 2502500: box 26.2 x 54.7 (x, z) x 4 (y) at
+    // (119.5, 129.1, -452.7), yaw -35 degrees (MSB m25_00_00_00, POINT_PARAM_ST)
+    const float dx = p[0] - 127.7f, dz = p[2] + 464.5f, dy = p[1] - 129.95f;
+    const bool in330 = dx * dx + dz * dz <= 1.0f && dy >= -1.0f && dy <= 3.0f;
+    const float a = -35.0f * 3.14159265f / 180.0f;
+    const float bx = p[0] - 119.5f, bz = p[2] + 452.7f, by = p[1] - 129.1f;
+    const float lx = bx * std::cos(a) - bz * std::sin(a), lz = bx * std::sin(a) + bz * std::cos(a);
+    const bool in331 = std::fabs(lx) <= 13.1f && std::fabs(lz) <= 27.35f && by >= -2.0f && by <= 6.0f;
+    // Her gift trigger 9042 (common event 9040 slot: the Caryll rune, lot 17000, personal flag 50000200) reads 1 in the guest's overlay
+    // from the host's world (the guest's own 9040 slot ends at load, `End if Client`), so the guest's talk setting it again is no change
+    // and the own talk gift (OwnTalkGiftLot) never saw it: while the guest's own save has not got the rune the overlay shows it 0.
+    {
+        // once per overlay (a later 1 is the talk's own set, which GuestLocalWorldChanges must see)
+        static u64 cleared_ident = 0;
+        bool trig = false, own_rune = false;
+        if (store.OverlayIdentity() != cleared_ident && store.ReadVisible(9042u, &trig) && store.ReadOwnSave(50000200u, &own_rune)) {
+            cleared_ident = store.OverlayIdentity();
+            if (trig && !own_rune && store.WriteVisible(9042u, false))
+            Log("guest Annalise: gift trigger 9042 shown clear (the own save has no Caryll rune yet), so the guest's talk sets it afresh");
+        }
+    }
+    // The blood animations' events 12500013 / 12500014 (also `End if Client`) end the ESD's one-shot flags 72500339 (the offer) and
+    // 72500337 (the oath's blood): the ESD sets them, waits for them to fall again (state "Feel the spreading corruption burn" waits
+    // 72500337 = 0 before the gift machine sets 9042), so on a guest the talk stopped there. The event holds them for 180 frames.
+    for (const u32 id : {72500337u, 72500339u}) {
+        static std::map<u32, std::chrono::steady_clock::time_point> since;
+        bool v = false;
+        if (!store.ReadVisible(id, &v) || !v) {
+            since.erase(id);
+            continue;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto it = since.emplace(id, now).first;
+        if (now - it->second >= std::chrono::milliseconds(3000) && store.WriteVisible(id, false)) {
+            since.erase(id);
+            Log("guest Annalise: one-shot flag %u cleared after her blood animation time (event 12500013 / 12500014 do not run on a guest)", id);
+        }
+    }
+    if (int(in330) != last330) {
+        if (store.WriteVisible(72500330u, in330)) {
+            last330 = int(in330);
+            Log("guest Annalise: kneel spot (flag 72500330) %s at (%.1f, %.1f, %.1f)", in330 ? "entered" : "left", p[0], p[1], p[2]);
+        }
+    }
+    if (int(in331) != last331) {
+        if (store.WriteVisible(72500331u, in331)) {
+            last331 = int(in331);
+            Log("guest Annalise: greeting region (flag 72500331) %s at (%.1f, %.1f, %.1f)", in331 ? "entered" : "left", p[0], p[1], p[2]);
+        }
+    }
+}
+
 const char* MirrorWhy(bool full, u64 id, u64 last) {
     return !full ? "host changes" : id != last ? "new overlay" : "snapshot applied";
 }
@@ -2855,6 +2930,7 @@ void Tick(const GameSnapshot& s) {
         if (store.LoadMode() == 1) {
             GuestShopStockTick(store);
             GuestCovenantTick(store);
+            GuestAnnaliseRegionTick(store, s.player, s.map_id);
         }
         GuestTick(g, store, s.map_id);
     }
