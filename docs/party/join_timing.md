@@ -158,6 +158,11 @@ Fixes:
    the peers reserved for that online id lose the id (first byte `#`) and the keep flag. The next
    summon reserves a fresh peer.
 3. `Party: Fast rejoin`: the peer keep 30 -> 10 s (0x147afe4, 0x147b0a7, 0x1480cf7, 0x1480e14).
+   The timer (+0xe8) is counted down by the game's step (0x1480d10, float seconds): measured with
+   `BB_PARTY_PEERKEEP_LOG=1` + `BB_PARTY_PEERKEEP_TEST=1` (reserves one idle peer for 10.0 and logs the timer twice a
+   second) at 30 and 60 FPS with Live FPS and at 60 and 90 FPS with the frame hooks: 1.0 per wall second, so 10 s
+   at any frame rate (it runs slower only while the game itself steps slower than real time). No FPS patch writes
+   these bytes (tests/test_patches.py).
 4. `FromApi::hold_signs`: a member that was in, joining or loading into the host's world when its
    link dropped has its new signs held for 26 s after the drop, so the host's game cannot summon
    it over the old connection. In the runs the hold ended 2-5 s after the restarted guest's sign

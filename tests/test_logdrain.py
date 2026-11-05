@@ -9,9 +9,9 @@ import unittest
 EXE = test_exe('logdrain-test')
 
 
-def run(lines, stall_s, async_on):
+def run(lines, stall_s, async_on, kill=False, width=None):
     env = dict(os.environ, BB_LOG_ASYNC='1' if async_on else '0')
-    p = subprocess.Popen([str(EXE.resolve()), str(lines)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    p = subprocess.Popen([str(EXE.resolve()), str(lines)] + ((['kill'] if kill else ['go']) + [str(width)] if (kill or width) else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     err = []
     import threading
     t = threading.Thread(target=lambda: err.append(p.stderr.read()), daemon=True)
@@ -35,6 +35,19 @@ class LogDrainTests(unittest.TestCase):
         self.assertEqual(data.count(b'\n'), self.N)
         self.assertTrue(data.startswith(b'line 000000 '))
         self.assertIn(b'line %06d ' % (self.N - 1), data)
+
+    def test_fatal_stop_flushes_the_last_line(self):
+        code, data, ms = run(self.N, 1, True, kill=True)
+        self.assertEqual(code, 23)
+        self.assertTrue(data.rstrip().endswith(b'LAST LINE before the fatal stop'))
+
+    def test_a_full_pipe_drops_lines_instead_of_stalling(self):
+        n = 8000  # 8000 lines of 1 KiB: over the 4 MiB drain pipe
+        code, data, ms = run(n, 12, True, width=1000)
+        self.assertEqual(code, 0)
+        self.assertLess(ms, 8000)  # the reader sleeps 12 s: a blocked writer would wait for it
+        self.assertLess(data.count(b'line 0'), n)
+        self.assertIn(b'log lines were dropped', data)
 
     def test_off_keeps_the_direct_writes(self):
         code, data, ms = run(self.N, 3, False)

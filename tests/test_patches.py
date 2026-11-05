@@ -518,10 +518,24 @@ class PartyWinsTest(unittest.TestCase):
 class PartyOverlapTest(unittest.TestCase):
     """The shipped optional patches never write bytes the party patches write (the party's checks skip a site whose bytes
     another patch changed). Known, intended pair: the two copies of the network-choice skip."""
-    # The Deltatime base (Mrsuss60's, like Lantern's 60 FPS++) writes 60.0 into the four floats "Party: Fast rejoin" sets to
-    # 10.0; in a party the party patches win on those bytes (patches.py party_wins, with a WARNING).
-    ALLOWED = {frozenset(('Party: Skip Online/Offline Choice (Online)', 'Skip Online/Offline Choice')),
-               frozenset(('Party: Fast rejoin', '60 FPS++ (Deltatime)'))}
+    ALLOWED = {frozenset(('Party: Skip Online/Offline Choice (Online)', 'Skip Online/Offline Choice'))}
+
+    def test_no_fps_patch_writes_a_party_patch_byte(self):
+        # "60 FPS++ (Deltatime)" once wrote 60.0 into the four peer-keep timers "Party: Fast rejoin" sets to 10.0 (the
+        # Nightwatch developers hit the same overlap: the rejoin timers went back to 30 s / 60 s). In a party the party
+        # patches win on shared bytes, but no shipped FPS list may write them at all.
+        by_name = {}
+        for m in ET.parse(XML).getroot().iter('Metadata'):
+            if m.get('AppVer') != '01.09':
+                continue
+            by_name.setdefault(m.get('Name'), []).extend(
+                (a, a + len(d)) for a, d in ((x[0] + EBOOT_BASE, x[1]) for x in patches.metadata_writes(m)))
+        party = [r for n, rs in by_name.items() if n.startswith('Party: ') for r in rs]
+        fps = [n for n in by_name if 'fps' in n.lower() or 'deltatime' in n.lower() or 'frame' in n.lower()]
+        self.assertIn('60 FPS++ (Deltatime)', fps)
+        self.assertIn('Party: Fast rejoin', by_name)
+        bad = [n for n in fps if any(a[0] < b[1] and b[0] < a[1] for a in by_name[n] for b in party)]
+        self.assertEqual(bad, [])
 
     def test_party_patches_overlap_nothing(self):
         by_name = {}
