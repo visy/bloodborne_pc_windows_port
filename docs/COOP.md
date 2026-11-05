@@ -317,9 +317,15 @@ before anyone is in the game):
   page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
 - **Give items to a party member.** *Give items to the party* (*System -> My party: Your items*, the launcher's My Party
   tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give* to the command menu of an
-  item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials only, never
-  key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
+  item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials (the blood
+  stones too), never key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
   when the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
+- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> My party: Your items*, the launcher's My
+  Party tab, `party_give_gear`, off by default, your own setting and your consent to receive; separate from *Give items to the
+  party*) adds *Give* to a weapon's or armor's command menu in the inventory: pick a hunter. A weapon keeps its upgrade level and its
+  blood gems, armor moves as it is. Not worn gear, and not the gear the party shares anyway (story and unique weapons, Gascoigne's
+  set ...); the receiver needs a free inventory entry. The giver loses the gear only when the receiver has it, and a broken link
+  puts it back with its gems. See docs/party/give_items.md section 5.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
   ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My

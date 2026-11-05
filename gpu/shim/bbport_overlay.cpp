@@ -1921,6 +1921,13 @@ void PartyTab() {
              "Передача расходников охотникам группы и получение от них (строки ниже). Ваш переключатель показывает "
              "список; их - согласие. Никогда ключевые, уникальные и сюжетные предметы. По умолчанию: выкл."),
            on);
+    Toggle("party_give_gear", T("Give weapons and armor", "Передача оружия и брони"), s.party_give_gear,
+           T("Give a weapon (with its upgrade level and blood gems) or an armor piece to a hunter in your party and receive theirs "
+             "(Give in the item's menu in the inventory). Your switch shows it; theirs is their consent. Never worn, shared or "
+             "story gear. Default: off.",
+             "Передача оружия (с улучшением и кровавыми самоцветами) и брони охотникам группы и получение от них. Ваш "
+             "переключатель показывает пункт; их - согласие. Никогда надетое, общее и сюжетное. По умолчанию: выкл."),
+           on);
     Toggle("party_conn_warnings", T("Connection warnings", "Предупреждения о связи"), s.party_conn_warnings,
            T("A notice with the fix when the Windows Firewall, the router or a wrong address keeps the party "
              "from working (nobody reaches your party, a guest's game is not heard, the host cannot be "
