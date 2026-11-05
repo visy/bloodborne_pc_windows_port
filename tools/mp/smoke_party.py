@@ -8065,12 +8065,12 @@ def check_cis(v, L, d=None):
 
 
 # Phase cim (chalice_madman, 2 players; 0.7.9 shop079, CL-8e24b7): the Madman set rows 5091 of a LOWER Hintertomb Chalice dungeon
-# (goods 6310, mapBaseId 31x -> m29_31_90_00; event 12906824 sets 5091 when the layer 2 boss 2900105 dies). Same walk as cis, with
-# the fixture chalice_lowerhint_ritual (made by `caq` with CAQ_GOODS=goods=6310:1,... , docs/party/test_saves.md): the host kills
-# 2900105, the guest's flag 5091 must follow and the guest's Insight shop must open. UNPROVEN, so not in the default list: the run
-# enters the dungeon and kills 2900105 (HP 1555: a regular enemy in this layout, not the layer boss), and killing the loaded bosses
-# 2900103 / 2900100 / 2900108 / 2900115 sets 12901801 but never 5091 (see REPORT shop079); run it with --phase cim.
-CIM_FIX = Path(os.environ.get("CIM_FIX", "E:/games/bbport/test_saves/chalice_lowerhint_ritual/savedata"))
+# (goods 6319, the FIXED Lower Hintertomb Chalice, mapBaseId 319 -> script folder m29_31_90_00; event 12906824 sets 5091 when the
+# twin boss 2900105 + 2900106, event 12901723, are both dead). Only m29_31_90_00 (and m29_20_90_00 for 5090) start event 12906824: the ritual chalices 6300 / 6302 /
+# 6310 / 6312 run m29_30_90_00, which never sets 5091 (cim079). Same walk as cis, with the fixture chalice_lowerhint_fixed (made by
+# `caq` with CAQ_GOODS=goods=6319:1,... , docs/party/test_saves.md): the host kills 2900105 and 2900106, the guest's flag 5091 must follow and
+# the guest's Insight shop must open.
+CIM_FIX = Path(os.environ.get("CIM_FIX", "E:/games/bbport/test_saves/chalice_lowerhint_fixed/savedata"))
 
 
 def prep_cim(root: Path):
@@ -8082,11 +8082,18 @@ def prep_cim(root: Path):
 
 def phase_cim(only):
     ph = phase_cis(only)
-    host = ph["ienv"][0].replace("host_kill=2900101", "host_kill=2900105")
+    # the layer 2 boss of this dungeon is a PAIR: event 12901723 sets 12901801 only when 2900105 AND 2900106 are dead
+    host = ph["ienv"][0].replace("host_kill=2900101", "host_kill=2900105").replace(
+        "host_kill=2900105:hp@20%m29", "host_kill=2900105:hp@20%m29,host_kill=2900106:hp@3%m29")
     # the host holds a chalice (goods 6109, as caw) so the altar opens its menu at all
     host = host.replace("log_pos,", "log_pos,goods=6109:1,", 1)
     ph.update(name="cim", prep=prep_cim)
     ph["ienv"] = [host] + ph["ienv"][1:]
+    if os.environ.get("CIM_KILL"):  # diagnostics: other targets, e.g. "999@5%m29,2900105:hp@20%m29" (999 lists the strongest loaded enemies)
+        host = ph["ienv"][0].replace("host_kill=2900105:hp@20%m29", ",".join("host_kill=" + k for k in os.environ["CIM_KILL"].split(",")))
+        ph["ienv"] = [host] + ph["ienv"][1:]
+    if os.environ.get("CIM_TRACE"):  # diagnostics: which EMEVD instructions the dungeon runs
+        ph["env"] = ph["env"] + ["BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=" + os.environ["CIM_TRACE"]]
     return ph
 
 
@@ -8094,7 +8101,8 @@ def check_cim(v, L, d=None):
     check_common(v, L, "cim")
     need(v, L, "cim host in the dungeon (m29)", 0, r"map - -> m29_00")
     need(v, L, "cim guest in the dungeon (m29)", 1, r"map - -> m29_00")
-    kill = need(v, L, "cim the host killed the layer 2 boss 2900105 (HP 0)", 0, r"host_kill: entity 2900105 HP \d+ -> 0 ")
+    need(v, L, "cim the host killed the layer 2 boss pair, 2900105 (HP 0)", 0, r"host_kill: (?:\w+ )?entity 2900105 .*?HP \d+ -> 0")
+    kill = need(v, L, "cim the host killed the layer 2 boss pair, 2900106 (HP 0)", 0, r"host_kill: (?:\w+ )?entity 2900106 .*?HP \d+ -> 0")
     need(v, L, "cim host: the unlock 5091 set by the game's own event", 0, r"test: flags (?:\S+ )*5091=1", kill or 0)
     need(v, L, "cim guest: 5091 (Madman set unlock) reaches the guest", 1, r"test: flags (?:\S+ )*5091=1", kill or 0)
     need(v, L, "cim guest: the Insight messenger's menu opened (the Madman rows' shop)", 1, r"test: levelup: key ", kill or 0)
@@ -12701,7 +12709,7 @@ def sweep_main(a, only):
 FLAKY_PHASES = {
     # the Ritual Altar's menu walk: the first Cross at the altar often finds no prompt (cao: 1 clean entry in 5 runs; cae and
     # cgt each timed out in 0.7.8 with "the autopilot answered the prompts" missing). Root cause not found.
-    "cae", "cao", "cgt", "cgp", "cgu", "cab", "cis", "caq", "caw",
+    "cae", "cao", "cgt", "cgp", "cgu", "cab", "cis", "cim", "caq", "caw",
     # the lift walk-ins: the car's build / the ride's start races the walker (0.7.8: lfwcs "no fall", lfwf "host does not ride"
     # and lfwcf "copy does not freeze" each failed once, green on the retry). Root cause not found.
     "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
@@ -12787,7 +12795,7 @@ RELEASE_SKIP = {
 CHANGED_MAP = [
     (r"party_lift|party_worldact|world_warper", "lf,lfw,lfwc,lfwbs,lfwcbs,ld,el,lt,fl,fdj"),
     (r"party_kidnap|kidnap", "kd,kw"),
-    (r"party_chalice|chalice", "cl,clg,clw,cla,cpr,chc,chn,chw,cpa,cae,cao,cab,caq,caw,cis,ch,cy,cyn"),
+    (r"party_chalice|chalice", "cl,clg,clw,cla,cpr,chc,chn,chw,cpa,cae,cao,cab,caq,caw,cis,cim,ch,cy,cyn"),
     (r"party_npc|npcfight|npcfog|npctalk|npcghost", "nf,nfa,nfe,nfw,npi,npa,npd,npf,cv,cvs,cvr,cvc,cva,cvt,tv,an,anl,scb"),
     (r"party_pvp|pvp_rules", "px,pxg,pvd,pvh,pvn"),
     (r"party_gather|gather", "ga,gl,gg,sh"),
@@ -12976,7 +12984,7 @@ def main():
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only and a.lane_id < 0:  # (a lane child keeps the one phase it was given)
         a.phase = ",".join(p for p in ("pc", "vm", "yj", "s1", "s2", "rules", "ss", "sh", "iv", "ivn", "ivx", "ivl", "ivp", "iv2", "ivm", "ojl", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cgt", "cgp", "cgu", "caa", "cas", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
-                                     "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "mp", "mpg", "mph", "jl", "ml", "mg", "ll", "hlq", "hlr", "bq", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "emf", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvm", "cvc", "cva", "cvf", "cvk", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "gv", "gvg", "gvr", "gvl", "gvn", "gvm", "gvs", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "gdr", "gdrd", "gdrb", "gdrf", "mesh", "oum", "meshm", "fp", "fp5", "oj", "lo", "po", "pos", "sg", "sg2", "sgb", "sgb2", "sgb3", "sgp", "csh", "csh2", "csh3", "cis", "ba", "bh", "bk", "hg", "bg", "lr", "mi", "mig", "lw", "lwf", "amp", "la", "lb", "lc")
+                                     "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "mp", "mpg", "mph", "jl", "ml", "mg", "ll", "hlq", "hlr", "bq", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "emf", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvm", "cvc", "cva", "cvf", "cvk", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "gv", "gvg", "gvr", "gvl", "gvn", "gvm", "gvs", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "gdr", "gdrd", "gdrb", "gdrf", "mesh", "oum", "meshm", "fp", "fp5", "oj", "lo", "po", "pos", "sg", "sg2", "sgb", "sgb2", "sgb3", "sgp", "csh", "csh2", "csh3", "cis", "cim", "ba", "bh", "bk", "hg", "bg", "lr", "mi", "mig", "lw", "lwf", "amp", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")

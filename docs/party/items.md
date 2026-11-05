@@ -1038,6 +1038,12 @@ flag (type 9), so a future gate is covered by regenerating. `shop_gates.py` reso
 Sinister Root Chalice gates 92905385-92905389 are engine-set per dungeon (chalice type 9 groups, never written from
 outside) and stay out of scope of the flag sync; see "Sinister Root Chalice rows for a guest with its own dungeon" below.
 
+**5091 (Madman set) is only the FIXED Lower Hintertomb Chalice (cim079, traced 2026-11-05)**: of all `m29_*_90_00` scripts only
+m29_20_90_00 (5090) and m29_31_90_00 (5091) start event 12906824. `HolygrailExParam` 6319 (mapBaseId 319) runs m29_31; the ritual
+chalices 6300 / 6302 / 6310 / 6312 run m29_30_90_00, which never sets 5091 (a 6310 dungeon showed no 12906824 in the EMEVD trace).
+In the 6319 dungeon the 12901801 boss is a twin pair, entities 2900105 + 2900106 (event 12901723 sets the flag only when both are
+dead); smoke `cim` kills both with `host_kill=ID:hp@S` (they are not in the enemy census).
+
 **0.7.6 (chaliceshop): the Sinister Root Chalice rows in a host's Chalice Dungeon.** ShopLineupParam rows 5N0011-5N0015
 (N = 1..4, the Bath Messenger t290300's four shops, same rows in each) sell goods 6302 / 6312 / 6502 / 6522 / 6532, each
 gated by qwcId 92905385 .. 92905389 and sold out by the per-player flags 70009200 .. 70009240. The gate is the dungeon's
