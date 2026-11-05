@@ -205,6 +205,8 @@ PARTY_INI_FLAGS = [
     ("party_item_notices", True),
     # 0.7.8 (CL-63e235): give items to a party member, off by default (System > My party: Your items)
     ("party_give_items", False),
+    # 0.7.9 (CL-1b3b98): give weapons and armor (with upgrade level and blood gems), off by default
+    ("party_give_gear", False),
     # 0.7.7 (CL-2eec68): splitscreen mode, off by default (System > My party: Splitscreen)
     ("party_splitscreen", False),
     # 0.7.7 (CL-adeb50): a guest pauses the automatic joining, off by default (System > Party > Stay in my world)
@@ -608,6 +610,12 @@ MY_PARTY_TAB = [
          "giver loses the items only once the receiver has them (a lost link puts them back). Never key items, "
          "unique items, badges, tools or story items. In the game: System > My party: Your items. "
          "Default: off (bbport.ini party_give_items)."),
+        ("check", "party_give_gear", "Give weapons and armor",
+         "Lets you give a weapon (with its upgrade level and its blood gems) or an armor piece to a hunter in your party and "
+         "receive theirs: open the item in the inventory, its menu has a Give entry. Your switch shows it; theirs is their "
+         "consent. The giver loses the gear only once the receiver has it (a lost link puts it back, gems included). Never "
+         "worn gear, nor the gear the party shares anyway (story and unique weapons, Gascoigne's set ...). In the game: "
+         "System > My party: Your items. Default: off (bbport.ini party_give_gear)."),
     ]),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
@@ -3433,6 +3441,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_conn_warnings = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_conn_warnings"))
         self.party_item_notices = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_item_notices"))
         self.party_give_items = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_give_items", False))
+        self.party_give_gear = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_give_gear", False))
         self.party_splitscreen = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_splitscreen", False))
         self.party_stay = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stay", False))
         self.party_guest_lamps = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_guest_lamps"))
