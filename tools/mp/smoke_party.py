@@ -6853,22 +6853,26 @@ def check_gvm(v, L):
     check_common(v, L, "gvm")
 
 
-# Phase gvt (~4 min, 2 players, group `give_menu`; 0.7.9 CL-063e51): Give on the Materials tab. Player report: Give did not show for
-# upgrade materials (EquipParamGoods goodsType 2, not 0). The host opens the inventory, switches to the Materials tab (Right) and opens
-# Blood Stone Shard's command menu (screenshot: Use / Discard / Give), then the gives run through the transfer test aid (host 5 to the
-# guest, the guest 2 back). Known open: a Cross on Give in this one menu does not reach the port (the game ignores it where Use is
-# disabled; Pebble's menu works, gvm), so the press is not part of this phase.
-GVT_KEYS = os.environ.get("GVT_KEYS", "0x8,0x4000,0x4000,0x2000,0x20,0x4000").split(",")
+# Phase gvt (~5 min, 2 players, group `give_menu`; 0.7.9 CL-063e51): Give on the Materials tab, done with real menu presses (no transfer test
+# aid). Player report: Give did not show for upgrade materials (EquipParamGoods goodsType 2, not 0). Both players open the inventory, switch to
+# the Materials tab (Right), open Blood Stone Shard's command menu (Use / Discard / Give; the cursor starts on the disabled Use), press Down
+# twice, Cross on Give, Cross on the member, then the amount (host: Down twice = 5; guest: Down once = 2). The game's Cross handler refuses
+# every row but Discard where Use is not usable (the port hooks it, bbport_game_menu.cpp CrossHook); the pickers go through the same handler.
+# The guest starts its presses after the host's give has arrived (the item-get dialog of the receiver must not swallow a press).
+GVT_PRE = "0x8,0x4000,0x4000,0x2000,0x20,0x4000".split(",")
+GVT_HOST = os.environ.get("GVT_HOST", ",".join(GVT_PRE + ["0x40", "0x40", "0x4000", "0x4000", "0x40", "0x40", "0x4000"])).split(",")
+GVT_GUEST = os.environ.get("GVT_GUEST", ",".join(GVT_PRE + ["0x40", "0x40", "0x4000", "0x4000", "0x40", "0x4000"])).split(",")
 
 
 def phase_gvt(only):
-    host = ",".join(["god", "goods=3000:30", "goods=3010:7"] + ["host_press=%s@%d!" % (k, int(os.environ.get("GVT_GAP", "8")) if i else 30) for i, k in enumerate(GVT_KEYS)])
+    gap = int(os.environ.get("GVT_GAP", "5"))
+    host = ",".join(["god", "goods=3000:30", "goods=3010:7"] + ["host_press=%s@%d!" % (k, gap if i else 30) for i, k in enumerate(GVT_HOST)])
+    guest = ",".join(["god", "goods=3000:5"] + ["guest_press=%s@%d!" % (k, gap if i else 30 + gap * (len(GVT_HOST) + 2)) for i, k in enumerate(GVT_GUEST)])
     return dict(
-        name="gvt", seconds=240, count=2, headless=0,
-        env=[], watch=["--watch", r"Game menu: Give added=added@1.5,4", "--watch", r"transfer ended=done@1.5,3"],
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=god,goods=3000:2",
-              "0:BB_PARTY_GIVE_ITEMS=1", "1:BB_PARTY_GIVE_ITEMS=1", "1:BB_PARTY_GIVE_WATCH=3000,3010", "0:BB_PARTY_GIVE_WATCH=3000,3010",
-              "0:BB_PARTY_GIVE_TEST=3000:5:1@80", "1:BB_PARTY_GIVE_TEST=3000:2:0@100"],
+        name="gvt", seconds=420, count=2, headless=0,
+        env=[], watch=["--watch", r"Game menu: Give added=added@1.5,4", "--watch", r"Give picker built=picker@1.5", "--watch", r"transfer ended=done@1.5,3"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + guest,
+              "0:BB_PARTY_GIVE_ITEMS=1", "1:BB_PARTY_GIVE_ITEMS=1", "1:BB_PARTY_GIVE_WATCH=3000,3010", "0:BB_PARTY_GIVE_WATCH=3000,3010"],
         crash=[], until=[r"0:applied goods 3000 x2 from slot 1"], until_hold=10,
     )
 
@@ -6876,10 +6880,12 @@ def phase_gvt(only):
 def check_gvt(v, L):
     need(v, L, "gvt join: 2 players", 0, r"cooperators 0 -> 1")
     need(v, L, "gvt the Materials tab item menu offers Give (Blood Stone Shard)", 0, r"Game menu: Give added to the item menu \(item 0x40000bb8\)")
+    need(v, L, "gvt Cross on the Give row reaches the port (host, Materials tab)", 0, r"Game menu: Cross on the Give row")
+    need(v, L, "gvt the member picker is built (host)", 0, r"Game menu: Give picker built")
     need(v, L, "gvt host -> guest: 5 Blood Stone Shards leave the host", 0, r"removed goods 3000 x5: held 30 -> 25")
     need(v, L, "gvt ... and the guest gets them", 1, r"applied goods 3000 x5 from slot 0")
     need(v, L, "gvt the transfer ends with everything arrived", 0, r"transfer ended: got 5 of 5, refund 0")
-    need(v, L, "gvt guest -> host: 2 leave the guest", 1, r"removed goods 3000 x2: held 7 -> 5")
+    need(v, L, "gvt guest -> host (guest's own menu presses): 2 leave the guest", 1, r"removed goods 3000 x2: held 10 -> 8")
     need(v, L, "gvt ... and the host gets them", 0, r"applied goods 3000 x2 from slot 1")
     none_of(v, L, "gvt no crash dump", r"BLOODBORNE CRASH DUMP|Boot: runtime set up", 20.0, insts=(0, 1))
     check_common(v, L, "gvt")
