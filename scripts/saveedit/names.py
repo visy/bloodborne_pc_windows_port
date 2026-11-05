@@ -17,7 +17,7 @@ FMG_FILES = {"goods": "アイテム名", "weapon": "武器名", "armor": "防具
 PARAMS = {"weapon": "EquipParamWeapon", "armor": "EquipParamProtector", "accessory": "EquipParamAccessory",
           "goods": "EquipParamGoods"}
 _PLACEHOLDER = re.compile(r"^(\*|NOT NEEDED|en\d+)?$", re.I)
-CACHE_VERSION = 8
+CACHE_VERSION = 9
 EVENT_TEXT = "イベントテキスト"  # menu.msgbnd FMG: the lamp warp list names (id 7000AABn)
 NPC_NAMES = "NPC名"  # item.msgbnd FMG: boss and NPC names by character id
 GEM_NAMES = "魔石名"  # menu.msgbnd FMG: blood gem and rune names (key built in gems.name_key)
@@ -104,6 +104,7 @@ def read_game(game_dir, lang="engus"):
     try:  # hand, icon and gem rows need the paramdefs too; without them the editor still has names
         p = Params(game)
         data["goods_sort"] = {i: v[0] for i, v in p.table("EquipParamGoods", ["sortId"]).items()}
+        data["goods_max"] = {i: v[0] for i, v in p.table("EquipParamGoods", ["maxNum"]).items()}  # held at most
         data["weapon_hands"] = {i: "left" if left and not right else "right"
                                 for i, (right, left) in p.table("EquipParamWeapon",
                                     ["rightHandEquipable", "leftHandEquipable"]).items()}
@@ -174,6 +175,7 @@ class Catalogue:
         self._gemgen = {int(i): v for i, v in (data or {}).get("gemgen", {}).items()}
         self._gemrows = {int(i): v for i, v in (data or {}).get("gemrows", {}).items()}
         self._goods_sort = {int(i): v for i, v in (data or {}).get("goods_sort", {}).items()}
+        self._goods_max = {int(i): v for i, v in (data or {}).get("goods_max", {}).items()}
         self._reach = set((data or {}).get("reach", []))
         self._weapon_hands = {int(i): v for i, v in (data or {}).get("weapon_hands", {}).items()}
 
@@ -202,6 +204,10 @@ class Catalogue:
         except OSError:
             pass
         return cls(data)
+
+    def goods_max(self, number):
+        """How many of a goods item the game lets you hold (EquipParamGoods.maxNum), None when unknown."""
+        return self._goods_max.get(number) or None
 
     def goods_sort(self, number):
         """The goods row's sortId (menu order); None when unknown."""

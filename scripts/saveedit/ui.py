@@ -11,7 +11,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox
 
-from . import model as M, store as S, names as N, flagsdata as F, gearops as G, instances as I, dialogs as D
+from . import model as M, store as S, names as N, flagsdata as F, gearops as G, instances as I, dialogs as D, summary as SUM
 
 RISK_WARNING = ("Editing a save can make the game crash or break the save (cut content, unobtainable items "
                 "and values beyond the normal range are allowed here).\n\nA backup of the whole save folder is "
@@ -357,7 +357,8 @@ class SaveEditorTab(ttk.Frame):
         if it is None or not self._risk():
             return
         try:
-            self.model.set_count(it, int(self.count_var.get()))
+            top = self.catalogue.goods_max(it.number) if it.category == 4 else None
+            self.model.set_count(it, int(self.count_var.get()), top)
         except ValueError as ex:
             messagebox.showerror("Save editor", str(ex))
         self.fill_items()
@@ -568,6 +569,9 @@ class SaveEditorTab(ttk.Frame):
         if not self.risk_ok and not self._risk():
             return
         if self.kind == "party" and not self.confirm("Save editor", PARTY_WARNING):
+            return
+        lines = SUM.changes(self.model, self.catalogue)
+        if lines and not self.confirm("Save editor", f"Write these changes to {self.model.name}?\n\n" + "\n".join(lines)):
             return
         try:
             backup = S.apply_edit(self.get_user(), self.kind, self.slot, self.model, self.running, self.update_party)

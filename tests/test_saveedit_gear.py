@@ -269,3 +269,55 @@ def test_real_save_adds_survive_a_reopen(tmp_path):
     t = I.read(back)
     assert t is not None and {g.effects[0] for g in t.gems.values() if g.type == 1 and g.handle > 0xC0800100} >= {effects[0]}
     assert M.SaveModel(out).to_bytes() == out  # decode -> encode identical when unchanged
+
+
+# ---- the summary of an Apply, the goods maximum -------------------------------------------------------------------
+def test_summary_lists_what_changed_in_words():
+    from saveedit import summary
+    c, m = catalogue(), M.SaveModel(gem_save())
+    assert summary.changes(m, c) == []
+    m.set_stat("vigor", 30)
+    m.set_echoes(9000)
+    m.set_count([i for i in m.items((0,)) if i.number == 100][0], 9)
+    m.set_weapon_level(m.items((0,))[0], 10, c.valid_ids(0))
+    G.add_item(m, c, 4, 1230, 3)
+    G.add_item(m, c, 0, 7000000)
+    G.set_gem_effects(m, c, 0xC0800001, [13105, 28101])
+    m.set_flag(12401800, True)
+    m.set_flag(7, True)
+    lines = summary.changes(m, c)
+    text = "\n".join(lines)
+    assert "Vigor: 10 -> 30" in text and "Blood Echoes: 500 -> 9000" in text
+    assert "Test Cleaver +3 -> Test Cleaver +10" in text and "+ Pebble x3" in text and "+ Saw Test" in text
+    assert "effects [13105] -> [13105, 28101]" in text
+    assert "Set: Boss [12401800]" in text and "Event flag bits: 2 set, 0 cleared" in text
+    assert len(lines) < 40
+
+
+def test_summary_caps_a_long_list():
+    from saveedit import summary
+    m = M.SaveModel(make_save())
+    for k in range(60):
+        m.add_goods(2000 + k, 1)
+    lines = summary.changes(m, catalogue())
+    assert len(lines) == summary.MAX_LINES + 1 and lines[-1].startswith("... and ")
+
+
+def test_goods_counts_stay_within_what_the_game_holds():
+    c = catalogue()
+    c._goods_max = {1230: 20, 1000: 20}
+    m = M.SaveModel(make_save())
+    with pytest.raises(ValueError, match="1 to 20"):
+        G.add_item(m, c, 4, 1230, 21)
+    G.add_item(m, c, 4, 1230, 20)
+    item = [i for i in m.items((0,)) if i.number == 1230][0]
+    with pytest.raises(ValueError):
+        m.set_count(item, 21, c.goods_max(1230))
+    m.set_count(item, 7, c.goods_max(1230))
+    assert N.Catalogue().goods_max(1230) is None
+
+
+@pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
+def test_real_game_goods_maximum(tmp_path):
+    c = N.Catalogue.load(GAME, tmp_path)
+    assert c.goods_max(1000) == 20 and c.goods_max(1230) == 20 and c.goods_max(1500) == 99

@@ -46,8 +46,9 @@ def add_item(model, catalogue, category, number, count=1):
     if category == 0 and (number % 10000) // 100:
         raise ValueError("add a weapon at +0; raise its level afterwards")
     if category == 4:
-        if not isinstance(count, int) or not 1 <= count <= ADD_MAX_COUNT:
-            raise ValueError(f"the count is 1 to {ADD_MAX_COUNT}")
+        top = min(ADD_MAX_COUNT, catalogue.goods_max(number) or ADD_MAX_COUNT)
+        if not isinstance(count, int) or not 1 <= count <= top:
+            raise ValueError(f"the game holds 1 to {top} of this item")
         model.add_goods(number, count, catalogue.goods_sort(number))
     else:
         model.add_gear(category, number)
