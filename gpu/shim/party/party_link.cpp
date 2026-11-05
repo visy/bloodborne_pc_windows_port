@@ -1853,6 +1853,7 @@ struct PartyLink::Impl {
         }
         RosterEntry e = entry_of(m);
         e.connected = false;
+        if (!notify_bye && !why.empty()) e.lost_why = why;  // 0.7.9: an invader whose link was lost (a reset = a crash)
         members.erase(it);
         if (cb.on_member_left) post([this, e] { cb.on_member_left(e, false); });
         broadcast_roster();
