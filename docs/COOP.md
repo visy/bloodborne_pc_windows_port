@@ -340,7 +340,7 @@ before anyone is in the game):
   | Caryll runes, the world bosses' reward runes | Enemy drops (each player rolls their own copy) |
   | Boss rewards the party earned together (Gold Pendant, badges, the Living String from the Brain of Mensis) | |
 
-  A boss killed by a guest pays the host as well. The full list of lots is in [docs/party/items_audit.md](party/items_audit.md).
+  A boss killed by a guest pays the host as well. The list of lots is derived from your own game data at load.
 - **Early items for every player.** Each player picks its own starting weapons from the Dream's
   messengers (another player's pick never takes yours away); Iosefka's Blood Vial and the Old
   Hunter Bell go to every player, whoever got them in the host's world.

@@ -935,6 +935,11 @@ add_executable(auto-hud-test EXCLUDE_FROM_ALL ../tests/test_auto_hud.cpp)
 target_compile_options(auto-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(auto-hud-test PRIVATE shim)
 set_target_properties(auto-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# The party tables' cache parser (shim/party/party_gamedata.h, header only). ninja -C out/gpu party-gamedata-test
+add_executable(party-gamedata-test EXCLUDE_FROM_ALL ../tests/test_party_gamedata.cpp)
+target_compile_options(party-gamedata-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-gamedata-test PRIVATE shim)
+
 # NPC presence mirror (shim/party/party_npc_mirror.h, header only): the guest's plan, the event
 # body. cmake --build out/gpu --target party-npc-mirror-test
 add_executable(party-npc-mirror-test EXCLUDE_FROM_ALL ../tests/test_party_npc_mirror.cpp)

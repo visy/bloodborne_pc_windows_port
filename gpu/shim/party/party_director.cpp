@@ -5939,7 +5939,7 @@ void PartyDirector::Tick() {
                 // Playtest 1: its sign / direct summon hold (a room served to the old run, or the
                 // lost link's 26 s) refused the new run's summon ("a crashed member's connection is
                 // still held"); our game is out of that session and its peer is gone: end the hold.
-                if (bbnet::party::FromApi::instance().hold_left_ms() > 0) {
+                if (bbnet::party::FromApi::instance().hold_left_ms(name) > 0) {
                     bbnet::party::FromApi::instance().hold_signs(name, 1);
                     Log("%s: its sign hold ended (the new run can be summoned now)", name.c_str());
                 }
@@ -6206,7 +6206,7 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
                 continue;
             }
             float best = 1e18f;
-            for (const std::uint32_t id : ids::kPartyReturnPoints) {
+            for (const std::uint32_t id : ids::ReturnPoints()) {
                 float sp[4];
                 if (ids::EntityMap(id) >> 16 != host_map >> 16 || !ids::ReturnSpot(id, sp)) {
                     continue;

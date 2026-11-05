@@ -312,19 +312,21 @@ std::array<std::uint8_t, 32> eboot_hash() {
     return h;
 }
 
-// A9: the game's param set, dvdroot_ps4/param/gameparam/gameparam.parambnd.dcx under the game
-// directory (mods replacing it count under the gameplay mods). Zeros (logged) when unreadable.
+// A9: the game dump's own param set, <BB_GAME_DIR>/dvdroot_ps4/param/gameparam/gameparam.parambnd.dcx (the folder the
+// launcher chose, before the mods overlay). A mod that ships a gameparam counts under the gameplay mods, not here, so a
+// difference is a real dump difference. Without BB_GAME_DIR: the loaded game folder. Zeros (logged) when unreadable.
 std::array<std::uint8_t, 32> params_hash() {
     std::array<std::uint8_t, 32> h{};
-    std::string dir = bbnet::settings().app0;
-    if (dir.empty() && env("BB_GAME_DIR")) dir = env("BB_GAME_DIR");
-    if (dir.empty()) return h;
-    const fs::path p = fs::path(dir) / "dvdroot_ps4" / "param" / "gameparam" / "gameparam.parambnd.dcx";
-    if (!sha256_file(p, &h)) {
-        plog("warning: cannot read %s for the version check (params not compared)", p.string().c_str());
-        return std::array<std::uint8_t, 32>{};
+    const fs::path rel = fs::path("dvdroot_ps4") / "param" / "gameparam" / "gameparam.parambnd.dcx";
+    std::vector<std::string> dirs;
+    if (env("BB_GAME_DIR") && *env("BB_GAME_DIR")) dirs.push_back(env("BB_GAME_DIR"));
+    if (!bbnet::settings().app0.empty()) dirs.push_back(bbnet::settings().app0);
+    for (const std::string& d : dirs) {
+        std::error_code ec;
+        if (fs::is_regular_file(fs::path(d) / rel, ec) && sha256_file(fs::path(d) / rel, &h)) return h;
     }
-    return h;
+    plog("warning: cannot read gameparam.parambnd.dcx for the version check (params not compared)");
+    return std::array<std::uint8_t, 32>{};
 }
 
 // A9: this game's full version-check identity in <user dir>/party_identity.txt (what HELLO
@@ -373,6 +375,19 @@ void write_adopt_file(const HostOptions& host) {
     fs::create_directories(user_dir(), ec);
     std::ofstream f(fs::path(user_dir()) / "party_adopt.txt", std::ios::binary | std::ios::trunc);
     if (f) f << adopt_file_text(host);
+}
+
+// A guest refused over gameplay mods keeps the host's mods label for a launcher (party_host_mods.txt); none: no file.
+void write_host_mods_file(const std::string& label) {
+    std::error_code ec;
+    const fs::path p = fs::path(user_dir()) / "party_host_mods.txt";
+    if (label.empty()) {
+        fs::remove(p, ec);
+        return;
+    }
+    fs::create_directories(user_dir(), ec);
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    if (f) f << label << "\n";
 }
 
 // A9: the party's installed game hooks (coop_hooks), diagnostics (logs, probes, traces, test
@@ -1061,6 +1076,14 @@ void on_state(LinkState s, const std::string& detail) {
                     plog("host-owned options differ; kept the host's for the launcher's next join (party_adopt.txt): %s",
                          options_text(host_opts).c_str());
                 }
+            }
+            // 0.7.9: the host's mods label (a refusal over gameplay mods): shown, and kept for a launcher in
+            // <user dir>/party_host_mods.txt (one line; removed after a refusal without one).
+            const std::string host_mods = link->reject_mods_label();
+            write_host_mods_file(host_mods);
+            if (!host_mods.empty()) {
+                shown += " (the host's mods: " + host_mods + ")";
+                plog("the host's mods label: %s (party_host_mods.txt)", host_mods.c_str());
             }
             set_error("host refused: " + shown);
             plog("the host refused this game: %s", shown.c_str());
@@ -1901,6 +1924,7 @@ void start_host(LinkConfig cfg) {
             a.open = party::open_party::ScopeOf(a.password, BbSettings::Get().party_vpn_lobby, BbSettings::Get().party_open) !=
                      party::open_party::Scope::None;
             a.build = rr.cfg.build_id;
+            a.mods = rr.cfg.mods_label;  // 0.7.9: its own datagram (party_discovery.h), none without gameplay mods
         }
         int players = 0;
         for (const RosterEntry& e : l->roster()) players += e.connected ? 1 : 0;
@@ -2988,6 +3012,9 @@ void startup_main() {
     std::string what;
     patch_identity(cfg, &what);
     mod_identity(cfg, &what);
+    // 0.7.9: what this game loaded as the VPN lobby shows it (party_vpnlobby.h mods_label): LAN discovery and the
+    // refusal of a guest with other mods carry it; the party's mod hash stays the join check.
+    cfg.mods_label = bbnet::lobby::mods_label(env("BB_PARTY_MODS_LABEL"), !cfg.mod_names.empty(), cfg.mods_hash);
     // Max players and the 4-player rule set (party_fourp.h): the same for every player.
     cfg.options = options_text(local_options(cfg.max_players));  // 0.7.8: a refused guest takes them (party_options.h)
     cfg.rules = "max " + std::to_string(cfg.max_players) + " players, " + coop::fourp::FourpRulesTag();
