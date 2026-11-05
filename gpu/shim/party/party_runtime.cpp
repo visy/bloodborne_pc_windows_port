@@ -1242,7 +1242,24 @@ LinkCallbacks make_callbacks(bool host) {
                 plog("%s left with its own Leave during its going-home load (left our room %lld ms ago): no sign hold",
                      m.name.c_str(), static_cast<long long>(bbnet::np::ms_since_member_left()));
             }
-            if (!own_leave_home && (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
+            // 0.7.9: an invader's slot is never kept and its game goes home through its own send-home, a normal leave of the room: the
+            // second invasion into this host must not wait out the 26 s crash hold ("a crashed member's connection is still held").
+            // Only a reset link (its game crashed) keeps that hold. The host's game still holds its transport connection to the
+            // invader's game until the transport times it out (a join in the meantime never completes: "the game did not join the
+            // host's room within 8 s"), so the connection is released now, as C6 does for a crash (NrDropSilentPeers: it ends the
+            // hold 1 s after the release; the shorter hold here is only the net under it).
+            const bool invader_left = m.invader && m.lost_why.find("reset") == std::string::npos;
+            // ... and its place in the host service's room goes at once too: the invader's own LeaveRoom cannot reach the host once the
+            // link is down, so its membership stayed until the 15 s heartbeat timeout and the next joiner's game waited for that
+            // dead peer ("member 2 left room (timeout)" 36 s after the invasion ended).
+            if (m.invader && bbnet::party::PartyHostService::instance().member_timed_out(m.name))
+                plog("%s's membership of the host's room ended at once (an invader's slot is never kept)", m.name.c_str());
+            if (invader_left) {
+                plog("%s left as an invader (its game goes home itself): our game's connection to it is released now", m.name.c_str());
+                bbnet::party::FromApi::instance().hold_signs(m.name, 12000);
+                if (!(env("BB_PARTY_NR_DROP") && env("BB_PARTY_NR_DROP")[0] == '0')) coop::b2::NrDropSilentPeers(m.name);
+            }
+            if (!own_leave_home && !invader_left && (m.state == MemberState::InHostWorld || m.state == MemberState::Joining ||
                 m.state == MemberState::Loading)) {
                 // A crash (RST): the connection is expired early (nr_fast_expire), so a short hold.
                 const bool crashed = m.lost_why.find("reset") != std::string::npos && env_on("BB_PARTY_NR_FAST_EXPIRE");
