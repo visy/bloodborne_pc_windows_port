@@ -74,14 +74,14 @@ Adding a table: derive it in a new `derive_*.cpp` (or extend one), add it to `De
   edit that the next build follows, cache reuse, no game data). `cmake --build out/gpu --target gamedata-test`.
 * `party-gamedata-test` checks the cache parser with made-up numbers.
 * `tests/test_party_tables.py` builds the tables with `party-tables-cli` (`tests/party_tables_cli.cpp`) and with the
-  Python oracle (`tools/partydata/oracle.py`, dev only, not shipped: the former derivation, kept as the reference)
+  Python oracle (`scripts/partydata/oracle.py`, dev only, not shipped: the former derivation, kept as the reference)
   on `BB_GAME_DIR` (else the clone's `../game`) and requires the cache text to be byte-identical (the key line
   aside); a second test does the same on a temporary mod view whose param file has one pickup flag edited, and
   requires the tables to follow it. Skipped without a game folder or the built CLI.
 * Tests that need real tables build a cache from the clone's game folder and skip without it:
   `out/gpu/party-tables-cli.exe <game dir> <dir>/party_tables.txt`, then `BB_PARTY_TABLES=<dir>/party_tables.txt
   out/gpu/<test>.exe` (`tests/party_tables_test.h`). `tests/test_item_audit.py` runs the Python item audit on the
-  game (`python -I tools/partydata/item_tool.py audit GAME --out FILE`, written only where asked, never into the repo).
+  game (`python -I scripts/partydata/item_tool.py audit GAME --out FILE`, written only where asked, never into the repo).
 
 ## Event-flag categories (`flagRows`)
 

@@ -1609,7 +1609,7 @@ static void test_goods_limits() {
     CHECK(ClassifyLotFit({badge}) == LotFit::Owned);
 }
 
-// 0.7.7 (sharing077): the audit of the player's own game (tools/partydata/item_tool.py audit). Every lot that gives a key / unique item, a weapon or a
+// 0.7.7 (sharing077): the audit of the player's own game (scripts/partydata/item_tool.py audit). Every lot that gives a key / unique item, a weapon or a
 // Caryll rune and is not one of the owner's per-player rows must have a path to every member in the shipped tables;
 // the per-player rows must have none. Fails when a table regeneration or a deny rule drops a lot.
 static void test_audit() {

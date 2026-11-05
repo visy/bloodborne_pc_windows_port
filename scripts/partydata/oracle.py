@@ -5,7 +5,7 @@
 The engine derives the tables in C++ (gpu/shim/gamedata/). This is the slow reference implementation the C++
 output is compared with (tests/test_party_tables.py): same sections, same cache text, no key.
 
-  python -I -X utf8 tools/partydata/oracle.py GAME_DIR OUT_FILE
+  python -I -X utf8 scripts/partydata/oracle.py GAME_DIR OUT_FILE
 """
 import sys
 import time

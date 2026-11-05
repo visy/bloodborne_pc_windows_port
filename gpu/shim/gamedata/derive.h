@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The party game-data tables derived from the player's own game files (docs/party/gamedata.md). The same
-// derivation the Python tools of tools/partydata did (kept there as the test oracle), in C++.
+// derivation the Python tools of scripts/partydata did (kept there as the test oracle), in C++.
 #pragma once
 
 #include "events.h"

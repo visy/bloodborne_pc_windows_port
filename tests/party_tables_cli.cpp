@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // party-tables-cli GAME_DIR OUT_FILE [--force] [--threads N]: the engine's table derivation from the command
-// line (tests compare its output with the Python oracle tools/partydata/oracle.py; timings per step).
+// line (tests compare its output with the Python oracle scripts/partydata/oracle.py; timings per step).
 #include "gamedata/build.h"
 
 #include <cstdio>

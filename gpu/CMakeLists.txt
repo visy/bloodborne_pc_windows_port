@@ -936,7 +936,7 @@ target_compile_options(auto-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(auto-hud-test PRIVATE shim)
 set_target_properties(auto-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # The party tables derived from the game files in C++ (shim/gamedata/, in bbgpu through SHIM_SOURCES): the CLI
-# compares with tools/partydata/oracle.py; the test builds synthetic DCX / BND4 / PARAM / EMEVD / MSB data.
+# compares with scripts/partydata/oracle.py; the test builds synthetic DCX / BND4 / PARAM / EMEVD / MSB data.
 # cmake --build out/gpu --target party-tables-cli gamedata-test
 file(GLOB GAMEDATA_SOURCES CONFIGURE_DEPENDS shim/gamedata/*.cpp)
 add_executable(party-tables-cli EXCLUDE_FROM_ALL ../tests/party_tables_cli.cpp ${GAMEDATA_SOURCES})

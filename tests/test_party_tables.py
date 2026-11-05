@@ -1,5 +1,5 @@
 """The engine's C++ table derivation (gpu/shim/gamedata, built as party-tables-cli) against the Python oracle
-(tools/partydata/oracle.py), on the player's own game folder (BB_GAME_DIR, else the agent clone's game/);
+(scripts/partydata/oracle.py), on the player's own game folder (BB_GAME_DIR, else the agent clone's game/);
 skipped without a game folder or without the built CLI (cmake --build out/gpu --target party-tables-cli).
 No game data is stored here."""
 import os
@@ -38,7 +38,7 @@ class CppVersusPython(unittest.TestCase):
             cpp, py = Path(d) / "cpp.txt", Path(d) / "py.txt"
             r = run_cli(game_dir(), cpp, "--force")
             self.assertEqual(r.returncode, 0, r.stderr)
-            subprocess.run([sys.executable, "-I", "-X", "utf8", str(ROOT / "tools" / "partydata" / "oracle.py"),
+            subprocess.run([sys.executable, "-I", "-X", "utf8", str(ROOT / "scripts" / "partydata" / "oracle.py"),
                             str(game_dir()), str(py)], check=True, capture_output=True)
             self.assertEqual(body(cpp), body(py))
             mtime = cpp.stat().st_mtime_ns
@@ -63,7 +63,7 @@ def _patch_param_flag(game, view, new_flag):
     junction to the original folders (synthetic edit; nothing is committed)."""
     import struct
     import zlib
-    sys.path.insert(0, str(ROOT / "tools" / "partydata"))
+    sys.path.insert(0, str(ROOT / "scripts" / "partydata"))
     import flag_tool as ft
     src = Path(game) / "dvdroot_ps4"
     (view / "dvdroot_ps4" / "param" / "gameparam").mkdir(parents=True)
@@ -118,7 +118,7 @@ class ModOverlay(unittest.TestCase):
             self.assertEqual(run_cli(game_dir(), vanilla, "--force").returncode, 0)
             r = run_cli(view, mod, "--force")
             self.assertEqual(r.returncode, 0, r.stderr)
-            subprocess.run([sys.executable, "-I", "-X", "utf8", str(ROOT / "tools" / "partydata" / "oracle.py"), str(view), str(py)],
+            subprocess.run([sys.executable, "-I", "-X", "utf8", str(ROOT / "scripts" / "partydata" / "oracle.py"), str(view), str(py)],
                            check=True, capture_output=True)
             self.assertEqual(body(mod), body(py))  # the C++ tables equal the oracle's on the modded files
             self.assertNotEqual(body(mod), body(vanilla))

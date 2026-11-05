@@ -1,5 +1,5 @@
 """The shared-rewards audit, derived at run time from the player's own game folder (no committed table):
-tools/partydata/item_tool.py derive() must find no GAP row, and its sections agree with the audit rows.
+scripts/partydata/item_tool.py derive() must find no GAP row, and its sections agree with the audit rows.
 Skipped when no game folder is at hand (BB_GAME_DIR, else the agent clone's game/). The C++ side
 (party-items-test test_audit) checks that the tables the game loads give every `shared` row a path."""
 import os
@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools" / "partydata"))
+sys.path.insert(0, str(ROOT / "scripts" / "partydata"))
 
 
 def game_dir():

@@ -110,7 +110,7 @@ For hostdeath (party_travel.h / party_b2.h):
 ## 3a. Moves inside the loaded map: no loading screen (B4 / H1)
 
 User priority (2026-10-11): only a real map change may show a loading screen. The lamp spots come
-from the game data: `tools/partydata/ids_tool.py` now also derives `kPartyReturnSpotIds` /
+from the game data: `scripts/partydata/ids_tool.py` now also derives `kPartyReturnSpotIds` /
 `kPartyReturnSpots` (x, y, z, yaw) for 75 of the 85 ReturnPointParam rows - the MSB revive event
 named by `returnPointEntityId` (EVENT_PARAM_ST entry: base data +8 entity id, type data +0 region
 index) and that region's position / rotation (POINT_PARAM_ST +0x14 / +0x20, degrees) [C]. Checked:
