@@ -1796,6 +1796,11 @@ void DefineAll() {
            "Adds Give to an item's menu in the inventory, and lets hunters give you items. Not key or story items",
            "Передача расходников охотникам и приём (меню Insert, вкладка Party). Не ключевые и не сюжетные",
            toggle, Kind::Toggle);
+    // 0.7.9: weapons and armor (with the weapon's upgrade level and blood gems); its own switch, off by default, also the consent to receive.
+    AddRow(Flag(&Values::party_give_gear), "Give weapons and armor", "Передача оружия и брони",
+           "Adds Give to a weapon's or armor's menu in the inventory (a weapon keeps its upgrade and blood gems), and lets hunters give you gear. Not worn gear, not shared or story gear",
+           "Передача оружия и брони охотникам и приём (оружие с улучшением и кровавыми самоцветами). Не надетое, не общее и не сюжетное",
+           toggle, Kind::Toggle);
 
 
     // ---- My party: Display: what this player sees of the party (local) ----
