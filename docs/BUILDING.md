@@ -50,3 +50,15 @@ It copies the interpreter, `DLLs\`, `tcl\` and `Lib\` without tests, IDLE, pip, 
 ## Upscaler assets
 
 FSR 3.1 needs none. FSR 4 (v07) and FSR 4.1.1 need assets that are not included: `tools/fetch_fsr4_assets.sh` downloads FSR 4 v07, and FSR 4.1.1 is built from your own AMD `amd_fidelityfx_upscaler_dx12.dll` (4.1.x) by `tools/fsr4cap` (upstream runs this under Proton on Linux; the resulting `fsr4_411` folder can be copied here). On RDNA4 the FP8 variant is picked automatically; `BB_FSR411_VARIANT=int8` forces INT8.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/` | Win32 loader, memory management, PS4 runtime |
+| `gpu/` | Vulkan renderer, upscalers, DLSS bridge, party co-op (`gpu/shim/party`) |
+| `scripts/` | Eboot preparation, game check, patch compiler |
+| `patches/` | Community XML patches for v1.09 |
+| `launcher.py`, `launch_gui.bat`, `run.bat`, `build.bat` | Windows launcher and scripts |
+| `tools/`, `tests/`, `docs/` | Developer tools, tests, documentation |
+| `launcher/`, `run.sh`, `build.sh` | Upstream Linux scripts (reference only) |
