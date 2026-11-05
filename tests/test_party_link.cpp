@@ -1261,6 +1261,8 @@ static void test_invader_b2_filter() {
     CHECK(!invader_event_to_ok("b2", "{\"op\":\"gather\"}"));
     CHECK(!invader_event_to_ok("progress", "{}"));
     CHECK(invader_event_to_ok("invade", "{}"));
+    CHECK(invader_event_to_ok("room_member_joined", "{}") && invader_event_to_ok("room_member_left", "{}"));  // 0.7.9: the room's membership
+    CHECK(!invader_event_to_ok("room_closed", "{}") && !invader_event_to_ok("guest_invite", "{}"));
 }
 
 // ---- 0.7.8 invasions: the invader admission path (docs/party/invasions.md) ----

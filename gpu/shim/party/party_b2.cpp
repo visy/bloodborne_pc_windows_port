@@ -8979,6 +8979,26 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
         pending_since = 0;
         const float dx = hp[0] - me[0], dz = hp[2] - me[2];
         const float d = std::sqrt(dx * dx + dz * dz);
+        if (coop::invade::JoinAsInvader()) {
+            // 0.7.9: an invader appears away from the host (the host names a lamp it has lit, 30 m or more off); none named or not
+            // reachable without a load: beside the host as before.
+            const u32 lamp = coop::invade::ApartLamp();
+            // This game's own map id reads unknown ("-") while it is a client in the host's world, so the block is the host's: the
+            // host's chr stands here (checked above) and the lamp must be in the host's map block.
+            float spot[4];
+            const u32 host_map = HostMap();
+            const bool known = lamp && lamp / 100000 != 29 && ids::ReturnSpot(lamp, spot) && host_map != 0 && host_map != 0xffffffffu &&
+                               (ids::EntityMap(lamp) >> 16) == (host_map >> 16);
+            const float to[4] = {spot[0], spot[1], spot[2], 1.0f};
+            if (known && WarpLocal(to, spot[3], "invader arrival: apart from the host")) {
+                const float ax = hp[0] - spot[0], az = hp[2] - spot[2];
+                Log("invader: arrived %.1f m from the host; put at lamp %u, %.1f m from the host (%.1f, %.1f, %.1f)", double(d), lamp,
+                    double(std::sqrt(ax * ax + az * az)), double(spot[0]), double(spot[1]), double(spot[2]));
+                return;
+            }
+            Log("invader: no lamp apart from the host (lamp %u: %s; the host's map %s): beside the host", lamp,
+                !lamp ? "none named" : !known ? "not in the host's map block" : "the warp was refused", MapName(host_map).c_str());
+        }
         static const float min_d = [] {
             const char* v = std::getenv("BB_PARTY_JOIN_BESIDE_MIN");  // test aid: the distance kept (m)
             return v && v[0] ? float(std::atof(v)) : 4.0f;

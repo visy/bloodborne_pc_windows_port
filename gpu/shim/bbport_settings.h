@@ -329,6 +329,10 @@ struct Values {
     /// join its world as hostile phantoms from the public lists (VPN lobby / LAN discovery). Only the host's value counts. ini
     /// party_invaders, env BB_PARTY_INVADERS. Live. Off by default.
     std::atomic<bool> party_invaders{false};
+    /// 0.7.9 (CL-7e748c): "Max invaders": how many invaders the host lets in at once, 1 or 2 (party_invade_rules.h). The HOST's
+    /// value only; both count against Max players and the game's four slots. ini party_max_invaders, env
+    /// BB_PARTY_MAX_INVADERS. Live. Default 1 (the 0.7.8 behaviour).
+    std::atomic<int> party_max_invaders{1};
     /// 0.7.7 (CL-2eec68): splitscreen mode for several windows on one screen (party/party_splitscreen_rules.h): the party
     /// HUD shows only the compass, no name tags, party messages cut to errors. Each player's own. ini
     /// party_splitscreen, env BB_PARTY_SPLITSCREEN. Live. Off by default.
