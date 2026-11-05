@@ -128,7 +128,7 @@ class Catalogue:
         self.ok = bool(data)
         self._names = {k: {int(i): n for i, n in v.items()} for k, v in (data or {}).get("names", {}).items()}
         self._ids = {k: set(v) for k, v in (data or {}).get("ids", {}).items()}
-        self.progress = (data or {}).get("progress") or {}  # {"bosses": [[flag, npc param id]], "lamps": [flag]}
+        self.progress = (data or {}).get("progress") or {}  # {"bosses": [[flag, NPC name id]], "lamps": [flag]}
 
     @classmethod
     def load(cls, game_dir, cache_dir, lang="engus"):
@@ -172,7 +172,7 @@ class Catalogue:
         return self._names.get("lamp", {}).get(70000000 + (flag // 10000 % 1000) * 10 + flag % 100)
 
     def boss_name(self, chr_id):
-        """The NPC name list entry of an NPC param id; a variant row (210020) falls back to its base (210000)."""
+        """The NPC name list entry of a boss name id (the one its health bar shows); a variant row (210020) falls back to its base (210000)."""
         names = self._names.get("npc", {})
         return names.get(chr_id) or names.get(chr_id // 1000 * 1000)
 

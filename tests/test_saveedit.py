@@ -541,4 +541,32 @@ def test_real_names_of_lamps_and_bosses(tmp_path):
     assert all(c.lamp_name(f) for f in F.lamp_ids(c) if f // 10000 % 1000 < 300)  # every main-game lamp has a warp-list name
     assert c.lamp_name(72410200) == "1st Floor Sickroom" and c.lamp_name(72110200) == "Abandoned Old Workshop"
     named = [c.boss_name(chr_id) for _f, chr_id in c.progress["bosses"] if chr_id]
-    assert len(named) >= 14 and sum(map(bool, named)) >= 14 and "Vicar Amelia" in named and "Orphan of Kos" in named
+    assert len(named) == 19 and all(named) and "Vicar Amelia" in named and "Orphan of Kos" in named
+    assert not any(label.startswith("Boss [") for _f, _g, label in F.bosses(c))  # no boss is left unnamed
+    by_flag = dict((f, l) for f, g, l in F.bosses(c))
+    assert by_flag[12601800].startswith("Mergo") and by_flag[13501850].startswith("Living Failures")  # bar found by its event
+
+
+def test_boss_names_come_from_the_health_bar_not_the_npc_param(monkeypatch):
+    """derive() names a boss by the 2003[11] health bar of its defeat event's entity; a defeat event that names
+    another entity than the bar (m26) is found by the bar's event, 1AAB4802 for the kill flag 1AAB1800."""
+    from saveedit import flagsdata as F
+    import types
+
+    def rec(event, markers):
+        return {"event": event, "slot": 0, "markers": [{"m": m, "v": v} for m, v in markers], "ops": [], "reads": []}
+
+    allrec = {"m24_00_00_00": [rec(12401800, [("boss_defeat", [2400800])]),
+                               rec(12404802, [("boss_bar", [1, 2400800, 0, 502000])])],
+              "m26_00_00_00": [rec(12601800, [("boss_defeat", [2600803])]),
+                               rec(12604802, [("boss_bar", [1, 2600802, 0, 551000])])],
+              "m28_00_00_00": [rec(12801800, [("boss_defeat", [2800803])])]}  # no bar at all
+    ft = types.SimpleNamespace(
+        MARKERS={}, load_emedf=lambda x: x, find_emedf=lambda x: x, expand_all=lambda ev, em: allrec,
+        category_rows=lambda game, rec_: ([(12401800, 12401800, "boss_defeated", ""), (12601800, 12601800, "boss_defeated", ""),
+                                           (12801800, 12801800, "boss_defeated", "")], None),
+        categorize=lambda rows, f: ("boss_defeated",))
+    monkeypatch.setattr(F, "_partydata", lambda: (ft, None))
+    got = F.derive("anywhere")
+    assert got["bosses"] == [[12401800, 502000], [12601800, 551000], [12801800, 0]]
+    assert ft.MARKERS == {}  # the marker was only added for this one read
