@@ -68,6 +68,20 @@ def ensure_nav_cache(game):
     return None
 
 
+def ensure_party_tables(game, out_dir):
+    """The party tables (scripts/party_tables.py: maps, lamps, item lots ... read from the game's own files),
+    built once for every instance of a run into out_dir. None when they cannot be built (the game then logs
+    that the party features needing them are off)."""
+    tool = Path(__file__).resolve().parents[2] / "scripts" / "party_tables.py"
+    if not tool.exists():
+        return None
+    r = subprocess.run([sys.executable, "-I", "-X", "utf8", str(tool), str(game), "--user-dir", str(out_dir)],
+                       capture_output=True, text=True)
+    print("[instances] party tables: %s" % (r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-200:]), flush=True)
+    cache = Path(out_dir) / "party_tables.txt"
+    return cache if cache.exists() else None
+
+
 BASE_PORT = 47600  # default root; see base_port()
 
 
@@ -642,9 +656,13 @@ def run(a):
         "inst%d=%s%s" % (i, f, " + %s FG 2x" % g.upper() if g else "") for i, (f, g) in enumerate(zip(inst_fps, inst_fg))),
           flush=True)
     nav_cache = ensure_nav_cache(a.game)
+    party_tables = ensure_party_tables(a.game, Path(a.root) / "partytables")
     for n_started, i in enumerate(order):
         inst = Path(a.root) / f"inst{i}"
         env = os.environ.copy()
+        if party_tables:  # one cache for every instance (run.bat would build one per instance folder)
+            env.setdefault("BB_PARTY_TABLES", str(party_tables))
+            env.setdefault("BB_PARTY_TABLES_BUILD", "0")
         if nav_cache:
             env.setdefault("BB_NAV_CACHE", str(nav_cache))  # the test walker's navmesh files (docs/party/walker.md)
         env.update({

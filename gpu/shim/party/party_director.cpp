@@ -6206,7 +6206,7 @@ bool GatherGuest(const GameSnapshot& s, party::PartyLink* link, Clock::time_poin
                 continue;
             }
             float best = 1e18f;
-            for (const std::uint32_t id : ids::kPartyReturnPoints) {
+            for (const std::uint32_t id : ids::ReturnPoints()) {
                 float sp[4];
                 if (ids::EntityMap(id) >> 16 != host_map >> 16 || !ids::ReturnSpot(id, sp)) {
                     continue;

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Messenger shop gates (ShopLineupParam.qwcId = an event flag): what sets each one and whether the
-party shares it (docs/party/shop_gates.md).
+party shares it (writes only the files you name, never into the repo).
 
   python -I tools/party/shop_gates.py GAME [--md OUT.md] [--json OUT.json]
 
