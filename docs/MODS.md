@@ -50,6 +50,13 @@ mods/
 Соглашение `-mods` проверено по
 [исходникам shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/file_sys/fs.cpp).
 
+Мод, который добавляет или копирует события фаз босса под своими id, перечисляет эти id
+в `party_host_only.txt` в папке мода (рядом с `dvdroot_ps4`): один десятичный id события
+в строке, `#` начинает комментарий. В кооперативе хост не принимает от гостей состояние
+этих событий, как и для встроенного списка (`party_bossfog_rules.h`, `HostOnlyBossEvent`).
+Списки включённых модов собираются в `out/party_host_only.txt` (не больше 4096 id); список
+с неверной строкой не используется, журнал запуска пишет почему.
+
 Оригиналы игры не перезаписываются. На время запуска создаётся отдельное
 объединённое дерево ссылок в каталоге данных `out/mod-game-*`; чтение, stat и
 перечисление каталогов видят выбранные замены и остальные оригинальные файлы.
@@ -115,4 +122,4 @@ BB_GAME_DIR=/path/to/CUSA03173 BB_MODS_ENABLED=0 bash run.sh
 
 **DLC:** The Old Hunters' data is part of patch 1.09 (maps `m34`–`m36`); the game only needs the add-on reported as installed. `run.bat` does that automatically on a fresh install by creating `user\addcont\CUSA03173\SPEXPANSIONDLC03` when those maps exist (`BB_AUTO_DLC=0` skips it). **That folder stays empty, and that is correct:** its name is all the game checks, so nothing needs to be copied into it. The log confirms it with `AppContent add-ons reported installed (...): 1`; in game, the Eye of a Blood-drunk Hunter takes you to the Hunter's Nightmare. To set it up by hand, just create that empty folder. Other add-on dumps go in `user\addcont\<title id>\<entitlement label>\`.
 
-- **DLC**: folders in `user\addcont\<title id>\<entitlement label>\` (shadPS4's layout) are reported to the game as installed add-ons. For The Old Hunters an **empty** `user\addcont\CUSA03173\SPEXPANSIONDLC03` folder is enough (its data is in patch 1.09), and `run.bat` creates it automatically (see [Mods, patches and DLC](#mods-patches-and-dlc)).
+- **DLC**: folders in `user\addcont\<title id>\<entitlement label>\` (shadPS4's layout) are reported to the game as installed add-ons. For The Old Hunters an **empty** `user\addcont\CUSA03173\SPEXPANSIONDLC03` folder is enough (its data is in patch 1.09), and `run.bat` creates it automatically (see [DLC (The Old Hunters)](#dlc-the-old-hunters)).
