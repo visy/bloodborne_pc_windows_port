@@ -1294,6 +1294,33 @@ static void test_unusable_endpoint() {
     std::printf("unusable endpoint: remote guest without a mapping held back, back after its STUN answer\n");
 }
 
+// --- Crash hold vs. serve hold (0.7.9: two guests joining 2 s apart) -------------------------------
+static void test_hold_scope() {
+    auto& api = bbnet::party::FromApi::instance();
+    // Guest A was just served a room (its own place, 20 s): guest B asking is NOT held by it.
+    api.hold_signs("HoldA", 20000, true);
+    CHECK(api.hold_left_ms("HoldB") == 0);
+    CHECK(api.hold_left_ms() == 0);
+    CHECK(api.hold_left_ms("HoldA") > 15000);  // A itself (a restart before the hold ran out) still waits
+    // A really crashed member's connection (26 s, the default) holds every join, the asker included.
+    api.hold_signs("HoldC", 26000);
+    CHECK(api.hold_left_ms("HoldB") > 20000);
+    CHECK(api.hold_left_ms("HoldA") > 20000);
+    CHECK(api.hold_left_ms() > 20000);
+    // The crash hold ends (released connection): nobody else waits any more.
+    api.hold_signs("HoldC", 1);
+    api.hold_signs("HoldA", 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(api.hold_left_ms("HoldB") == 0);
+    // An own-only hold turned into a crash hold of the same member (it crashed during its join) blocks all.
+    api.hold_signs("HoldA", 20000, true);
+    api.hold_signs("HoldA", 26000);
+    CHECK(api.hold_left_ms("HoldB") > 20000);
+    api.hold_signs("HoldA", 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(api.hold_left_ms("HoldB") == 0);
+}
+
 int main() {
     if (!coop::gamedata::InstallFromEnv()) {
         // The sign checks need the sign maps to be maps of the game: made-up tables with the maps the test uses (no game data).
@@ -1343,6 +1370,7 @@ int main() {
     test_remote_guest_lan();
     test_matching2_host();
     test_from_api();
+    test_hold_scope();
     test_chalice_channels();
     test_matching2_leave_and_join();
     test_impersonation();

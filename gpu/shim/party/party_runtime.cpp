@@ -312,19 +312,21 @@ std::array<std::uint8_t, 32> eboot_hash() {
     return h;
 }
 
-// A9: the game's param set, dvdroot_ps4/param/gameparam/gameparam.parambnd.dcx under the game
-// directory (mods replacing it count under the gameplay mods). Zeros (logged) when unreadable.
+// A9: the game dump's own param set, <BB_GAME_DIR>/dvdroot_ps4/param/gameparam/gameparam.parambnd.dcx (the folder the
+// launcher chose, before the mods overlay). A mod that ships a gameparam counts under the gameplay mods, not here, so a
+// difference is a real dump difference. Without BB_GAME_DIR: the loaded game folder. Zeros (logged) when unreadable.
 std::array<std::uint8_t, 32> params_hash() {
     std::array<std::uint8_t, 32> h{};
-    std::string dir = bbnet::settings().app0;
-    if (dir.empty() && env("BB_GAME_DIR")) dir = env("BB_GAME_DIR");
-    if (dir.empty()) return h;
-    const fs::path p = fs::path(dir) / "dvdroot_ps4" / "param" / "gameparam" / "gameparam.parambnd.dcx";
-    if (!sha256_file(p, &h)) {
-        plog("warning: cannot read %s for the version check (params not compared)", p.string().c_str());
-        return std::array<std::uint8_t, 32>{};
+    const fs::path rel = fs::path("dvdroot_ps4") / "param" / "gameparam" / "gameparam.parambnd.dcx";
+    std::vector<std::string> dirs;
+    if (env("BB_GAME_DIR") && *env("BB_GAME_DIR")) dirs.push_back(env("BB_GAME_DIR"));
+    if (!bbnet::settings().app0.empty()) dirs.push_back(bbnet::settings().app0);
+    for (const std::string& d : dirs) {
+        std::error_code ec;
+        if (fs::is_regular_file(fs::path(d) / rel, ec) && sha256_file(fs::path(d) / rel, &h)) return h;
     }
-    return h;
+    plog("warning: cannot read gameparam.parambnd.dcx for the version check (params not compared)");
+    return std::array<std::uint8_t, 32>{};
 }
 
 // A9: this game's full version-check identity in <user dir>/party_identity.txt (what HELLO
