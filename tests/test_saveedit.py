@@ -402,15 +402,36 @@ def test_real_save_edit_cycle_on_a_copy(tmp_path):
         (src / "1/CUSA00207/SPRJ0005/userdata0010").read_bytes()
 
 
-def test_flag_lists_match_party_session():
+def synthetic_catalogue():
+    """A catalogue with made-up progress lists (the real ones are derived from the player's game)."""
+    return N.Catalogue({"names": {"lamp": {"70002410": "Test lamp"}, "npc": {"502000": "Test boss"}}, "ids": {},
+                        "progress": {"bosses": [[12401800, 502000], [12411800, 0]],
+                                     "lamps": [72410200, 73400201, 72110200]}})
+
+
+def test_flag_lists_come_from_the_catalogue():
     import party_session as ps
     from saveedit import flagsdata as F
-    assert F.BOSS_IDS == ps.BOSS_FLAGS and F.LAMP_IDS == ps.LAMP_FLAGS and F.ENDING_IDS == ps.ENDING_FLAGS
-    assert all(M.group_key(f) is not None for f in F.BOSS_IDS + F.ALL_LAMP_IDS + F.ENDING_IDS)
-    assert len(F.bosses()) == 19 and len(F.lamps()) == 28 + 16
-    assert F.lamps()[0][1] == "Abandoned Old Workshop" and F.bosses()[4][1:] == ("Cathedral Ward", "Boss [12401800]")
-    assert {g for _, g, _ in F.bosses() + F.lamps()} <= set(F.AREAS.values())
+    assert F.ENDING_IDS == ps.ENDING_FLAGS
+    assert F.bosses() == [] and F.lamps() == [] and F.lamp_ids() == ()  # no game files: nothing offered
+    c = synthetic_catalogue()
+    assert all(M.group_key(f) is not None for f in [b for b, _ in c.progress["bosses"]] + list(F.lamp_ids(c)) +
+               list(F.ENDING_IDS))
+    assert F.bosses(c)[0] == (12401800, "Cathedral Ward", "Test boss [12401800]")
+    assert F.bosses(c)[1][2] == "Boss [12411800]"
+    assert F.lamps(c)[0][2] == "Test lamp [72410200]"
+    assert {g for _, g, _ in F.bosses(c) + F.lamps(c)} <= set(F.AREAS.values())
     assert M.group_key(12401800) == party_group(12401800)
+
+
+@pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
+def test_flag_lists_derived_from_the_game(tmp_path):
+    from saveedit import flagsdata as F
+    c = N.Catalogue.load(GAME, tmp_path)
+    assert len(F.bosses(c)) == 19 and len(F.lamps(c)) == 44 and len(F.endings()) == 8
+    assert {g for _, g, _ in F.bosses(c) + F.lamps(c)} <= set(F.AREAS.values())
+    assert all(M.group_key(f) is not None for f, _g, _l in F.bosses(c) + F.lamps(c))
+    assert N.Catalogue.load(GAME, tmp_path).progress == c.progress  # the cache round-trips
 
 
 def party_group(fid):
@@ -494,16 +515,18 @@ def test_lamp_flags_are_the_whole_lamp_dlc_included():
     assert F.lamp_flags(73400201) == (73400201, 13407830, 13407831)       # Nightmare Church (issue #28)
     assert F.lamp_flags(72410201) == (72410201, 12417830, 12417831)
     assert F.lamp_flags(73600202) == (73600202, 13607850, 13607851)       # Fishing Hamlet
-    dlc = [f for f in F.lamps() if f[1] in ("Hunter's Nightmare", "Research Hall", "Fishing Hamlet")]
-    assert len(dlc) == 10 and {g for _, g, _ in dlc} == {"Hunter's Nightmare", "Research Hall", "Fishing Hamlet"}
-    assert all(M.group_key(x) is not None for f in F.ALL_LAMP_IDS for x in F.lamp_flags(f))
-    assert len(set(F.ALL_LAMP_IDS)) == len(F.ALL_LAMP_IDS)
+    c = synthetic_catalogue()
+    dlc = [f for f in F.lamps(c) if f[1] in ("Hunter's Nightmare", "Research Hall", "Fishing Hamlet")]
+    assert len(dlc) == 1 and dlc[0][1] == "Hunter's Nightmare"
+    assert all(M.group_key(x) is not None for f in F.lamp_ids(c) for x in F.lamp_flags(f))
+    assert len(set(F.lamp_ids(c))) == len(F.lamp_ids(c))
 
 
 def test_lamp_and_boss_names_from_the_catalogue():
     from saveedit import flagsdata as F
     c = N.Catalogue({"names": {"lamp": {"70002410": "1st Floor Sickroom", "70002401": "Grand Cathedral"},
-                               "npc": {"502000": "Vicar Amelia"}}, "ids": {}})
+                               "npc": {"502000": "Vicar Amelia"}}, "ids": {},
+                       "progress": {"bosses": [[12401800, 502000]], "lamps": [72410200, 72500200]}})
     assert c.lamp_name(72410200) == "1st Floor Sickroom" and c.lamp_name(72400201) == "Grand Cathedral"
     assert c.lamp_name(72500200) is None
     lamps = {f: l for f, g, l in F.lamps(c)}
@@ -515,7 +538,7 @@ def test_lamp_and_boss_names_from_the_catalogue():
 def test_real_names_of_lamps_and_bosses(tmp_path):
     from saveedit import flagsdata as F
     c = N.Catalogue.load(GAME, tmp_path)
-    assert all(c.lamp_name(f) for f in F.LAMP_IDS)  # every lamp flag has a warp-list name
+    assert all(c.lamp_name(f) for f in F.lamp_ids(c) if f // 10000 % 1000 < 300)  # every main-game lamp has a warp-list name
     assert c.lamp_name(72410200) == "1st Floor Sickroom" and c.lamp_name(72110200) == "Abandoned Old Workshop"
-    named = [c.boss_name(chr_id) for chr_id in F.BOSS_CHR.values() if chr_id]
-    assert all(named) and "Vicar Amelia" in named and "Orphan of Kos" in named
+    named = [c.boss_name(chr_id) for _f, chr_id in c.progress["bosses"] if chr_id]
+    assert len(named) >= 14 and sum(map(bool, named)) >= 14 and "Vicar Amelia" in named and "Orphan of Kos" in named

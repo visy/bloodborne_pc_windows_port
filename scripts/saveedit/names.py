@@ -17,7 +17,7 @@ FMG_FILES = {"goods": "アイテム名", "weapon": "武器名", "armor": "防具
 PARAMS = {"weapon": "EquipParamWeapon", "armor": "EquipParamProtector", "accessory": "EquipParamAccessory",
           "goods": "EquipParamGoods"}
 _PLACEHOLDER = re.compile(r"^(\*|NOT NEEDED|en\d+)?$", re.I)
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 EVENT_TEXT = "イベントテキスト"  # menu.msgbnd FMG: the lamp warp list names (id 7000AABn)
 NPC_NAMES = "NPC名"  # item.msgbnd FMG: boss and NPC names by character id
 
@@ -95,7 +95,12 @@ def read_game(game_dir, lang="engus"):
     menu = _bnd4(_dcx((game / "msg" / lang / "menu.msgbnd.dcx").read_bytes()))
     names["lamp"] = {i: t for i, t in _fmg(_entry(menu, EVENT_TEXT + ".fmg")).items() if 70002100 <= i < 70003600}
     ids = {kind: sorted(_param_ids(_entry(par, pn + ".param"))) for kind, pn in PARAMS.items()}
-    return {"names": names, "ids": ids}
+    try:  # the boss / lamp flags the editor offers (flagsdata.derive): without them the editor lists none
+        from . import flagsdata
+        progress = flagsdata.derive(game)
+    except Exception:
+        progress = {}
+    return {"names": names, "ids": ids, "progress": progress}
 
 
 def _stamp(game, lang):
@@ -106,6 +111,11 @@ def _stamp(game, lang):
             out += [st.st_size, int(st.st_mtime)]
         except OSError:
             out += [0, 0]
+    try:  # the event scripts and map files the flag lists are derived from
+        out.append(sum(f.stat().st_size for f in sorted((game / "event").iterdir()) if f.is_file()))
+        out.append(sum(f.stat().st_size for f in sorted((game / "map" / "mapstudio").rglob("*.msb*"))))
+    except OSError:
+        out += [0, 0]
     return out
 
 
@@ -118,6 +128,7 @@ class Catalogue:
         self.ok = bool(data)
         self._names = {k: {int(i): n for i, n in v.items()} for k, v in (data or {}).get("names", {}).items()}
         self._ids = {k: set(v) for k, v in (data or {}).get("ids", {}).items()}
+        self.progress = (data or {}).get("progress") or {}  # {"bosses": [[flag, npc param id]], "lamps": [flag]}
 
     @classmethod
     def load(cls, game_dir, cache_dir, lang="engus"):
@@ -161,7 +172,9 @@ class Catalogue:
         return self._names.get("lamp", {}).get(70000000 + (flag // 10000 % 1000) * 10 + flag % 100)
 
     def boss_name(self, chr_id):
-        return self._names.get("npc", {}).get(chr_id)
+        """The NPC name list entry of an NPC param id; a variant row (210020) falls back to its base (210000)."""
+        names = self._names.get("npc", {})
+        return names.get(chr_id) or names.get(chr_id // 1000 * 1000)
 
     def valid_ids(self, category):
         """The set of row ids the game has for this category (None when unknown)."""

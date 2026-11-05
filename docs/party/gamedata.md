@@ -82,3 +82,45 @@ Adding a table: derive it in a new `derive_*.cpp` (or extend one), add it to `De
   `out/gpu/party-tables-cli.exe <game dir> <dir>/party_tables.txt`, then `BB_PARTY_TABLES=<dir>/party_tables.txt
   out/gpu/<test>.exe` (`tests/party_tables_test.h`). `tests/test_item_audit.py` runs the Python item audit on the
   game (`python -I tools/partydata/item_tool.py audit GAME --out FILE`, written only where asked, never into the repo).
+
+## Event-flag categories (`flagRows`)
+
+`party_flags.inc` (277 KB, 2761 rows) is gone. `party_progress.cpp` reads the table from the `flagRows` section
+(`first<TAB>last<TAB>category<TAB>note`, file order = match order, first match wins, no row = never_sync;
+`FlagRow` in `party_gamedata.h`). A row naming a category this build does not know is skipped. Without the section
+every id is never_sync, so nothing is shared (progress, doors, lamps, NPC quests, shop gates) until the tables exist.
+`Rows()` is built on first use, so tests install their tables (`tests/party_tables_test.h`) before the first lookup.
+
+Derivation, in match order (reference implementation: `flag_tool.category_rows`, prints with
+`python -I scripts/partydata/flag_tool.py table GAME`; a C++ port must reproduce its rows exactly):
+
+1. Covenant rows (`COVENANT_ROWS`, 15 ranges) and override rows (`OVERRIDE_ROWS`, 87 ranges: the area-gate flags, endings,
+   cutscene / time-of-day flags, per-player Doll / messenger / badge flags). Hand rules with our own notes, no game scan.
+2. Specific rows (about 1700 ranges) from the game: every EMEVD script expanded once per `InitializeEvent` call with its
+   own arguments (name from the matching `.emeld`), plus ItemLotParam / ShopLineupParam / ObjActParam. Per event record
+   (done flag = event id + slot for events >= 10000000), priority wins, equal priority = last write:
+   boss-defeat marker (2003[12/15/53]) -> the done flag (9) and the single flags the event sets, except ids below 2100,
+   5000-8999 and 9000-9451 (8) -> `boss_defeated`;
+   lamp events (`ワープOBJ_起動`) -> `lamp_unlocked` 7AAB02xx (9), other 7AAB0xxx reads -> `session_runtime` (6); lamp
+   registration 2009[5] -> `lamp_unlocked` (9), ladder 2009[0] -> `shortcut_door` (7); restart-on-reload events in zones
+   0/1 -> `session_runtime` (3); by event name keyword (key events, door / lever / elevator words, chest / item-lot
+   marker, cutscene marker, NPC words) -> `key_event` / `shortcut_door` / `item_lot_picked` / `cutscene_seen` /
+   `npc_quest` (6 / 6 / 5 / 4 / 4); ItemLotParam getItemFlagId and cumulate flags -> `item_lot_picked` (2), ShopLineupParam
+   eventFlag -> `never_sync` "shop stock row" (2), and each qwcId gate that has no lot, is not 5500-5521 / 6000-8999 /
+   type 9 and would otherwise be item_lot / never_sync / session_runtime -> `world_state` (10). Contiguous ids of one
+   category inside one 1000-flag group merge into one row.
+3. Global rows (`GLOBAL_ROWS`, about 50 ranges, our notes) and the structural rows: per map of the flag store's 17-map
+   table and per type 1/5/6/7/9 and zone 0-9 a default (`ZONE_DEFAULT`), the m29 layouts, chalice instance areas 41-46
+   and area 99 -> `never_sync`.
+
+The scan reads the player's own files, so a mod that changes a script or a param changes its rows.
+
+Other consumers of the same derivation, none of them committed data:
+- `scripts/saveedit/flagsdata.py` `derive(game)` (the save editor is Python): the boss kill flags (`boss_defeated` rows
+  of the form 1AAB1800 / 1AAB1850, areas below 40, not 29) and lit-lamp flags (`lamp_unlocked` rows 7AAB02nn, same area
+  rule), plus each boss's NPC param id (the entity named by its boss-defeat marker -> the MSB character part -> the
+  param id at +8 of the part's enemy block) for the name lookup. `names.Catalogue` caches the result (`progress`) with
+  the item names and the launcher hands it to `party_session.check` for the after-session save comparison. Same lists
+  as the old typed ones: 19 bosses, 44 lamps (equal on vanilla).
+- Tools (`save_check.py`, `save_decode.py`, `shop_gates.py`, `flag_tool.py dump / diff`) read the section from a cache
+  file (`--tables`, default `BB_PARTY_TABLES` or `user/party_tables.txt`) or derive it from the game folder.

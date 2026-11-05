@@ -5,6 +5,7 @@
 // writes, the host diff, seq de-duplication, JSON round trips, snapshot apply, BBPF files
 // (read back here and, when python is available, by tools/party/flag_tool.py dump).
 // Build and run: ninja -C out/gpu party-progress-test && out/gpu/party-progress-test.exe
+#include "party_tables_test.h"
 #include "party/party_progress.h"
 
 #include <algorithm>
@@ -896,7 +897,7 @@ static void TestWorldMirror() {
 // sold out for the guest, who never had it): which flags, the mirror never carries them, and the
 // guest's overlay / own pool merge.
 static void TestShopStock() {
-    // the id rule: every one-time ShopLineupParam row's stock flag (party_flags.inc "shop stock row")
+    // the id rule: every one-time ShopLineupParam row's stock flag (the flagRows "shop stock row" rows)
     for (u32 id = 70009000; id <= 70009490; id += 10) {
         CHECK(ShopStockFlag(id));  // Bath Messengers' armor / emblem / ardeo, Insight shop sets, chalices
     }
@@ -1166,18 +1167,23 @@ static void TestCovenantOutcomes() {
 
 int main(int argc, char** argv) {
     const char* source_dir = argc > 1 ? argv[1] : BB_SOURCE_DIR;
+    // The category table (flagRows) is read from the player's own game files: the tests that use real flag
+    // ids run with BB_PARTY_TABLES and are skipped without it (tests/party_tables_test.h).
+    const bool tables = coop::test::UseGameTables("party-progress-test");
     TestKeys();
     TestBits();
-    TestCategories();
-    TestPolicy();
-    TestStore();
-    TestDiffAndDedupe();
     TestJson();
-    TestApplier();
-    TestNpcFollow();
-    TestWorldMirror();
-    TestShopStock();
-    TestCovenantOutcomes();
+    if (tables) {
+        TestCategories();
+        TestPolicy();
+        TestStore();
+        TestDiffAndDedupe();
+        TestApplier();
+        TestNpcFollow();
+        TestWorldMirror();
+        TestShopStock();
+        TestCovenantOutcomes();
+    }
     TestBbpf(source_dir);
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
