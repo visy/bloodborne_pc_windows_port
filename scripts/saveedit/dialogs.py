@@ -209,7 +209,7 @@ class RuneDialog:
             text = cat.effect_text(effect) or ""
             if want in name.lower() or want in text.lower():
                 self.shown.append(effect)
-                self.lb.insert("end", f"{name}: {text}" if text else name)
+                self.lb.insert("end", (f"{name}: {text}" if text else name) + f"  [{effect}]")  # tiers read alike: the id tells them apart
 
     def add(self):
         sel = self.lb.curselection()
