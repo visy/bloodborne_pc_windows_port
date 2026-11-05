@@ -46,7 +46,7 @@ Goods only (weapons, armor and rings are shared by the key / unique rules of ite
 
 | Rule | Reason shown |
 |---|---|
-| EquipParamGoods `goodsType` must be 0 (key items are 1) | key items cannot be given |
+| EquipParamGoods `goodsType` must be 0 (consumables) or 2 (materials: the Blood Stone Shard / Twin / Chunk / Rock and the ritual materials; 27 rows, all maxNum 99). Key items are 1, the unique rows 6 | key items cannot be given |
 | `maxNum` must be above 1 (unique goods: badges, the Eye, tools, keys) | unique items cannot be given |
 | goods 800-822 (gestures) and 4000-4999 (the key / story band: keys, hunter badges 4110-4119, Eye 4311, Old Hunter Bell 4312, workshop tools ...) | story items cannot be given |
 | unknown param row or count | could not be given |
@@ -99,6 +99,19 @@ Residual risks (not covered, by design): a crash of the giver's game between the
 removed stack (the game saves on its own events; the removal also asks for a save at COMMIT); a receiver that applied,
 saved and then vanished for good before the DONE reached the giver, while the giver's rollback timer ran out, would
 leave both with the items (needs the link down for 90 s exactly in that window).
+
+## 3.1 Bug fixed in 0.7.9: no Give on materials (CL-063e51)
+
+Player report: "I cant get it to show up for upgrade stuff". The menu hook is the one item command menu of every inventory tab;
+`GoodsAllowed` refused every goods row whose `goodsType` is not 0, and the upgrade materials (Blood Stone Shard, Twin Blood Stone
+Shards, Blood Stone Chunk, Blood Rock) and the ritual materials are `goodsType` 2 (27 rows of type 2, all maxNum 99, read from the
+game's EquipParamGoods). The rule now allows type 0 and 2; key (1), unique (maxNum 1) and the story bands stay out. Smoke `gvt`: the
+Materials tab's menu shows Give on Blood Stone Shard, and a give of materials host -> guest and back completes.
+
+Open: in that one menu (Use is disabled for a material) a Cross on the Give row is ignored by the game (the functor is never called),
+while the same press works in Pebble's menu (`gvm`). Copying Discard's row predicate onto the Give row did not change it. The give is
+proven through the transfer test aid; the press in the Materials menu needs more RE (which functor the game calls for a row whose
+Use row is disabled).
 
 ## 4. Tests
 

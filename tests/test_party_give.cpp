@@ -35,6 +35,11 @@ static void Allow() {
     CHECK(GiverVerdict(Vial(150), 100) == Why::NotHeld);  // more than one transfer carries
     { GoodsFacts f = Vial(); f.id = 4000; f.goods_type = 1; f.max_num = 1; CHECK(GiverVerdict(f, 1) == Why::KeyItem); }
     { GoodsFacts f = Vial(); f.goods_type = 1; f.max_num = 5; CHECK(GiverVerdict(f, 1) == Why::KeyItem); }
+    // materials are goodsType 2 (blood stones, ritual materials): giveable like the stacks
+    { GoodsFacts f = Vial(40); f.id = 3000; f.goods_type = 2; f.max_num = 99; CHECK(GiverVerdict(f, 40) == Why::None); }
+    { GoodsFacts f = Vial(3); f.id = 3030; f.goods_type = 2; f.max_num = 99; CHECK(GiverVerdict(f, 3) == Why::None); CHECK(ReceiverVerdict(f, 3, 99) == Why::None); }
+    { GoodsFacts f = Vial(3); f.goods_type = 3; CHECK(GiverVerdict(f, 3) == Why::KeyItem); }
+    { GoodsFacts f = Vial(3); f.goods_type = 6; CHECK(GiverVerdict(f, 3) == Why::KeyItem); }
     // unique: a hunter tool / badge row that is goodsType 0 but maxNum 1
     { GoodsFacts f = Vial(1); f.id = 5555; f.max_num = 1; CHECK(GiverVerdict(f, 1) == Why::Unique); }
     // the story bands are denied even when the param row looks plain

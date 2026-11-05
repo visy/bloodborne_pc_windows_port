@@ -133,7 +133,7 @@ struct GoodsFacts {
     int held = -1;         ///< inventory count of the player (-1 unknown)
     int max_num = -1;      ///< maxNum (-1 unknown)
     int max_storage = -1;  ///< maxRepositoryNum (-1 unknown)
-    int goods_type = -1;   ///< goodsType (0 plain, 1 key item; -1 unknown)
+    int goods_type = -1;   ///< goodsType (0 consumable, 1 key item, 2 material; -1 unknown)
     bool quick = false;    ///< assigned to a quick-item slot ("equipped")
 };
 
@@ -141,7 +141,9 @@ struct GoodsFacts {
 /// a peer cannot make a game take a key or unique item.
 inline Why GoodsAllowed(const GoodsFacts& f) {
     if (f.id == 0 || f.goods_type < 0 || f.max_num < 0) return Why::Failed;  // unknown: never
-    if (f.goods_type != 0) return Why::KeyItem;
+    // 0 = consumables, 2 = materials (the blood stones and the ritual materials: 27 rows, all maxNum 99; 0.7.9 CL-063e51: type 2
+    // was refused, so Give never showed for upgrade materials). 1 = key items and every other type stay out.
+    if (f.goods_type != 0 && f.goods_type != 2) return Why::KeyItem;
     if (f.max_num <= 1) return Why::Unique;
     if (StoryGoods(f.id)) return Why::Story;
     return Why::None;
