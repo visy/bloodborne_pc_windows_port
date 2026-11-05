@@ -404,7 +404,7 @@ before anyone is in the game):
 - **Covenants are your own.** How the covenant quests end stays in the world it happened in:
   Alfred killing Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates
   never reach another player's save (in the host's world the covenant leaders still show your own
-  state, so you can talk to Valtr and join after the host did). A covenant
+  state, so you can talk to Valtr and join after the host did). A guest can kneel to Queen Annalise in the host's world and swear the Vileblood oath, in their own save. A covenant
   rune an NPC hands you (Valtr's Impurity, for example) is yours, in your own save. A host setting,
   on by default (*Covenants per player* on *System → Party rules: World*).
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
