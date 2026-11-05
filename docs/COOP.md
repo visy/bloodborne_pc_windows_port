@@ -77,7 +77,7 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
   *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
   On the opt-in Nightwatch VPN a host with a password can also turn on *Nightwatch VPN lobby* (off by default):
-  the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password. The entry also carries a short label of the host's mods and gameplay patches (hashes), so a mismatch can be told before joining (0.7.9).
+  the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password. The host also announces a short label of its mods and gameplay patches (hashes) to the lobby, for clients that show it (Nightwatch) (0.7.9).
   While connected to the Nightwatch VPN the game uses its tunnel address for all party traffic by itself (no
   *party_vpn* setting needed).
   Hateful player names (slurs, hate codes, hostile phrases about groups of people) are shown as *Hunter* and a short
