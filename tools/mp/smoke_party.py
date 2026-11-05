@@ -388,7 +388,7 @@ RULES_PAGES = [
                        "Host over a VPN"],
      ("Relay for members", "down/down/", "left", "Off", "right", "party_member_relay=0", "party_member_relay=1", None)),
     # 0.7.8: the host's opt-ins to join without a code, and to be invaded (a guest sees one "Host's access" line)
-    ("Party access", ["Nightwatch VPN lobby", "Open party (no password)", "Allow invaders", "Host's access"],
+    ("Party access", ["Nightwatch VPN lobby", "Open party (no password)", "Allow invaders", "Max invaders", "Host's access"],
      ("Open party (no password)", "down/", "right", "On", "left", "party_open=1", "party_open=0", None)),
     # 0.7.1 / 0.7.3: the host's world rules
     ("Party rules: World", ["Enemies stay dead", "Host can gather", "NPCs as in host's world", "Covenants per player",
@@ -9781,7 +9781,7 @@ def check_rules(v, L):
             shown = [r.rsplit("=", 1)[0] for r in line[1].split("): ", 1)[1].split(" | ")]
             # the host has no "Join via a member" row (a guest's button)
             # (and a guest has no "Nightwatch VPN lobby" row: the host lists the party there)
-            want = [x for x in labels if not (i == 0 and x == "Join via a member") and not (i == 1 and x in ("Nightwatch VPN lobby", "Open party (no password)", "Allow invaders"))
+            want = [x for x in labels if not (i == 0 and x == "Join via a member") and not (i == 1 and x in ("Nightwatch VPN lobby", "Open party (no password)", "Allow invaders", "Max invaders"))
                     and not (i == 0 and x == "Host's access")]
             if page == "Party members":  # RULES_PLAYERS member rows (their names vary), then the fixed rows
                 want = shown[:RULES_PLAYERS] + want
