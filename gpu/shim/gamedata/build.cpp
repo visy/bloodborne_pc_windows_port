@@ -23,7 +23,7 @@ namespace fs = std::filesystem;
 namespace {
 
 // Bump when the derivation changes what the tables hold (a cache of another version is rebuilt).
-constexpr const char* kDerivationVersion = "cpp-2";
+constexpr const char* kDerivationVersion = "cpp-3";
 constexpr const char* kCacheMagic = "BBPARTYTABLES 1";
 
 std::string Lower(std::string s) {
@@ -427,7 +427,11 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
                     out[4] = DeriveFlagRows(cats);
                     for (auto& [name, rows] : DeriveLamps(cats)) out[4][name] = std::move(rows);
                     for (auto& [name, rows] : DeriveHostOnlyEvents(allrec)) out[4][name] = std::move(rows);
-                    for (auto& [name, rows] : DeriveWorldAct(allrec)) out[4][name] = std::move(rows);
+                    for (auto& [name, rows] : DeriveShopGates(params, allrec)) out[4][name] = std::move(rows);
+                    for (auto& [name, rows] : DeriveProgressIds(cats, allrec)) out[4][name] = std::move(rows);
+                    const Sections worldact = DeriveWorldAct(allrec);
+                    for (const auto& [name, rows] : worldact) out[4][name] = rows;
+                    for (auto& [name, rows] : DeriveSpots(allrec, worldact, (root / "map/mapstudio").string(), threads)) out[4][name] = std::move(rows);
                     for (auto& [name, rows] : DeriveBossEntities(allrec, chalice_rec)) out[4][name] = std::move(rows);
                     break;
                 }

@@ -42,9 +42,11 @@ struct EventCall {
     std::string params;  // the call's argument bytes after slot + target
 };
 
-/// A condition instruction the party derivations read arguments of: 3[0] (flag state: v[3] = the flag) and
-/// 3[24] (action button: v[2] = the object's entity) and 2004[8] (SpEffect on a character: v[0] = the entity, v[1] = the
-/// effect id), in instruction order.
+/// A condition instruction the party derivations read arguments of, in instruction order: 3[0] (flag state: v[3] = the
+/// flag), 3[2] (player in a region: v[3] = the region's entity), 3[3] (player near an entity: the entity and the metres
+/// as float bits), 3[4] (player holds an item: v[1] = item type, v[2] = its id, v[3] = 1 for holds), 3[24] (action
+/// button: v[2] = the object's entity), 4[0] (character dead: v[1] = the entity) and 2004[8] (SpEffect on a
+/// character: v[0] = the entity, v[1] = the effect id).
 struct Cond {
     std::uint32_t bank = 0, id = 0;
     std::vector<std::int64_t> v;

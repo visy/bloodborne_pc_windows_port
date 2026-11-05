@@ -36,8 +36,24 @@ void Put(Bytes& b, std::size_t at, T v) {
     std::memcpy(b.data() + at, &v, sizeof(T));
 }
 void PutStr16(Bytes& b, std::size_t at, const std::string& s) {
-    for (std::size_t i = 0; i < s.size(); ++i) Put<std::uint16_t>(b, at + i * 2, static_cast<unsigned char>(s[i]));
-    Put<std::uint16_t>(b, at + s.size() * 2, 0);
+    // UTF-8 (BMP only) to UTF-16LE
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        std::uint32_t u = c;
+        std::size_t len = 1;
+        if (c >= 0xE0) {
+            u = (c & 0x0Fu) << 12 | (static_cast<unsigned char>(s[i + 1]) & 0x3Fu) << 6 | (static_cast<unsigned char>(s[i + 2]) & 0x3Fu);
+            len = 3;
+        } else if (c >= 0xC0) {
+            u = (c & 0x1Fu) << 6 | (static_cast<unsigned char>(s[i + 1]) & 0x3Fu);
+            len = 2;
+        }
+        Put<std::uint16_t>(b, at + n * 2, static_cast<std::uint16_t>(u));
+        ++n;
+        i += len;
+    }
+    Put<std::uint16_t>(b, at + n * 2, 0);
 }
 
 struct DefField {
@@ -539,6 +555,217 @@ void TestWorldAct() {
     CHECK(t.boss_entities.size() == 2 && t.chalice_boss_entities.size() == 2 && t.chalice_boss_entities[1] == 5002);
 }
 
+// ---- the Messenger shop gates, the arena places and the progress id lists (made-up data) ----
+
+ParamTable SynTable(const std::vector<DefField>& fields, const std::vector<std::pair<std::int32_t, std::vector<std::int64_t>>>& rows) {
+    std::vector<std::pair<std::int32_t, Bytes>> r;
+    for (const auto& row : rows) r.emplace_back(row.first, RowBytes(fields, row.second));
+    return ParseParam(MakeParam(r), MakeParamdef(fields));
+}
+
+void TestShopGates() {
+    using namespace bbdata;
+    std::vector<DefField> lot_f = {{"s32", "getItemFlagId", 4}};
+    for (int k = 1; k <= 8; ++k) lot_f.push_back({"s32", "lotItemId0" + std::to_string(k), 4});
+    for (int k = 1; k <= 8; ++k) lot_f.push_back({"s32", "lotItemCategory0" + std::to_string(k), 4});
+    auto lot = [](std::int64_t flag, std::int64_t item1, std::int64_t cat1, std::int64_t item2 = 0) {
+        return std::vector<std::int64_t>{flag, item1, item2, 0, 0, 0, 0, 0, 0, cat1, 0, 0, 0, 0, 0, 0, 0};
+    };
+    coop::gamedata::ParamSet P;
+    P.item_lot = SynTable(lot_f, {{10, lot(5100, 7010000, 0)},            // a weapon lot behind a shop gate
+                                   {11, lot(5101, 7020000, 0, 7020001)},  // two items: no gate
+                                   {12, lot(5102, 7030000, 4)},           // goods, not a weapon
+                                   {13, lot(5103, 7040000, 0)}});         // the shop sells another weapon behind it
+    P.shop = SynTable({{"s32", "qwcId", 4}, {"s32", "equipType", 4}, {"s32", "equipId", 4}},
+                      {{1, {5100, 0, 7010000}}, {2, {5101, 0, 7020000}}, {3, {5102, 0, 7030000}}, {4, {5103, 0, 7999999}},
+                       {5, {5500, 0, 23010000}}, {6, {5501, 0, 23020000}}, {7, {5501, 0, 23030000}}, {8, {5600, 0, 9990000}},
+                       {9, {5104, 3, 7010000}}, {10, {-1, 0, 7010000}}});
+    auto owns = [](std::int64_t slot, std::int64_t weapon, std::int64_t type = 0) {
+        EventRec r;
+        r.event = 5500;
+        r.slot = static_cast<std::int32_t>(slot);
+        r.conds.push_back({4, 3, {1, 10000, 0}});
+        r.conds.push_back({3, 4, {0, type, weapon, 1}});
+        return r;
+    };
+    EventRec other = owns(9, 7010000);  // a map script's event of the same id: not read
+    const std::vector<coop::gamedata::FileEvents> ev = {
+        {"common", {owns(0, 23010000), owns(1, 23020000), owns(7, 23999999), owns(8, 5, 3)}}, {"m01", {other}}};
+    const auto rows = coop::gamedata::DeriveShopGates(P, ev).at("shopGates");
+    CHECK(rows.size() == 2 && rows[0] == (coop::gamedata::Row{"5100", "7010000"}) && rows[1] == (coop::gamedata::Row{"5500", "23010000"}));
+    // no params, no events: an empty section, no crash
+    CHECK(coop::gamedata::DeriveShopGates(coop::gamedata::ParamSet{}, {}).at("shopGates").empty());
+    coop::gamedata::Tables t;
+    std::string err;
+    CHECK(coop::gamedata::Parse(coop::gamedata::RenderCache("k", coop::gamedata::DeriveShopGates(P, ev)), &t, &err));
+    CHECK(t.shop_gates.size() == 2 && t.shop_gates[1].flag == 5500 && t.shop_gates[1].weapon == 23010000);
+}
+
+// An MSB with a POINT_PARAM_ST and a PARTS_PARAM_ST list (names, positions, entity ids) for DeriveSpots.
+struct SynPoint {
+    std::string name;
+    std::int32_t entity;
+    float x, y, z;
+};
+struct SynPart {
+    std::int32_t type, entity;
+    float x, y, z;
+};
+Bytes MakeMsb(const std::vector<SynPoint>& points, const std::vector<SynPart>& parts) {
+    Bytes b(0x6000, 0);
+    std::memcpy(b.data(), "MSB ", 4);
+    const std::size_t list1 = 0x10, list2 = 0x100, names = 0x200, pts = 0x1000, prt = 0x3000;
+    Put<std::int32_t>(b, list1 + 4, static_cast<std::int32_t>(points.size() + 1));
+    Put<std::int64_t>(b, list1 + 8, names);
+    PutStr16(b, names, "POINT_PARAM_ST");
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        Put<std::int64_t>(b, list1 + 16 + i * 8, pts + i * 0x100);
+    }
+    Put<std::int64_t>(b, list1 + 16 + points.size() * 8, list2);
+    Put<std::int32_t>(b, list2 + 4, static_cast<std::int32_t>(parts.size() + 1));
+    Put<std::int64_t>(b, list2 + 8, names + 0x40);
+    PutStr16(b, names + 0x40, "PARTS_PARAM_ST");
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        Put<std::int64_t>(b, list2 + 16 + i * 8, prt + i * 0x100);
+    }
+    Put<std::int64_t>(b, list2 + 16 + parts.size() * 8, 0);
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const std::size_t e = pts + i * 0x100, nm = 0x4800 + i * 0x80;
+        Put<std::int64_t>(b, e, static_cast<std::int64_t>(nm - e));
+        PutStr16(b, nm, points[i].name);
+        Put<float>(b, e + 0x14, points[i].x);
+        Put<float>(b, e + 0x18, points[i].y);
+        Put<float>(b, e + 0x1c, points[i].z);
+        Put<std::int64_t>(b, e + 0x48, 0xC0);
+        Put<std::int32_t>(b, e + 0xC0, points[i].entity);
+    }
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        const std::size_t e = prt + i * 0x100;
+        Put<std::int32_t>(b, e + 0x14, parts[i].type);
+        Put<float>(b, e + 0x28, parts[i].x);
+        Put<float>(b, e + 0x2c, parts[i].y);
+        Put<float>(b, e + 0x30, parts[i].z);
+        Put<std::int64_t>(b, e + 0xB0, 0xC0);
+        Put<std::int32_t>(b, e + 0xC0, parts[i].entity);
+    }
+    return b;
+}
+
+void TestSpots() {
+    using namespace bbdata;
+    using namespace coop::gamedata;
+    const fs::path d = fs::temp_directory_path() / "bb_gamedata_spots";
+    std::error_code ec;
+    fs::remove_all(d, ec);
+    WriteFile(d / "m01.msb.dcx",
+              MakeDcx(MakeMsb({{"Event_霧壁埋まりワープ先", 8801, 10, 2, 30},    // 1 m inside the fog of gate 1
+                               {"Event_ボス部屋進入目標", 8802, 50, 2, 60},        // an entry target farther away: not taken
+                               {"Event_領域_初戦", 8800, 1, 2, 3},                 // the first fight's region
+                               {"Event_ボス部屋侵入目標", 8820, 130, 0, 0},        // gate 2 has no stuck point: the entry target
+                               {"Event_霧壁埋まりワープ先_遠い", 8830, 900, 0, 0}},  // far from the fog of gate 3
+                              {{1, 777, 10, 2, 29}, {2, 4001, 0, 0, 0}, {2, 4002, 0, 0, 0}, {2, 4011, 0, 0, 0}, {1, 4003, 0, 0, 0},
+                               {1, 778, 100, 0, 0}, {2, 4101, 7, 8, 9}, {1, 779, -500, 0, 0}})));
+    auto rec = [](std::int64_t id, const char* name) {
+        EventRec r;
+        r.event = id;
+        r.name = name;
+        return r;
+    };
+    EventRec boss1 = rec(100, "ボス撃破"), boss2 = rec(101, "ボス撃破"), boss3 = rec(102, "ボス撃破");
+    boss1.conds.push_back({4, 0, {1, 4001, 1}});
+    boss1.markers.push_back({MarkerKind::BossDefeat, 0, {4001}});
+    boss2.markers.push_back({MarkerKind::BossDefeat, 0, {4101}});
+    boss3.markers.push_back({MarkerKind::BossDefeat, 0, {4201}});
+    EventRec entry1 = rec(500, "ゲストがボス部屋入場"), entry2 = rec(501, "ゲストがボス部屋入場"), entry3 = rec(502, "ゲストがボス部屋入場");
+    EventRec in1 = rec(600, "ホストがボス部屋入場_初戦_後半"), in2 = rec(601, "ホストがボス部屋入場_初戦"), in3 = rec(602, "ホストがボス部屋入場_初戦");
+    in1.conds.push_back({3, 2, {1, 1, 10000, 8800}});  // 3[2]: the region 8800
+    in1.markers.push_back({MarkerKind::Cutscene, 3, {1000, 0, 10000}});
+    const float metres = 16.0f;
+    std::int32_t bits = 0;
+    std::memcpy(&bits, &metres, 4);
+    in2.conds.push_back({3, 3, {1, 1, 4101, 10000, bits}});  // 3[3]: within 16 m of the character 4101
+    in3.conds.push_back({3, 2, {1, 1, 10000, 8800}});        // two position conditions: no spot
+    in3.conds.push_back({3, 2, {1, 1, 10000, 8801}});
+    const std::vector<FileEvents> ev = {{"m01", {boss1, boss2, boss3, entry1, entry2, entry3, in1, in2, in3}}};
+    Sections wa;
+    wa["bossGates"] = {{"500", "1", "2", "100", "600", "777", "0"},
+                       {"501", "1", "2", "101", "601", "778", "0"},
+                       {"502", "1", "2", "102", "602", "779", "0"},
+                       {"503", "1", "2", "100", "0", "777", "0"}};  // an entry event that is in no script: skipped
+    const Sections s = DeriveSpots(ev, wa, d.string(), 2);
+    const auto& ar = s.at("bossArenas");
+    // gate 1: the boss 4001 and its decade mate 4002 (a character part), not 4011 or the object 4003; gate 2: 4101
+    CHECK(ar.size() == 3);
+    if (ar.size() == 3) {
+        CHECK(ar[0] == (Row{"4001", "10.00", "2.00", "30.00"}) && ar[1] == (Row{"4002", "10.00", "2.00", "30.00"}));
+        CHECK(ar[2] == (Row{"4101", "130.00", "0.00", "0.00"}));
+    }
+    const auto& ff = s.at("firstFightSpots");
+    CHECK(ff.size() == 2);
+    if (ff.size() == 2) {
+        CHECK(ff[0] == (Row{"600", "1.00", "2.50", "3.00", "1", "1"}));   // region 8800 raised 0.5 m; second half; plays a scene
+        CHECK(ff[1] == (Row{"601", "7.00", "8.50", "11.00", "0", "0"}));  // the character's part, +0.5 m up, +2 m along z
+    }
+    // the cache round trip
+    Tables t;
+    std::string err;
+    CHECK(Parse(RenderCache("k", s), &t, &err));
+    CHECK(t.boss_arenas.size() == 3 && t.boss_arenas[2].boss == 4101 && t.boss_arenas[2].x == 130.0f);
+    CHECK(t.first_fights.size() == 2 && t.first_fights[0].chained && t.first_fights[0].scene && !t.first_fights[1].chained);
+    // no map file, no gates: nothing, no crash
+    const Sections miss = DeriveSpots(ev, wa, (d / "nowhere").string(), 1);
+    CHECK(miss.at("bossArenas").empty() && miss.at("firstFightSpots").empty());
+    CHECK(DeriveSpots({}, {}, d.string(), 1).at("bossArenas").empty());
+    fs::remove_all(d, ec);
+}
+
+void TestProgressIds() {
+    using namespace bbdata;
+    using namespace coop::gamedata;
+    auto set = [](EventRec& r, std::int64_t first, std::int64_t last, std::int64_t state, FlagOp op = FlagOp::Set) {
+        Op o;
+        o.op = op;
+        o.first = first;
+        o.last = last;
+        o.state = state;
+        r.ops.push_back(o);
+    };
+    EventRec door, rnd, counter, never, wide, toggled;
+    door.event = 12400140;
+    set(door, 12400150, 12400151, 0);  // a door flag cleared by its event: a state flag (a range of two)
+    set(door, 12400152, 12400152, 1);  // set on: no state
+    rnd.event = 12400141;
+    set(rnd, 12400160, 12400161, 0, FlagOp::Random);  // randomised: runtime
+    counter.event = 12400142;
+    set(counter, 12400170, 12400170, 0, FlagOp::ValueInc);
+    never.event = 12400143;
+    set(never, 21, 21, 0);  // an ending flag: a never_sync row, in neither list
+    wide.event = 12400144;
+    set(wide, 12400200, 12400900, 0);  // a whole group at once: ignored
+    toggled.event = 12400145;
+    set(toggled, 12400180, 12400180, 2, FlagOp::Toggle);
+    EventRec common_ev;
+    common_ev.event = 3503;
+    set(common_ev, 12400190, 12400190, 0);  // common events are per-player systems: not read for the state list
+    const std::vector<FileEvents> ev = {{"m24_00_00_00", {door, rnd, counter, never, wide, toggled}}, {"common", {common_ev}}};
+    const ParamSet P;
+    const FlagCategories cats(ev, P);
+    CHECK(cats.Lookup(12400150) == Cat::world_state);  // the made-up flags sit in a category the lists take
+    const Sections s = DeriveProgressIds(cats, ev);
+    std::vector<std::string> st, rt;
+    for (const Row& r : s.at("stateIds")) st.push_back(r[0]);
+    for (const Row& r : s.at("runtimeIds")) rt.push_back(r[0]);
+    CHECK((st == std::vector<std::string>{"12400150", "12400151", "12400180"}));
+    CHECK((rt == std::vector<std::string>{"12400160", "12400161", "12400170"}));
+    Tables t;
+    std::string err;
+    CHECK(Parse(RenderCache("k", s), &t, &err));
+    CHECK(t.state_ids.size() == 3 && t.runtime_ids.size() == 3 && t.state_ids[0] == 12400150u);
+    const std::vector<FileEvents> no_events;
+    const Sections none = DeriveProgressIds(FlagCategories(no_events, P), no_events);
+    CHECK(none.at("stateIds").empty() && none.at("runtimeIds").empty());
+}
+
 void TestParallel() {
     std::atomic<int> sum{0};
     coop::gamedata::ParallelFor(100, 4, [&](std::size_t i) { sum += static_cast<int>(i); });
@@ -563,6 +790,9 @@ int main() {
     TestMsb();
     TestParallel();
     TestWorldAct();
+    TestShopGates();
+    TestSpots();
+    TestProgressIds();
     TestDerive();
     std::printf(g_fail ? "gamedata-test: %d FAILED\n" : "gamedata-test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

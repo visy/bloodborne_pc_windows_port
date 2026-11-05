@@ -275,7 +275,7 @@ public:
                     if (def && !def->args.empty()) {
                         vals = UnpackArgs(*def, raw);
                     }
-                    if ((iv.bank == 3 && (iv.id == 0 || iv.id == 24)) || (iv.bank == 2004 && iv.id == 8)) {
+                    if ((iv.bank == 3 && (iv.id == 0 || iv.id == 2 || iv.id == 3 || iv.id == 4 || iv.id == 24)) || (iv.bank == 4 && iv.id == 0) || (iv.bank == 2004 && iv.id == 8)) {
                         rec.conds.push_back({iv.bank, iv.id, vals});
                     }
                     bool done = false;

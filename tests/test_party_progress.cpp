@@ -1165,6 +1165,30 @@ static void TestCovenantOutcomes() {
     SetCovenantPerPlayer(true);
 }
 
+// The derived flag lists (gamedata stateIds / runtimeIds) with made-up contents on top of the real category rows:
+// a flag in `runtimeIds` is never synced, one in `stateIds` follows the host both ways, the hand lists still apply,
+// and without the lists (or without any table) nothing is State and nothing crashes.
+static void TestDerivedLists() {
+    const coop::gamedata::Tables real = coop::gamedata::Get();
+    const Policy p = Policy::Defaults();
+    coop::gamedata::Tables t = real;
+    t.state_ids = {12410200};
+    t.runtime_ids = {12400150};
+    coop::gamedata::Install(t);
+    CHECK(ModeFor(p, 12410200) == SyncMode::State);                           // listed: follows the host
+    CHECK(ModeFor(p, 12400150) == SyncMode::Off && !HostCandidate(12400150));  // counted / randomised by the scripts
+    CHECK(ModeFor(p, 12400147) == SyncMode::State);                           // our own elevator list
+    CHECK(!HostCandidate(12100122) && !HostCandidate(6400));                  // our own exclusions
+    t.state_ids.clear();
+    t.runtime_ids.clear();
+    coop::gamedata::Install(t);
+    CHECK(ModeFor(p, 12410200) == SyncMode::SetOnly && HostCandidate(12400150));  // no derived lists: the plain mode
+    coop::gamedata::Install(coop::gamedata::Tables{});
+    CHECK(ModeFor(p, 12410200) != SyncMode::State);                           // no tables at all: no crash
+    (void)ModeFor(p, 12400150);
+    coop::gamedata::Install(real);
+}
+
 int main(int argc, char** argv) {
     const char* source_dir = argc > 1 ? argv[1] : BB_SOURCE_DIR;
     // The category table (flagRows) is read from the player's own game files: the tests that use real flag
@@ -1183,6 +1207,7 @@ int main(int argc, char** argv) {
         TestWorldMirror();
         TestShopStock();
         TestCovenantOutcomes();
+        TestDerivedLists();
     }
     TestBbpf(source_dir);
     std::printf("%d checks, %d failures\n", g_checks, g_failures);

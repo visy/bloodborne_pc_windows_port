@@ -27,6 +27,20 @@ static bool Spot(std::uint32_t rp) {
 }
 
 int main() {
+    // The arena entry floors come from the party tables (read from the player's MSBs): none without them, and exactly
+    // the installed rows with made-up tables.
+    {
+        float a[3] = {};
+        coop::gamedata::Install(coop::gamedata::Tables{});
+        CHECK(!BossArenaSpot(1234, a));
+        coop::gamedata::Tables t;
+        t.loaded = true;
+        t.boss_arenas = {{1234, 1.0f, 2.0f, 3.0f}, {5678, -4.0f, 5.0f, 6.5f}};
+        coop::gamedata::Install(t);
+        CHECK(BossArenaSpot(5678, a) && a[0] == -4.0f && a[1] == 5.0f && a[2] == 6.5f && BossArenaSpot(1234, a) && a[2] == 3.0f);
+        CHECK(!BossArenaSpot(1233, a) && !BossArenaSpot(9999, a) && !BossArenaSpot(0, a));
+        coop::gamedata::Install(coop::gamedata::Tables{});
+    }
     if (!coop::test::UseGameTables("world-warper-test")) return 0;
     // Options.
     CHECK(ParseOptions(nullptr).mode == Mode::Off);
@@ -224,7 +238,7 @@ int main() {
         CHECK(!BossSpotOk(boss, fell, fell));       // fell through
         CHECK(!BossSpotOk(boss, far, far2));        // pushed out of the arena
         float a[3];
-        CHECK(BossArenaSpot(2300800, a) && std::fabs(a[0] + 88.3f) < 1e-3f && !BossArenaSpot(2300801, a));
+        CHECK(BossArenaSpot(2300800, a) && std::fabs(a[0] + 88.33f) < 1e-3f && !BossArenaSpot(2300801, a));
         const float spot[3] = {0, 10, 0}, s1[3] = {0, 10.2f, 0}, w1[3] = {0.5f, 10.2f, 0}, w0[3] = {0.1f, 10.2f, 0};
         const float down[3] = {0, 3, 0};
         CHECK(ArenaSpotOk(spot, s1, w1) && !ArenaSpotOk(spot, s1, w0) && !ArenaSpotOk(spot, down, down));

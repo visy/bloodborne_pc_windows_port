@@ -73,6 +73,12 @@ Sections DeriveWorldAct(const std::vector<FileEvents>& events);
 /// bossEntities {entity, 1 for a chalice dungeon boss}: every entity an event gives the boss-doping SpEffect 7500 or
 /// 7501 (2004[8]). `chalice`: the area 29 events expanded with the calls the dungeon maps make into them.
 Sections DeriveBossEntities(const std::vector<FileEvents>& events, const std::vector<bbdata::EventRec>& chalice);
+/// shopGates {gate flag, weapon id}: the Messenger shop's per-player weapon gates (derive_shop.cpp).
+Sections DeriveShopGates(const ParamSet& params, const std::vector<FileEvents>& events);
+/// bossArenas {boss character entity, x, y, z} and firstFightSpots {intro event, x, y, z, chained, scene}
+/// (derive_spots.cpp): places in the boss arenas read from the MSBs for the gates of `worldact` (bossGates).
+Sections DeriveSpots(const std::vector<FileEvents>& events, const Sections& worldact, const std::string& msb_dir, unsigned threads);
+Sections DeriveProgressIds(const FlagCategories& cats, const std::vector<FileEvents>& events);
 /// flagRows.
 Sections DeriveFlagRows(const FlagCategories& cats);
 /// warperRight, warperLeft, warperArmor.

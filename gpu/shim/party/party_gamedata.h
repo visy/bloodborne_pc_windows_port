@@ -98,6 +98,23 @@ struct GateRuleRow {
     std::uint32_t boss, gate, also;
 };
 
+/// A per-player weapon gate of the Messenger shop: the event flag and the weapon (base id) it means "got".
+struct ShopGateData {
+    std::int32_t flag, weapon;
+};
+/// The entry floor of a boss character's arena (MSB point): world_warper_rules.h BossArenaSpot.
+struct BossArenaRow {
+    std::uint32_t boss;
+    float x, y, z;
+};
+/// Where the host's character must stand for a first-fight event to see its position condition hold, and whether the
+/// event is the second half of a two-part first fight (`chained`) or plays an intro scene (`scene`).
+struct FirstFightRow {
+    std::uint32_t event;
+    float x, y, z;
+    bool chained, scene;
+};
+
 struct Tables {
     bool loaded = false;
     std::string status = "party tables not loaded";
@@ -126,6 +143,10 @@ struct Tables {
     std::vector<std::uint32_t> boss_entities, chalice_boss_entities;  // entities given the boss-doping SpEffects (sorted)
     std::vector<BossGateRow> boss_gates;          // file order
     std::vector<GateRuleRow> gate_rules;
+    std::vector<std::uint32_t> state_ids, runtime_ids;  // sorted: flags whose state follows the host / flags never synced (counters)
+    std::vector<ShopGateData> shop_gates;         // sorted by flag
+    std::vector<BossArenaRow> boss_arenas;        // sorted by boss entity
+    std::vector<FirstFightRow> first_fights;      // sorted by event
 };
 
 namespace detail {
@@ -301,6 +322,27 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
         } else if (section == "gateRules") {
             ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && detail::ToU32(f[2], &u[2]);
             if (ok) t.gate_rules.push_back({u[0], u[1], u[2]});
+        } else if (section == "stateIds") {
+            ok = u32row(t.state_ids, f);
+        } else if (section == "runtimeIds") {
+            ok = u32row(t.runtime_ids, f);
+        } else if (section == "shopGates") {
+            ok = f.size() >= 2 && detail::ToI32(f[0], &a) && detail::ToI32(f[1], &b);
+            if (ok) t.shop_gates.push_back({a, b});
+        } else if (section == "bossArenas") {
+            BossArenaRow r{};
+            ok = f.size() >= 4 && detail::ToU32(f[0], &r.boss) && detail::ToF(f[1], &r.x) && detail::ToF(f[2], &r.y) &&
+                 detail::ToF(f[3], &r.z);
+            if (ok) t.boss_arenas.push_back(r);
+        } else if (section == "firstFightSpots") {
+            FirstFightRow r{};
+            ok = f.size() >= 6 && detail::ToU32(f[0], &r.event) && detail::ToF(f[1], &r.x) && detail::ToF(f[2], &r.y) &&
+                 detail::ToF(f[3], &r.z) && (f[4] == "0" || f[4] == "1") && (f[5] == "0" || f[5] == "1");
+            if (ok) {
+                r.chained = f[4] == "1";
+                r.scene = f[5] == "1";
+                t.first_fights.push_back(r);
+            }
         } else if (section == "itemLotFlag") {
             ok = f.size() >= 2 && detail::ToI32(f[0], &a) && detail::ToI32(f[1], &b);
             if (ok) t.lot_flags.push_back({a, b});
@@ -335,11 +377,14 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
         return fail("party tables: file is cut short");
     }
     // The consumers binary-search these: keep the contract even for a hand-edited file.
-    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror, &t.host_only_events, &t.boss_entities, &t.chalice_boss_entities}) {
+    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror, &t.host_only_events, &t.boss_entities, &t.chalice_boss_entities, &t.state_ids, &t.runtime_ids}) {
         std::sort(v->begin(), v->end());
         v->erase(std::unique(v->begin(), v->end()), v->end());
     }
     std::sort(t.unshared.begin(), t.unshared.end());
+    std::sort(t.shop_gates.begin(), t.shop_gates.end(), [](const ShopGateData& x, const ShopGateData& y) { return x.flag < y.flag; });
+    std::sort(t.boss_arenas.begin(), t.boss_arenas.end(), [](const BossArenaRow& x, const BossArenaRow& y) { return x.boss < y.boss; });
+    std::sort(t.first_fights.begin(), t.first_fights.end(), [](const FirstFightRow& x, const FirstFightRow& y) { return x.event < y.event; });
     std::sort(t.lot_flags.begin(), t.lot_flags.end(), [](const LotFlag& x, const LotFlag& y) {
         return x.lot != y.lot ? x.lot < y.lot : x.flag < y.flag;
     });

@@ -30,6 +30,18 @@ struct MsbPoint {
 /// otherwise such a point simply has no entity.
 std::vector<MsbPoint> ReadMsbPoints(Span data, const std::vector<std::int64_t>& entries, bool strict_entity);
 
+/// PARTS_PARAM_ST entries: the part type at +0x14 (1 object, 2 character ...), the position at +0x28, the entity
+/// data offset at +0xB0. An entry too short for that, or an entity offset outside the file, has no entity.
+struct MsbPart {
+    std::int32_t type = 0;
+    float x = 0, y = 0, z = 0;
+    bool has_entity = false;
+    std::int32_t entity = 0;
+};
+std::vector<MsbPart> ReadMsbParts(Span data, const std::vector<std::int64_t>& entries);
+/// The names (UTF-8) of the entries of a list (the offset at +0 of each entry, relative to it; "" when absent).
+std::vector<std::string> ReadMsbNames(Span data, const std::vector<std::int64_t>& entries);
+
 /// Every 4-byte aligned int32 of the file in [lo, lo + 10000), inserted into `out` (a superset of the map's
 /// point / part entity ids). Throws unless the file starts with "MSB ".
 void ScanMsbEntities(Span data, std::int64_t lo, std::vector<std::int32_t>* out);

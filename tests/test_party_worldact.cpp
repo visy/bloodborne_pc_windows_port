@@ -37,6 +37,21 @@ int main() {
         coop::gamedata::Install(coop::gamedata::Tables{});
         assert(BossGates().empty() && GateRules().empty());
     }
+    // The host's first-fight spots come from the tables too (the MSB regions of the first-fight events).
+    {
+        coop::gamedata::Install(coop::gamedata::Tables{});
+        assert(!FirstFightSpotFor(1005) && !FirstFightSpotFor(0));
+        coop::gamedata::Tables t;
+        t.loaded = true;
+        t.first_fights = {{1005, 1.0f, 2.5f, 3.0f, false, true}, {2005, -7.0f, 8.0f, 9.0f, true, false}};
+        coop::gamedata::Install(t);
+        const FirstFightSpot* a = FirstFightSpotFor(1005);
+        const FirstFightSpot* b = FirstFightSpotFor(2005);
+        assert(a && b && a->pos[1] == 2.5f && a->scene && !a->chained && b->pos[0] == -7.0f && b->chained && !b->scene);
+        assert(!FirstFightSpotFor(1006));
+        coop::gamedata::Install(coop::gamedata::Tables{});
+        assert(!FirstFightSpotFor(1005));
+    }
     // CategoryOf reads the event-flag category table of the player's own game (flagRows): skipped without it.
     if (!coop::test::UseGameTables("party-worldact-test")) return 0;
     const std::uint32_t m2401 = 0x18010000u, m2400 = 0x18000000u, m2200 = 0x16000000u, dream = 0x15000000u;
