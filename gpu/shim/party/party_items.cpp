@@ -457,7 +457,7 @@ bool MessengerGiftLot(std::int32_t lot) {
 }
 
 bool OwnTalkGiftLotId(std::int32_t lot) {
-    return lot == 43120 || lot == 43130;
+    return lot == 43120 || lot == 43130 || lot == 17000;  // 0.7.9: 17000 = Annalise's Caryll rune
 }
 
 bool RepeatGiftLotId(std::int32_t lot) {

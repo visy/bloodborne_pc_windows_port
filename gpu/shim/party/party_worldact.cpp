@@ -41,6 +41,7 @@ std::int32_t OwnTalkGiftLot(std::uint32_t trigger) {
     switch (trigger) {
     case 72700321u: return 43120;  // Valtr: the Impurity rune (GemGen 200030, flag 6676)
     case 72700322u: return 43130;  // Valtr: the League Staff (goods 131, flag 6678)
+    case 9042u: return 17000;      // 0.7.9: Annalise: the Caryll rune of the Vilebloods (common event 9040, flag 50000200)
     default: return -1;
     }
 }
