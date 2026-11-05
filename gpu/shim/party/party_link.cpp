@@ -960,6 +960,7 @@ struct PartyLink::Impl {
     RejectCode reject = RejectCode::None;
     std::string reject_text;
     std::string reject_options_text;
+    std::string reject_mods_text;
 
     // Callback thread.
     std::mutex dmu;
@@ -1544,7 +1545,9 @@ struct PartyLink::Impl {
             if (!mismatch.empty()) {
                 HostOptions ho;
                 const bool have = !cfg.options.empty() && options_parse(cfg.options, &ho);
-                return reject_conn(c, RejectCode::Mismatch, have ? reject_with_options(mismatch, ho) : mismatch);
+                const std::string why =
+                    cfg.mods_hash != theirs.mods_hash ? reject_with_mods(mismatch, cfg.mods_label) : mismatch;
+                return reject_conn(c, RejectCode::Mismatch, have ? reject_with_options(why, ho) : why);
             }
             if (!valid_member_name(c->name))
                 return reject_conn(c, RejectCode::Name, "invalid name (1-16 of A-Z a-z 0-9 _ -)");
@@ -1879,6 +1882,8 @@ struct PartyLink::Impl {
                 reject_options_text = options_text(ho);
                 why = bare;
             }
+            reject_mods_text.clear();
+            if (reject_split_mods(why, &bare, &reject_mods_text)) why = bare;
             reject_text = why;
             close_conn(c);
             gconn = nullptr;
@@ -2712,6 +2717,11 @@ RejectCode PartyLink::reject_code() const {
 std::string PartyLink::reject_options() const {
     std::lock_guard<std::mutex> lk(impl_->mu);
     return impl_->reject_options_text;
+}
+
+std::string PartyLink::reject_mods_label() const {
+    std::lock_guard<std::mutex> lk(impl_->mu);
+    return impl_->reject_mods_text;
 }
 
 std::string PartyLink::reject_reason() const {

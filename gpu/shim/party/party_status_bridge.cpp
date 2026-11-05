@@ -10,6 +10,7 @@
 #include "party_gather.h"
 #include "party_b2.h"
 #endif
+#include "party_gamedata.h"
 
 #include <chrono>
 #include <cstdarg>
@@ -427,6 +428,12 @@ std::string SnapshotLine(const status::Board& b) {
 
 void OnRuntimeStart(bool host, const std::string& name) {
     status::SetRole(host ? Role::Host : Role::Guest);
+    if (!coop::gamedata::Loaded()) {
+        // The tables the party features read from the player's own game files are not there (the launcher
+        // builds them, scripts/party_tables.py): say so instead of failing silently.
+        status::SetAlert("Party game data missing: travel, shared items and NPC help are off. Start the game "
+                         "from the launcher (run.bat) once to build it from your game files.");
+    }
     {
         std::lock_guard<std::mutex> lk(B().mu);
         B().local_name = name;

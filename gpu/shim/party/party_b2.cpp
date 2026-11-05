@@ -4375,7 +4375,7 @@ u32 LitLampInMap(u32 map) {
     using Get = u32(BB_COOP_SYSV*)(u64, u32, u32);
     u32 first = 0;
     std::string seen;
-    for (u32 id : ids::kPartyReturnPoints) {
+    for (u32 id : ids::ReturnPoints()) {
         if (ids::EntityMap(id) != (map & 0xffff0000u) || id % 10000 / 10 != 295) {
             continue;
         }
@@ -9169,7 +9169,7 @@ u32 LampNearHost(u32 host_map) {
     const Where* w = WhereOf(0);
     std::vector<lampshare::LampCandidate> c;
     std::string seen;
-    for (const std::uint32_t id : ids::kPartyReturnPoints) {
+    for (const std::uint32_t id : ids::ReturnPoints()) {
         float sp[4];
         if (ids::EntityMap(id) >> 16 != host_map >> 16 || id / 100000 == 29 || id % 10000 / 10 != 295 ||
             !ids::ReturnSpot(id, sp)) {
