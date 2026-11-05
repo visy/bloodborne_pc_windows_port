@@ -10229,6 +10229,8 @@ void RoomHead(int type, u32* head0, u32* head1) {
     SafeGet(u64(Guest(kSessionTypeDesc + 0xc + u64(type) * 0x80)), head0);
 }
 
+std::string DsNameOf(int slot);  // defined with DirectSummon below
+
 void TitleJoinHostTick(const GameSnapshot& s) {
     std::vector<int> req;
     {
@@ -10240,20 +10242,33 @@ void TitleJoinHostTick(const GameSnapshot& s) {
     // game's transport connection (FromApi sign hold, ~26 s from the drop): a room sent now is
     // joined over that connection and fails after ~20 s (live: crash rejoin 41 s). Wait it out.
     if (!req.empty()) {
-        const std::int64_t left = bbnet::party::FromApi::instance().hold_left_ms();
-        if (left > 0) {
+        // Each asker waits for crash holds and for its own place's hold only: another guest just served
+        // (its serve hold) never makes this one wait (0.7.9, two guests joining 2 s apart).
+        std::vector<int> wait, go;
+        std::int64_t left = 0;
+        for (int slot : req) {
+            const std::int64_t l = bbnet::party::FromApi::instance().hold_left_ms(DsNameOf(slot));
+            if (l > 0) {
+                wait.push_back(slot);
+                left = std::max(left, l);
+            } else {
+                go.push_back(slot);
+            }
+        }
+        if (!wait.empty()) {
             static double last = 0;
             const double now = Now();
             if (now - last >= 2.0) {
                 last = now;
-                for (int slot : req) Send(slot, "{\"op\":\"title_wait\",\"host\":1}");
-                Log("title join: slot %d waits %.1f s more (a crashed member's old connection is still held)", req[0],
+                for (int slot : wait) Send(slot, "{\"op\":\"title_wait\",\"host\":1}");
+                Log("title join: slot %d waits %.1f s more (a crashed member's old connection is still held)", wait[0],
                     double(left) / 1000.0);
             }
             std::lock_guard<std::mutex> lk(TJ().mu);
-            TJ().requests.insert(TJ().requests.end(), req.begin(), req.end());
-            return;
+            TJ().requests.insert(TJ().requests.end(), wait.begin(), wait.end());
         }
+        req = go;
+        if (req.empty()) return;
     }
     // A11 (ERSC_PARITY.md, user decision): no title join into a boss fight / cutscene (live: the
     // guest's Continue put it beside the host in the Cleric Beast's arena mid-fight). Refused with
@@ -10484,6 +10499,11 @@ DirectSummon& DS() {
     static DirectSummon d;
     return d;
 }
+std::string DsNameOf(int slot) {
+    std::lock_guard<std::mutex> lk(DS().mu);
+    const auto it = DS().names.find(slot);
+    return it == DS().names.end() ? std::string() : it->second;
+}
 
 bool DirectSummonOn() {
     static const bool on = dsummon::SwitchOn(std::getenv("BB_PARTY_DIRECT_SUMMON"), true);  // on by default; =0 keeps the bell signs only
@@ -10703,7 +10723,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         v.max_cooperators = dsummon::MaxCooperators(coop::fourp::FourpEffectiveMax());
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
         v.ms_since_member_joined = bbnet::np::ms_since_member_joined();
-        v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms();
+        v.other_hold_ms = bbnet::party::FromApi::instance().hold_left_ms(names.count(slot) ? names[slot] : std::string());
         v.busy = dsummon::HostBusy(BossBarShown(), CutscenePlaying());  // A11: joiners wait outside
         // F5 (live): a member's game left our room in a network outage; ~5 s after its leave reached
         // us our game ended that session itself, and a room served in between was gone before the
@@ -10846,7 +10866,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
                     double(left));
             }
         }
-        if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000);
+        if (!name.empty()) bbnet::party::FromApi::instance().hold_signs(name, 20000, true);  // own place only: a second guest's join is not held by it
         Send(slot, dsummon::EncodeRoom(room));
         {
             std::lock_guard<std::mutex> lk(DS().mu);
@@ -11236,7 +11256,7 @@ void DirectSummonEvent(int from_slot, const std::string& body) {
             else DS().failed_at[from_slot] = Now();
         }
         if (!name.empty()) {
-            bbnet::party::FromApi::instance().hold_signs(name, ok ? 3000 : 1);
+            bbnet::party::FromApi::instance().hold_signs(name, ok ? 3000 : 1, true);
             bbnet::party::FromApi::instance().hide_unreachable(name, ok || heard_now ? 0 : 35000);
             if (!ok) bbnet::party::FromApi::instance().renew_signs(name);
         }
