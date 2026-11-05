@@ -14,7 +14,7 @@ import clinic_logic as logic  # noqa: E402
 import iosefka_voice as voice  # noqa: E402
 
 GUILD_ID = 1562099776869105674
-RELEASES = "releases"
+RELEASES = ("releases", "announcements")  # renamed to #announcements on the NW server (2026-11-05)
 ASK_DELAY = 5.0            # seconds between two posts
 NUDGE_DAYS = 14
 CLOSE_DAYS = 30
@@ -353,9 +353,9 @@ async def sweep_waiting(ctx, *, dry_run=False, out=print, now=None, delay=None):
 
 
 def is_releases_channel(ch, guild_id=GUILD_ID):
-    """The #releases text channel of the server (a thread inside it does not count)."""
+    """The #releases (now #announcements) text channel of the server (a thread inside it does not count)."""
     g = getattr(ch, "guild", None)
-    return (getattr(ch, "name", None) == RELEASES and g is not None and getattr(g, "id", guild_id) == guild_id
+    return (getattr(ch, "name", None) in RELEASES and g is not None and getattr(g, "id", guild_id) == guild_id
             and not (hasattr(ch, "archived") and hasattr(ch, "locked")))
 
 

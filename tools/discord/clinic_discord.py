@@ -127,6 +127,19 @@ def _not_found(exc):
 
 # --- walking ---------------------------------------------------------------------------------------------
 
+def hidden_from_me(ch):
+    """A channel staff hid or archived away from her (she cannot even view it): not her place, no alert.
+    A channel she can view but not read is still walked, so a lost Read Message History still alerts."""
+    guild = getattr(ch, "guild", None)
+    me = getattr(guild, "me", None) if guild is not None else None
+    if me is None or not hasattr(ch, "permissions_for"):
+        return False
+    try:
+        return not getattr(ch.permissions_for(me), "view_channel", True)
+    except Exception:
+        return False
+
+
 async def walk_places(guild, archived=True):
     """Every text/news/voice/stage channel (and every thread of it, active or archived, public or private) and every
     forum post, except the skipped channels. Forums themselves have no messages and are not yielded."""
@@ -135,7 +148,7 @@ async def walk_places(guild, archived=True):
     places = list(getattr(guild, "text_channels", None) or []) + \
         list(getattr(guild, "voice_channels", None) or []) + list(getattr(guild, "stage_channels", None) or [])
     for ch in places + forums:
-        if logic.skipped_channel(getattr(ch, "name", "")):
+        if logic.skipped_channel(getattr(ch, "name", "")) or hidden_from_me(ch):
             continue
         is_forum = ch in forums
         if not is_forum:

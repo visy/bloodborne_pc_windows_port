@@ -337,3 +337,28 @@ def test_log_message_gets_no_has_saves_tag(tmp_path):
     bug = c.new_bug("x", "channel cluster", 100, None)
     run(cd.replace_and_delete(c, m, bug, ping=False, delete=True, need_export=False))
     assert "has_saves" not in c.bug(bug)["tags"] and "brought a log" in ch.sent[0].content
+
+
+def test_walk_skips_channels_hidden_from_her():
+    """Staff archived or hid a channel away from her (no View Channel): not walked, no forbidden alert.
+    A channel she can view (even without Read Message History) is still walked, so a lost read alerts."""
+    class Perms:
+        def __init__(self, view):
+            self.view_channel = view
+
+    class Me:
+        pass
+    hidden = F.Channel(7, "polls")
+    readonly = F.Channel(8, "announcements")
+    gen = F.Channel(9, "general")
+    g = F.Guild([hidden, readonly, gen], [])
+    g.me = Me()
+    for ch in (hidden, readonly, gen):
+        ch.guild = g
+    hidden.permissions_for = lambda who: Perms(False)
+    readonly.permissions_for = lambda who: Perms(True)
+    assert cd.hidden_from_me(hidden) and not cd.hidden_from_me(readonly) and not cd.hidden_from_me(gen)
+
+    async def collect():
+        return [p.id async for p in cd.walk_places(g)]
+    assert set(run(collect())) == {8, 9}
