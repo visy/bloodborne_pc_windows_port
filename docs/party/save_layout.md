@@ -70,5 +70,6 @@ are a separate record), the storage box.
   Parasite). Blood gem effects are edited in place (24 bytes of the record).
 - Proof in the game (2026-11-05, saveedit079, release 0.7.8 build, harness instance on a copy of the default test save): a copy with a
   goods item, two weapons, the four Gascoigne armor pieces, a blood gem and a rune added loaded ("Saves: check OK", the world up at
-  the Hunter's Dream), and the inventory screen listed the new item. Not proven: that the game saves such a file again (the run was
-  ended by the harness before a save).
+  the Hunter's Dream), and the inventory screen listed the new goods item (Beast Blood Pellet x5, with its sortId index). The added
+  weapons, armor, gem and rune did not stop the load or the inventory, but their tabs were not looked at (the scripted menu walk
+  did not reach them). Not proven: that the game saves such a file again (the run was ended by the harness before a save).
