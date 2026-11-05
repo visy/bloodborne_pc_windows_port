@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <string>
+#include <vector>
 
 using namespace coop::bossfog;
 namespace pg = coop::progress;
@@ -267,6 +269,56 @@ int main() {
         CHECK(HostOnlyBossEvent(13404824) && HostOnlyBossEvent(13404825) && HostOnlyBossEvent(12404807));
         CHECK(!HostOnlyBossEvent(13404802) && !HostOnlyBossEvent(13404801) && !HostOnlyBossEvent(13401802));
         CHECK(!HostOnlyBossEvent(7200) && !HostOnlyBossEvent(12107000) && !HostOnlyBossEvent(0));
+    }
+
+    {
+        // Host-only events a host's mods add (out/party_host_only.txt): the fixed list stays as it is, the mods'
+        // ids join it, and a missing, empty or broken file changes nothing.
+        static const std::uint32_t kFixed[] = {
+            12104807u, 12204807u, 12304707u, 12304807u, 12304808u, 12404807u, 12414707u, 12424980u, 12704806u,
+            12704812u, 12804870u, 12804871u, 12904028u, 12904735u, 12904868u, 12904884u, 12904889u, 12906766u,
+            12906767u, 12906863u, 12906869u, 12906870u, 13204807u, 13304807u, 13304808u, 13404820u, 13404821u,
+            13404822u, 13404823u, 13404824u, 13404825u, 13604820u};
+        std::size_t fixed = 0;
+        for (std::uint32_t id = 12000000u; id < 13700000u; ++id) {
+            fixed += HostOnlyBossEvent(id);
+        }
+        CHECK(fixed == sizeof kFixed / sizeof kFixed[0]);
+        const std::vector<std::uint32_t> none;
+        for (std::uint32_t id : kFixed) {
+            CHECK(HostOnlyBossEvent(id) && HostOnlyBossEvent(id, none));
+        }
+        // A mod's copy of a phase event under a new id: host-only only once the mods name it.
+        std::vector<std::uint32_t> ids{1u, 2u};
+        CHECK(ParseModHostOnlyEvents("# copies of phase events\n12345678\n  12345679  # a copy of 12424980\r\n\n"
+                                     "12345678\n4294967295",
+                                     &ids));
+        CHECK((ids == std::vector<std::uint32_t>{12345678u, 12345679u, 4294967295u}));
+        CHECK(!HostOnlyBossEvent(12345678) && !HostOnlyBossEvent(12345678, none));
+        CHECK(HostOnlyBossEvent(12345678, ids) && HostOnlyBossEvent(12345679, ids) && HostOnlyBossEvent(4294967295u, ids));
+        CHECK(HostOnlyBossEvent(13404825, ids) && !HostOnlyBossEvent(12414894, ids) && !HostOnlyBossEvent(0, ids));
+        CHECK(ParseModHostOnlyEvents("\xEF\xBB\xBF" "12345678\r\n", &ids) && ids == std::vector<std::uint32_t>{12345678u});
+        // Empty, blank or comment-only: a valid list of no ids.
+        for (const char* text : {"", "\n\n", "# nothing yet\n", "  \t\r\n"}) {
+            ids = {7u};
+            CHECK(ParseModHostOnlyEvents(text, &ids) && ids.empty());
+        }
+        // Broken: any line that is not one decimal id (1 .. 4294967295) - the whole file counts as none.
+        for (const char* text : {"12345678\nx", "12345678\n-5", "+5", "0", "4294967296", "99999999999999999999",
+                                 "12345678 12345679", "12345678,12345679", "0x12", "1.5", "12345678;"}) {
+            ids = {7u};
+            CHECK(!ParseModHostOnlyEvents(text, &ids) && ids.empty());
+            CHECK(!HostOnlyBossEvent(12345678, ids) && HostOnlyBossEvent(13404825, ids));
+        }
+        // Bounded: kMaxModHostOnlyEvents ids are taken, one more is a broken file.
+        std::string many;
+        for (std::size_t i = 0; i < kMaxModHostOnlyEvents; ++i) {
+            many += std::to_string(20000000u + i) + "\n";
+        }
+        CHECK(ParseModHostOnlyEvents(many, &ids) && ids.size() == kMaxModHostOnlyEvents);
+        CHECK(HostOnlyBossEvent(20000000u + kMaxModHostOnlyEvents - 1, ids));
+        many += "30000000\n";
+        CHECK(!ParseModHostOnlyEvents(many, &ids) && ids.empty());
     }
 
     if (g_fail) {
