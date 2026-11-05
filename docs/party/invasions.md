@@ -106,8 +106,20 @@ What the invader sees while it waits: *Invading: waiting to be let in* (persiste
 then *Joining the host's world...*, and if the quick way fails *Invading: the quick way failed, taking the slower way in* /
 *going to the host's area first*; nothing happens silently.
 
-Placement: the invader arrives like a summoned guest, beside the host's arrival point (the vanilla invader appears away from
-the host; not changed in 0.7.9, a placement apart from the host is a separate item).
+Placement (0.7.9): the invader arrives like a summoned guest, beside the host, and is then put **away from the host**, as a vanilla
+invader appears. The game's own invader spawn is not used; the least risky spot is a **lamp the host has lit**: the host (every
+5 s while the invasion is on, in the `invade` event's `"a"` field) names the nearest lit lamp of the host's map block whose spot is
+30 to 250 m from the host on the ground plane (`PickApart` in `party_invade_rules.h`, the lamp table `lamp_travel_rules.h`, the
+return-point spots of `party_ids.h`; the lit flag is the lamp's `LitFlag`). The invader's join-arrival warp (`JoinBesideTick`)
+puts it at that lamp's spot with the same in-world warp the lamp travel uses (`WarpToLampInWorld`, no load; the fall recovery net
+applies). Why a lit lamp: it is a place the host (or the party, lit lamps are shared) has stood at, so never inside a wall, and a
+boss arena's lamp is lit only after the boss fell, so never into a living boss's arena; the invader is not in a boss arena either way
+(an invasion ends when a fog fight begins). None 30 m or more away in the block (the Hunter's Dream, a Chalice Dungeon, one lamp
+only), a lamp not in the loaded block, or `BB_PARTY_INVADE_APART=0`: beside the host as before. Test aid `BB_PARTY_INVADE_APART_ANY=1`
+(host): every lamp of the block counts as lit (a test save that lit too few). The invader logs `apart: N m from the host` every 5 s
+while it is in. Smoke phase `ivp` (group `invade_place`: host and invader both rendered, both loaded into Central Yharnam first).
+
+**Known limit (not new, found while testing the placement):** the one-load summon works when the invader's own world is in the SAME map block as the host's. An invader in another block (the Hunter's Dream while the host is in Central Yharnam) joins the host's room, then stalls in the A5 cross-map arrival load (*waiting in flow state 1 for the host's snapshot*: the snapshot path needs b2 messages an invader is never sent or allowed to send) until the host sends it home after 120 s (*could not get into the host's world*). The host's room also keeps the area it was created in after the host travels. The smokes (`ivp`, `iv2`) keep both games in one block.
 
 ## The level range (0.7.9)
 

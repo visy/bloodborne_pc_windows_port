@@ -346,7 +346,35 @@ static void LevelRange() {
     CHECK(!DenyText(Deny::LevelRange).empty() && std::string(DenyWord(Deny::LevelRange)) == "level_range");
 }
 
+void Apart() {
+    const float host[3] = {0, 0, 0};
+    std::vector<ApartSpot> sp = {{2302950, 10, 0, 0}, {2302951, 0, 0, 45}, {2302952, 100, 5, 100}, {2302953, 400, 0, 0}};
+    float d = 0;
+    CHECK(PickApart(host, sp, kApartMinM, kApartMaxM, &d) == 2302951 && d > 44.9f && d < 45.1f);  // 10 m is too near, 45 m the nearest
+    sp.erase(sp.begin() + 1);
+    CHECK(PickApart(host, sp) == 2302952);       // 141 m
+    sp.erase(sp.begin() + 1);
+    CHECK(PickApart(host, sp) == 0);             // 10 m too near, 400 m too far: none, the invader stays beside the host
+    CHECK(PickApart(host, {}) == 0);
+    CHECK(PickApart(host, {{0, 50, 0, 0}}) == 0);  // id 0 is not a lamp
+    // the ground plane decides, not the height
+    CHECK(PickApart(host, {{2302950, 5, 80, 5}}) == 0);
+    CHECK(PickApart(host, {{2302950, 20, 80, 20}}) == 0);  // 28 m: too near
+    CHECK(PickApart(host, {{2302950, 25, 0, 25}}) == 2302950);   // 35 m
+    // ties: the lower id
+    CHECK(PickApart(host, {{2302951, 40, 0, 0}, {2302950, 0, 0, 40}}) == 2302950);
+    // the wire carries it (state 1 / 2 only, with the health byte)
+    Msg m;
+    Msg w{2, "Bob", End::None, 1, 2302951};
+    CHECK(Encode(w) == "{\"s\":2,\"n\":\"Bob\",\"h\":1,\"a\":2302951}");
+    CHECK(Decode(Encode(w), &m) && m.state == 2 && m.full_hp == 1 && m.apart == 2302951);
+    CHECK(Decode("{\"s\":1,\"n\":\"Bob\",\"h\":0}", &m) && m.apart == 0);  // a 0.7.9 host without it
+    CHECK(!Decode("{\"s\":1,\"n\":\"Bob\",\"h\":0,\"a\":0}", &m));
+    CHECK(!Decode("{\"s\":0,\"n\":\"Bob\",\"h\":0,\"a\":5}", &m));
+}
+
 int main() {
+    Apart();
     Look();
     NameColour();
     Rewards();
