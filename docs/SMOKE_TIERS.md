@@ -20,6 +20,8 @@ progress, `bf` fight load, `br` boss rooms and fog walls, `bd` boss drops, `tv` 
 lamp, `rf` Rom's fog, `px` poison, `csh` chalice shop, `gvm` give menu, `eh` echo hold, `gdr` guest restart. (`ivl` is not in it: it failed its 3 level-range rows on master 23704188 when run by the smoke079 harness, 2026-11-04, and stays in the release tier until its owner has looked.) Areas it skips (chalice dungeon entry, lift walk-ins, covenants, NPC quests, PvP,
 shops, music, ...) are in the release tier and are picked by `--changed-since`.
 
+`cim` (group `chalice_madman`, 0.7.9 cim079: the Lower Hintertomb Chalice's twin boss sets the Madman unlock 5091 for the host and the guest, about 5 min) and `cis` are in the release and full tiers (not quick / fast: the Ritual Altar menu walk is flaky, both retry up to 3 times) and in `--changed-since` for chalice code.
+
 ## Fail fast
 
 A phase ends as soon as its outcome is decided, not at its `--seconds` cap:
