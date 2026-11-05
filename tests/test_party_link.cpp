@@ -1014,6 +1014,27 @@ static void test_identity() {
         CHECK(w.find("version mismatch with the host (host bbport 0.5 (v0.5-42-gabcdef1234), yours 0.5 "
                      "(v0.5-42-gabcdef1234)): ") == 0);
         CHECK(w.find("use the same game dump (1.09) as the host") != std::string::npos);
+        {
+            // 0.7.9: only the dump differs -> the game-folder advice; only mods differ (the dump's params are equal, a
+            // mod's gameparam is part of the mods hash) -> mods only, no params clause; both -> mods lead, dump after.
+            LinkConfig hm = hb, gm = hb;
+            gm.params_sha256[3] ^= 1;
+            std::string d = identity_mismatch(hm, gm);
+            CHECK(d.find("game params differ") != std::string::npos && d.find("launcher's game folder") != std::string::npos &&
+                  d.find("gameplay mods") == std::string::npos);
+            gm = hb;
+            gm.mods_hash[0] ^= 1;
+            gm.mod_names = {"synthetic mod (1 files)"};
+            d = identity_mismatch(hm, gm);
+            CHECK(d.find("gameplay mods differ") != std::string::npos && d.find("game params") == std::string::npos &&
+                  d.find("game folder") == std::string::npos);
+            gm.params_sha256[3] ^= 1;
+            d = identity_mismatch(hm, gm);
+            const std::size_t at_mods = d.find("gameplay mods differ"), at_dump = d.find("game params of the game dump differ too");
+            CHECK(at_mods != std::string::npos && at_dump != std::string::npos && at_mods < at_dump);
+            CHECK(d.find("launcher's game folder") == std::string::npos);
+            std::printf("  mods + dump: %s\n", d.c_str());
+        }
         gb.params_sha256 = hb.params_sha256;
         gb.hook_names = {"4p H1 cooperator slots (SessionSlotSummary) @+0x186fe40",
                          "talk IsClientPlayer (guest services) @+0x1234"};

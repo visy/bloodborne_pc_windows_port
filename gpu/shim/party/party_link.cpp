@@ -513,19 +513,29 @@ std::string identity_mismatch(const LinkConfig& host, const LinkConfig& guest) {
     if (host.eboot_sha256 != guest.eboot_sha256)
         parts.push_back("eboot.bin differs (host " + short_hex(host.eboot_sha256) + ", yours " +
                         short_hex(guest.eboot_sha256) + ": another game version or dump; the port needs 1.09)");
-    if (host.params_sha256 != guest.params_sha256)
-        parts.push_back("game params differ (gameparam.parambnd.dcx: host " + short_hex(host.params_sha256) +
-                        ", yours " + short_hex(guest.params_sha256) +
-                        "): first check that the launcher's game folder is the right one (players fixed this by "
-                        "choosing the game folder by hand), else another game version or edited params; use the "
-                        "same game dump (1.09) as the host");
+    // 0.7.9: params_sha256 is the dump's own gameparam (party_runtime params_hash; a mod's gameparam counts under the
+    // mods), so a difference here is a real dump difference. When the mods differ too, the mods clause leads and the
+    // game-folder advice (a common mistake with identical dumps) is left out: the mods are the likelier cause.
+    const bool mods_differ = host.mods_hash != guest.mods_hash;
+    if (mods_differ)
+        parts.push_back(set_clause("gameplay mods", host.mods_hash, host.mod_names, guest.mods_hash, guest.mod_names) +
+                        ": enable the same mods as the host (launcher Mods tab)");
+    if (host.params_sha256 != guest.params_sha256) {
+        if (mods_differ)
+            parts.push_back("game params of the game dump differ too (gameparam.parambnd.dcx: host " +
+                            short_hex(host.params_sha256) + ", yours " + short_hex(guest.params_sha256) +
+                            "): use the same game dump (1.09) as the host");
+        else
+            parts.push_back("game params differ (gameparam.parambnd.dcx: host " + short_hex(host.params_sha256) +
+                            ", yours " + short_hex(guest.params_sha256) +
+                            "): first check that the launcher's game folder is the right one (players fixed this by "
+                            "choosing the game folder by hand), else another game version or edited params; use the "
+                            "same game dump (1.09) as the host");
+    }
     if (host.patches_hash != guest.patches_hash)
         parts.push_back(set_clause("gameplay patches", host.patches_hash, host.patch_names, guest.patches_hash,
                                    guest.patch_names) +
                         ": turn on the same patches as the host (launcher Patches tab)");
-    if (host.mods_hash != guest.mods_hash)
-        parts.push_back(set_clause("gameplay mods", host.mods_hash, host.mod_names, guest.mods_hash, guest.mod_names) +
-                        ": enable the same mods as the host (launcher Mods tab)");
     if (host.hooks_hash != guest.hooks_hash) {
         // 0.7.8: name each differing option in plain words when every differing hook belongs to a known one.
         std::vector<std::string> host_only, guest_only;
