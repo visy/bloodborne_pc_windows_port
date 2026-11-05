@@ -15,18 +15,20 @@ Game data (read-only, untrusted; run with python -I):
                                             GAME/paramdef/paramdef.paramdefbnd.dcx
       Flag ids in params: ItemLotParam getItemFlagId(01..08), ShopLineupParam eventFlag,
       ObjActParam spQualifiedPassEventFlag.
-  python -I tools/party/flag_tool.py gen-inc GAME [--out gpu/shim/party/party_flags.inc]
-      Regenerates the category table: specific rows from the scripts/params (boss defeat, lamps,
-      doors/ladders, chests/item lots, cutscenes, NPC events, restart events), then the global
-      and per-map zone rows (GLOBAL_ROWS / ZONE_DEFAULT below). GAME = .../dvdroot_ps4.
-  python -I tools/party/flag_tool.py classify GAME [--inc gpu/shim/party/party_flags.inc]
-      Both of the above, then each flag id against the category table (party_flags.inc):
-      per category counts and the flags no row covers.
+  python -I tools/party/flag_tool.py table GAME
+      Prints the category table derived from the player's game: specific rows from the scripts/params
+      (boss defeat, lamps, doors/ladders, chests/item lots, cutscenes, NPC events, restart events),
+      then the global and per-map zone rows (GLOBAL_ROWS / ZONE_DEFAULT below). GAME = .../dvdroot_ps4.
+      Nothing is committed: scripts/party_tables.py writes the same rows as the flagRows section of
+      <user dir>/party_tables.txt, which the game and the --tables options below read.
+  python -I tools/party/flag_tool.py classify GAME
+      Both of the above, then each flag id against the category table: per category counts and the
+      flags no row covers.
 
 Snapshots (the game side writes them with BB_PARTY_FLAG_DUMP=1; format below):
 
-  python -I tools/party/flag_tool.py dump  A.bbpf [--set-only] [--inc party_flags.inc]
-  python -I tools/party/flag_tool.py diff  A.bbpf B.bbpf [--inc party_flags.inc] [--sync-only]
+  python -I tools/party/flag_tool.py dump  A.bbpf [--set-only] [--tables party_tables.txt]
+  python -I tools/party/flag_tool.py diff  A.bbpf B.bbpf [--tables party_tables.txt] [--sync-only]
           exit status 0 = no difference (in the compared set), 1 = differences, 2 = error
   python -I tools/party/flag_tool.py make  OUT.bbpf --set 1000,12404800 [--blocks auto]
           a synthetic snapshot for tests.
@@ -514,19 +516,35 @@ def cmd_params(a):
         print(f"{f}\t{src}\t{rid}\t{note}")
 
 # ---------------------------------------------------------------------------------------------
-# category table (party_flags.inc)
-
-INC_RE = re.compile(r"\{\s*(\d+)u?\s*,\s*(\d+)u?\s*,\s*Category::(\w+)\s*,\s*\"((?:[^\"\\]|\\.)*)\"\s*\}")
+# category table (the flagRows section of party_tables.txt)
 
 
-def load_inc(path):
-    rows = []
+
+def load_rows(path):
+    """The flagRows section of a party_tables.txt: [(first, last, category, note)] in match order."""
+    rows, left, sec = [], 0, None
     for line in Path(path).read_text(encoding="utf-8").splitlines():
-        s = line.split("//", 1)[0] if not line.lstrip().startswith("{") else line
-        m = INC_RE.search(s)
-        if m:
-            rows.append((int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)))
+        if left == 0:
+            m = re.match(r"\[(\w+)\] (\d+)$", line)
+            if m:
+                sec, left = m.group(1), int(m.group(2))
+            continue
+        left -= 1
+        if sec == "flagRows":
+            f = line.split("	")
+            rows.append((int(f[0]), int(f[1]), f[2], f[3] if len(f) > 3 else ""))
     return rows
+
+
+def default_tables():
+    """BB_PARTY_TABLES, else <repo>/user/party_tables.txt."""
+    return os.environ.get("BB_PARTY_TABLES") or str(Path(__file__).resolve().parents[2] / "user" / "party_tables.txt")
+
+
+def static_rows():
+    """The rows that need no game data (our own rules: covenants, overrides, global and structural groups);
+    the data-derived specific rows are missing, so ids only those cover are not categorised."""
+    return list(COVENANT_ROWS) + list(OVERRIDE_ROWS) + structural_rows()
 
 
 def categorize(rows, fid):
@@ -541,7 +559,7 @@ def cmd_classify(a):
     game = Path(a.game)
     ev_dir = game / "event"
     emedf = load_emedf(find_emedf(ev_dir))
-    rows = load_inc(a.inc)
+    rows = category_rows(game)[0]
     flags = {}  # id -> set(sources)
     for stem, recs in expand_all(ev_dir, emedf).items():
         for r in recs:
@@ -571,7 +589,7 @@ def cmd_classify(a):
         print(f"  {f}  {sorted(flags[f])[:4]}")
 
 # ---------------------------------------------------------------------------------------------
-# category table generator (gpu/shim/party/party_flags.inc)
+# category table generator (scripts/party_tables.py writes it as flagRows)
 
 # the flag store's map table (0x47314d0: 17 {area, block} pairs) - every map with pooled groups
 STORE_MAPS = [(21, 0), (21, 1), (22, 0), (23, 0), (24, 0), (24, 1), (24, 2), (25, 0), (26, 0), (27, 0),
@@ -914,37 +932,11 @@ def category_rows(game, allrec=None):
     return list(COVENANT_ROWS) + list(OVERRIDE_ROWS) + spec_rows + srows, spec_rows, srows
 
 
-def cmd_gen_inc(a):
-    game = Path(a.game)
-    _rows, spec_rows, srows = category_rows(game)
-    out = [
-        "// Generated by tools/party/flag_tool.py gen-inc from the game's EMEVD/EMELD and params",
-        "// (Bloodborne 1.09). Do not edit by hand: change the tool's rules and regenerate.",
-        "// Row: {first id, last id, Category, note}. FIRST MATCH WINS: specific rows (from the",
-        "// event scripts and params) come first, then global rows, then per-map zone defaults.",
-        "// Flag id layout: TAABZnnn - T type digit (0 global, 1/5/6/7/9), AA area, B block,",
-        "// Z zone, nnn bit in the 1000-flag group (see docs/party/event_flags.md).",
-        "// Categories: boss_defeated boss_area lamp_unlocked shortcut_door npc_quest",
-        "// item_lot_picked key_event cutscene_seen world_state session_runtime never_sync",
-        "// time_of_day (9800-9802: applied only through the cutscene replay path, never silently).",
-        "// covenant_outcome (per player while the host's rule is on; else the next row's category).",
-        "// Ids no row covers: treat as never_sync.",
-        f"// ---- {len(COVENANT_ROWS)} covenant outcome rows (per player: Annalise, Alfred, Valtr)",
-    ]
-    for lo, hi, cat, note in COVENANT_ROWS:
-        out.append(f'{{{lo}u, {hi}u, Category::{cat}, "{esc(note)}"}},')
-    out.append(f"// ---- {len(OVERRIDE_ROWS)} override rows (area gates, endings, cutscene/time-of-day flags)")
-    for lo, hi, cat, note in OVERRIDE_ROWS:
-        out.append(f'{{{lo}u, {hi}u, Category::{cat}, "{esc(note)}"}},')
-    out.append(f"// ---- {len(spec_rows)} specific rows")
-    for lo, hi, cat, note in spec_rows:
-        out.append(f'{{{lo}u, {hi}u, Category::{cat}, "{esc(note)}"}},')
-    out.append(f"// ---- {len(srows)} global and structural rows")
-    for lo, hi, cat, note in srows:
-        out.append(f'{{{lo}u, {hi}u, Category::{cat}, "{esc(note)}"}},')
-    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(a.out).write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
-    print(f"wrote {a.out}: {len(spec_rows)} specific + {len(srows)} structural rows")
+def cmd_table(a):
+    rows, spec_rows, srows = category_rows(Path(a.game))
+    for lo, hi, cat, note in rows:
+        print(f"{lo}	{hi}	{cat}	{esc(note)}")
+    print(f"# {len(spec_rows)} specific + {len(srows)} structural rows", file=sys.stderr)
 
 # ---------------------------------------------------------------------------------------------
 # snapshots
@@ -1035,7 +1027,7 @@ def describe(s):
 
 def cmd_dump(a):
     s = Snapshot.read(a.snap)
-    rows = load_inc(a.inc) if a.inc else []
+    rows = load_rows(a.inc) if a.inc else []
     print(describe(s))
     if not a.set_only:
         for blk in sorted(s.blocks):
@@ -1048,7 +1040,7 @@ def cmd_dump(a):
 
 def cmd_diff(a):
     A, B = Snapshot.read(a.a), Snapshot.read(a.b)
-    rows = load_inc(a.inc) if a.inc else []
+    rows = load_rows(a.inc) if a.inc else []
     print("A: " + describe(A))
     print("B: " + describe(B))
     if A.bits != B.bits:
@@ -1109,19 +1101,17 @@ def main():
     p.add_argument("paramdefbnd")
     p = sp.add_parser("classify")
     p.add_argument("game")
-    p.add_argument("--inc", default=str(Path(__file__).resolve().parents[2] / "gpu/shim/party/party_flags.inc"))
     p.add_argument("--show", type=int, default=40)
-    p = sp.add_parser("gen-inc")
+    p = sp.add_parser("table")
     p.add_argument("game")
-    p.add_argument("--out", default=str(Path(__file__).resolve().parents[2] / "gpu/shim/party/party_flags.inc"))
     p = sp.add_parser("dump")
     p.add_argument("snap")
     p.add_argument("--set-only", action="store_true")
-    p.add_argument("--inc")
+    p.add_argument("--tables", dest="inc")
     p = sp.add_parser("diff")
     p.add_argument("a")
     p.add_argument("b")
-    p.add_argument("--inc")
+    p.add_argument("--tables", dest="inc")
     p.add_argument("--sync-only", action="store_true")
     p = sp.add_parser("make")
     p.add_argument("out")
@@ -1131,7 +1121,7 @@ def main():
     p.add_argument("--label", default="synthetic")
     a = ap.parse_args()
     try:
-        r = {"emevd": cmd_emevd, "params": cmd_params, "classify": cmd_classify, "gen-inc": cmd_gen_inc, "dump": cmd_dump,
+        r = {"emevd": cmd_emevd, "params": cmd_params, "classify": cmd_classify, "table": cmd_table, "dump": cmd_dump,
              "diff": cmd_diff, "make": cmd_make}[a.cmd](a)
     except (ValueError, OSError, StopIteration, struct.error) as e:
         print(f"error: {e}", file=sys.stderr)

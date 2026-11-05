@@ -485,21 +485,21 @@ class SaveEditorTab(ttk.Frame):
             if group not in groups:
                 groups[group] = self.flag_tree.insert("", "end", iid=f"g:{group}", text=group, open=True)
             self.flag_tree.insert(groups[group], "end", iid=str(fid), text=label,
-                                  values=("yes" if all(self.model.flag(x) for x in F.flag_group(fid)) else "no",))
+                                  values=("yes" if all(self.model.flag(x) for x in F.flag_group(fid, self.catalogue)) else "no",))
 
     def toggle_flag(self):
         sel = [i for i in self.flag_tree.selection() if not i.startswith("g:")]
         if sel and self._risk():
             fid = int(sel[0])
-            on = not all(self.model.flag(x) for x in F.flag_group(fid))
-            for f in F.flag_group(fid):  # a lamp: its object flags too; a boss: the flags that go with its kill
+            on = not all(self.model.flag(x) for x in F.flag_group(fid, self.catalogue))
+            for f in F.flag_group(fid, self.catalogue):  # a lamp: its object flags too; a boss: the flags that go with its kill
                 self.model.set_flag(f, on)
             self.fill_flags()
 
     def light_lamps(self):
         if self._risk():
-            for fid in F.ALL_LAMP_IDS:
-                for f in F.flag_group(fid):  # the lamp-lit flag and the lamp object's flags
+            for fid in F.lamp_ids(self.catalogue):
+                for f in F.flag_group(fid, self.catalogue):  # the lamp-lit flag and the lamp object's flags
                     self.model.set_flag(f, True)
             self.fill_flags()
 

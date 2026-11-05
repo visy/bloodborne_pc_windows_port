@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bloodborne 1.09 id allowlists for the party co-op peer validation (bbport security pass):
-derived at run time from the player's own game files (scripts/party_tables.py writes the cache
+derived at run time from the player's own game files (gpu/shim/gamedata derives the cache natively; this is the Python oracle of it
 user/party_tables.txt that gpu/shim/party/party_gamedata.h loads; nothing generated is committed).
 
 Game data (read-only, untrusted; run with python -I). GAME = .../dvdroot_ps4.
@@ -235,7 +235,7 @@ def fmt_spot(i, spot):
 
 def derive(game):
     """{section: [row, ...]} of the id tables from the player's own game folder (dvdroot_ps4; a mods
-    overlay view is read like the game reads it). Rows are lists of strings (party_tables.py writes
+    overlay view is read like the game reads it). Rows are lists of strings (the oracle writes
     them to the cache); see the module doc for what each section holds."""
     game = Path(game)
     maps, msbs = scan_maps(game)

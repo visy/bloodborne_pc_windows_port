@@ -13,6 +13,7 @@
 #include "party_util.h"
 #include "gpu/bbnet.h"
 #include "party_sign_blob.h"
+#include "party/party_gamedata.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1321,6 +1322,13 @@ static void test_hold_scope() {
 }
 
 int main() {
+    if (!coop::gamedata::InstallFromEnv()) {
+        // The sign checks need the sign maps to be maps of the game: made-up tables with the maps the test uses (no game data).
+        coop::gamedata::Tables t;
+        t.loaded = true;
+        t.maps = {0x15010000u, 0x18010000u, 486607628u};  // the Hunter's Dream, Cathedral Ward, a Chalice piece
+        coop::gamedata::Install(std::move(t));
+    }
     bbnet::party::FromApi::instance().set_min_sign_age_ms(0);  // A4's 1.5 s sign age: checked once below
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {

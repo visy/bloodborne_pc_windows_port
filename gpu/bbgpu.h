@@ -16,6 +16,9 @@ typedef struct {
 } BbGpuConfig;
 /* Registers kernel event queues (needed with or without graphics). */
 void bbgpu_register_kernel(void);
+/* Starts deriving the party game-data tables from the game files under app0 on a background worker pool
+ * (cached in user_dir; BB_PARTY_TABLES_BUILD=0 or BB_PARTY_TABLES skips it). Returns at once. */
+void bbgpu_party_data_start(const char *app0, const char *user_dir);
 /* Creates window, Vulkan device, presenter and GPU command processor. */
 int bbgpu_init(const BbGpuConfig *config);
 /* Function for an imported NID ("NID#lib#mod"), or 0 when the GPU library does not provide it. */

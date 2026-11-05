@@ -5744,6 +5744,23 @@ class BloodborneLauncher(tk.Tk):
                             f"Your saves from before the undo are in:\n{backup}")
         return True
 
+    def party_progress_flags(self, user):
+        """The boss / lamp flags of the player's own game for the save check (derived once, cached in the user's
+        cache folder); {} when the game folder or the editor's modules are not at hand."""
+        try:
+            text = self.eboot_var.get().strip()
+            game = resolve_game_dir(text) if text else None
+            if game is None:
+                return {}
+            scripts_dir = str(APP_DIR / "scripts")
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            from saveedit import names as saveedit_names
+            return saveedit_names.Catalogue.load(game, Path(user) / "cache").progress
+        except Exception as ex:
+            self.log(f"[PARTY] The boss / lamp lists of the save check could not be read: {ex}")
+            return {}
+
     def check_last_party_session(self):
         """After a party session (the game closed, or at the next launcher start): do the party saves
         still load, and did nothing go backwards? On a problem: offer the undo."""
@@ -5755,7 +5772,7 @@ class BloodborneLauncher(tk.Tk):
             session = pss.needs_check(user)
             if session is None:
                 return
-            problems = pss.check(user, session)
+            problems = pss.check(user, session, self.party_progress_flags(user))
             pss.mark_checked(user, session, problems)
         except Exception as ex:  # a check must never keep the launcher from working
             self.log(f"[PARTY] The save check after the party session failed: {ex}")

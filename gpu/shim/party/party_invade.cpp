@@ -523,7 +523,7 @@ std::uint32_t ApartLampForInvader(const GameSnapshot& s) {
     float host[3];
     if (!balance::ChrPosition(s.player, host)) return 0;
     std::vector<ApartSpot> spots;
-    for (const lamptravel::Lamp& l : lamptravel::kLamps) {
+    for (const lamptravel::Lamp& l : lamptravel::Lamps()) {
         const std::uint32_t rp = lamptravel::ReturnPoint(l);
         float sp[4];
         bool lit = false;

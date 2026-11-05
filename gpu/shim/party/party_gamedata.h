@@ -3,22 +3,26 @@
 // committed): which maps / lamps / cutscenes / NPCs exist, which item lots carry a pickup flag and
 // which awards are host-only, the Beckoning-Bell helpers, the world warper's gear.
 //
-// scripts/party_tables.py (run by run.bat / run.sh after the mods overlay is merged, so mods are
-// respected) derives them from the game folder and writes <user dir>/party_tables.txt, keyed by a
-// hash of its inputs and rebuilt when they change. This header parses that file the first time a
-// table is asked for. Missing or unreadable file: every table is empty, Loaded() is false and the
-// reason is logged once and kept in Status(); the consumers then say no (an unknown map, lamp or
-// entity id is refused, no item is shared by lot) and never crash.
+// The engine derives them in C++ (gpu/shim/gamedata/, started at engine start on a worker pool; the mods
+// overlay is respected because the files read are the ones the game reads) and caches them in
+// <user dir>/party_tables.txt, keyed by the inputs. Get() waits for that build; Preparing() / PreparingPercent()
+// tell a caller that must not wait (an in-game hint). Without a build (tests, BB_PARTY_TABLES naming a cache
+// file) Get() parses the cache file the first time a table is asked for. Missing or unreadable tables: every
+// table is empty, Loaded() is false and the reason is logged once and kept in Status(); the consumers then say
+// no (an unknown map, lamp or entity id is refused, no item is shared by lot) and never crash.
 //
 // File format (UTF-8, "\n" or "\r\n"): `BBPARTYTABLES 1`, `key <sha1>`, then per section `[name] <rows>`
-// and that many lines of tab-separated fields. Section names and columns: scripts/party_tables.py.
+// and that many lines of tab-separated fields. Section names and columns: gpu/shim/gamedata/build.cpp (RenderCache), docs/party/gamedata.md.
 // Header only, no game dependency; tests install their own tables with Install().
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -69,6 +73,21 @@ struct NpcFogRow {
     float x, y, z, yaw;
 };
 
+/// A world lamp: AAB = area * 10 + block (241 = m24_01), n = its index in the block, group = the Hunter's Dream
+/// headstone that lists it (lamptravel::Group), in the order the headstones list them.
+struct LampRow {
+    std::uint16_t aab;
+    std::uint8_t n;
+    std::uint8_t group;
+};
+
+/// One event-flag category row {first id, last id, category name, note}; rows keep file order (first match wins).
+struct FlagRow {
+    std::uint32_t first, last;
+    std::string category;
+    std::string note;
+};
+
 struct Tables {
     bool loaded = false;
     std::string status = "party tables not loaded";
@@ -89,6 +108,11 @@ struct Tables {
     std::vector<BossDropRow> boss_drops;
     std::vector<AuditRowData> audit_rows;
     std::vector<KillAward> kill_awards;
+    // event-flag categories (party_progress.cpp resolves the names)
+    std::vector<FlagRow> flag_rows;
+    std::vector<LampRow> lamps;
+    std::vector<std::pair<std::uint32_t, std::string>> gesture_names;  // goods id -> the game's name (message files)
+    std::vector<std::uint32_t> host_only_events;  // sorted: boss phase events only the host's copy decides
 };
 
 namespace detail {
@@ -240,6 +264,19 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
                  detail::ToU32(f[2], &r.leave) && detail::ToU32(f[3], &r.host_flag) && detail::ToU32(f[4], &r.region) &&
                  detail::ToF(f[5], &r.x) && detail::ToF(f[6], &r.y) && detail::ToF(f[7], &r.z) && detail::ToF(f[8], &r.yaw);
             if (ok) t.npc_fog.push_back(r);
+        } else if (section == "flagRows") {
+            ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && !f[2].empty() &&
+                 u[0] <= u[1];
+            if (ok) t.flag_rows.push_back({u[0], u[1], f[2], f.size() > 3 ? f[3] : std::string()});
+        } else if (section == "lamps") {
+            ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && detail::ToU32(f[2], &u[2]) &&
+                 u[0] < 65536 && u[1] < 256 && u[2] < 256;
+            if (ok) t.lamps.push_back({static_cast<std::uint16_t>(u[0]), static_cast<std::uint8_t>(u[1]), static_cast<std::uint8_t>(u[2])});
+        } else if (section == "gestureNames") {
+            ok = f.size() >= 2 && detail::ToU32(f[0], &u[0]) && !f[1].empty();
+            if (ok) t.gesture_names.emplace_back(u[0], f[1]);
+        } else if (section == "hostOnlyEvents") {
+            ok = u32row(t.host_only_events, f);
         } else if (section == "itemLotFlag") {
             ok = f.size() >= 2 && detail::ToI32(f[0], &a) && detail::ToI32(f[1], &b);
             if (ok) t.lot_flags.push_back({a, b});
@@ -274,7 +311,7 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
         return fail("party tables: file is cut short");
     }
     // The consumers binary-search these: keep the contract even for a hand-edited file.
-    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror}) {
+    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror, &t.host_only_events}) {
         std::sort(v->begin(), v->end());
         v->erase(std::unique(v->begin(), v->end()), v->end());
     }
@@ -333,18 +370,74 @@ inline std::once_flag& Once() {
     static std::once_flag o;
     return o;
 }
+/// The background build's state: 0 none (Get() reads the cache file), 1 building, 2 done.
+struct Async {
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int> state{0};
+    std::atomic<int> percent{0};
+    std::string label;
+};
+inline Async& A() {
+    static Async a;
+    return a;
+}
 }  // namespace detail
 
-/// The tables, loaded on first use. Never null, never throws; empty when the cache is missing.
+namespace detail {
+inline std::string& GameDirStore() {
+    static std::string d;
+    return d;
+}
+}  // namespace detail
+/// The game folder (dvdroot_ps4) the tables were built from, set by the builder; "" when unknown. For code that
+/// reads other texts of the player's own game at run time (message files).
+inline std::string GameDir() { return detail::GameDirStore(); }
+inline void SetGameDir(const std::string& d) { detail::GameDirStore() = d; }
+
+/// The builder (gamedata/build.cpp) marks the start; Get() then waits for FinishBuild().
+inline void BeginBuild() { detail::A().state.store(1); }
+inline void SetBuildProgress(int percent, const std::string& label) {
+    std::lock_guard<std::mutex> lk(detail::A().mu);
+    detail::A().percent.store(percent);
+    detail::A().label = label;
+}
+/// Installs the built tables (empty with a status when the build failed) and wakes the waiters.
+inline void FinishBuild(Tables t) {
+    std::call_once(detail::Once(), [] {});
+    {
+        std::lock_guard<std::mutex> lk(detail::A().mu);
+        detail::Store() = std::move(t);
+        detail::A().percent.store(100);
+        detail::A().state.store(2);
+    }
+    detail::A().cv.notify_all();
+}
+/// True while the background build runs (never blocks).
+inline bool Preparing() { return detail::A().state.load() == 1; }
+inline int PreparingPercent() { return detail::A().percent.load(); }
+inline std::string PreparingLabel() {
+    std::lock_guard<std::mutex> lk(detail::A().mu);
+    return detail::A().label;
+}
+
+/// The tables. Waits for the background build when one runs; else loaded from the cache file on first use.
+/// Never null, never throws; empty when the tables are missing.
 inline const Tables& Get() {
+    detail::Async& a = detail::A();
+    if (a.state.load() != 0) {
+        std::unique_lock<std::mutex> lk(a.mu);
+        a.cv.wait(lk, [&] { return a.state.load() == 2; });
+        return detail::Store();
+    }
     std::call_once(detail::Once(), [] {
         std::string err;
         Tables t;
         if (!LoadFile(CachePath(), &t, &err)) {
             std::fprintf(stderr,
                          "[party] game-data tables unavailable: %s. Party features that need them (travel, "
-                         "shared items, NPC fog, world warper) refuse until the launcher has built them from "
-                         "your game files (scripts/party_tables.py).\n",
+                         "shared items, NPC fog, world warper) refuse until they are built from your game "
+                         "files (the engine does it at start).\n",
                          err.c_str());
         }
         detail::Store() = std::move(t);
@@ -354,6 +447,21 @@ inline const Tables& Get() {
 
 inline bool Loaded() {
     return Get().loaded;
+}
+
+/// A gesture's name as the player's game spells it (goods id 800 ..; read from the message files when the tables are
+/// built), "Gesture <n>" when the tables have none. The pointer stays valid for the program's life.
+inline const char* GestureText(std::uint32_t goods) {
+    static std::mutex mu;
+    static std::map<std::uint32_t, std::string> cache;
+    std::lock_guard<std::mutex> lk(mu);
+    const auto it = cache.find(goods);
+    if (it != cache.end()) return it->second.c_str();
+    std::string name = "Gesture " + std::to_string(goods);
+    for (const auto& g : Get().gesture_names) {
+        if (g.first == goods) name = g.second;
+    }
+    return cache.emplace(goods, std::move(name)).first->second.c_str();
 }
 
 /// Replaces the tables (tests, or a caller that built them itself). Not thread safe with Get().

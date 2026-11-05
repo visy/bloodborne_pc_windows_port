@@ -17,7 +17,7 @@ FMG_FILES = {"goods": "アイテム名", "weapon": "武器名", "armor": "防具
 PARAMS = {"weapon": "EquipParamWeapon", "armor": "EquipParamProtector", "accessory": "EquipParamAccessory",
           "goods": "EquipParamGoods"}
 _PLACEHOLDER = re.compile(r"^(\*|NOT NEEDED|en\d+)?$", re.I)
-CACHE_VERSION = 9
+CACHE_VERSION = 10
 EVENT_TEXT = "イベントテキスト"  # menu.msgbnd FMG: the lamp warp list names (id 7000AABn)
 NPC_NAMES = "NPC名"  # item.msgbnd FMG: boss and NPC names by character id
 GEM_NAMES = "魔石名"  # menu.msgbnd FMG: blood gem and rune names (key built in gems.name_key)
@@ -99,7 +99,12 @@ def read_game(game_dir, lang="engus"):
     names["gem"] = _fmg(_entry(menu, GEM_NAMES + ".fmg"))
     names["effect"] = _fmg(_entry(menu, GEM_EFFECTS + ".fmg"))
     ids = {kind: sorted(_param_ids(_entry(par, pn + ".param"))) for kind, pn in PARAMS.items()}
-    data = {"names": names, "ids": ids}
+    try:  # the boss / lamp flags the editor offers (flagsdata.derive): without them the editor lists none
+        from . import flagsdata
+        progress = flagsdata.derive(game)
+    except Exception:
+        progress = {}
+    data = {"names": names, "ids": ids, "progress": progress}
     from .params import Params  # params reads its files with this module's helpers
     try:  # hand, icon and gem rows need the paramdefs too; without them the editor still has names
         p = Params(game)
@@ -153,6 +158,11 @@ def _stamp(game, lang):
             out += [st.st_size, int(st.st_mtime)]
         except OSError:
             out += [0, 0]
+    try:  # the event scripts and map files the flag lists are derived from
+        out.append(sum(f.stat().st_size for f in sorted((game / "event").iterdir()) if f.is_file()))
+        out.append(sum(f.stat().st_size for f in sorted((game / "map" / "mapstudio").rglob("*.msb*"))))
+    except OSError:
+        out += [0, 0]
     return out
 
 
@@ -170,6 +180,7 @@ class Catalogue:
         self.ok = bool(data)
         self._names = {k: {int(i): n for i, n in v.items()} for k, v in (data or {}).get("names", {}).items()}
         self._ids = {k: set(v) for k, v in (data or {}).get("ids", {}).items()}
+        self.progress = (data or {}).get("progress") or {}  # {"bosses": [[flag, NPC name id]], "lamps": [flag]}
         self._icons = {k: {int(i): n for i, n in v.items()} for k, v in (data or {}).get("icons", {}).items()}
         self._effects = {int(i): v for i, v in (data or {}).get("effects", {}).items()}
         self._gemgen = {int(i): v for i, v in (data or {}).get("gemgen", {}).items()}
@@ -311,7 +322,9 @@ class Catalogue:
         return self._names.get("lamp", {}).get(70000000 + (flag // 10000 % 1000) * 10 + flag % 100)
 
     def boss_name(self, chr_id):
-        return self._names.get("npc", {}).get(chr_id)
+        """The NPC name list entry of a boss name id (the one its health bar shows); a variant row (210020) falls back to its base (210000)."""
+        names = self._names.get("npc", {})
+        return names.get(chr_id) or names.get(chr_id // 1000 * 1000)
 
     def valid_ids(self, category):
         """The set of row ids the game has for this category (None when unknown)."""

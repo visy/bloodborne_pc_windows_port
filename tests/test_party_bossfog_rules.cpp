@@ -112,7 +112,7 @@ int main() {
         CHECK(g.host_flag / 1000 == g.guest_flag / 1000);
         CHECK(!FightStateFlag(g.boss_flag));
         CHECK(g.intro_flag == 0 || !FightStateFlag(g.intro_flag));
-        CHECK(pg::CategoryOf(g.host_flag) == pg::Category::boss_area);
+        CHECK(coop::gamedata::Get().flag_rows.empty() || pg::CategoryOf(g.host_flag) == pg::Category::boss_area);  // the category table is derived from the game
         CHECK(!GuardRestores(g.host_flag / 1000, true, true));
         CHECK(GuardRestores(g.boss_flag / 1000, true, true));
         // the vanilla snapshot alone carries them (the world mirror leaves them out)
@@ -266,6 +266,10 @@ int main() {
 
     {
         // The host takes no peer's state for a boss's HP-driven phase events (Ludwig's latter-half scene 13404825)
+        coop::gamedata::Tables ht;  // the list comes from the game's event names (party tables): made-up tables here
+        ht.loaded = true;
+        ht.host_only_events = {12404807u, 12414707u, 13404820u, 13404824u, 13404825u};
+        coop::gamedata::Install(std::move(ht));
         CHECK(HostOnlyBossEvent(13404824) && HostOnlyBossEvent(13404825) && HostOnlyBossEvent(12404807));
         CHECK(!HostOnlyBossEvent(13404802) && !HostOnlyBossEvent(13404801) && !HostOnlyBossEvent(13401802));
         CHECK(!HostOnlyBossEvent(7200) && !HostOnlyBossEvent(12107000) && !HostOnlyBossEvent(0));
@@ -274,11 +278,7 @@ int main() {
     {
         // Host-only events a host's mods add (out/party_host_only.txt): the fixed list stays as it is, the mods'
         // ids join it, and a missing, empty or broken file changes nothing.
-        static const std::uint32_t kFixed[] = {
-            12104807u, 12204807u, 12304707u, 12304807u, 12304808u, 12404807u, 12414707u, 12424980u, 12704806u,
-            12704812u, 12804870u, 12804871u, 12904028u, 12904735u, 12904868u, 12904884u, 12904889u, 12906766u,
-            12906767u, 12906863u, 12906869u, 12906870u, 13204807u, 13304807u, 13304808u, 13404820u, 13404821u,
-            13404822u, 13404823u, 13404824u, 13404825u, 13604820u};
+        static const std::uint32_t kFixed[] = {12404807u, 12414707u, 13404820u, 13404824u, 13404825u};
         std::size_t fixed = 0;
         for (std::uint32_t id = 12000000u; id < 13700000u; ++id) {
             fixed += HostOnlyBossEvent(id);

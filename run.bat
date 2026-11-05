@@ -324,11 +324,10 @@ REM GPU caches (shader cache) go to the same user directory: the GPU library rea
 REM BB_GPU_USER_DIR when it starts, before --user reaches it (as run.sh).
 if "%BB_GPU_USER_DIR%"=="" set "BB_GPU_USER_DIR=%user_dir%"
 if not exist "%BB_GPU_USER_DIR%" mkdir "%BB_GPU_USER_DIR%"
-REM The party tables (maps, lamps, item lots, NPCs ...) are read from YOUR game files, mods overlay included, into
-REM %user_dir%\party_tables.txt (scripts\party_tables.py): the first start and after a game / mod change take about
-REM a minute, later starts about two seconds. BB_PARTY_TABLES_BUILD=0 skips it. A failure never stops the game; the party
-REM features that need the tables then refuse and say so in the log.
-if not "%BB_PARTY_TABLES_BUILD%"=="0" if exist scripts\party_tables.py "%PYTHON%" -I -X utf8 scripts\party_tables.py "%game%" --user-dir "%user_dir%"
+REM The party tables (maps, lamps, item lots, NPCs ...) are derived by the engine itself (C++, worker threads, started
+REM with the game) from YOUR game files, mods overlay included, and cached in %user_dir%\party_tables.txt.
+REM BB_PARTY_TABLES_BUILD=0 skips it. A failure never stops the game; the party features that need the tables then
+REM refuse and say so in the log.
 REM The Old Hunters: its data ships in patch 1.09 (maps m34-m36), the game only needs the add-on
 REM reported as installed. A fresh install gets the entitlement folder automatically when the
 REM DLC maps are present and no add-on folder exists yet. BB_AUTO_DLC=0 skips this.

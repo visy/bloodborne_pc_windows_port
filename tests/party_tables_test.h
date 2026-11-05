@@ -2,7 +2,7 @@
 // Unit tests that need the game's data (map / lamp / lot tables) read the party tables the launcher builds
 // from the player's own game files; nothing extracted is committed. Build the cache once, then point the
 // test at it:
-//   python -I scripts/party_tables.py <game dir> --user-dir <some dir>
+//   out/gpu/party-tables-cli.exe <game dir> <some dir>/party_tables.txt
 //   BB_PARTY_TABLES=<some dir>/party_tables.txt out/gpu/<test>.exe
 // Without the cache the test prints "skipped" and succeeds.
 #pragma once
