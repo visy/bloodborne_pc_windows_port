@@ -6887,7 +6887,7 @@ def check_gvt(v, L):
     need(v, L, "gvt the transfer ends with everything arrived", 0, r"transfer ended: got 5 of 5, refund 0")
     need(v, L, "gvt guest -> host (guest's own menu presses): 2 leave the guest", 1, r"removed goods 3000 x2: held 10 -> 8")
     need(v, L, "gvt ... and the host gets them", 0, r"applied goods 3000 x2 from slot 1")
-    none_of(v, L, "gvt no crash dump", r"BLOODBORNE CRASH DUMP|Boot: runtime set up", 20.0, insts=(0, 1))
+    none_of(v, L, "gvt no crash dump", r"BLOODBORNE CRASH DUMP|Boot: runtime set up", 90.0, insts=(0, 1))
     check_common(v, L, "gvt")
 
 
@@ -7005,7 +7005,7 @@ def check_gvw(v, L, tag="gvw"):
     g0 = gg_gems(L, 0, gg_hex(GG_W))
     v.step(tag + " the host's weapon holds the same gems after two moves", g0 == fix, "%s vs %s" % (g0, fix))
     none_of(v, L, tag + " no refund, no removal that did not verify, no incomplete refund", r"REFUND INCOMPLETE|STILL IN THE INVENTORY|refund of (weapon|armor)", insts=(0, 1))
-    none_of(v, L, tag + " no crash dump", r"BLOODBORNE CRASH DUMP|Boot: runtime set up", 20.0, insts=(0, 1))
+    none_of(v, L, tag + " no crash dump", r"BLOODBORNE CRASH DUMP|Boot: runtime set up", 90.0, insts=(0, 1))
     check_common(v, L, tag)
 
 
