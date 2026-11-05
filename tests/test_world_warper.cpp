@@ -2,6 +2,7 @@
 // The world warper's rules (gpu/shim/party/world_warper_rules.h): options, the route through
 // every ReturnPointParam row, the progress file and resume after a crash, the scripted steps.
 // Build and run: ninja -C out/gpu world-warper-test && out/gpu/world-warper-test.exe
+#include "party_tables_test.h"
 #include "party/party_ids.h"
 #include "party/world_warper_rules.h"
 
@@ -26,6 +27,7 @@ static bool Spot(std::uint32_t rp) {
 }
 
 int main() {
+    if (!coop::test::UseGameTables("world-warper-test")) return 0;
     // Options.
     CHECK(ParseOptions(nullptr).mode == Mode::Off);
     CHECK(ParseOptions("").mode == Mode::Off);
@@ -50,8 +52,7 @@ int main() {
     CHECK(ParseIds("1+x+3 4").size() == 3);
 
     // The route: every row with a spot, Dream first, then the lamps, Chalice rows never.
-    const std::vector<std::uint32_t> all(std::begin(coop::ids::kPartyReturnPoints),
-                                         std::end(coop::ids::kPartyReturnPoints));
+    const std::vector<std::uint32_t> all = coop::ids::ReturnPoints();
     const auto route = BuildRoute(all, Spot);
     CHECK(!route.empty());
     CHECK(route.front() == coop::lamptravel::kDreamReturnPoint);
@@ -171,10 +172,10 @@ int main() {
             armor.insert(g.armor);
             right.insert(g.right), left.insert(g.left);
         }
-        CHECK(armor.size() == std::size(kWarperArmorSets));
-        CHECK(right.size() == std::size(kWarperRightWeapons));
-        CHECK(left.size() == std::size(kWarperLeftWeapons));
-        CHECK(GearFor(0).right == kWarperRightWeapons[0] && GearFor(1).right == kWarperRightWeapons[1]);
+        CHECK(armor.size() == ArmorSets().size());
+        CHECK(right.size() == RightWeapons().size());
+        CHECK(left.size() == LeftWeapons().size());
+        CHECK(GearFor(0).right == RightWeapons()[0] && GearFor(1).right == RightWeapons()[1]);
         CHECK(Seconds(LoadoutSteps(false)) < Seconds(LoadoutSteps(true)));
         for (const auto& st : GearSteps()) CHECK(st.buttons != kRight && st.buttons != kLeft);
         std::printf("gear: %zu armor sets, %zu right-hand and %zu left-hand weapons\n", armor.size(), right.size(),

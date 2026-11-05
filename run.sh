@@ -78,6 +78,12 @@ fi
 # Boot image (prepare, link_libc, link_modules; reused while the game files stay the same,
 # docs/STARTUP.md) and the AppContent profile.
 "$PYTHON" scripts/boot_image.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+# The party tables (maps, lamps, item lots, NPCs ...) from this game folder, mods overlay included, into
+# $BB_GPU_USER_DIR/party_tables.txt (scripts/party_tables.py): about a minute when the game or a mod changed,
+# else seconds. BB_PARTY_TABLES_BUILD=0 skips it; a failure never stops the game.
+if [[ ${BB_PARTY_TABLES_BUILD:-1} != 0 && -f scripts/party_tables.py ]]; then
+    "$PYTHON" -I -X utf8 scripts/party_tables.py "$game" --user-dir "$BB_GPU_USER_DIR" || true
+fi
 # Legacy CPU profile (scripts/cpu_compat.py): bb-probe's CPU check lets such a CPU start.
 if [[ $(cat "$out/cpu_compat.txt" 2>/dev/null) == 1 ]]; then export BB_CPU_COMPAT=1; else unset BB_CPU_COMPAT; fi
 # Sizes chosen below for the previous launch are recomputed after an in-game restart.
