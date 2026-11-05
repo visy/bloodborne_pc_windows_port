@@ -51,7 +51,8 @@ def catalogue():
                     700: [0, 0, 0, 1]},
         "gemgen": {124001: 0, 129001: 10000000, 127000: 0, 127002: 0, 100301: 10000000},
         "gemrows": {127000: [0, 1, 13105], 127002: [0, 2, 13105], 100301: [10000000, 1, 700]},
-        "reach": [13105, 700, 28101]})
+        "reach": [13105, 700, 28101],
+        "progress": {"bosses": [[12401800, 0]], "lamps": [72410200, 73600202]}})  # made-up lists (the real ones come from the game)
 
 
 # ---- adding items ------------------------------------------------------------------------------------------
@@ -158,7 +159,9 @@ def test_apply_after_adding_gear_keeps_the_save_openable(user):
 
 # ---- flags -----------------------------------------------------------------------------------------------------
 def test_flag_groups_lamp_boss_companion():
-    assert F.flag_group(72410200) == F.lamp_flags(72410200) and len(F.flag_group(73600202)) == 3
+    c = catalogue()
+    assert F.flag_group(72410200, c) == F.lamp_flags(72410200) and len(F.flag_group(73600202, c)) == 3
+    assert F.flag_group(72410200) == (72410200,)  # no catalogue: no lamp is known
     assert F.flag_group(12401800) == (12401800,)
     assert F.flag_group(13401800) == (13401800, 9471)
     assert F.flag_group(6600) == (6600,)
