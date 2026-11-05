@@ -256,6 +256,25 @@ std::vector<EmevdSkipRule> ChaliceLampSkipRules() {
     return out;
 }
 
+std::vector<EmevdSkipRule> AnnaliseKneelRules() {
+    std::vector<EmevdSkipRule> out;
+    // 0.7.9 (annalise079, CL-22c416): m25_00 events 12500012 (the player's kneel: 2004[14] turn to Annalise playing 101260 when the
+    // ESD's kneel flag 72500329 rises, 2003[18] 101262 when it falls) and 12500013 / 12500014 (the oath's blood animation: player
+    // 101263 on 72500339 / 72500337) begin with 1003[6] End if Client, so a guest's own character stood still while it knelt
+    // (the host's played them). Without that end they run on the guest's game for its own chr (10000) and the net sync shows the
+    // animation to the others. Annalise's own animation (2003[18] on 2500600, index 3 of both blood events) stays the host's.
+    // Kill switch BB_PARTY_GUEST_ANNALISE=0 (the same one as the guest's kneel flags).
+    const char* k = std::getenv("BB_PARTY_GUEST_ANNALISE");
+    if (k && k[0] == '0') {
+        return out;
+    }
+    ParseEmevdSkipRules("12500012:1003:6@0,12500013:1003:6@0,12500014:1003:6@0,12500013:2003:18@3,12500014:2003:18@3", &out);
+    for (EmevdSkipRule& r : out) {
+        r.client_only = true;
+    }
+    return out;
+}
+
 std::vector<EmevdSkipRule> DollPlacementRules() {
     std::vector<EmevdSkipRule> out;
     ParseEmevdSkipRules("12100110:2003:22@25,12100110:2003:17@26", &out);
@@ -1773,6 +1792,9 @@ std::vector<EmevdSkipRule> GuestServicesSkipRules() {
         return {};
     }
     std::vector<EmevdSkipRule> out = DollPlacementRules();
+    for (const EmevdSkipRule& r : AnnaliseKneelRules()) {
+        out.push_back(r);
+    }
     if (GuestLampsAtStart()) {
         for (const EmevdSkipRule& r : LampSkipRules()) {
             out.push_back(r);

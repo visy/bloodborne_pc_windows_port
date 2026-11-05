@@ -4030,6 +4030,30 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             }
             last_idx = idx;
         }
+        // annalise079: the OTHER players' chrs (WorldChrMan player set +0x30 count, +0x38 entries 0x38 apart) on this game, so a host
+        // can see that a guest's kneel animation reached it: "test: remote anim <id> (chr slot k)"
+        std::int32_t n = 0;
+        std::uint64_t entries = 0;
+        if (s.world_chr_man && SafeGet(s.world_chr_man + 0x30, &n) && n > 0 && n <= 8 && SafeGet(s.world_chr_man + 0x38, &entries) && entries) {
+            static std::int32_t r_idx[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+            static std::int32_t r_last[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+            for (int i = 0; i < n; ++i) {
+                std::uint64_t c = 0, rcm = 0, rta = 0;
+                std::int32_t ri = -1;
+                if (!SafeGet(entries + std::uint64_t(i) * 0x38, &c) || !c || c == s.player || !SafeGet(c + 0x3b0, &rcm) || !rcm ||
+                    !SafeGet(rcm + 0x18, &rta) || !rta || !SafeGet(rta + 0xc0, &ri) || ri < 0 || ri >= 10 || ri == r_idx[i]) {
+                    continue;
+                }
+                for (int k = r_idx[i] < 0 ? ri : r_idx[i]; k != ri; k = (k + 1) % 10) {
+                    std::int32_t anim = 0;
+                    SafeGet(rta + 0x20 + std::uint64_t(k) * 0x10, &anim);
+                    if (anim == r_last[i]) continue;
+                    r_last[i] = anim;
+                    Log("test: remote anim %d (chr slot %d)", anim, i);
+                }
+                r_idx[i] = ri;
+            }
+        }
     }
     if (t.log_oath && s.world_up && !s.loading && s.player && Seconds(t.fx_at, now) >= 0.5) {
         // 6100 Corruption (Vilebloods), 6110 Radiance (Executioners), 6120 Hunter, 6142 Impurity (League),
