@@ -88,7 +88,7 @@ have a party character. Details: [party/ingame_flow.md](party/ingame_flow.md).
 1. Start the launcher (`launch_gui.bat`) and open the **Party** tab.
 2. **Mode: Host a party.** Enter **Your name** (1-16 letters, digits, `_` or `-`; the others see
    it in the game).
-3. Pick **Max players** (3 is the game's normal co-op size; 4 is experimental).
+3. Pick **Max players** (3 is the game's own co-op size; 4 is fully supported).
 4. Leave **Automatic summoning** and **Seamless party rules** on (*Separate party saves* is always on).
 5. Optional: a **Password** (every player must then enter the same one; see
    [the password rule](#the-party-code-and-the-password)).
@@ -566,10 +566,9 @@ settings. The environment variables behind each option are listed in
 
 ## Four players
 
-**Max players 4** (host + 3 guests) is experimental: the game was made for at most 3 players.
-The party patches the game to allow a third helper and to scale boss HP for it. **Every player
-must set Max players to 4**; a player who joins takes the host's value by itself (set it on the host only). With 4 players there is no free slot for an invader. Players have run 3 and
-4 player parties and sent reports, which were fixed; expect more rough edges than with 2 or 3.
+**Max players 4** (host + 3 guests) is supported. The game itself was made for at most 3 players;
+the party patches the game to allow a third helper and to scale boss HP for it. Set it on the host only:
+a player who joins takes the host's value by itself. With 4 players there is no free slot for an invader.
 
 ## Troubleshooting
 
@@ -623,8 +622,7 @@ moment it happens to mark the logs.
 
 ## Known limitations
 
-- **Four players is experimental.** The game was made for three; there is no slot for invaders,
-  and it has had less testing than 2 and 3 players.
+- **Four players leave no slot for an invader.** Invaders count against Max players and the game's 4 slots.
 - **Chalice Dungeons**: the fixed Pthumeru dungeons have been played together; **Root (randomly
   generated) and glyph dungeons use the host's dungeon the same way but have not been checked in
   a real session yet.** Bringing a dungeon home to a guest's altar is proven for the first layers; deeper
