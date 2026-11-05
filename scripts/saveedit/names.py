@@ -17,9 +17,11 @@ FMG_FILES = {"goods": "アイテム名", "weapon": "武器名", "armor": "防具
 PARAMS = {"weapon": "EquipParamWeapon", "armor": "EquipParamProtector", "accessory": "EquipParamAccessory",
           "goods": "EquipParamGoods"}
 _PLACEHOLDER = re.compile(r"^(\*|NOT NEEDED|en\d+)?$", re.I)
-CACHE_VERSION = 3
+CACHE_VERSION = 10
 EVENT_TEXT = "イベントテキスト"  # menu.msgbnd FMG: the lamp warp list names (id 7000AABn)
 NPC_NAMES = "NPC名"  # item.msgbnd FMG: boss and NPC names by character id
+GEM_NAMES = "魔石名"  # menu.msgbnd FMG: blood gem and rune names (key built in gems.name_key)
+GEM_EFFECTS = "魔石効果"  # menu.msgbnd FMG: gem effect texts by GemeffectParam id
 
 
 def _dcx(b):
@@ -93,19 +95,64 @@ def read_game(game_dir, lang="engus"):
     names = {kind: _fmg(_entry(msg, fn + ".fmg")) for kind, fn in FMG_FILES.items()}
     names["npc"] = _fmg(_entry(msg, NPC_NAMES + ".fmg"))
     menu = _bnd4(_dcx((game / "msg" / lang / "menu.msgbnd.dcx").read_bytes()))
-    names["lamp"] = {i: t for i, t in _fmg(_entry(menu, EVENT_TEXT + ".fmg")).items() if 70002100 <= i < 70003600}
+    names["lamp"] = {i: t for i, t in _fmg(_entry(menu, EVENT_TEXT + ".fmg")).items() if 70002100 <= i < 70003700}
+    names["gem"] = _fmg(_entry(menu, GEM_NAMES + ".fmg"))
+    names["effect"] = _fmg(_entry(menu, GEM_EFFECTS + ".fmg"))
     ids = {kind: sorted(_param_ids(_entry(par, pn + ".param"))) for kind, pn in PARAMS.items()}
     try:  # the boss / lamp flags the editor offers (flagsdata.derive): without them the editor lists none
         from . import flagsdata
         progress = flagsdata.derive(game)
     except Exception:
         progress = {}
-    return {"names": names, "ids": ids, "progress": progress}
+    data = {"names": names, "ids": ids, "progress": progress}
+    from .params import Params  # params reads its files with this module's helpers
+    try:  # hand, icon and gem rows need the paramdefs too; without them the editor still has names
+        p = Params(game)
+        data["goods_sort"] = {i: v[0] for i, v in p.table("EquipParamGoods", ["sortId"]).items()}
+        data["goods_max"] = {i: v[0] for i, v in p.table("EquipParamGoods", ["maxNum"]).items()}  # held at most
+        data["weapon_hands"] = {i: "left" if left and not right else "right"
+                                for i, (right, left) in p.table("EquipParamWeapon",
+                                    ["rightHandEquipable", "leftHandEquipable"]).items()}
+        data["icons"] = {kind: {i: v[0] for i, v in p.table(pn, ["iconIdM" if kind == "armor" else "iconId"]).items()
+                                if v[0] > 0 and not (kind == "weapon" and (i % 10000) // 100)}
+                         for kind, pn in PARAMS.items()}
+        negative = {i for i, v in p.table("GemCategoryParam", ["isNegative"]).items() if v[0]}
+        # effect id -> [cursed, icon offset, name offset, sort category (0 blood gem, 1 Caryll rune, 2 oath rune)]
+        data["effects"] = {i: [int(cat in negative), icon, name, sort] for i, (cat, icon, name, sort) in
+                           p.table("GemeffectParam", ["categoryId", "gemIconIdOffset", "gemNameIdOffset",
+                                                      "sortCategory"]).items()}
+        data["gemgen"] = {i: v[0] for i, v in p.table("GemGenParam", ["gemNameIdOffset"]).items()}
+        # Rows whose first effect is fixed: id -> [name offset, shapes (bit per slotTypeRate column A-F), effect id,
+        # the row's other fixed effects...]. The shape and effects of every gem and rune in a party save follow from
+        # these (see Catalogue.caryll_runes): the game writes all of a rune row's fixed effects, e.g. Milkweed's third
+        # (2129003) is what transforms the Kos Parasite, and a Beast rune holds 1129000 and 1140000.
+        cols = (["gemNameIdOffset"] + [f"slotTypeRate{c}" for c in "ABCDEF"]
+                + [f"gemeffectGenParam{k}_{i}" for i in range(6) for k in ("Type", "")])
+        data["gemrows"] = {i: [v[0], sum(1 << k for k in range(6) if v[1 + k] > 0)]
+                           + [v[8 + 2 * k] for k in range(6) if v[7 + 2 * k] == 1 and v[8 + 2 * k] > 0]
+                           for i, v in p.table("GemGenParam", cols).items()
+                           if v[7] == 1 and v[8] > 0}
+        # Effects the game can produce: a fixed effect of a generator row (type 1) or any effect of a category a
+        # generator draws from (type 2). Rows no generator reaches are cut or unused content and are not offered.
+        gen_cols = [f"gemeffectGenParam{k}_{i}" for i in range(6) for k in ("Type", "")]
+        fixed, drawn = set(), set()
+        for v in p.table("GemGenParam", gen_cols).values():
+            for i in range(6):
+                if v[2 * i] == 1 and v[2 * i + 1] > 0:
+                    fixed.add(v[2 * i + 1])
+                elif v[2 * i] == 2 and v[2 * i + 1] > 0:
+                    drawn.add(v[2 * i + 1])
+        data["reach"] = sorted(fixed | {e for e, (cat, *_rest) in p.table("GemeffectParam", ["categoryId"]).items()
+                                        if cat in drawn})
+    except (OSError, ValueError, KeyError, struct.error, zlib.error):
+        pass
+    return data
 
 
 def _stamp(game, lang):
     out = []
-    for p in (game / "msg" / lang / "item.msgbnd.dcx", game / "param" / "gameparam" / "gameparam.parambnd.dcx"):
+    for p in (game / "msg" / lang / "item.msgbnd.dcx", game / "param" / "gameparam" / "gameparam.parambnd.dcx",
+              game / "msg" / lang / "menu.msgbnd.dcx", game / "paramdef" / "paramdef.paramdefbnd.dcx"):
         try:
             st = p.stat()
             out += [st.st_size, int(st.st_mtime)]
@@ -119,6 +166,11 @@ def _stamp(game, lang):
     return out
 
 
+# Two armour rows the game gives one name: the garb with the cape and the one without. The caped row is named so, as
+# Noxde's editor does; else both read "Hunter Garb" and the capeless one looks missing from the Add item list.
+_CAPED = {71000: ("Hunter Garb", "Hunter Garb (Cape)"), 191000: ("Student Uniform", "Student Uniform (Cape)")}
+
+
 class Catalogue:
     """Names and ids for the UI. Empty (ok False) when the game files cannot be read."""
 
@@ -129,6 +181,14 @@ class Catalogue:
         self._names = {k: {int(i): n for i, n in v.items()} for k, v in (data or {}).get("names", {}).items()}
         self._ids = {k: set(v) for k, v in (data or {}).get("ids", {}).items()}
         self.progress = (data or {}).get("progress") or {}  # {"bosses": [[flag, NPC name id]], "lamps": [flag]}
+        self._icons = {k: {int(i): n for i, n in v.items()} for k, v in (data or {}).get("icons", {}).items()}
+        self._effects = {int(i): v for i, v in (data or {}).get("effects", {}).items()}
+        self._gemgen = {int(i): v for i, v in (data or {}).get("gemgen", {}).items()}
+        self._gemrows = {int(i): v for i, v in (data or {}).get("gemrows", {}).items()}
+        self._goods_sort = {int(i): v for i, v in (data or {}).get("goods_sort", {}).items()}
+        self._goods_max = {int(i): v for i, v in (data or {}).get("goods_max", {}).items()}
+        self._reach = set((data or {}).get("reach", []))
+        self._weapon_hands = {int(i): v for i, v in (data or {}).get("weapon_hands", {}).items()}
 
     @classmethod
     def load(cls, game_dir, cache_dir, lang="engus"):
@@ -156,6 +216,14 @@ class Catalogue:
             pass
         return cls(data)
 
+    def goods_max(self, number):
+        """How many of a goods item the game lets you hold (EquipParamGoods.maxNum), None when unknown."""
+        return self._goods_max.get(number) or None
+
+    def goods_sort(self, number):
+        """The goods row's sortId (menu order); None when unknown."""
+        return self._goods_sort.get(number)
+
     def name(self, category, number):
         kind = self.KIND_OF_CATEGORY.get(category)
         if kind is None:
@@ -163,9 +231,91 @@ class Catalogue:
         n = self._names.get(kind, {})
         if kind == "weapon":
             number = number - (number % 10000) // 100 * 100  # id = base + 100 * reinforcement level
-        elif kind == "armor":
-            pass
+        elif kind == "armor" and number in _CAPED and n.get(number) == _CAPED[number][0]:
+            return _CAPED[number][1]
         return n.get(number)
+
+    def weapon_hand(self, number):
+        """Equip hand; unknown or dual-hand rows stay in the right-hand filter."""
+        base = number - (number % 10000) // 100 * 100
+        return self._weapon_hands.get(number, self._weapon_hands.get(base, "right"))
+
+    def icon(self, category, number):
+        """Icon id of an inventory item (the menu sheets' numbering), None when unknown."""
+        kind = self.KIND_OF_CATEGORY.get(category)
+        if kind == "weapon":
+            number = number - (number % 10000) // 100 * 100
+        return self._icons.get(kind, {}).get(number)
+
+    # Gem shape bit -> the digit in the gem name key and the icon block (checked on all 77 gems and runes of a
+    # level 90 save: name key = GemGen.gemNameIdOffset + digit * 1e6 + 1e5 if cursed + first effect's
+    # gemNameIdOffset; icon = 3000 + block + 100 if cursed + first effect's gemIconIdOffset).
+    SHAPES = {1: (1, 0), 2: (2, 200), 4: (3, 400), 8: (4, 600), 63: (6, 1000)}
+
+    def effect(self, eid):
+        """[cursed, icon offset, name offset, sort category] of a GemeffectParam row, None when unknown."""
+        return self._effects.get(eid)
+
+    def effect_text(self, eid):
+        return self._names.get("effect", {}).get(eid)
+
+    def gem(self, gen_id, shape, effects):
+        """(name, icon id, cursed) of a gem or rune from its GemGen row, shape and effect ids."""
+        rows = [self._effects.get(e) for e in effects]
+        if not rows or rows[0] is None or shape not in self.SHAPES:
+            return None, None, False
+        cursed = any(r and r[0] for r in rows)
+        digit, block = self.SHAPES[shape]
+        key = self._gemgen.get(gen_id, 0) + digit * 1000000 + (100000 if cursed else 0) + rows[0][2]
+        return self._names.get("gem", {}).get(key), 3000 + block + (100 if cursed else 0) + rows[0][1], cursed
+
+    # New records: the shape column of a GemGen row (checked on all 11 gems and runes of a party save: radial = column
+    # A, triangle = B; saves also hold waning = 4 and circle = 8 blood gems). Every shape a blood gem can have is offered.
+    ADD_SHAPES = (1, 2, 4, 8, 63)
+    CARYLL_NAME_OFFSET = 10000000
+
+    # GemGen rows of name offset 0 that roll one shape: 127000 radial and 127002 triangle (the gems in a party save use
+    # them), 128000 waning, 123000 circle, 6 droplet (the only row that rolls 63).
+    BLOOD_GENS = {1: 127000, 2: 127002, 4: 128000, 8: 123000, 63: 6}
+
+    def blood_gem_gen(self, shape):
+        """GemGen id for a new blood gem of this shape, None when the game's row is not what the saves show."""
+        gen = self.BLOOD_GENS.get(shape)
+        row = self._gemrows.get(gen)
+        return gen if row and row[0] == 0 and row[1] == shape else None
+
+    # Rune GemGen rows by sort category: (ids, shape). Caryll runes are 1xxxxx rows that roll radial (the rows the runes
+    # in a save come from); oath runes are the 2000x0 rows that roll triangle, the oath slot's shape, and only that shape
+    # gives their names. The 4xx and 2xxxxxx rows are other tables.
+    RUNE_ROWS = {1: (range(100000, 200000), 1), 2: (range(200000, 300000), 2)}
+
+    def caryll_runes(self):
+        """[(GemGen id, effect id, shape)] of the Caryll and oath runes that can be added, in row order: the lowest row
+        of the Caryll name offset in RUNE_ROWS for one fixed rune effect of that sort whose rune has a name."""
+        best = {}
+        for gen, (offset, shapes, eff, *_) in sorted(self._gemrows.items()):
+            sort = (self._effects.get(eff) or [None] * 4)[3]
+            ids, shape = self.RUNE_ROWS.get(sort, ((), 0))
+            if (offset == self.CARYLL_NAME_OFFSET and shapes == shape and gen in ids
+                    and eff in self._names.get("effect", {}) and self.gem(gen, shape, [eff])[0] is not None):
+                best.setdefault(eff, (gen, shape))
+        return sorted((gen, eff, shape) for eff, (gen, shape) in best.items())
+
+    def rune_effects(self, gen):
+        """Every fixed effect of a rune's GemGen row, in slot order: what the game writes on a rune it gives."""
+        return list(self._gemrows[gen][2:])
+
+    def gem_icon_ids(self):
+        """Every icon a blood gem can show, so a preview never waits for the icon sheet."""
+        return {3000 + block + cursed + row[1] for _, block in self.SHAPES.values() for cursed in (0, 100)
+                for row in self._effects.values() if row[3] == 0}
+
+    def effects_for(self, sort_category):
+        """[(id, text)] of the named effects a gem of this sort category can carry, in id order. Only effects the game can
+        produce (see "reach" in read_game); a catalogue without that list offers every named one."""
+        texts = self._names.get("effect", {})
+        return [(i, texts[i]) for i, v in sorted(self._effects.items())
+                if v[3] == sort_category and i in texts and (not self._reach or i in self._reach)]
 
     def lamp_name(self, flag):
         """Name of the lamp whose lit flag is 7AAB02nn (the warp list text 7000AABn), None when unknown."""

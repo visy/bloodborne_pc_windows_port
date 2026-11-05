@@ -268,6 +268,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_conn_warnings = i != 0;
     } else if (key == "party_give_items") {
         v.party_give_items = i != 0;
+    } else if (key == "party_give_gear") {
+        v.party_give_gear = i != 0;
     } else if (key == "party_item_notices") {
         v.party_item_notices = i != 0;
     } else if (key == "party_guest_lamps") {
@@ -850,6 +852,7 @@ void Save() {
     put("party_messages", coop::splitscreen::MessagesName(coop::splitscreen::ClampMessages(v.party_messages.load())));
     put("party_conn_warnings", flag(v.party_conn_warnings));
     put("party_give_items", flag(v.party_give_items));
+    put("party_give_gear", flag(v.party_give_gear));
     put("party_item_notices", flag(v.party_item_notices));
     put("party_name_tags", flag(v.party_name_tags));
     put("party_glow_off", flag(v.party_glow_off));
