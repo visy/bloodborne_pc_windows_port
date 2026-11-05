@@ -13,6 +13,7 @@
 #include "party_util.h"
 #include "gpu/bbnet.h"
 #include "party_sign_blob.h"
+#include "party/party_gamedata.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1294,6 +1295,13 @@ static void test_unusable_endpoint() {
 }
 
 int main() {
+    {
+        // The sign checks need the sign's map to be a map of the game: made-up tables with that one map (no game data).
+        coop::gamedata::Tables t;
+        t.loaded = true;
+        t.maps = {402718720u};
+        coop::gamedata::Install(std::move(t));
+    }
     bbnet::party::FromApi::instance().set_min_sign_age_ms(0);  // A4's 1.5 s sign age: checked once below
     // Loopback-only sockets: no Windows Firewall prompt for a test program (party_sock.h).
     if (!std::getenv("BB_PARTY_LOOPBACK")) {

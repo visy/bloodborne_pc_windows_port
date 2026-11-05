@@ -467,7 +467,7 @@ endif()
 # sceHttp, Matching2/Signaling over LocalHost. ninja -C out/gpu party-host-test
 add_executable(party-host-test EXCLUDE_FROM_ALL ../tests/test_party_host.cpp ${PARTY_NET_SOURCES})
 target_compile_options(party-host-test PRIVATE -UNDEBUG -Wall -Wextra)
-target_include_directories(party-host-test PRIVATE shim/net ..)
+target_include_directories(party-host-test PRIVATE shim/net shim ..)
 set_target_properties(party-host-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 if (WIN32)
     target_link_libraries(party-host-test PRIVATE ws2_32 iphlpapi synchronization)
@@ -935,6 +935,18 @@ add_executable(auto-hud-test EXCLUDE_FROM_ALL ../tests/test_auto_hud.cpp)
 target_compile_options(auto-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(auto-hud-test PRIVATE shim)
 set_target_properties(auto-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# The party tables derived from the game files in C++ (shim/gamedata/, in bbgpu through SHIM_SOURCES): the CLI
+# compares with tools/partydata/oracle.py; the test builds synthetic DCX / BND4 / PARAM / EMEVD / MSB data.
+# cmake --build out/gpu --target party-tables-cli gamedata-test
+file(GLOB GAMEDATA_SOURCES CONFIGURE_DEPENDS shim/gamedata/*.cpp)
+add_executable(party-tables-cli EXCLUDE_FROM_ALL ../tests/party_tables_cli.cpp ${GAMEDATA_SOURCES})
+target_compile_options(party-tables-cli PRIVATE -Wall -Wextra -Werror)
+target_include_directories(party-tables-cli PRIVATE shim shim/party)
+target_link_libraries(party-tables-cli PRIVATE miniz::miniz)
+add_executable(gamedata-test EXCLUDE_FROM_ALL ../tests/test_gamedata.cpp ${GAMEDATA_SOURCES})
+target_compile_options(gamedata-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(gamedata-test PRIVATE shim shim/party)
+target_link_libraries(gamedata-test PRIVATE miniz::miniz)
 # The party tables' cache parser (shim/party/party_gamedata.h, header only). ninja -C out/gpu party-gamedata-test
 add_executable(party-gamedata-test EXCLUDE_FROM_ALL ../tests/test_party_gamedata.cpp)
 target_compile_options(party-gamedata-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

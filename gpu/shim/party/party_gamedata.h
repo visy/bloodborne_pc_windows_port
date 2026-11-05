@@ -3,19 +3,22 @@
 // committed): which maps / lamps / cutscenes / NPCs exist, which item lots carry a pickup flag and
 // which awards are host-only, the Beckoning-Bell helpers, the world warper's gear.
 //
-// scripts/party_tables.py (run by run.bat / run.sh after the mods overlay is merged, so mods are
-// respected) derives them from the game folder and writes <user dir>/party_tables.txt, keyed by a
-// hash of its inputs and rebuilt when they change. This header parses that file the first time a
-// table is asked for. Missing or unreadable file: every table is empty, Loaded() is false and the
-// reason is logged once and kept in Status(); the consumers then say no (an unknown map, lamp or
-// entity id is refused, no item is shared by lot) and never crash.
+// The engine derives them in C++ (gpu/shim/gamedata/, started at engine start on a worker pool; the mods
+// overlay is respected because the files read are the ones the game reads) and caches them in
+// <user dir>/party_tables.txt, keyed by the inputs. Get() waits for that build; Preparing() / PreparingPercent()
+// tell a caller that must not wait (an in-game hint). Without a build (tests, BB_PARTY_TABLES naming a cache
+// file) Get() parses the cache file the first time a table is asked for. Missing or unreadable tables: every
+// table is empty, Loaded() is false and the reason is logged once and kept in Status(); the consumers then say
+// no (an unknown map, lamp or entity id is refused, no item is shared by lot) and never crash.
 //
 // File format (UTF-8, "\n" or "\r\n"): `BBPARTYTABLES 1`, `key <sha1>`, then per section `[name] <rows>`
-// and that many lines of tab-separated fields. Section names and columns: scripts/party_tables.py.
+// and that many lines of tab-separated fields. Section names and columns: gpu/shim/gamedata/build.cpp (RenderCache), docs/party/gamedata.md.
 // Header only, no game dependency; tests install their own tables with Install().
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -333,18 +336,63 @@ inline std::once_flag& Once() {
     static std::once_flag o;
     return o;
 }
+/// The background build's state: 0 none (Get() reads the cache file), 1 building, 2 done.
+struct Async {
+    std::mutex mu;
+    std::condition_variable cv;
+    std::atomic<int> state{0};
+    std::atomic<int> percent{0};
+    std::string label;
+};
+inline Async& A() {
+    static Async a;
+    return a;
+}
 }  // namespace detail
 
-/// The tables, loaded on first use. Never null, never throws; empty when the cache is missing.
+/// The builder (gamedata/build.cpp) marks the start; Get() then waits for FinishBuild().
+inline void BeginBuild() { detail::A().state.store(1); }
+inline void SetBuildProgress(int percent, const std::string& label) {
+    std::lock_guard<std::mutex> lk(detail::A().mu);
+    detail::A().percent.store(percent);
+    detail::A().label = label;
+}
+/// Installs the built tables (empty with a status when the build failed) and wakes the waiters.
+inline void FinishBuild(Tables t) {
+    std::call_once(detail::Once(), [] {});
+    {
+        std::lock_guard<std::mutex> lk(detail::A().mu);
+        detail::Store() = std::move(t);
+        detail::A().percent.store(100);
+        detail::A().state.store(2);
+    }
+    detail::A().cv.notify_all();
+}
+/// True while the background build runs (never blocks).
+inline bool Preparing() { return detail::A().state.load() == 1; }
+inline int PreparingPercent() { return detail::A().percent.load(); }
+inline std::string PreparingLabel() {
+    std::lock_guard<std::mutex> lk(detail::A().mu);
+    return detail::A().label;
+}
+
+/// The tables. Waits for the background build when one runs; else loaded from the cache file on first use.
+/// Never null, never throws; empty when the tables are missing.
 inline const Tables& Get() {
+    detail::Async& a = detail::A();
+    if (a.state.load() != 0) {
+        std::unique_lock<std::mutex> lk(a.mu);
+        a.cv.wait(lk, [&] { return a.state.load() == 2; });
+        return detail::Store();
+    }
     std::call_once(detail::Once(), [] {
         std::string err;
         Tables t;
         if (!LoadFile(CachePath(), &t, &err)) {
             std::fprintf(stderr,
                          "[party] game-data tables unavailable: %s. Party features that need them (travel, "
-                         "shared items, NPC fog, world warper) refuse until the launcher has built them from "
-                         "your game files (scripts/party_tables.py).\n",
+                         "shared items, NPC fog, world warper) refuse until they are built from your game "
+                         "files (the engine does it at start).\n",
                          err.c_str());
         }
         detail::Store() = std::move(t);
