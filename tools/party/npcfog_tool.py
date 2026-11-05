@@ -1,5 +1,5 @@
-"""Moved to scripts/partydata/ (shipped with the game: the launcher builds the party tables from the
-player's own game files with it). This shim keeps the old import path and command line working."""
+"""Moved to scripts/partydata/ (dev tools and the test oracle of the engine C++ table derivation).
+This shim keeps the old import path and command line working."""
 import importlib.util
 import sys
 from pathlib import Path

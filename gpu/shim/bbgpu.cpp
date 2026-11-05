@@ -1,4 +1,5 @@
 #include "bbport_write_log.h"
+#include "gamedata/build.h"
 #include "../../src/runtime_logdrain.h"
 #include "bbport_boot_watch.h"
 #include "bbport_game_menu.h"
@@ -319,6 +320,10 @@ extern "C" void bbgpu_save_caches(void) {
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
 #endif
     std::_Exit(code);
+}
+
+extern "C" void bbgpu_party_data_start(const char* app0, const char* user_dir) {
+    coop::gamedata::StartBackground(app0 ? app0 : "", user_dir ? user_dir : "");
 }
 
 extern "C" int bbgpu_init(const BbGpuConfig* config) {

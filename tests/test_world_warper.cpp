@@ -56,7 +56,7 @@ int main() {
     const auto route = BuildRoute(all, Spot);
     CHECK(!route.empty());
     CHECK(route.front() == coop::lamptravel::kDreamReturnPoint);
-    CHECK(route[1] == coop::lamptravel::ReturnPoint(coop::lamptravel::kLamps[0]));
+    CHECK(route[1] == coop::lamptravel::ReturnPoint(coop::lamptravel::Lamps()[0]));
     std::set<std::uint32_t> uniq(route.begin(), route.end());
     CHECK(uniq.size() == route.size());
     for (std::uint32_t rp : route) {
@@ -64,8 +64,8 @@ int main() {
         CHECK(Spot(rp));
     }
     std::size_t lamps_in = 0;
-    for (const auto& l : coop::lamptravel::kLamps) lamps_in += uniq.count(coop::lamptravel::ReturnPoint(l));
-    CHECK(lamps_in == coop::lamptravel::kLampCount);  // every lamp is visited
+    for (const auto& l : coop::lamptravel::Lamps()) lamps_in += uniq.count(coop::lamptravel::ReturnPoint(l));
+    CHECK(lamps_in == coop::lamptravel::Lamps().size());  // every lamp is visited
     std::printf("route: %zu rows (%zu lamps + the Dream + %zu other rows)\n", route.size(), lamps_in,
                 route.size() - lamps_in - 1);
     {

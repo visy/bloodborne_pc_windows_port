@@ -2,6 +2,7 @@
 // Guest world actions (gpu/shim/party/party_worldact.h): the whitelist, the request JSON and its
 // validation, the host's rate limit, the NPC talk allowance.
 // cmake --build out/gpu --target party-worldact-test && out/gpu/party-worldact-test
+#include "party_tables_test.h"
 #include "party/party_npcghost.h"
 #include "party/party_progress.h"
 #include "party/party_worldact.h"
@@ -14,6 +15,8 @@ using namespace coop::worldact;
 namespace pg = coop::progress;
 
 int main() {
+    // CategoryOf reads the event-flag category table of the player's own game (flagRows): skipped without it.
+    if (!coop::test::UseGameTables("party-worldact-test")) return 0;
     const std::uint32_t m2401 = 0x18010000u, m2400 = 0x18000000u, m2200 = 0x16000000u, dream = 0x15000000u;
     // Doors / levers of the host's area: set and clear (elevators toggle).
     assert(pg::CategoryOf(12410200) == pg::Category::shortcut_door);
@@ -40,7 +43,8 @@ int main() {
     assert(!WorldActionAllowed(9074, true, m2400));       // never cleared by a guest
     assert(!WorldActionAllowed(9043, false, m2400));      // repeatable 9100 gift (Blood of Arianna ...)
     for (std::uint32_t id = 9042; id <= 9077; ++id) {
-        assert(WorldActionAllowed(id, false, m2401) == NpcGiftTrigger(id));
+        // 9042 (Annalise's Caryll rune) is the guest's own gift since 0.7.9 (OwnTalkGiftLot): never a world action
+        assert(WorldActionAllowed(id, false, m2401) == (NpcGiftTrigger(id) && id != 9042));
     }
     assert(!WorldActionAllowed(21, false, m2401));       // ending
     assert(!WorldActionAllowed(6600, false, m2401));     // own pool (personal)
@@ -428,7 +432,8 @@ int main() {
     // Valtr's rune / League Staff triggers (m27 12700906): the guest's own gift, never the host's,
     // whatever the rule.
     assert(OwnTalkGiftLot(72700321) == 43120 && OwnTalkGiftLot(72700322) == 43130);
-    assert(OwnTalkGiftLot(72700320) < 0 && OwnTalkGiftLot(9042) < 0 && OwnTalkGiftLot(0) < 0);
+    assert(OwnTalkGiftLot(72700320) < 0 && OwnTalkGiftLot(9042) == 17000 && OwnTalkGiftLot(9045) < 0 &&
+           OwnTalkGiftLot(0) < 0);  // 0.7.9: Annalise's Caryll rune, common event 9040
     for (const bool rule : {true, false}) {
         pg::SetCovenantPerPlayer(rule);
         assert(!WorldActionAllowed(72700321, false, m2700) && !WorldActionAllowed(72700322, false, m2700));

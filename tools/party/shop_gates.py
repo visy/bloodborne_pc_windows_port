@@ -64,7 +64,7 @@ def build(game):
     emedf = ft.load_emedf(ft.find_emedf(game / "event"))
     allrec = ft.expand_all(game / "event", emedf, cross_map=True)
     text = names(game)
-    cats = ft.load_inc(Path(__file__).resolve().parents[2] / "gpu/shim/party/party_flags.inc")
+    cats = ft.category_rows(game)[0]
 
     def cat(f):
         for lo, hi, c, _n in cats:

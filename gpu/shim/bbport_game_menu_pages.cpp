@@ -1311,6 +1311,12 @@ void DefineAll() {
            AddText("Listed games only: other players may invade your world as hostile phantoms (one at a time). Off: never",
                    "Только в списке игр: другие игроки могут вторгаться в ваш мир (по одному). Выкл.: никогда"),
            toggle, Kind::Toggle, [] { return party::status::Snapshot().role != party::status::Role::Guest; });
+    AddRow(Info(), AddText("Host's access", "Доступ хоста"),
+           AddText("The host decides who joins without a party code (Open party, Nightwatch VPN lobby)",
+                   "Хост решает, кто входит без кода группы (открытая группа, лобби Nightwatch VPN)"),
+           {AddText("Host only", "Только хост")}, Kind::Button,
+           [] { return party::status::Snapshot().role == party::status::Role::Guest; });
+    // A pop-up list opens over the rows below it, so the list is the page's last row (the guests' Info line is above it).
     // 0.7.9 (CL-7e748c): how many invaders at once (1 or 2); the host's value, live. Both count against Max players.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_max_invaders.load(), 1, 2) - 1; },
@@ -1320,11 +1326,6 @@ void DefineAll() {
                    "Вторженцев одновременно: 1 или 2. Они занимают места группы и четыре места игры"),
            {AddText("1", "1"), AddText("2", "2")}, Kind::List,
            [] { return party::status::Snapshot().role != party::status::Role::Guest; });
-    AddRow(Info(), AddText("Host's access", "Доступ хоста"),
-           AddText("The host decides who joins without a party code (Open party, Nightwatch VPN lobby)",
-                   "Хост решает, кто входит без кода группы (открытая группа, лобби Nightwatch VPN)"),
-           {AddText("Host only", "Только хост")}, Kind::Button,
-           [] { return party::status::Snapshot().role == party::status::Role::Guest; });
 
     // The split-travel question (party_split.cpp): a game dialog with YES / NO after a lamp,
     // headstone or Hunter's Mark in a party (docs/party/split_travel.md).

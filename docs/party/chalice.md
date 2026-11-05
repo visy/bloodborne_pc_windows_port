@@ -611,7 +611,7 @@ flags the party reached were in the overlay.
 **The change** (`party_chalice.cpp` `BringDungeonHome`, pure rules in `party_chalice_merge.h`): the quick-joined slot
 record is kept when the carry happens (`g_carried_rec`); on the load-mode 1 -> 0 switch (the guest leaving the host's
 world, any path) the lamp / shortcut flags that read set in the overlay are collected (`ReadReached`: the lamp
-categories and shortcut doors of area 29 block 0 from `party_flags.inc`, plus the four flags of every lamp whose lit
+categories and shortcut doors of area 29 block 0 from the flag category table (`flagRows`), plus the four flags of every lamp whose lit
 flag is set: the host's world syncs only some of them), the switch runs, and then in the guest's own store:
 1. `PlanMerge`: the dungeon already in slots 1..6 (same ChannelId) -> `Existing`: nothing is added; else the first free
    slot 1..6 (record holds no map) -> `Added`; none free or no ChannelId -> nothing. Slot 0 is never a target and a

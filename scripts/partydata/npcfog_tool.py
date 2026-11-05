@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Bell NPC helpers and their boss arenas (party co-op; the npcFog section of the run-time cache
-scripts/party_tables.py builds from the player's own game files).
+the engine builds from the player's own game files).
 
 Game data (read-only, untrusted; run with python -I -X utf8). GAME = .../dvdroot_ps4.
 
