@@ -40,6 +40,15 @@ polymorphic object (vtable: 0/1 clone, 2 operator(), 4/5 destructors) with the i
 * Every call into the game is behind `VtableOk` (readable vtable slots); a failure leaves the entry out or closes the picker
   (null menu object), never a crash. `BB_PARTY_GIVE_MENU_OFF=1` installs nothing.
 * Known: after a give the inventory list shows the old count until the cursor moves (the list is not told to refresh).
+* Cross on a row (found 2026-11-05, give079): the command menu view (class 0x539be10) handles Cross in vtable slot 11
+  (`FUN_01ba2600`), and it is text based. A row whose text is "Discard" activates at once; every other row first asks
+  `FUN_016e4f00(item index)` ("can this item be used now", the same test that greys Use out) and, when it says no, only plays the
+  error sound: the row's functor is never called. On the consumables tab the answer is yes (Pebble worked), on materials, key items
+  and the like it is no (Use is greyed, the cursor still starts on it; Down twice reaches Give). `CrossHook` replaces slot 11: when
+  the highlighted row (`FUN_01bea2e0` copies it) is ours (Give, or a picker entry: vtable = ours) it calls `FUN_01beaad0`, the
+  handler's own activation, and skips the check; every other row goes to the original. The functor's `operator()` is called by that
+  activation (and once more by the per-frame highlight code, hence the repeat guard above). `BB_GIVE_VTRACE=1` logs every
+  virtual call of the Use / Discard functor, predicate, finalizer and view classes (the way this was found).
 
 ## 2. What may be given (`GoodsAllowed`, `GiverVerdict`, `ReceiverVerdict`)
 
@@ -107,7 +116,7 @@ Player report: "I cant get it to show up for upgrade stuff". The menu hook was f
 inventory tab); `GoodsAllowed` refused every goods row whose `goodsType` is not 0, and the upgrade materials (Blood Stone Shard,
 Twin Blood Stone Shards, Blood Stone Chunk, Blood Rock) and the ritual materials are `goodsType` 2 (checked in the game's
 EquipParamGoods: 27 rows of type 2, all maxNum 99; type 0 = 189 rows, type 1 = 54 key items, type 6 = 25 unique rows). The rule now
-allows type 0 and 2; key (1), unique (maxNum 1) and the story bands stay out. Smoke `gvt` opens the Materials tab, shows Give on
+allows type 0 and 2; key (1), unique (maxNum 1) and the story bands stay out. Smoke `gvt` (both players, real menu presses since give079) opens the Materials tab, shows Give on
 Blood Stone Shard and completes a give.
 
 ## 5. Weapons and armor (0.7.9, givegear079, CL-1b3b98)
