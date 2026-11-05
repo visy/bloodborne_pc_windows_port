@@ -281,6 +281,22 @@ Key findings behind the rows:
   mode): both rows are on their own chr only; HP stayed flat on the Corruption member at 70 % HP (no drain: the effect is gated by
   conditionHp 12.5, i.e. it acts only at very low HP, not measured); the stamina bar (0-100) refills in 2-3 s on both members; the straight-line fits over three runs were noisy (host 8.1 / 8.3 / 14.8, guest
   9.0 / 9.5 / 42 per s), so the Hunter +3 / s is not resolved at the 0.5 s sampling (reported, not asserted). The vial heal (Radiance) was not measured (no low-HP aid).
+  **0.7.9 (covenant079, CL-95dee9) Annalise's kneel PROVEN, also for a guest.** The kneel is NOT a gesture: her ESD t250307 machine
+  0x7FFFFFF4 state 1 runs the prompt machine 0x7FFFFFF1, whose state 2 (action text 6005, flag 72500330 = the 1 m cylinder of region
+  2502501 at (127.7, 129.95, -464.5), height 2) returns 1 when the ACTION BUTTON (Cross) is pressed there after the greeting (72500301);
+  that enters machine 0x7FFFFFF0, which sets 72500329 (state 2's exit clears it). Smoke `cvk`: host Cross in the cylinder -> 329 = 1, player anim
+  101261, lines 1700150.., the choices "Swear Oath to the Vilebloods" / "Swear Vileblood Oath", 9042 + 50000200 (lot 17000). Her events
+  12500011 (330), 12500012 (kneel anim 101260 / 101262), 12500013 / 12500014 (blood anims; they CLEAR 339 / 337 after 180 frames, and the ESD
+  waits for 337 = 0 before the gift machine 0x7FFFFFFA sets 9042), 12500019, 12500021 (331 = box 2502500: 26.2 x 54.7 x 4 at (119.5,
+  129.1, -452.7), yaw -35) all start with 1003[06] End if Client, so a GUEST never had 330 / 331 / the clears. `GuestAnnaliseRegionTick`
+  (party_progress.cpp, kill switch `BB_PARTY_GUEST_ANNALISE=0`, covenant per player only) does them for the guest's own position (physics
+  position, `balance::ChrPosition`; the +0xC0 spot stays at the lamp for a guest), clears 337 / 339 after 3 s, and shows 9042 clear once per
+  overlay while the own save lacks the rune, so the guest's talk SETS it (an unchanged 1 was never seen by the observer). 9042 -> lot 17000 is
+  now an OwnTalkGiftLot (the guest's own grant, flag 50000200; the host's Caryll rune award still reaches a guest as a shared gift first:
+  then its own talk logs "already given"). Not done: the guest's own kneel animation (event 12500012 plays it on the host only).
+  **Rune amounts (0.7.9)**: `BB_PARTY_TEST_SET_HP=PCT:DELAY_S` sets the HP once; smoke `cvm` with `CVM_HP=10:100`: both members rise (host Hunter
+  71 -> 104 of 719 in 101 s, guest Corruption 50 -> 89 of 503 in 95 s), i.e. a natural regeneration swamps any rune effect and no -1 HP / 2 s
+  drain is seen; Hunter's stamina (+3 / s) is below the sampling resolution; the Radiance vial heal was not measured.
 - **Session/runtime**: 2000-2099, 7000-7399 and 7600-7699 (common event completions), 9200-9299,
   zones 1AAB5/6/7nnn, restart events. **boss_area** (1AAB4nnn: fight state, fog, NPC summons) is
   not synced live; the vanilla session already carries it.
