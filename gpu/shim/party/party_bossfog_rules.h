@@ -26,8 +26,11 @@
 // the host opened the fight and the boss attacked the party at the lamp.
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
+#include <vector>
 
 namespace coop::bossfog {
 
@@ -65,6 +68,58 @@ inline bool HostOnlyBossEvent(std::uint32_t id) {
         }
     }
     return false;
+}
+
+/// Mods that add or copy a boss's phase events give the copies ids of their own, which the list
+/// above cannot know: a guest's state for such a copy would be applied on the host. A host's mods
+/// name them in out/party_host_only.txt (scripts/mods.py: the enabled mods' own party_host_only.txt
+/// files, merged), read once by the host (party_guestsvc.cpp ModHostOnlyEvents). Format: one decimal
+/// event id (1 .. 4294967295) per line; blank lines and `#` comments (whole line or after the id)
+/// are skipped. A file with any other line, or more than kMaxModHostOnlyEvents ids, counts as no
+/// file at all (false, no ids): a broken file changes nothing. `ids`: sorted, no duplicates.
+constexpr std::size_t kMaxModHostOnlyEvents = 4096;
+inline bool ParseModHostOnlyEvents(std::string_view text, std::vector<std::uint32_t>* ids) {
+    ids->clear();
+    if (text.substr(0, 3) == "\xEF\xBB\xBF") {
+        text.remove_prefix(3);  // a UTF-8 byte order mark (Windows editors)
+    }
+    while (!text.empty()) {
+        const std::size_t eol = text.find('\n');
+        std::string_view line = text.substr(0, eol);
+        text.remove_prefix(eol == std::string_view::npos ? text.size() : eol + 1);
+        if (const std::size_t hash = line.find('#'); hash != std::string_view::npos) {
+            line = line.substr(0, hash);
+        }
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+            line.remove_prefix(1);
+        }
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r')) {
+            line.remove_suffix(1);
+        }
+        if (line.empty()) {
+            continue;
+        }
+        std::uint64_t v = 0;
+        for (char c : line) {
+            if (c < '0' || c > '9' || v > 0xffffffffu) {
+                ids->clear();
+                return false;
+            }
+            v = v * 10u + std::uint64_t(c - '0');
+        }
+        if (v == 0 || v > 0xffffffffu || ids->size() >= kMaxModHostOnlyEvents) {
+            ids->clear();
+            return false;
+        }
+        ids->push_back(std::uint32_t(v));
+    }
+    std::sort(ids->begin(), ids->end());
+    ids->erase(std::unique(ids->begin(), ids->end()), ids->end());
+    return true;
+}
+/// The fixed list above or one of the ids a host's mods named (`mod_ids`: ParseModHostOnlyEvents).
+inline bool HostOnlyBossEvent(std::uint32_t id, const std::vector<std::uint32_t>& mod_ids) {
+    return HostOnlyBossEvent(id) || std::binary_search(mod_ids.begin(), mod_ids.end(), id);
 }
 
 /// Guest, after the host's snapshot was applied for a load into the host's world: the overlay group

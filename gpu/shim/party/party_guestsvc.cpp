@@ -1510,6 +1510,34 @@ bool BossPhaseSyncFilterOn() {
     }();
     return on;
 }
+/// The host-only boss events a host's mods add (bossfog::ParseModHostOnlyEvents): out/party_host_only.txt beside
+/// out/party_mods.txt (scripts/mods.py), read once, at the host's first peer event state. None with mods off
+/// (BB_MODS_ENABLED=0), no file, or a broken one.
+const std::vector<std::uint32_t>& ModHostOnlyEvents() {
+    static const std::vector<std::uint32_t> ids = [] {
+        std::vector<std::uint32_t> v;
+        const char* mods = std::getenv("BB_MODS_ENABLED");
+        if (mods && mods[0] == '0') return v;
+        const char* d = std::getenv("BB_DATA_DIR");
+        const std::string path = std::string(d && d[0] ? d : ".") + "/out/party_host_only.txt";
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return v;
+        std::string text;
+        char buf[4096];
+        std::size_t n = 0;
+        while (text.size() <= (1u << 20) && (n = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
+        std::fclose(f);
+        if (text.size() > (1u << 20) || !bossfog::ParseModHostOnlyEvents(text, &v)) {
+            Log("Boss phase: %s is not a list of at most %zu event ids, one per line: not used", path.c_str(),
+                bossfog::kMaxModHostOnlyEvents);
+            return std::vector<std::uint32_t>();
+        }
+        Log("Boss phase: %zu host-only events from the mods (%s)", v.size(), path.c_str());
+        return v;
+    }();
+    return ids;
+}
+bool HostOnlyBossOrModEvent(std::uint32_t event) { return bossfog::HostOnlyBossEvent(event, ModHostOnlyEvents()); }
 bool EventSyncLogOn() {
     static const bool on = [] {
         const char* v = std::getenv("BB_PARTY_EVENT_SYNC_LOG");
@@ -1571,11 +1599,11 @@ BB_COOP_SYSV u64 EventSyncRead(u64 man, u64 peer, u64 type, u64 buf, u64 size) {
             !((MessengerSyncFilterOn() && PerPlayerMessengerEvent(std::uint32_t(event))) ||
               (ItemGateSyncFilterOn() && PerPlayerItemGateEvent(std::uint32_t(event))) ||
               (LampSyncFilterOn() && deathrules::LampWarpEvent(std::uint32_t(event))) ||
-              (BossPhaseSyncFilterOn() && bossfog::HostOnlyBossEvent(std::uint32_t(event)) &&
-               PartyDirector::Get().Role() == PartyRole::Host))) {
+              (BossPhaseSyncFilterOn() && PartyDirector::Get().Role() == PartyRole::Host &&
+               HostOnlyBossOrModEvent(std::uint32_t(event))))) {
             return r;
         }
-        if (bossfog::HostOnlyBossEvent(std::uint32_t(event))) {
+        if (PartyDirector::Get().Role() == PartyRole::Host && HostOnlyBossOrModEvent(std::uint32_t(event))) {
             // Main thread. A guest's copy of a boss's phase event finished on its own chr: not the host's call.
             static std::atomic<int> boss_drops{0};
             if (boss_drops.fetch_add(1) < 8) {
