@@ -439,3 +439,12 @@ def test_reply_to_ask_joins_even_short_and_past_followup_cap(tmp_path):
     assert cd.find_link(c, F.Msg(5, ch, F.User(77, "P"), "ok", minutes=15 * 24 * 60)) is None  # too late
     got = cd.find_link(c, msg, [{"sha256": "zz", "day": "2026-10-20"}])  # a log of another session
     assert got and got[1] == "ask"
+
+
+def test_announcements_is_the_releases_channel():
+    """#releases was renamed to #announcements on the NW server (2026-11-05): both count."""
+    g = F.Guild([], [])
+    g.id = asks.GUILD_ID
+    assert asks.is_releases_channel(F.Channel(60, "announcements", guild=g))
+    assert asks.is_releases_channel(F.Channel(61, "releases", guild=g))
+    assert not asks.is_releases_channel(F.Channel(62, "general", guild=g))

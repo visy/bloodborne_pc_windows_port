@@ -247,7 +247,7 @@ class Ctx:
 
     def _place_id_skipped(self, place_id):
         ch = self.client.get_channel(int(place_id)) if self.client is not None else None
-        return ch is not None and cd.place_skipped(ch)
+        return ch is not None and (cd.place_skipped(ch) or cd.hidden_from_me(ch))
 
 
 CTX = None
