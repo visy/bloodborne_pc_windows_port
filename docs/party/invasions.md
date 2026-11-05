@@ -221,6 +221,8 @@ The announcement (version 1) is unchanged. After it, the host sends a second dat
 `0xfa 'I' 1, id u32, flags u8 (bit 0 allows invaders, bit 1 boss fight), area u32, phase u8, ng u8` (14 bytes). An old listener
 drops it as junk (wrong second byte); a new one pairs it with the announcement of the same `id`, for the TTL of the announcement.
 The `Area` column shows the area and phase when the extension is there, the announcement's own area name otherwise.
+0.7.9: a host with gameplay mods sends a third datagram, its mods label (`0xfa 'M' 1, id u32, u8 len + label`;
+docs/party/version_check.md "The host's mods label"); old listeners drop it the same way.
 
 ### The words (`scripts/party_where.py`, the same table for the Nightwatch launcher)
 
