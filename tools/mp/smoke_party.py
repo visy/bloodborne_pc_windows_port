@@ -6907,21 +6907,40 @@ def gg_hex(i):
     return "0x%x" % i
 
 
+# Navigation to the Saw Cleaver +4 in the Weapons tab: Options, Inventory, (popup), Circle, Right to the tab, Down to the item, Cross
+# (the item menu: Use / Discard / Give, the cursor on Use), Down Down, Cross (Give), Cross (the member), Circle out.
+GVW_PRE = "0x8,0x4000,0x4000,0x2000".split(",")
+GVW_TAB = os.environ.get("GVW_TAB", "0x20,0x20,0x20").split(",")
+GVW_ITEM = os.environ.get("GVW_ITEM", "").split(",") if os.environ.get("GVW_ITEM") else []
+GVW_KEYS = os.environ.get("GVW_KEYS", ",".join(GVW_PRE + GVW_TAB + GVW_ITEM + ["0x4000", "0x40", "0x40", "0x4000", "0x4000"])).split(",")
+GVW_GAP = int(os.environ.get("GVW_GAP", "5"))
+GVW_AID_T = 30 + GVW_GAP * (len(GVW_KEYS) + 3)
+
+
 def phase_gvw(only, name="gvw", net=None):
     host_setup = "w%d:2@5,a%d@6,a%d@7,w%d:0@8" % (GG_W, GG_A, GG_A2, GG_K)
-    host_give = "gon@0,w%d:1@30,w%d:1@40,a%d:1@55,a%d:1@75" % (GG_K, GG_W, GG_A, GG_A2)
-    guest_give = "gon@0,goff@60,gon@85,w%d:0@95,w%d:0@120" % (GG_G, GG_W)
+    # The Saw Cleaver +4 goes through the game's own item menu (real presses, GVW_KEYS: the host_press chain below); the other gives use the
+    # transfer test aid, timed after the presses (an aid at 30 s is the Kos Parasite's refusal, which needs no menu).
+    host_give = "gon@0,w%d:1@30,a%d:1@%d,a%d:1@%d" % (GG_K, GG_A, GVW_AID_T, GG_A2, GVW_AID_T + 20)
+    guest_give = "gon@0,goff@%d,gon@%d,w%d:0@%d,w%d:0@%d" % (GVW_AID_T + 10, GVW_AID_T + 35, GG_G, GVW_AID_T + 45, GG_W, GVW_AID_T + 70)
     watch = []
     for rx, tag in ((r"Party give: notice: Gave .* to", "gave"), (r"Party give: notice: .* from", "got"),
                     (r"Party give: notice: Give .*: does not take", "off"), (r"Party give: notice: Give .*: unique", "uniq")):
         watch += ["--watch", "%s=%s@0.8" % (rx, tag)]
-    ienv = ["0:BB_PARTY_DIRECTOR_TEST=god", "1:BB_PARTY_DIRECTOR_TEST=god",
-            "0:BB_PARTY_GEAR_SETUP=" + host_setup, "1:BB_PARTY_GEAR_SETUP=w%d:1@5" % GG_G,
+    presses = ["host_press=%s@%d!" % (k, GVW_GAP if i else 30) for i, k in enumerate(GVW_KEYS)]
+    # a last, harmless Circle keeps the test chain open until the aids of the other gives are done (the harness stops 60 s after the chain)
+    presses.append("host_press=0x2000@%d!" % max(GVW_GAP, GVW_AID_T + 75 - (30 + GVW_GAP * (len(GVW_KEYS) - 1))))
+    # the guest opens its inventory's Weapons tab after the give (timed screenshots show the received weapon), then closes it again
+    gk = GVW_PRE + GVW_TAB + ["0x40"]
+    gpresses = ["guest_press=%s@%d!" % (k, GVW_GAP if i else 30 + GVW_GAP * len(GVW_KEYS) + 10) for i, k in enumerate(gk)]
+    gpresses += ["guest_press=0x2000@25!", "guest_press=0x2000@3!"]
+    ienv = ["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(["god"] + presses), "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(["god"] + gpresses),
+            "0:BB_PARTY_GIVE_GEAR=1", "0:BB_PARTY_GEAR_SETUP=" + host_setup, "1:BB_PARTY_GEAR_SETUP=w%d:1@5" % GG_G,
             "0:BB_PARTY_GIVE_TEST=" + host_give, "1:BB_PARTY_GIVE_TEST=" + guest_give,
             "0:BB_PARTY_GEAR_PROBE=60", "1:BB_PARTY_GEAR_PROBE=60", "0:BB_PARTY_GEAR_WATCH=1", "1:BB_PARTY_GEAR_WATCH=1"]
     if net:
         ienv += ["0:BB_NET_SIM=" + net, "1:BB_NET_SIM=" + net]
-    return dict(name=name, seconds=420 if net else 360, count=2, headless=0, until_hold=22, env=[], watch=watch, ienv=ienv, crash=[],
+    return dict(name=name, seconds=520 if net else 460, count=2, headless=0, until_hold=22, env=[], watch=watch, ienv=ienv, crash=[],
                 until=[r"0:applied weapon %d from slot 1" % GG_W])
 
 
