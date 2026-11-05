@@ -16,7 +16,7 @@ Code: `gpu/shim/net/from_api_channel.{h,cpp}` (the channel board), `gpu/shim/net
   and echoes: row 109 = 1000 echoes + Ritual Blood (1) (goods 7000) x2 (C, param dump).
 * **Maps**: area 29 (`m29_BB_RR_00`, 300+ pieces); a dungeon is assembled at load time from pieces
   according to the slot's layout parameters (I). Area-29 AreaIds in signs are ordinary packed maps
-  (`0x1Dbbrrii`), all in `party_ids.inc` (C).
+  (`0x1Dbbrrii`), all in the party tables read from the player's own game (`party_gamedata.h`, C).
 * **Slots** (C, 0x1ab2970 / 0x1ab2b40 / 0x1ab2f70 / 0x1ab34d0 and their callers): a player has 7
   dungeon slots. The one-hot flags 9020..9026 select the current slot (`GetEventFlagValue(9020, 7)`,
   slot = 7 - bit length; event_flags.md 2). Slot k's **record lives in the event flag store**, in
