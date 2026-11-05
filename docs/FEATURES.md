@@ -5,9 +5,9 @@ Back to the [README](../README.md).
 | Feature | What you get |
 |---|---|
 | **Native on Windows** | No emulator, no Wine. The game's own code runs on your CPU; the graphics go through Vulkan. |
-| **Party co-op, no server** | Play the whole campaign with friends over a direct connection: no PSN, no server. Modelled on Elden Ring Seamless Co-op. [More](#party-co-op) |
+| **Party co-op, no server** | Play the whole campaign with friends over a direct connection: no PSN, no server. Modelled on Elden Ring Seamless Co-op. [More](COOP.md) |
 | **Settings in the game's menu** | Every port setting is a page in the game's own *System* menu, with gamepad navigation. |
-| **Keyboard, mouse and any gamepad** | Classic keyboard layout or mouse & keyboard mode, every key rebindable; button prompts show your keys, Xbox or Nintendo buttons. [Controls](#controls) |
+| **Keyboard, mouse and any gamepad** | Classic keyboard layout or mouse & keyboard mode, every key rebindable; button prompts show your keys, Xbox or Nintendo buttons. [Controls](CONTROLS.md) |
 | **High frame rates** | 30 / 60 / 90 / 120 / uncapped with correct game speed. **Live FPS** (on by default, Mrsuss60's work): the game's clock follows the real frame time, so physics, cloth and the camera stay steady at any rate, and the target can be changed in *System > Live FPS*. Off = deadinside's frame-rate hooks or the community FPS++ patches; plus bbhost's high-FPS fixes for effects, grass wind and the Bloodletter's L2. [More](LIVE_FPS.md) |
 | **Texture quality** | *Auto / full / half / quarter*: large textures can skip their top mip level to save video memory; *auto* only steps down on cards with 3 GB or less. |
 | **Upscaling** | FSR 3.1, FSR 4, FSR 4.1.1 and DLSS, with motion vectors added for this game. |

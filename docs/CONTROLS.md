@@ -25,6 +25,7 @@ tab or *System > Mouse & keyboard* in game).
 | Gestures / key items (touchpad) | Touchpad left / right half (Xbox pads: `Back` + d-pad left / right, `Back` alone the left half) | `Tab` or `G` / `Backspace` | `Tab` or `G` / `Backspace` |
 | Party: ping / gather the party (host) | Hold the touchpad, press `R3` / `L3` (Xbox pads: hold `Back`) | `V` / `H` (or `Tab` + `C` / `Tab` + `Z`) | `V` / `H` (or `Tab` + `Q` / `Tab` + `Z`) |
 | Party: text chat (off by default) | Hold the touchpad, press `L1` (Xbox pads: hold `Back`): a list of short lines | `T` (`party_chat_key` in `bbport.ini` changes it) | `T` |
+| In-game map (off by default, [SETTINGS.md](SETTINGS.md#in-game-map)) | Hold `L1` + `R1` + `Start` for 0.65 s | `M` | `M` |
 | Port settings | *System* in the game's menu | *System* in the game's menu | *System* in the game's menu |
 | Overlay menu (fallback) | `L3 + R3` (enable in the launcher) | `Insert` | `Insert` |
 | Fullscreen | — | `Alt + Enter` | `Alt + Enter` |

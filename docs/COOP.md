@@ -77,7 +77,7 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   The host's game also announces the party on the VPN / LAN (never the Internet), and the launcher's
   *Parties found* list shows it with a **Join selected** button (*Party discovery*, on by default).
   On the opt-in Nightwatch VPN a host with a password can also turn on *Nightwatch VPN lobby* (off by default):
-  the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password.
+  the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password. The entry also carries a short label of the host's mods and gameplay patches (hashes), so a mismatch can be told before joining (0.7.9).
   While connected to the Nightwatch VPN the game uses its tunnel address for all party traffic by itself (no
   *party_vpn* setting needed).
   Hateful player names (slurs, hate codes, hostile phrases about groups of people) are shown as *Hunter* and a short
@@ -85,7 +85,9 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   launcher Party tab, or *System > My party: Names*). The Nightwatch VPN lobby does the same for everyone.
   A host with **no password** can be joined by plain address, with no party code, by players on its own LAN or VPN
   (*Open party*, off by default: launcher Party tab checkbox, or *System > Party access*). Anyone on that network can
-  join, so use it only on networks you trust; a listed game marked *open* in the lists is joined without any password.
+  join, so use it only on networks you trust; a listed game marked *open* in the lists is joined without any password. A player who joins an open party outside the host's
+  level range (`floor(level * 0.8 - 20)` to `floor(level * 1.2 + 20)`; host level 100: 60 to 140) is refused with the range named
+  (0.7.9); a party code or password ignores the range.
 - **Windows Firewall**: allow `bbport.exe` (*Windows Security → Firewall → Allow an app through firewall*). If the game says the firewall *blocks* it (you cancelled the prompt once), press **Fix firewall issues** in the launcher's party help (one admin prompt: removes the game's inbound Block rules, adds Allow rules for UDP + TCP on the party port), or delete the Block entries by hand (`wf.msc` → Inbound Rules, red block icon).
 - More options (guest codes, DHT, IPv6): [Connecting over the internet](#connecting-over-the-internet).
 
@@ -141,6 +143,9 @@ before anyone is in the game):
   seconds (about 5 s in the same area; a join that stalls restarts by itself). *Continue party
   game*, or joining from another map (the Hunter's Dream, say), takes one loading screen. If the
   host travels while you join, its travel waits until you are in and you travel together.
+- **Slow sign-in at the title.** In a party the title waits for the game's online sign-in: the automatic *Continue* counts it as running, and
+  a *Continue* you press by hand is held back until it is over (30 s at most), so a slow server no longer leaves the game offline
+  for the whole session (where no Chalice summon works) (0.7.9).
 - **Host in a boss fight or cutscene?** Your join waits in your own world until it is over (the
   Party status says why), then puts you beside the host with one loading screen.
 - **Leave any time.** *System → Party → Leave the party* takes a guest home at once and it keeps
@@ -167,7 +172,7 @@ before anyone is in the game):
   world keeps its own lamps, and a lamp anyone lights there is lit for everyone, in everyone's own
   save too; the host's lamps also reach each guest's save. A guest's lamps from its own world stay
   there unless the host turns on *Guests bring their lamps* (then a lamp past a boss the host has
-  not beaten yet waits until the host beats it). The host can turn sharing off (*Shared lamps*).
+  not beaten yet waits until the host beats it). A lamp a guest lights is lit whole in every save: it appears in the travel list and can be rested at, also after a restart; a lamp left half-lit by an older save is repaired when your own world loads. The host can turn sharing off (*Shared lamps*).
 - **Travel from any lamp to any lamp.** A lamp offers the headstones' list (the Hunter's Dream and
   every lit lamp) and takes you straight there with one loading screen (launcher: "Direct lamp
   travel", on by default).
@@ -214,7 +219,7 @@ before anyone is in the game):
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
   perform the ritual: the host's altar then offers *Enter the party's dungeon*. Chalices are shared
   between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's Bath Messengers (the shop) show for every guest, also one with a Chalice Dungeon of their own. The dungeon's
-  lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A Cursed dungeon halves every member's maximum health, guests too, whatever the Phantom health cut rule says. A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest who dies
+  lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A Cursed dungeon halves every member's maximum health, guests too, whatever the Phantom health cut rule says. A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest whose game is offline (no online login) stays in the host's world with the notice "This game is in offline mode" (restart the game and wait at the title until it goes online) instead of being sent home, and follows the host out of the dungeon. A guest who dies
   in the dungeon gets up beside the party; a guest pulled out by a death or a forced trip is summoned
   back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party rules: Travel).
 
@@ -226,11 +231,13 @@ before anyone is in the game):
   what the host does in their room (a hit, walking up to Maria, Laurence's Skull at the altar):
   until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
   starts with anyone's hit. The Celestial Emissary's small emissaries appear on every screen, whoever
-  goes through the fog first.
+  goes through the fog first (0.7.9).
 - **Guests can hit NPCs.** A guest's blows land on the host world's NPCs as the host's do (the friendly
   hunters and the others the host could hurt): they take damage and a killing blow counts for
   everyone. An NPC that turns hostile after a few hits (Alfred) does so on a guest's blows too.
   Nothing is added that the host could not do.
+- **The Mad Ones show for guests.** The Insight madness spirits (in Hemwick Charnel Lane, say) appear when a guest with enough Insight
+  comes near them at night, as for the host, with the guest's own Insight; they show on every screen (0.7.9).
 - **NPC hunters fight the whole party.** Eileen and Henryk at the Tomb of Oedon, Alfred, the
   blood-drunk Eileen, Valtr and the DLC hunters are there for everyone in the host's world:
   anyone can hurt them, and their death and the quest step after it count for every player's own
@@ -260,7 +267,7 @@ before anyone is in the game):
 - **Covenants are your own.** How the covenant quests end stays in the world it happened in:
   Alfred killing Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates
   never reach another player's save (in the host's world the covenant leaders still show your own
-  state, so you can talk to Valtr and join after the host did). A guest can kneel to Queen Annalise in the host's world and swear the Vileblood oath, in their own save. A covenant
+  state, so you can talk to Valtr and join after the host did). A guest can kneel to Queen Annalise in the host's world and swear the Vileblood oath, in their own save (0.7.9): after her greeting stand in the circle before her throne and press the action button; the Caryll rune is the guest's own, once per player. A covenant
   rune an NPC hands you (Valtr's Impurity, for example) is yours, in your own save. A host setting,
   on by default (*Covenants per player* on *System → Party rules: World*).
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
@@ -288,11 +295,17 @@ before anyone is in the game):
 - **Invasions into open public games.** The host decides: *Allow invaders* (*System -> Party access*, the launcher's Party tab,
   `party_invaders`, off by default, live) lets other players join a game from the launcher's lists as a hostile phantom
   (**Invade**, next to Join, no password): you and your guests are told, fight it, and it goes home when it dies or when the host
-  dies. One at a time (or two: *Max invaders*, `party_max_invaders`, default 1), away from you like a vanilla invader, never in a boss
-  fight, a loading screen or a cutscene, never into a full (4 player) game; you can block it
+  dies. An invader takes one loading screen and a few seconds to arrive, also one that starts in another map (the Hunter's
+  Dream, say) than the host (0.7.9), and is put away from you at a lamp the host lit, 30 to 250 m off in the same map, like a vanilla
+  invader (beside the host where there is none, e.g. in the Hunter's Dream or a Chalice Dungeon) (0.7.9). Only players within
+  the host's level range can invade, `floor(level * 0.8 - 20)` to `floor(level * 1.1 + 10)` (host level 100: 60 to 120); the refused
+  player is told the range (0.7.9). One invader at a time, or two with the host's *Max invaders* (*System -> Party access*, the
+  launcher's Party tab, `party_max_invaders`, 1 or 2, default 1, live) (0.7.9); never in a boss
+  fight, a loading screen or a cutscene, never into a full (4 player) game; you can block the invaders
   for the session (*System -> Party -> Block the invader*). The invader is drawn with the game's red phantom glow, and the game's own
   rewards are paid on each player's own game: an invader that defeats the host gets Blood Echoes and +1 Insight, the host and
-  guests get Blood Echoes for defeating it. See docs/party/invasions.md.
+  guests get Blood Echoes for defeating it. The host's *Full health in PvP* rule also covers an invasion: with it on (the
+  default) the invader is not cut to 70 % maximum health (0.7.9). See docs/party/invasions.md.
 - **Stay in my world.** As a guest you can pause the automatic joining without leaving the party, e.g. for your own
   Chalice ritual or shopping: *System -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
   `party_stay`, off by default, live). You ring no bell, are not gathered and not asked to vote; the host does not wait
@@ -417,6 +430,9 @@ before anyone is in the game):
   on where they stood once the network is back. After a longer one a guest goes home and is
   summoned back by itself. Every 15 s the party checks that everyone sees the same world and
   progress and re-sends whatever differs.
+- **No freezes from a slow log reader.** The game writes its log through a background thread (launcher *Advanced / Debug*: *Log output
+  through a background thread*, `log_async`, on by default), so a launcher or an antivirus that stops reading for a moment no longer freezes the
+  game for seconds (0.7.9).
 - **Wrong passwords are locked out**: after 5 wrong passwords in a minute the host refuses that
   address for a while.
 - **Your single-player save is safe.** Party play uses a separate save, backed up every 10 minutes.
@@ -464,15 +480,14 @@ The score bars are in the [README](../README.md#seamless-co-op-progress).
 
 ## Coming next
 
+Features marked (0.7.9) are on the development build and come with the next release.
+
 | Change | Status |
 |---|---|
-| Invasions: the red hostile-phantom look and the vanilla rewards | In progress |
 | Character creation: choosing glasses no longer locks the editor; a clean Favourites portrait | In progress |
-| Chalice Dungeons with a guest started in offline mode: no kick home, a clear message | In progress |
-| A lamp a guest lit is fully usable in the host's world (GitHub #28) | In progress |
-| After a party wipe at Ludwig: no second-half scene, boss bar or "Prey Slaughtered" by mistake | Needs logs (diagnostics in the launcher) |
 | A guest joining the host in Yahar'gul loads in (no endless loading screen) | Needs the host's log |
 | FSR 4 white or grey picture fixed | Protective fixes built; the cause (FSR 4 with HDR on in Windows) is still being confirmed |
+| Annalise: the guest's character plays the kneel animation | Planned |
 | Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (opt-in first) |
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
 
