@@ -163,7 +163,7 @@ static void EverySettingSaved() {
         "upscaler", "preset", "sharpen", "sharpness", "jitter", "object_motion", "reactive", "reactive_scale",
         "reactive_threshold", "reactive_max", "debug_view", "show_fps", "show_hud", "hud_position", "hud_opacity",
         "hud_scale", "hud_graph", "hud_vram", "hud_gpu", "hud_cpu", "hud_ram", "mk_enabled", "mk_sens_x",
-        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl",
+        "mk_sens_y", "mk_invert_x", "mk_invert_y", "mk_deadzone", "mk_smoothing", "mk_wheel", "async_pipelines", "gpl", "nan_guard",
         "compile_indicator", "party_toasts", "party_hud", "fsr4_auto_exposure", "fsr4_invert_jitter", "model_lod",
         "output_res", "live_resolution", "menu_language", "volumetric_res", "key_ramp", "texture_quality"};
     for (const char* key : overlay) {

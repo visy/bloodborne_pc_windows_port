@@ -236,6 +236,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         }
     } else if (key == "gpl") {
         v.gpl = i != 0;
+    } else if (key == "nan_guard") {
+        v.nan_guard = i != 0;
+    } else if (key == "nan_guard_mark") {
+        v.nan_guard_mark = i != 0;
     } else if (key == "compile_indicator") {
         v.compile_indicator = i != 0;
     } else if (const auto sw = std::find_if(std::begin(PartySwitches), std::end(PartySwitches),
@@ -491,7 +495,7 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
-        {"BB_GPL", "gpl"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
+        {"BB_GPL", "gpl"}, {"BB_NAN_GUARD", "nan_guard"}, {"BB_NAN_GUARD_MARK", "nan_guard_mark"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
         {"BB_HUD", "show_hud"},                     {"BB_AUTO_HUD", "auto_hide_hud"}, {"BB_PARTY_NAME_COLOURS", "party_name_colours"},                     {"BB_HUD_POSITION", "hud_position"},
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
         {"BB_MOUSE_DIRECT_CAMERA", "mk_direct_camera"},
@@ -566,6 +570,8 @@ void Load() {
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
     v.startup_gpl = v.gpl;
+    v.startup_nan_guard = v.nan_guard;
+    v.startup_nan_guard_mark = v.nan_guard_mark;
     v.startup_frame_generation = v.frame_generation;
     v.startup_fg_backend = v.fg_backend;
     v.startup_reflex = v.reflex;
@@ -693,7 +699,8 @@ bool RestartNeeded() {
     const auto& s = Get();
     bool restart = s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
                    s.texture_quality != s.startup_texture_quality ||
-                   s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl ||
+                   s.live_resolution != s.startup_live_resolution || s.gpl != s.startup_gpl || s.nan_guard != s.startup_nan_guard ||
+                   s.nan_guard_mark != s.startup_nan_guard_mark ||
                    s.frame_generation != s.startup_frame_generation ||
                    (s.frame_generation >= 2 && s.fg_backend != s.startup_fg_backend) ||
                    s.reflex != s.startup_reflex || s.anti_lag != s.startup_anti_lag || s.vrr != s.startup_vrr ||
@@ -836,6 +843,8 @@ void Save() {
     put("key_ramp", flag(v.key_ramp));
     put("async_pipelines", flag(v.async_shaders));
     put("gpl", flag(v.gpl));
+    put("nan_guard", flag(v.nan_guard));
+    put("nan_guard_mark", flag(v.nan_guard_mark));
     put("compile_indicator", flag(v.compile_indicator));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));

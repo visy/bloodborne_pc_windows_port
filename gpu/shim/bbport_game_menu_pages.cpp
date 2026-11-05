@@ -911,6 +911,10 @@ void DefineAll() {
            "Pipelines from reusable parts (VK_EXT_graphics_pipeline_library; after a restart)",
            "Конвейеры из готовых частей (VK_EXT_graphics_pipeline_library; после перезапуска)", toggle,
            Kind::Toggle);
+    AddRow(Flag(&Values::nan_guard), "NaN guard", "Защита от NaN",
+           "Bad (NaN / Inf) pixels become black: stops a white-out flash from bloom (after a restart)",
+           "Битые пиксели (NaN / Inf) становятся чёрными: против белой вспышки от блума (после перезапуска)",
+           toggle, Kind::Toggle);
     AddRow(Setting(
                Kind::List, [](const Values& v) { return v.debug_view.load(); },
                [](int i) { BbSettings::Get().debug_view = std::clamp(i, 0, BbSettings::DebugViewCount - 1); }),
