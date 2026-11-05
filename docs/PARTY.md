@@ -1,7 +1,7 @@
 # Party co-op (playing together)
 
-> **Status (0.7.6):** party co-op has been played for real: on one PC with several game copies, on
-> a LAN between two PCs, and over the Internet in two long sessions between homes, plus many
+> **Status (0.7.8):** party co-op has been played for real: on one PC with several game copies, on
+> a LAN between two PCs, and over the Internet in three long sessions between homes, plus many
 > reports from players with 3 and 4 player parties and VPNs. Every report so far was fixed in the
 > next release. It is still young software: keep the save backups (below) and report problems
 > with the logs. What is still open is listed under [Known limitations](#known-limitations).
@@ -635,7 +635,7 @@ moment it happens to mark the logs.
   reachable member, cannot connect directly. Use a VPN (Radmin VPN, Hamachi, ZeroTier,
   Tailscale) or let a player with an open port host. The Windows Firewall must allow the game on
   every PC; the game warns but never changes your firewall.
-- **Real-network testing is limited.** Two long Internet sessions and a growing number of player
+- **Real-network testing is limited.** Three long Internet sessions and a growing number of player
   reports; the fixes since the last long session were tested on one PC and on LANs. Please send
   support bundles when something goes wrong.
 - A first boss fight with Ebrietas, Lady Maria or Laurence starts only with what the host does in
@@ -643,8 +643,10 @@ moment it happens to mark the logs.
 - Travel is "follow and rejoin"-style: a trip takes a loading screen, and guests that load
   separately arrive a moment later. A shared seamless loading screen is not planned.
 - The Bath Messengers can pop in and out for a player watching while another browses their shop.
-- The online play of the original game (PSN messages, bloodstains of strangers, invasions) is not
-  available; the party only connects the players who have the code.
+- The online play of the original game (PSN messages, bloodstains of strangers, the Sinister Bell
+  and its invasions) is not available; the party only connects the players who have the code. A
+  host can instead let other players invade through the launcher's lists (*Allow invaders*, off by
+  default; see [COOP.md](COOP.md#how-it-plays)).
 
 For developers: the design and status are in [PARTY_COOP_PLAN.md](PARTY_COOP_PLAN.md) and
 [party/](party); test and debug switches in [party/DEBUG_SWITCHES.md](party/DEBUG_SWITCHES.md).

@@ -177,11 +177,10 @@ same sentence, name not banned). Smoke phase `ojl` (group `open_level`).
 
 ## Rewards and win / lose
 
-Winning or losing an invasion gives **no Echoes, Insight or items**. The session is a co-op session, not the game's invasion
-session, and the vanilla result flow (Blood Echoes / Insight for the winning invader, the Sinister Bell consumed) is not
-implemented: a kill in a party is a normal death (see pvp.md). The win / lose text is the notice on both sides.
-Not done: the **Sinister Resonant Bell / Bell-Ringing Woman** items are not used or consumed; the invader's maximum health is the
-phantom's (the host's *Phantom health cut* applies to it only where that rule reaches its game).
+The game's own rewards are paid, see "Rewards and costs" below (0.7.8). The Sinister Resonant Bell / Bell-Ringing Woman items are
+not used or consumed (not done). The invader's maximum health follows the host's **Full health in PvP** rule: an active invasion
+counts as PvP for it (0.7.9, CL-b4f728; the host sends its decision in the `invade` event's `h` field, a message without it reads as
+unknown), so with it on (the default) the invader is not cut to 70 %; with it off the 0.7 cut applies as for any phantom.
 
 ## The public lists: the invader flag and where the host is
 
@@ -302,14 +301,14 @@ ending within 120 s) and one pending outcome per game; the invader is paid once 
 * **`ivx`** (host and invader; 11 of 11): refused with the named reason while Allow invaders is off, in a boss fight, in a
   cutscene and with 4 players in the world (the host's view forced by the smoke script `BB_PARTY_INVADE_TEST`, see DEBUG_SWITCHES.md;
   a real fourth player needs five games, the table is unit tested), admitted when nothing is in the way.
-* Screenshots of the fight (host, guest) show the invader as a normal hunter with a name tag and a party-list entry: **the red
-  phantom look is not done** (see below). The notices are on the party panel's last-event line and in the log; they were not
+* Screenshots of the fight (host, guest) show the invader as a normal hunter with a name tag and a party-list entry (this run
+  was before the red phantom look of 0.7.8, see "The red phantom look"). The notices are on the party panel's last-event line and in the log; they were not
   caught by the 10-second screenshots.
 
 ## Not done / unproven
 
 * **Real networks beyond what is listed below, and the human bloodstain.** The game's Lua also has the host call CreateHeroBloodStain when a red invader falls (a bloodstain of the invader); it is not reproduced (see Rewards).
-* **Health.** The invader's health is the phantom's (the host's *Phantom health cut* applies where that rule reaches its game).
+* **Health.** *Full health in PvP* covering an invasion (CL-b4f728) is unit tested (wire, rule); it has not been run live.
 * **Boss fog / cutscene / loading** are proven by the forced view (the gate and the pending checks are the same code as for the
   real flags: `BossBarShown`, `CutscenePlaying`, `loading`); a real fog walk with an invader on the way was not run. An invader
   that is already in when a fog is entered is sent home (`CheckEnd`, unit tested; not run live).
