@@ -196,6 +196,22 @@ class Discovery(unittest.TestCase):
         self.assertEqual(book.snapshot(110.0), [])
         self.assertFalse(book.feed(b"junk", "10.0.0.9", 120.0))
 
+    def test_mods_label_datagram_is_ignored(self):
+        # 0.7.9: a host with gameplay mods also sends [0xfa]['M'][1] id u32 + u8 len + label (party_discovery.h);
+        # this listener does not read it: dropped as junk, the host's row stays as its announcement made it.
+        label = b"nocturne@1.0.1"
+        mods = bytes([0xFA, 0x4D, 1]) + (0xDEADBEEF).to_bytes(4, "big") + bytes([len(label)]) + label
+        longest = bytes([0xFA, 0x4D, 1]) + (0xDEADBEEF).to_bytes(4, "big") + bytes([255]) + b"a" * 255
+        for data in (mods, longest):
+            self.assertIsNone(self.L.parse_discovery_packet(data))
+            self.assertIsNone(self.L.parse_discovery_ext(data))
+        book = self.L.DiscoveryBook()
+        self.assertTrue(book.feed(packet(), "192.168.1.30", 100.0))
+        self.assertFalse(book.feed(mods, "192.168.1.30", 100.1))
+        snap = book.snapshot(100.2)
+        self.assertEqual(len(snap), 1)
+        self.assertEqual(snap[0]["name"], "Hunter_One")
+
     def test_book_rate_limit_and_cap(self):
         book = self.L.DiscoveryBook()
         ok = sum(book.feed(packet(pid=i), "10.0.0.5", 50.2) for i in range(100))
