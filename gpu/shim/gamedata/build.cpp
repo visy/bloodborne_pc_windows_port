@@ -23,7 +23,7 @@ namespace fs = std::filesystem;
 namespace {
 
 // Bump when the derivation changes what the tables hold (a cache of another version is rebuilt).
-constexpr const char* kDerivationVersion = "cpp-1";
+constexpr const char* kDerivationVersion = "cpp-2";
 constexpr const char* kCacheMagic = "BBPARTYTABLES 1";
 
 std::string Lower(std::string s) {
@@ -384,6 +384,28 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
         }
         for (auto& [k, v] : by_stem) fog_calls.push_back(std::move(v));
     }
+    // the chalice dungeons' parameterised events (m29.emevd) are started from the dungeon maps' own scripts: expand
+    // them once more with those calls (the boss entities are their arguments)
+    std::vector<bbdata::EventRec> chalice_rec;
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        if (files[i].stem != "m29") continue;
+        std::set<std::int64_t> own;  // the events that hold a SpEffect instruction (2004[8])
+        for (const bbdata::EvEvent& e : parsed[i].evd.events) {
+            for (const bbdata::EvInstr& in : e.ins) {
+                if (in.bank == 2004 && in.id == 8 && !e.params.empty()) own.insert(e.id);
+            }
+        }
+        bbdata::ExternalCalls ext;
+        for (const FileEvents& fe : allrec) {
+            if (fe.stem == "m29") continue;
+            for (const bbdata::EventRec& r : fe.recs) {
+                for (const bbdata::EventCall& c : r.calls) {
+                    if (own.count(c.target)) ext[c.target].push_back({c.slot, c.params});
+                }
+            }
+        }
+        chalice_rec = bbdata::ExpandFile(parsed[i].evd, parsed[i].names, emedf, ext);
+    }
     parsed.clear();
     parsed.shrink_to_fit();
     Sections out[5];
@@ -405,6 +427,8 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
                     out[4] = DeriveFlagRows(cats);
                     for (auto& [name, rows] : DeriveLamps(cats)) out[4][name] = std::move(rows);
                     for (auto& [name, rows] : DeriveHostOnlyEvents(allrec)) out[4][name] = std::move(rows);
+                    for (auto& [name, rows] : DeriveWorldAct(allrec)) out[4][name] = std::move(rows);
+                    for (auto& [name, rows] : DeriveBossEntities(allrec, chalice_rec)) out[4][name] = std::move(rows);
                     break;
                 }
                 case 4: break;

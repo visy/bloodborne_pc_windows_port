@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Boss fights after a party load (gpu/shim/party/party_bossfog_rules.h): which overlay groups the
 // guard restores after a load, and when a guest's boss fog counts as walked through - for every
-// boss fog of the game (worldact::BossGates).
+// boss fog of the game (worldact::BossGates, from the party tables).
 // cmake --build out/gpu --target party-bossfog-rules-test && out/gpu/party-bossfog-rules-test
 #include "party/party_bossfog_rules.h"
 #include "party/party_progress.h"
@@ -93,6 +93,17 @@ bool M34WallAfterKill(bool party, bool open_world, bool multiplayer) {
 } // namespace
 
 int main() {
+    // The boss fogs come from the party tables: the player's game when a cache is named (BB_PARTY_TABLES, built by
+    // party-tables-cli), else three made-up gates of the same shape (ids invented, no game data).
+    const bool real = coop::gamedata::InstallFromEnv();
+    if (!real) {
+        coop::gamedata::Tables gt;
+        gt.loaded = true;
+        gt.boss_gates = {{12404811, 12404790, 12404791, 12401790, 12401792, 2401790, 0},
+                         {12504811, 12504790, 12504791, 12501790, 0, 2501790, 0},
+                         {12604831, 12604790, 12604791, 12601790, 12601792, 2601790, 12604821}};
+        coop::gamedata::Install(std::move(gt));
+    }
     // Fight-state groups: T1 zones 4-6 of a map (1AAB4xxx boss fight / fog, 1AAB5xxx enemy AI,
     // 1AAB6xxx boss parts); not zone 0 / 1 (map objects, boss defeated), not the global groups.
     CHECK(FightStateFlag(12414800) && FightStateFlag(12414801) && FightStateFlag(12414802));
@@ -106,7 +117,7 @@ int main() {
     // Every boss fog of the game (flag_tool emevd, every `ゲストがボス部屋入場` event): its host- and
     // guest-entered flags are fight state (the host's load resets them; never restored), its boss
     // and first-fight (intro) flags are not (saved: the guard and the mirror keep them).
-    CHECK(wa::BossGates().size() == 20);
+    CHECK(wa::BossGates().size() == (real ? 20u : 3u));
     for (const wa::BossGate& g : wa::BossGates()) {
         CHECK(FightStateFlag(g.host_flag) && FightStateFlag(g.guest_flag));
         CHECK(g.host_flag / 1000 == g.guest_flag / 1000);
@@ -192,7 +203,7 @@ int main() {
 
     // How each boss's first fight really starts (player report 2026-10-22, Laurence): one row per
     // boss fog, and only an `entry` one (the host's position) may be started by a guest's fog.
-    {
+    if (real) {
         std::size_t n = 0;
         const FirstFight* rows = FirstFights(&n);
         CHECK(n == wa::BossGates().size());

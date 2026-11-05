@@ -15,6 +15,28 @@ using namespace coop::worldact;
 namespace pg = coop::progress;
 
 int main() {
+    // The boss fog gates and the area gate rules come from the party tables (derived from the player's event
+    // scripts): none without them, and exactly the installed rows with made-up tables.
+    {
+        coop::gamedata::Install(coop::gamedata::Tables{});
+        assert(BossGates().empty() && GateRules().empty() && !BossGateByEvent(1001) && !BossGateByGuestFlag(1002));
+        coop::gamedata::Tables t;
+        t.loaded = true;
+        t.boss_gates = {{1001, 1002, 1003, 1004, 1005, 1006, 0}, {2001, 2002, 2003, 2004, 0, 2006, 2007}};
+        t.gate_rules = {{1004, 2500, 0}, {1004, 2501, 2004}};
+        coop::gamedata::Install(t);
+        assert(BossGates().size() == 2 && GateRules().size() == 2 && GateRules()[1].also == 2004);
+        const BossGate& a = *BossGateByEvent(1001);
+        assert(a.host_flag == 1002 && a.guest_flag == 1003 && a.boss_flag == 1004 && a.intro_flag == 1005 &&
+               a.fog_entity == 1006 && a.landing_event == 0 && BossGateByGuestFlag(1003) == &a);
+        const BossGate& b = *BossGateByEvent(2001);
+        assert(BossGateByLandingEvent(2007) == &b && !BossGateByLandingEvent(1001));
+        assert(BossGateSkipCondition(1001, 3, 0, 1002) && BossGateSkipCondition(2007, 3, 0, 2002));
+        assert(!BossGateSkipCondition(1001, 3, 0, 1004) && !BossGateSkipCondition(3001, 3, 0, 1002));
+        assert(BossGateWaitsForHost(a, false, false, false) && !BossGateWaitsForHost(b, false, false, false));  // no intro: none
+        coop::gamedata::Install(coop::gamedata::Tables{});
+        assert(BossGates().empty() && GateRules().empty());
+    }
     // CategoryOf reads the event-flag category table of the player's own game (flagRows): skipped without it.
     if (!coop::test::UseGameTables("party-worldact-test")) return 0;
     const std::uint32_t m2401 = 0x18010000u, m2400 = 0x18000000u, m2200 = 0x16000000u, dream = 0x15000000u;

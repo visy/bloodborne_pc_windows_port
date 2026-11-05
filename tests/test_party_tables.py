@@ -26,9 +26,22 @@ def run_cli(game, out, *extra):
     return subprocess.run([str(CLI), str(game), str(out), *extra], capture_output=True, text=True, env=env)
 
 
+# Sections the engine derives that the Python oracle has no counterpart for (their reference was the hand-typed
+# tables of party_worldact.cpp, compared once on 1.09 when they moved).
+CPP_ONLY = {"bossGates", "gateRules", "bossEntities"}
+
+
 def body(path):
-    """The cache text without its key line."""
-    return [l for l in Path(path).read_text(encoding="utf-8").split("\n") if not l.startswith("key ")]
+    """The cache text without its key line and without the C++-only sections."""
+    out, skip = [], False
+    for l in Path(path).read_text(encoding="utf-8").split("\n"):
+        if l.startswith("key "):
+            continue
+        if l.startswith("["):
+            skip = l[1:l.index("]")] in CPP_ONLY
+        if not skip:
+            out.append(l)
+    return out
 
 
 @unittest.skipUnless(game_dir() and CLI.exists(), "no game folder or no out/gpu/party-tables-cli.exe")

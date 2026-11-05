@@ -67,6 +67,12 @@ Sections DeriveItems(const ParamSet& params, const std::vector<FileEvents>& even
 Sections DeriveLamps(const FlagCategories& cats);
 /// hostOnlyEvents: the id of every event whose name (EMELD) is a boss's HP-driven phase change ("ヒートアップ").
 Sections DeriveHostOnlyEvents(const std::vector<FileEvents>& events);
+/// bossGates {guest-entry event, host-entered flag, guest-entered flag, boss flag, intro flag, fog entity, landing
+/// event or 0} and gateRules {boss-defeat event, area gate flag, second boss event or 0} (derive_worldact.cpp).
+Sections DeriveWorldAct(const std::vector<FileEvents>& events);
+/// bossEntities {entity, 1 for a chalice dungeon boss}: every entity an event gives the boss-doping SpEffect 7500 or
+/// 7501 (2004[8]). `chalice`: the area 29 events expanded with the calls the dungeon maps make into them.
+Sections DeriveBossEntities(const std::vector<FileEvents>& events, const std::vector<bbdata::EventRec>& chalice);
 /// flagRows.
 Sections DeriveFlagRows(const FlagCategories& cats);
 /// warperRight, warperLeft, warperArmor.

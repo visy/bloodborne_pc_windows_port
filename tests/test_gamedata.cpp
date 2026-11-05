@@ -4,6 +4,7 @@
 // is tests/test_party_tables.py. cmake --build out/gpu --target gamedata-test
 #include "gamedata/build.h"
 #include "gamedata/container.h"
+#include "gamedata/derive.h"
 #include "gamedata/events.h"
 #include "gamedata/msb.h"
 #include "gamedata/param.h"
@@ -436,6 +437,108 @@ void TestDerive() {
     fs::remove_all(d, ec);
 }
 
+// The boss fog gates and gate rules from event records built here (made-up ids, no game data).
+void TestWorldAct() {
+    using namespace bbdata;
+    auto rec = [](std::int64_t id, const char* name) {
+        EventRec r;
+        r.event = id;
+        r.name = name;
+        return r;
+    };
+    auto set = [](EventRec& r, std::int64_t flag, std::int64_t state = 1) {
+        Op o;
+        o.op = FlagOp::Set;
+        o.first = o.last = flag;
+        o.state = state;
+        r.ops.push_back(o);
+    };
+    auto cond = [](EventRec& r, std::int64_t flag) { r.conds.push_back({3, 0, {1, 1, 0, flag}}); };
+    auto boss = [&](std::int64_t id) {
+        EventRec r = rec(id, "boss");
+        r.markers.push_back({MarkerKind::BossDefeat, 0, {1}});
+        return r;
+    };
+    EventRec b1 = boss(100), b2 = boss(101), b3 = boss(102);
+    set(b1, 2050);
+    set(b1, 2051, 0);  // a flag set off is no rule
+    set(b1, 9999);     // outside the gate range
+    set(b2, 2050);     // owned by the first event
+    set(b2, 2052);
+    set(b3, 2060);
+    EventRec both = rec(900, "perm");  // two bosses must be dead
+    set(both, 2070);
+    cond(both, 100);
+    cond(both, 102);
+    EventRec stray = rec(901, "perm");  // not a boss event flag among its conditions
+    set(stray, 2071);
+    cond(stray, 100);
+    cond(stray, 5);
+    EventRec g1 = rec(500, "ゲストがボス部屋入場_x");
+    cond(g1, 100);
+    cond(g1, 1234);
+    cond(g1, 555);
+    g1.conds.push_back({3, 24, {1, 2, 777}});
+    set(g1, 556);
+    EventRec first = rec(600, "ホストがボス部屋入場_初戦_y");
+    cond(first, 102);
+    set(first, 600);
+    EventRec g2 = rec(501, "y_ゲストがボス部屋入場");
+    cond(g2, 102);
+    cond(g2, 566);
+    g2.conds.push_back({3, 24, {1, 2, 778}});
+    set(g2, 567);
+    EventRec g3 = rec(502, "ゲストがボス部屋入場_z");  // the guest flag comes from the landing event
+    cond(g3, 104);
+    cond(g3, 105);
+    cond(g3, 570);
+    g3.conds.push_back({3, 24, {1, 2, 779}});
+    EventRec land = rec(503, "ゲストが着地_z");
+    cond(land, 570);
+    set(land, 571);
+    EventRec nofog = rec(504, "ゲストがボス部屋入場_w");  // no fog object: no gate
+    cond(nofog, 1);
+    cond(nofog, 2);
+    set(nofog, 3);
+    std::vector<coop::gamedata::FileEvents> ev = {{"m01", {b1, b2, b3, both, stray, g1, first, g2}}, {"m02", {g3, land, nofog}}};
+    const auto s = coop::gamedata::DeriveWorldAct(ev);
+    const auto& rules = s.at("gateRules");
+    CHECK(rules.size() == 4);
+    CHECK(rules[0] == (coop::gamedata::Row{"100", "2050", "0"}) && rules[1] == (coop::gamedata::Row{"100", "2070", "102"}));
+    CHECK(rules[2] == (coop::gamedata::Row{"101", "2052", "0"}) && rules[3] == (coop::gamedata::Row{"102", "2060", "0"}));
+    const auto& gates = s.at("bossGates");
+    CHECK(gates.size() == 3);
+    CHECK(gates[0] == (coop::gamedata::Row{"500", "555", "556", "100", "1234", "777", "0"}));
+    CHECK(gates[1] == (coop::gamedata::Row{"501", "566", "567", "102", "600", "778", "0"}));
+    CHECK(gates[2] == (coop::gamedata::Row{"502", "570", "571", "104", "105", "779", "503"}));
+    // the boss-doping SpEffect: world bosses from the map scripts, dungeon bosses from the area 29 scripts and the
+    // expansion with the dungeon maps' calls; other effects and entity 0 are no boss
+    EventRec d1 = rec(700, "dope"), d2 = rec(701, "dope"), d3 = rec(702, "dope"), d4 = rec(703, "dope");
+    d1.conds.push_back({2004, 8, {4001, 7500, 1}});
+    d1.conds.push_back({2004, 8, {4002, 7501, 1}});
+    d1.conds.push_back({2004, 8, {4003, 7000, 1}});  // another effect
+    d2.conds.push_back({2004, 8, {0, 7500, 1}});     // an unresolved parameter
+    d3.conds.push_back({2004, 8, {5001, 7500, 1}});
+    d4.conds.push_back({2004, 8, {5002, 7501, 1}});
+    d4.conds.push_back({2004, 8, {4001, 7500, 1}});  // listed once, as a world boss
+    const auto be = coop::gamedata::DeriveBossEntities({{"m01", {d1, d2}}, {"m29_01_00_00", {d3}}}, {d4}).at("bossEntities");
+    CHECK(be.size() == 4);
+    CHECK(be[0] == (coop::gamedata::Row{"4001", "0"}) && be[1] == (coop::gamedata::Row{"4002", "0"}));
+    CHECK(be[2] == (coop::gamedata::Row{"5001", "1"}) && be[3] == (coop::gamedata::Row{"5002", "1"}));
+    // no events: empty sections, still present
+    const auto none = coop::gamedata::DeriveWorldAct({});
+    CHECK(none.at("gateRules").empty() && none.at("bossGates").empty());
+    // the cache text round trip
+    coop::gamedata::Tables t;
+    std::string err;
+    CHECK(coop::gamedata::Parse(coop::gamedata::RenderCache("k", s), &t, &err));
+    CHECK(t.gate_rules.size() == 4 && t.gate_rules[1].also == 102 && t.boss_gates.size() == 3 && t.boss_gates[2].landing_event == 503);
+    coop::gamedata::Sections all = s;
+    all["bossEntities"] = be;
+    CHECK(coop::gamedata::Parse(coop::gamedata::RenderCache("k", all), &t, &err));
+    CHECK(t.boss_entities.size() == 2 && t.chalice_boss_entities.size() == 2 && t.chalice_boss_entities[1] == 5002);
+}
+
 void TestParallel() {
     std::atomic<int> sum{0};
     coop::gamedata::ParallelFor(100, 4, [&](std::size_t i) { sum += static_cast<int>(i); });
@@ -459,6 +562,7 @@ int main() {
     TestEvents();
     TestMsb();
     TestParallel();
+    TestWorldAct();
     TestDerive();
     std::printf(g_fail ? "gamedata-test: %d FAILED\n" : "gamedata-test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

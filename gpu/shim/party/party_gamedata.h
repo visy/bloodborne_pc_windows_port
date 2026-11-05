@@ -88,6 +88,16 @@ struct FlagRow {
     std::string note;
 };
 
+/// A boss fog gate (party_worldact.h BossGate): {guest-entry event, host-entered flag, guest-entered flag, boss flag,
+/// intro flag, fog entity, landing event or 0}.
+struct BossGateRow {
+    std::uint32_t guest_event, host_flag, guest_flag, boss_flag, intro_flag, fog_entity, landing_event;
+};
+/// An area gate rule (party_worldact.h GateRule): {boss-defeat event (= its flag), gate flag, second boss event or 0}.
+struct GateRuleRow {
+    std::uint32_t boss, gate, also;
+};
+
 struct Tables {
     bool loaded = false;
     std::string status = "party tables not loaded";
@@ -113,6 +123,9 @@ struct Tables {
     std::vector<LampRow> lamps;
     std::vector<std::pair<std::uint32_t, std::string>> gesture_names;  // goods id -> the game's name (message files)
     std::vector<std::uint32_t> host_only_events;  // sorted: boss phase events only the host's copy decides
+    std::vector<std::uint32_t> boss_entities, chalice_boss_entities;  // entities given the boss-doping SpEffects (sorted)
+    std::vector<BossGateRow> boss_gates;          // file order
+    std::vector<GateRuleRow> gate_rules;
 };
 
 namespace detail {
@@ -277,6 +290,17 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
             if (ok) t.gesture_names.emplace_back(u[0], f[1]);
         } else if (section == "hostOnlyEvents") {
             ok = u32row(t.host_only_events, f);
+        } else if (section == "bossEntities") {
+            ok = f.size() >= 2 && detail::ToU32(f[0], &u[0]) && (f[1] == "0" || f[1] == "1");
+            if (ok) (f[1] == "1" ? t.chalice_boss_entities : t.boss_entities).push_back(u[0]);
+        } else if (section == "bossGates") {
+            std::uint32_t w[7];
+            ok = f.size() >= 7;
+            for (std::size_t k = 0; ok && k < 7; ++k) ok = detail::ToU32(f[k], &w[k]);
+            if (ok) t.boss_gates.push_back({w[0], w[1], w[2], w[3], w[4], w[5], w[6]});
+        } else if (section == "gateRules") {
+            ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && detail::ToU32(f[2], &u[2]);
+            if (ok) t.gate_rules.push_back({u[0], u[1], u[2]});
         } else if (section == "itemLotFlag") {
             ok = f.size() >= 2 && detail::ToI32(f[0], &a) && detail::ToI32(f[1], &b);
             if (ok) t.lot_flags.push_back({a, b});
@@ -311,7 +335,7 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
         return fail("party tables: file is cut short");
     }
     // The consumers binary-search these: keep the contract even for a hand-edited file.
-    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror, &t.host_only_events}) {
+    for (auto* v : {&t.maps, &t.return_points, &t.entities, &t.remos, &t.npc_mirror, &t.host_only_events, &t.boss_entities, &t.chalice_boss_entities}) {
         std::sort(v->begin(), v->end());
         v->erase(std::unique(v->begin(), v->end()), v->end());
     }
@@ -382,6 +406,11 @@ inline Async& A() {
     static Async a;
     return a;
 }
+/// Bumped whenever the store is replaced (build done, first load, Install): derived views of a table rebuild.
+inline std::atomic<std::uint64_t>& Gen() {
+    static std::atomic<std::uint64_t> g{1};
+    return g;
+}
 }  // namespace detail
 
 namespace detail {
@@ -408,6 +437,7 @@ inline void FinishBuild(Tables t) {
     {
         std::lock_guard<std::mutex> lk(detail::A().mu);
         detail::Store() = std::move(t);
+        detail::Gen().fetch_add(1);
         detail::A().percent.store(100);
         detail::A().state.store(2);
     }
@@ -441,9 +471,13 @@ inline const Tables& Get() {
                          err.c_str());
         }
         detail::Store() = std::move(t);
+        detail::Gen().fetch_add(1);
     });
     return detail::Store();
 }
+
+/// Changes whenever the tables are replaced (see detail::Gen).
+inline std::uint64_t Generation() { return detail::Gen().load(); }
 
 inline bool Loaded() {
     return Get().loaded;
@@ -468,6 +502,7 @@ inline const char* GestureText(std::uint32_t goods) {
 inline void Install(Tables t) {
     std::call_once(detail::Once(), [] {});
     detail::Store() = std::move(t);
+    detail::Gen().fetch_add(1);
 }
 
 /// Test helper: loads the cache named by BB_PARTY_TABLES (or the default path) into the store. False
