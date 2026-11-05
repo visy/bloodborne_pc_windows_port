@@ -42,7 +42,7 @@ def make_save(name="Alfred", stats=(10, 11, 12, 13, 14, 15), echoes=500, insight
     struct.pack_into("<II", d, 0x0C, size, NAME_AT + M.NAME_BACK + size)
     struct.pack_into("<II", d, 0x14, M.FLAG_SECTION, POOL + M.FLAG_SECTION)
     struct.pack_into("<II", d, 0x2C, NG_AT, 8)
-    struct.pack_into("<II", d, 0x3C, 0x60, 12)  # an empty world-state section
+    struct.pack_into("<II", d, 0x3C, 0x200, 12)  # an empty world-state section (behind the instance record)
     d[NAME_AT:NAME_AT + 2 * len(name)] = name.encode("utf-16le")
     for k, v in zip(M.STAT_NAMES, stats):
         struct.pack_into("<I", d, NAME_AT - M.STAT_BACK[k], v)
@@ -58,7 +58,11 @@ def make_save(name="Alfred", stats=(10, 11, 12, 13, 14, 15), echoes=500, insight
         cnt = 1984 if sec == 0 else 64
         for k in range(cnt):
             struct.pack_into("<IIII", d, at + 4 + k * 16, 0, 0xFFFFFFFF, 0, 0)
+    d[NAME_AT + M.FACE_BEHIND_NAME:NAME_AT + M.FACE_BEHIND_NAME + 4] = b"FACE"
+    d[M.SLOT_SIZE - 4:] = b""  # the end of a real save is data, not zeros
     put_item(d, n, 0, 0x80800010, 22000300, 1, 7)  # a +3 weapon
+    d[M.GA_START:M.GA_START + 60] = (struct.pack("<5I", 0x80800010, 22000300, M.GEAR_DURABILITY, 0, 1)
+                                     + struct.pack("<2I", M.NO_SLOT, 0) * 5)  # its instance record
     put_item(d, n, 1, 0xB0000064, 0x40000064, 5, 100)  # goods 100 x5
     put_item(d, n, 2, 0xB0000584, 0x40000584, 2, 101)
     struct.pack_into("<I", d, n, 3)
@@ -163,11 +167,97 @@ def test_inventory_edit_remove_levels():
     w = items[0]
     valid = {22000000 + 100 * k for k in range(11)}
     m.set_weapon_level(w, 10, valid)
-    assert M.SaveModel(m.to_bytes()).items((0,))[0].number == 22001000
+    back = M.SaveModel(m.to_bytes())
+    assert back.items((0,))[0].number == 22001000
+    assert back.u32(back._ga_record(w.handle) + 4) == 22001000  # the instance record follows the inventory entry
+    lost = M.SaveModel(make_save())
+    lost.d[M.GA_START:M.GA_START + 60] = bytes(60)  # no instance record: refused, nothing written
+    with pytest.raises(ValueError):
+        lost.set_weapon_level(lost.items((0,))[0], 10, valid)
+    assert lost.items((0,))[0].number == 22000300
     with pytest.raises(ValueError):
         m.set_weapon_level(w, 12, valid)  # no param row
     with pytest.raises(ValueError):
         m.set_weapon_level(w, 5, None)
+
+
+def counter_of(m):
+    return m.u32(m._second_counter())
+
+
+def test_add_goods_takes_the_first_empty_entry_and_moves_two_counters():
+    m = M.SaveModel(make_save())
+    before, used = counter_of(m), m.u32(m.normal_at)
+    m.add_goods(1000, 20)
+    assert m.u32(m.normal_at) == used + 1 and counter_of(m) == before + 1
+    got = [i for i in m.items((0,)) if i.number == 1000][0]
+    assert (got.slot, got.handle, got.iid, got.count, got.serial) == (3, 0xB00003E8, 0x400003E8, 20, 0)
+    entry = m.normal_at + 4 + 3 * M.ENTRY
+    inside = lambda a, b: any(lo <= a and b <= hi for lo, hi in ((m.normal_at, m.normal_at + 4), (entry, entry + M.ENTRY),
+                                                               (m._second_counter(), m._second_counter() + 4)))
+    assert all(inside(a, b) for a, b in m.diff())  # only the used count, the new entry and the second counter
+    assert M.SaveModel(m.to_bytes()).items((0,))[3].count == 20
+
+
+def test_add_goods_with_a_sort_id_gets_the_index_the_menu_lists():
+    m = M.SaveModel(make_save())
+    tail = counter_of(m)
+    m.add_goods(2146, 1, 220077)
+    entry = m.normal_at + 4 + 3 * M.ENTRY
+    assert m.u32(entry + 12) == 220077 << 12 | (3 + 64)
+    assert counter_of(m) == max(tail, 3 + 64)
+    with pytest.raises(ValueError):
+        m.add_goods(2147, 1, 1 << 20)
+
+
+def test_add_goods_refuses_what_is_wrong():
+    m = M.SaveModel(make_save())
+    for call in ((100, 1), (1000, 0), (1000, 1000), (0, 1), (0x10000000, 1)):
+        with pytest.raises(ValueError):
+            m.add_goods(*call)
+    assert m.diff() == []
+    for k in range(M.NORMAL_ENTRIES - 3):
+        m.add_goods(2000 + k, 1)
+    with pytest.raises(ValueError, match="full"):
+        m.add_goods(900000, 1)
+
+
+def test_add_gear_follows_noxdes_layout_and_the_file_still_opens():
+    raw = make_save()
+    m = M.SaveModel(raw)
+    first = M.GA_START
+    struct.pack_into("<II", m.d, first, 0xC0800041, 0x80000001)  # a gem record: handles count from the highest
+    m.d[first + 8:first + 40] = b"\x00" * 32
+    m.d[first + 40:first + 48] = b"\x00" * 8
+    m.set_flag(100)
+    raw = m.to_bytes()
+    m = M.SaveModel(raw)
+    m.add_gear(0, 0x4C4B40)
+    assert len(m.to_bytes()) == M.SLOT_SIZE and m.shift == 52
+    d = m.to_bytes()
+    empty_at = first + 40  # the first empty slot behind the gem record
+    assert d[empty_at:empty_at + 60] == struct.pack("<5I", 0x80800042, 0x4C4B40, 0xC8, 0, 1) + struct.pack("<2I", 0x80000000, 0) * 5
+    again = M.SaveModel(d)  # the header is stale: the name is found again from the face block
+    assert (again.name, again.shift, again.name_at) == ("Alfred", 52, m.name_at)
+    assert [(i.kind, i.number, i.count) for i in again.items((0,))][-1] == ("weapon", 0x4C4B40, 1)
+    assert again.items((0,))[-1].handle == 0x80800042 and again.u32(again.normal_at) == 4
+    assert again.ng_cycle == 0 and again.world_empty and again.flag(100) is True and again.flag(101) is False
+    again.add_gear(1, 40000)  # a second add works on the shifted file
+    third = M.SaveModel(again.to_bytes())
+    assert third.shift == 104 and third.items((0,))[-1].iid == 0x10000000 | 40000
+    assert third.items((0,))[-1].handle == 0x90800043
+    assert third.stats == M.SaveModel(raw).stats and third.echoes == 500
+
+
+def test_add_gear_needs_an_item_slot_and_a_free_entry():
+    m = M.SaveModel(make_save())
+    for k in range(M.NORMAL_ENTRIES - 3):
+        m.add_goods(2000 + k, 1)
+    with pytest.raises(ValueError, match="full"):
+        m.add_gear(0, 0x4C4B40)
+    assert m.shift == 0
+    with pytest.raises(ValueError):
+        M.SaveModel(make_save()).add_gear(4, 100)
 
 
 def test_duplicate_keys_merge():
@@ -220,7 +310,7 @@ def test_apply_edit_backs_up_writes_and_verifies(user):
     assert path.read_bytes() == m.to_bytes() != before
     assert (backup / "1" / "CUSA00207" / "SPRJ0005" / "userdata0000").read_bytes() == before
     assert backup.name.endswith("-before-edit") and (backup / S.INFO).is_file()
-    assert S.list_backups(user, "solo")[0]["path"] == backup
+    assert S.list_backups(user, "solo")[0]["path"].samefile(backup)  # MSYS Python spells the same folder with a backslash
     # the other slot and the system file are untouched
     assert S.slot_files(user, "solo")[1].read_bytes() == make_save("Beth", phantom=1)
 
@@ -408,7 +498,7 @@ def test_flag_lists_match_party_session():
     assert F.BOSS_IDS == ps.BOSS_FLAGS and F.LAMP_IDS == ps.LAMP_FLAGS and F.ENDING_IDS == ps.ENDING_FLAGS
     assert all(M.group_key(f) is not None for f in F.BOSS_IDS + F.ALL_LAMP_IDS + F.ENDING_IDS)
     assert len(F.bosses()) == 19 and len(F.lamps()) == 28 + 16
-    assert F.lamps()[0][1] == "Abandoned Old Workshop" and F.bosses()[4][1:] == ("Cathedral Ward", "Boss [12401800]")
+    assert F.lamps()[0][1] == "Abandoned Old Workshop" and next((g, l) for f, g, l in F.bosses() if f == 12401800) == ("Cathedral Ward", "Boss [12401800]")
     assert {g for _, g, _ in F.bosses() + F.lamps()} <= set(F.AREAS.values())
     assert M.group_key(12401800) == party_group(12401800)
 
@@ -489,15 +579,10 @@ def test_catalogue_accepts_the_eboot_folder(tmp_path):
     assert N.Catalogue.load(GAME.parent, tmp_path).ok
 
 
-def test_lamp_flags_are_the_whole_lamp_dlc_included():
-    from saveedit import flagsdata as F
-    assert F.lamp_flags(73400201) == (73400201, 13407830, 13407831)       # Nightmare Church (issue #28)
-    assert F.lamp_flags(72410201) == (72410201, 12417830, 12417831)
-    assert F.lamp_flags(73600202) == (73600202, 13607850, 13607851)       # Fishing Hamlet
-    dlc = [f for f in F.lamps() if f[1] in ("Hunter's Nightmare", "Research Hall", "Fishing Hamlet")]
-    assert len(dlc) == 10 and {g for _, g, _ in dlc} == {"Hunter's Nightmare", "Research Hall", "Fishing Hamlet"}
-    assert all(M.group_key(x) is not None for f in F.ALL_LAMP_IDS for x in F.lamp_flags(f))
-    assert len(set(F.ALL_LAMP_IDS)) == len(F.ALL_LAMP_IDS)
+@pytest.mark.skipif(not (GAME / "msg").is_dir(), reason="no game folder")
+def test_fishing_hamlet_lamps_are_named(tmp_path):
+    c = N.Catalogue.load(GAME, tmp_path)
+    assert [c.lamp_name(f) for f in (73600200, 73600201, 73600202)] == ["Fishing Hamlet", "Lighthouse Hut", "Coast"]
 
 
 def test_lamp_and_boss_names_from_the_catalogue():
@@ -515,7 +600,46 @@ def test_lamp_and_boss_names_from_the_catalogue():
 def test_real_names_of_lamps_and_bosses(tmp_path):
     from saveedit import flagsdata as F
     c = N.Catalogue.load(GAME, tmp_path)
-    assert all(c.lamp_name(f) for f in F.LAMP_IDS)  # every lamp flag has a warp-list name
+    assert all(c.lamp_name(f) for f in F.ALL_LAMP_IDS)  # every lamp flag has a warp-list name
     assert c.lamp_name(72410200) == "1st Floor Sickroom" and c.lamp_name(72110200) == "Abandoned Old Workshop"
     named = [c.boss_name(chr_id) for chr_id in F.BOSS_CHR.values() if chr_id]
     assert all(named) and "Vicar Amelia" in named and "Orphan of Kos" in named
+
+
+def test_same_named_armour_rows_are_told_apart():
+    c = N.Catalogue({"names": {"armor": {"71000": "Hunter Garb", "281000": "Hunter Garb", "191000": "Student Uniform",
+                                          "301000": "Student Uniform"}},
+                     "ids": {"armor": [71000, 281000, 191000, 301000]}})
+    assert dict(c.search(1, "garb")) == {71000: "Hunter Garb (Cape)", 281000: "Hunter Garb"}
+    assert c.name(1, 191000) == "Student Uniform (Cape)" and c.name(1, 301000) == "Student Uniform"
+
+
+def test_guest_written_save_is_edited_through_a_repaired_copy(user):
+    """A save the game wrote as a guest has an empty world-state section: the editor works on a copy with the
+    blocks in and writes the game's own empty section back (scripts/save_editor.py), with no export / import step."""
+    import save_editor as se
+    d = bytearray(make_save("Gwen"))
+    struct.pack_into("<6I", d, 0x3C, 0x200, 12, 0x20C, 12, 0x20C, 16)  # a header save_editor.layout accepts
+    guest = bytes(d)
+    assert se.world_empty(guest)
+    path = S.slot_files(user, "party")[0]
+    path.write_bytes(guest)
+    model = S.open_slot(user, "party", 0)
+    assert not se.world_empty(model.orig) and model.world_changes
+    model.set_echoes(777)
+    S.apply_edit(user, "party", 0, model, not_running)
+    after = path.read_bytes()
+    assert se.world_empty(after) and S.open_slot(user, "party", 0).echoes == 777
+    diff = [i for i, (a, b) in enumerate(zip(guest, after)) if a != b]
+    assert 0 < len(diff) <= 4  # only the echoes changed; the game's own empty section is back
+
+
+def test_lamp_flags_are_the_whole_lamp_dlc_included():
+    from saveedit import flagsdata as F
+    assert F.lamp_flags(73400201) == (73400201, 13407830, 13407831)       # Nightmare Church (issue #28)
+    assert F.lamp_flags(72410201) == (72410201, 12417830, 12417831)
+    assert F.lamp_flags(73600202) == (73600202, 13607850, 13607851)       # Fishing Hamlet
+    dlc = [f for f in F.lamps() if f[1] in ("Hunter's Nightmare", "Research Hall", "Fishing Hamlet")]
+    assert len(dlc) == 10 and {g for _, g, _ in dlc} == {"Hunter's Nightmare", "Research Hall", "Fishing Hamlet"}
+    assert all(M.group_key(x) is not None for f in F.ALL_LAMP_IDS for x in F.lamp_flags(f))
+    assert len(set(F.ALL_LAMP_IDS)) == len(F.ALL_LAMP_IDS)
