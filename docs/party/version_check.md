@@ -70,6 +70,24 @@ line "Max players (4-player party): host 4, you 3", a refused guest reads the ho
 `party-net-test` (announcement bits), `tests/test_launcher_discovery.py` (parser, rows, `parse_party_adopt`,
 `apply_host_options`), smoke `vm` (`VM_MODE=maxadopt`: host 4, three guests 3, all join; `VM_MODE=refuse`).
 
+### The host's mods label (0.7.9)
+
+The VPN lobby already lists a host's mods label (`party_vpnlobby.h` `mods_label`: `BB_PARTY_MODS_LABEL` when valid, e.g.
+`nocturne@1.0.1`, else `mods:` + 8 hex of the party mod hash; none without gameplay mods; 1..255 of a-z 0-9 @ . _ : + -,
+`valid_mods_label`). LAN discovery and the refusal carry the same label, so a guest can tell which mods a host uses
+before the join or from its refusal. The party mod hash stays the join check.
+
+| Where | What |
+|---|---|
+| LAN discovery | a third datagram after the announcement and its extension, only while the host has a label: `0xfa 'M' 1, id u32, u8 len + label` (9..263 bytes, strict `parse_mods`). An old listener drops it as junk (`parse` / `parse_ext` and `launcher.py` refuse it); the announcement itself is unchanged. |
+| Mismatch REJECT | when the mods hashes differ and the host has a label: a prefix `[host mods: <label>] ` after the options prefix (`reject_with_mods`). The guest's `PartyLink` strips it (`reject_mods_label()`); the game adds "(the host's mods: <label>)" to the party status and writes `<user dir>/party_host_mods.txt` (the label, one line; removed after a refusal without one). An older guest shows the prefix as part of the reason. |
+| Party codes | nothing: BBP3's four flag bits are all used and the rest of the last symbol is the check, so a "mods" bit would make the code longer or break older decoders. |
+
+Tests: `party-net-test` (the datagram: round trip, the longest label, invalid labels never sent, strict parse, old parsers
+refuse it, junk), `party-link-test` (prefix round trip and forged labels; over the wire: a refused guest reads the host's
+label next to its options, a refusal over other things carries none), `tests/test_launcher_discovery.py` (the launcher's
+listener ignores the datagram).
+
 The party patch set reflects what really runs: a party option that installs a hook (for example
 guest lamps / headstones, the 4-player hooks, B2) changes it, so two players with different
 gameplay options cannot meet in a half-patched session. Diagnostic hooks (`BB_PARTY_TRACE_*`, item

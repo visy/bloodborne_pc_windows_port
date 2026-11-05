@@ -375,6 +375,19 @@ void write_adopt_file(const HostOptions& host) {
     if (f) f << adopt_file_text(host);
 }
 
+// A guest refused over gameplay mods keeps the host's mods label for a launcher (party_host_mods.txt); none: no file.
+void write_host_mods_file(const std::string& label) {
+    std::error_code ec;
+    const fs::path p = fs::path(user_dir()) / "party_host_mods.txt";
+    if (label.empty()) {
+        fs::remove(p, ec);
+        return;
+    }
+    fs::create_directories(user_dir(), ec);
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    if (f) f << label << "\n";
+}
+
 // A9: the party's installed game hooks (coop_hooks), diagnostics (logs, probes, traces, test
 // fixtures) left out: every peer must run the same gameplay patch set.
 void hook_identity(LinkConfig& cfg) {
@@ -1061,6 +1074,14 @@ void on_state(LinkState s, const std::string& detail) {
                     plog("host-owned options differ; kept the host's for the launcher's next join (party_adopt.txt): %s",
                          options_text(host_opts).c_str());
                 }
+            }
+            // 0.7.9: the host's mods label (a refusal over gameplay mods): shown, and kept for a launcher in
+            // <user dir>/party_host_mods.txt (one line; removed after a refusal without one).
+            const std::string host_mods = link->reject_mods_label();
+            write_host_mods_file(host_mods);
+            if (!host_mods.empty()) {
+                shown += " (the host's mods: " + host_mods + ")";
+                plog("the host's mods label: %s (party_host_mods.txt)", host_mods.c_str());
             }
             set_error("host refused: " + shown);
             plog("the host refused this game: %s", shown.c_str());
@@ -1901,6 +1922,7 @@ void start_host(LinkConfig cfg) {
             a.open = party::open_party::ScopeOf(a.password, BbSettings::Get().party_vpn_lobby, BbSettings::Get().party_open) !=
                      party::open_party::Scope::None;
             a.build = rr.cfg.build_id;
+            a.mods = rr.cfg.mods_label;  // 0.7.9: its own datagram (party_discovery.h), none without gameplay mods
         }
         int players = 0;
         for (const RosterEntry& e : l->roster()) players += e.connected ? 1 : 0;
@@ -2988,6 +3010,9 @@ void startup_main() {
     std::string what;
     patch_identity(cfg, &what);
     mod_identity(cfg, &what);
+    // 0.7.9: what this game loaded as the VPN lobby shows it (party_vpnlobby.h mods_label): LAN discovery and the
+    // refusal of a guest with other mods carry it; the party's mod hash stays the join check.
+    cfg.mods_label = bbnet::lobby::mods_label(env("BB_PARTY_MODS_LABEL"), !cfg.mod_names.empty(), cfg.mods_hash);
     // Max players and the 4-player rule set (party_fourp.h): the same for every player.
     cfg.options = options_text(local_options(cfg.max_players));  // 0.7.8: a refused guest takes them (party_options.h)
     cfg.rules = "max " + std::to_string(cfg.max_players) + " players, " + coop::fourp::FourpRulesTag();
