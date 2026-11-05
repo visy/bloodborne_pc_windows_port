@@ -114,6 +114,25 @@ void ReportProducer(const char* what, u32 other, const char* other_where, const 
 }
 } // namespace
 
+void ReportCommandOutsideChunk(const void* chunk, size_t chunk_used, const void* command,
+                               const char* reason) noexcept {
+    /* Rate limited rather than once per session: a single overwritten chunk abandons the rest of
+     * its list on every Execute, and the next ones carry the same defect (Mrsuss60 3e600386). */
+    static std::atomic<u32> reported{0};
+    if (reported.fetch_add(1, std::memory_order_relaxed) >= 32) {
+        return;
+    }
+    const auto base = reinterpret_cast<std::uintptr_t>(chunk);
+    const auto addr = reinterpret_cast<std::uintptr_t>(command);
+    LOG_CRITICAL(Render_Vulkan,
+                 "RecordChunk::Execute: {} for command {:#x} (slot {}, used {}, capacity {}): "
+                 "dropped the rest of the chunk",
+                 reason, static_cast<unsigned long long>(addr),
+                 static_cast<unsigned long long>(addr - base),
+                 static_cast<unsigned long long>(chunk_used),
+                 static_cast<unsigned long long>(RecordChunk::Capacity));
+}
+
 void Scheduler::ProducerScope::Enter(const char* where) noexcept {
     previous_where = producer_scope_where;
     static thread_local const u32 tid = CurrentThreadId();
