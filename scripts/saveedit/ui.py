@@ -359,13 +359,13 @@ class SaveEditorTab(ttk.Frame):
         if sel and self._risk():
             fid = int(sel[0])
             on = not self.model.flag(fid)
-            for f in (F.lamp_flags(fid) if fid in F.ALL_LAMP_IDS else (fid,)):  # a lamp: its object flags too
+            for f in (F.lamp_flags(fid) if fid in F.lamp_ids(self.catalogue) else (fid,)):  # a lamp: its object flags too
                 self.model.set_flag(f, on)
             self.fill_flags()
 
     def light_lamps(self):
         if self._risk():
-            for fid in F.ALL_LAMP_IDS:
+            for fid in F.lamp_ids(self.catalogue):
                 for f in F.lamp_flags(fid):  # the lamp-lit flag and the lamp object's flags
                     self.model.set_flag(f, True)
             self.fill_flags()

@@ -69,6 +69,13 @@ struct NpcFogRow {
     float x, y, z, yaw;
 };
 
+/// One event-flag category row {first id, last id, category name, note}; rows keep file order (first match wins).
+struct FlagRow {
+    std::uint32_t first, last;
+    std::string category;
+    std::string note;
+};
+
 struct Tables {
     bool loaded = false;
     std::string status = "party tables not loaded";
@@ -89,6 +96,8 @@ struct Tables {
     std::vector<BossDropRow> boss_drops;
     std::vector<AuditRowData> audit_rows;
     std::vector<KillAward> kill_awards;
+    // event-flag categories (party_progress.cpp resolves the names)
+    std::vector<FlagRow> flag_rows;
 };
 
 namespace detail {
@@ -240,6 +249,10 @@ inline bool Parse(const std::string& text, Tables* out, std::string* err) {
                  detail::ToU32(f[2], &r.leave) && detail::ToU32(f[3], &r.host_flag) && detail::ToU32(f[4], &r.region) &&
                  detail::ToF(f[5], &r.x) && detail::ToF(f[6], &r.y) && detail::ToF(f[7], &r.z) && detail::ToF(f[8], &r.yaw);
             if (ok) t.npc_fog.push_back(r);
+        } else if (section == "flagRows") {
+            ok = f.size() >= 3 && detail::ToU32(f[0], &u[0]) && detail::ToU32(f[1], &u[1]) && !f[2].empty() &&
+                 u[0] <= u[1];
+            if (ok) t.flag_rows.push_back({u[0], u[1], f[2], f.size() > 3 ? f[3] : std::string()});
         } else if (section == "itemLotFlag") {
             ok = f.size() >= 2 && detail::ToI32(f[0], &a) && detail::ToI32(f[1], &b);
             if (ok) t.lot_flags.push_back({a, b});

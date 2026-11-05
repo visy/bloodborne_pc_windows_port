@@ -4336,7 +4336,7 @@ bool LampIntent(u32 id, TravelIntent* t) {
 /// respawns at the host's last lamp in the host's world. No leave, no bell. False: not possible
 /// (no session, no host lamp, off) - the caller runs the old redirect.
 /// A lit lamp of the map the guest stands in (the host's world): the ReturnPointParam ids AAB295k
-/// of that map whose lamp flag 1AAB7800 + 20k (2009[5] registration, party_flags.inc) is set in
+/// of that map whose lamp flag 1AAB7800 + 20k (2009[5] registration, the flag category table (flagRows)) is set in
 /// the host-world overlay. The first one (lowest k); 0 if none.
 /// Lamp `rp` (ReturnPointParam AAB295n) is lit in the host's world: its lamp-lit flag 7AAB0200 + n
 /// or its headstone flag 1AAB7810 + 20n in the host's world image (the mirror; any thread). False
