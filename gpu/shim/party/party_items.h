@@ -781,4 +781,49 @@ int GiveGoodsToOwn(std::uint32_t id, int n, bool dialog);
 /// and after), -1 when unavailable.
 int TakeGoodsFromOwn(std::uint32_t id, int n);
 
+// ---- 0.7.9 give weapons and armor (party_give.cpp; rules party_give_rules.h; docs/party/give_items.md 5) ----
+/// One weapon / armor inventory entry as the give code sees it: the item id (a weapon's id carries its upgrade level),
+/// the GaItem handle (the entry's identity: two copies of one weapon are two handles), the inventory index, whether it
+/// is worn / wielded, and a weapon's blood gems (slot, GemGenParam id, the 8 instance ints).
+struct GearItem {
+    give::Kind kind = give::Kind::Weapon;
+    std::uint32_t id = 0, handle = 0;
+    int index = -1;
+    bool equipped = false;
+    int gem_count = 0;
+    give::GearGem gems[give::kGearSlots];
+    std::uint32_t masks[give::kGearSlots] = {give::kNoSlot, give::kNoSlot, give::kNoSlot, give::kNoSlot, give::kNoSlot};  ///< weapon: slot shape masks
+    std::uint32_t aux = 0;  ///< weapon: the instance word at +0x28
+};
+struct GearGiveResult {
+    std::uint32_t handle = 0;  ///< the new entry's handle
+    int arrived = 0;           ///< new entries found (1 = good)
+    int gems_placed = 0;       ///< gems attached to the new weapon
+    int gems_loose = 0;        ///< gems the slot did not take: in the inventory as loose gems (never lost)
+    int gems_lost = 0;         ///< gems that could not be built at all (should stay 0: the receiver validated them)
+};
+/// The entry with this handle and item id as a gear item (false: gone, not gear, or an unreadable instance).
+bool ReadGearEntry(give::Kind kind, std::uint32_t id, std::uint32_t handle, GearItem* out);
+/// Every weapon / armor entry of the own inventory.
+std::vector<GearItem> OwnGear();
+/// Free entries of the inventory's normal section; -1 unknown.
+int GearFreeSlots();
+bool GearEntryExists(std::uint32_t handle);
+/// Giver: removes the entry with this handle (by index, never by item id); true when it is gone afterwards.
+bool TakeGearFromOwn(std::uint32_t handle);
+/// Receiver: adds the weapon / armor with its gems (one new entry; each gem a new instance in its slot, else a loose
+/// gem in the inventory). Returns 1 when the entry arrived, 0 when nothing arrived, -1 when unsure / unavailable.
+int GiveGearToOwn(const GearItem& want, bool dialog, GearGiveResult* res);
+/// Builds the giveable-gear table from the loaded params once (main thread; a no-op until the params are loaded).
+void EnsureGearTable();
+/// Receiver: do the param rows exist for this weapon / armor and every gem on it (EquipParamWeapon / Protector,
+/// GemGenParam, GemeffectParam)? A gift the game cannot build is refused before anything moves.
+bool GearBuildable(give::Kind kind, std::uint32_t id, int gems, const give::GearGem* g);
+/// Test fixture: fills the free gem slots of the weapon entry `handle` with up to `want` real gems that fit (gems of the test save),
+/// returns how many and their data in `out` (5 entries).
+int GearFixtureGems(std::uint32_t handle, int want, give::GearGem* out, std::uint32_t* masks, std::uint32_t* aux);
+/// Test aid (BB_PARTY_GEAR_PROBE): logs the weapon / armor entries, a weapon's instance words and a few code bytes.
+void GearProbe();
+
+
 } // namespace coop

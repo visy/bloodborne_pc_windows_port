@@ -355,6 +355,11 @@ struct Values {
     /// consumables and sends one to a member through a two-phase transfer. The giver's switch shows the list, the
     /// receiver's is its consent. Per player. OFF by default. ini party_give_items; env BB_PARTY_GIVE_ITEMS=1 wins.
     std::atomic<bool> party_give_items{false};
+    /// 0.7.9 (givegear079, CL-1b3b98): the same for weapons and armor (a weapon moves with its upgrade level and blood gems).
+    /// Its own switch, separate from party_give_items: gear is worth more than a stack of bullets, so a hunter can take
+    /// consumables and still refuse gear. The giver's switch adds Give to a weapon's / armor's menu, the receiver's is its
+    /// consent. Per player. OFF by default. ini party_give_gear; env BB_PARTY_GIVE_GEAR=1 wins.
+    std::atomic<bool> party_give_gear{false};
     /// Party gameplay switches (the launcher's Party Rules / My Party tabs, the game's party pages in
     /// System; PartySwitches below): ini key = the member's name, env BB_PARTY_* = 0/1 wins at start.
     /// On by default. Load puts each value into the process environment when its variable is unset,

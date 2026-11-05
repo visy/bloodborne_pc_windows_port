@@ -832,7 +832,8 @@ constexpr std::size_t BuilderSize = 0x1400;  // the game's builder struct is 0x1
 struct PickState {
     void* finalizer = nullptr;  ///< a clone of the item menu's finalizer functor (owns the item context)
     u64 owner = 0;              ///< the builder's +0x1180 field (the item menu's owner)
-    u32 item = 0;               ///< type bits | goods id
+    u32 item = 0;               ///< type bits | goods id (0.7.9: or a weapon / armor id)
+    u32 index = 0;              ///< the item menu's inventory index (gear: tells two copies of one weapon apart)
     int slot = -1;              ///< the chosen member
 } pick;
 enum PickKind : u32 { PickMember = 1, PickAmount = 2 };
@@ -912,10 +913,11 @@ bool BuildCommandMenu(void* out, const std::vector<PickEntry>& entries) {
 }
 
 /// The Give command was chosen: the member picker.
-void OpenMemberPicker(void* out, u32 item) {
+void OpenMemberPicker(void* out, u32 item, u32 index) {
     const auto members = coop::give::MenuMembers();
     std::vector<PickEntry> entries;
     pick.item = item;
+    pick.index = index;
     for (std::size_t i = 0; i < members.size() && i < 4; ++i) {
         P::SetPickerText(int(i), members[i].second);
         entries.push_back({P::PickerText(int(i)), PickMember, u32(members[i].first), 0});
@@ -952,7 +954,9 @@ BB_SYSV void* PickInvoke(void* out, void* self, void* /*event*/) {
     std::memcpy(&kind, static_cast<const u8*>(self) + 0x78, 4);
     std::memcpy(&a, static_cast<const u8*>(self) + 0x7c, 4);
     if (RepeatedInvoke(kind, a)) return out;
-    if (kind == PickMember) {
+    if (kind == PickMember && coop::give::MenuIsGear(pick.item)) {
+        coop::give::MenuGiveGear(pick.item, pick.index, int(a));  // gear: one entry, no amount picker
+    } else if (kind == PickMember) {
         OpenAmountPicker(out, int(a));
     } else if (kind == PickAmount && pick.slot >= 0) {
         coop::give::MenuGive(pick.item, int(a), pick.slot);
@@ -979,7 +983,7 @@ BB_SYSV void* GiveInvoke(void* out, void* self, void* /*event*/) {
     if (out) *static_cast<void**>(out) = nullptr;
     if (RepeatedInvoke(0, item)) return out;
     coop::give::MenuChosen(item, index);
-    if (out) OpenMemberPicker(out, item);
+    if (out) OpenMemberPicker(out, item, index);
     return out;
 }
 void BuildGiveVtable() {
@@ -1025,9 +1029,10 @@ BB_SYSV void* CommandHook(void* list, void* pair, void* functor, void* x) {
         InItemMenuBuilder(__builtin_return_address(0))) {
         // The item menu's Discard entry is about to go in: make a Give functor for this item from Discard's.
         void* object = *reinterpret_cast<void* const*>(static_cast<const u8*>(functor) + 0x20);
-        u32 item = 0;
+        u32 item = 0, index = 0;
         if (object && bbnet::guest_read(reinterpret_cast<std::uintptr_t>(object) + 0x54, &item, 4) &&
-            coop::give::MenuOffers(item)) {
+            bbnet::guest_read(reinterpret_cast<std::uintptr_t>(object) + 0x50, &index, 4) &&
+            (coop::give::MenuOffers(item) || coop::give::MenuOffersGear(item, index))) {
             BuildGiveVtable();
             give_pending = static_cast<u8*>(GiveClone(object, nullptr));
             give_pending_item = item;
