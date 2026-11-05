@@ -62,7 +62,9 @@ The host's link drops, on both sides:
 
 So an invader cannot write the host's world progress or items, and its own save is not changed by the party.
 An invader's slot is never kept: a lost link releases it at once (no 130 s resume), and the invader's link does not reconnect
-(it goes home).
+(it goes home). Nothing of it is held afterwards either (0.7.9): the host's 26 s sign hold ("a crashed member's connection is still
+held") is for a member whose link was RESET (a crash); an invader that goes home through its own send-home leaves the game's room
+normally, so the next invader's room request is answered at once (smoke `iv` asks again 22 s after the first one got home, when the invader's own death load is over).
 
 ## The invasion
 

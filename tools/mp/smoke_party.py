@@ -8521,7 +8521,7 @@ def phase_iv(only, name="iv", sim=None):
     isteps = "log@5,invader@4,face=19@2,hit=4@1,log@3"
     ienv = ["0:BB_PARTY_INVADERS=1", "2:BB_PARTY_INVADE=1",
             "0:BB_PARTY_INVADE_TEST=die@40?in#2",
-            "2:BB_PARTY_INVADE_TEST=rejoin@25?home,die@45?in,rejoin@15?home",
+            "2:BB_PARTY_INVADE_TEST=rejoin@25?home,die@45?in,rejoin@22?home",
             "0:BB_PARTY_PVP_TEST=" + hsteps, "1:BB_PARTY_PVP_TEST=" + gsteps, "2:BB_PARTY_PVP_TEST=" + isteps]
     if sim:
         ienv += ["%d:BB_NET_SIM=%s" % (i, sim) for i in range(3)]
@@ -8555,12 +8555,20 @@ def check_iv(v, L, name="iv"):
     none_of(v, L, n + " no friendly-fire cell opened between the host and the guest", r"friendly fire applied", 0, 1e9, (0, 1))
     # the invader falls: tells the host, goes home through the game's own send-home
     fell = need(v, L, n + " invader: it falls and goes home", 2, r"invade: the invader fell: going home", inn or 0)
-    need(v, L, n + " host: the invasion ends (invader died)", 0, r"invasion of slot \d+ ends: invader_died|ends: .*invader", fell or 0)
-    need(v, L, n + " host+guest: told the invader was defeated", 1, r"invade: notice: The invader .* was defeated", fell or 0)
-    home = need(v, L, n + " invader: home through the game's own leave (no lamp revive)", 2, r"host lost \([^)]*\): home now \(OnLeave_Limit\)", fell or 0)
+    # the games' clocks start a few ms apart and the host reads the invader's HP 0 from its vitals: its line can come a hair
+    # before the invader's own, so the rows that follow look from 3 s earlier
+    fell0 = max(0, fell - 3) if fell else 0
+    need(v, L, n + " host: the invasion ends (invader died)", 0, r"invasion of slot \d+ ends: invader_died|ends: .*invader", fell0)
+    need(v, L, n + " host+guest: told the invader was defeated", 1, r"invade: notice: The invader .* was defeated", fell0)
+    home = need(v, L, n + " invader: home through the game's own leave (no lamp revive)", 2, r"host lost \([^)]*\): home now \(OnLeave_Limit\)", fell0)
     # asks again; the host dies; the invader goes home again
     again = need(v, L, n + " invader: asks again", 2, r"test: script step \d+: rejoin -> ", home or 0)
     inn2 = need(v, L, n + " host: the invader is in the world again", 0, r"invade: invader slot \d+: in the world", again or 0)
+    # 0.7.9: an invader's slot is released at once: the second invasion (asked 22 s after it got home) is not refused by the crash
+    # hold ("a crashed member's connection is still held", 26 s) nor by a world that still counts the first invader ("full")
+    none_of(v, L, n + " host: the second invasion is not refused (no crash hold, no full world)", r"direct summon: slot 2 .*refused \((a crashed member's connection is still held|the host's world is full)", again or 0, 1e9, (0,))
+    if again is not None and inn2 is not None:
+        v.step(n + " host: the second invader is in within 25 s of asking (it waited 30 s before)", inn2 - again < 25, "%.1f s" % (inn2 - again))
     hd = need(v, L, n + " host: dies", 0, r"test: script step \d+: this player dies now", inn2 or 0)
     need(v, L, n + " host: the invasion ends (host died)", 0, r"invasion of slot \d+ ends: host_died", hd or 0)
     need(v, L, n + " invader: told it won", 2, r"invade: notice: You defeated ", hd or 0)
@@ -8568,14 +8576,14 @@ def check_iv(v, L, name="iv"):
     need(v, L, n + " the teams go back (invader chr restored)", 0, r"invader: team \d+ closed: \d+ table cell\(s\) put back", hd or 0)
     # the look is removed with the invasion (the cooperator look comes back on the other games' copy)
     for i, who in ((0, "host"), (1, "guest")):
-        need(v, L, n + " %s: the invader's red look is removed at the end" % who, i, r"invader: its red look \(SpEffect 9026\) is off|invader: team \d+ closed", fell or 0)
+        need(v, L, n + " %s: the invader's red look is removed at the end" % who, i, r"invader: its red look \(SpEffect 9026\) is off|invader: team \d+ closed", fell0)
     # rewards (the game's own CalcExcuteMultiBonus, once per outcome, on the receiver's own game)
-    need(v, L, n + " host: paid for the fallen invader (echoes at 0.50, no Insight)", 0, r"invade: reward: host, invader_died: rate 0\.50, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell or 0)
-    need(v, L, n + " guest: paid for the fallen invader (echoes at 0.25, no Insight)", 1, r"invade: reward: guest, invader_died: rate 0\.25, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell or 0)
+    need(v, L, n + " host: paid for the fallen invader (echoes at 0.50, no Insight)", 0, r"invade: reward: host, invader_died: rate 0\.50, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell0)
+    need(v, L, n + " guest: paid for the fallen invader (echoes at 0.25, no Insight)", 1, r"invade: reward: guest, invader_died: rate 0\.25, Insight \+0: Blood Echoes -?\d+ -> -?\d+", fell0)
     need(v, L, n + " invader: paid for the fallen host (echoes at 0.10 and +1 Insight)", 2, r"invade: reward: invader, host_died: rate 0\.10, Insight \+1: Blood Echoes -?\d+ -> -?\d+", hd or 0)
     # the result banners (the game's text effects): ADVERSARY EXPUNGED (7) to the host and the guest, PREY SLAUGHTERED (5) only to the invader
-    need(v, L, n + " host: the 'adversary expunged' banner when the invader fell", 0, r"invade: banner: host, invader_died: text effect 7", fell or 0)
-    need(v, L, n + " guest: the 'adversary expunged' banner when the invader fell", 1, r"invade: banner: guest, invader_died: text effect 7", fell or 0)
+    need(v, L, n + " host: the 'adversary expunged' banner when the invader fell", 0, r"invade: banner: host, invader_died: text effect 7", fell0)
+    need(v, L, n + " guest: the 'adversary expunged' banner when the invader fell", 1, r"invade: banner: guest, invader_died: text effect 7", fell0)
     need(v, L, n + " invader: the 'prey slaughtered' banner when it killed the host", 2, r"invade: banner: invader, host_died: text effect 5", hd or 0)
     none_of(v, L, n + " the host and the guest never get PREY SLAUGHTERED (text effect 1 / 5) nor a boss-defeat banner in an invasion",
             r"invade: banner: (host|guest), \w+: text effect [15]|boss defeat processing 2003\[12\]", 0, 1e9, (0, 1))
