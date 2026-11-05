@@ -4045,6 +4045,19 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             SafeGet(dm + 0x134, &st);
             SafeGet(dm + 0x138, &stmax);
         }
+        // BB_PARTY_TEST_SET_HP=PCT:DELAY_S (covenant079): once, DELAY_S s after the first sample, the HP is set to PCT % of the maximum
+        // (the Corruption / Radiance amounts are keyed on low HP: the drain acts at conditionHp 12.5 %)
+        if (const char* sh = std::getenv("BB_PARTY_TEST_SET_HP"); sh && sh[0] && dm && hpmax > 0) {
+            static Clock::time_point first = now;
+            static bool done = false;
+            const char* colon = std::strchr(sh, ':');
+            if (!done && Seconds(first, now) >= (colon ? std::atof(colon + 1) : 0.0)) {
+                done = true;
+                std::int32_t v = std::max(1, int(hpmax * std::atof(sh) / 100.0));
+                SafeWrite(dm + 0xf8, &v, 4);
+                Log("test: HP set to %d of %d (BB_PARTY_TEST_SET_HP)", v, hpmax);
+            }
+        }
         Log("test: oath: covenant effects on the local player: %s (role %d, map 0x%08x) vitals HP %d/%d stamina %d/%d",
             on.empty() ? "none" : on.c_str(), int(s.session_role), unsigned(s.map_id), hp, hpmax, st, stmax);
     }

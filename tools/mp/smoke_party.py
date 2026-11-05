@@ -6140,7 +6140,8 @@ def phase_cvm(only):
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(["log_oath", "goods=4104:1", "award_lot=" + CVM_HOST_LOT] + seq("host")),
               "0:BB_PARTY_GUESTSVC_TEST=hosttalk=210699;open;hsdelay=45;keys=" + CVR_KEYS,
               "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(["log_oath"] + seq("guest")),
-              "1:BB_PARTY_GUESTSVC_TEST=lot=%s;goods=4104:1;warp=talk:210699;open;keys=%s" % (CVM_GUEST_LOT, CVR_GKEYS)],
+              "1:BB_PARTY_GUESTSVC_TEST=lot=%s;goods=4104:1;warp=talk:210699;open;keys=%s" % (CVM_GUEST_LOT, CVR_GKEYS)]
+             + (["0:BB_PARTY_TEST_SET_HP=" + os.environ["CVM_HP"], "1:BB_PARTY_TEST_SET_HP=" + os.environ["CVM_HP"]] if os.environ.get("CVM_HP") else []),
         crash=[], until=[r"0:test: host_press 0@40[\s\S]*1:test: guest_press 0@40"], until_hold=10,
     )
 
@@ -6247,7 +6248,7 @@ def phase_cvk(only):
         for _ in range(int(os.environ.get("CVK_TRIES", "1"))):
             seq += ["%s_press=0x4000@0.5%%m25_00!" % who, "%s_press=0@%s%%m25_00!" % (who, os.environ.get("CVK_WAIT", "14"))]
         # after the kneel her talk goes on: Cross through her lines / the offer (own menu choices are real rows)
-        for _ in range(int(os.environ.get("CVK_TALK", "14"))):
+        for _ in range(int(os.environ.get("CVK_TALK", "24"))):
             seq += ["%s_press=0x4000@2.5%%m25_00!" % who, "%s_press=0@0.5%%m25_00!" % who]
         return seq + ["%s_press=0x0@3%%m25_00!" % who]
     n = int(os.environ.get("CVT_PRESSES", "24"))
@@ -12178,6 +12179,14 @@ def check_cvm(v, L, d=None):
     ddetail = "host %s HP / s, guest %s HP / s" % tuple("%.3f" % dr[i] if dr[i] is not None else "-" for i in (0, 1))
     Log("HP drift: " + ddetail)
     v.step("cvm HP drift measured on both members", dr[0] is not None and dr[1] is not None, ddetail)
+    if os.environ.get("CVM_HP"):  # 0.7.9: both members set to a low HP (CVM_HP=PCT:DELAY_S) after the rune is on: what does each rune do from there
+        for i, who in ((0, "host"), (1, "guest")):
+            ts = L.find(i, r"test: HP set to \d+ of \d+", 0)
+            pts = [(t, hp) for t, hp, hpmax, st, stmax, fx in ser[i] if ts and t >= ts[0] + 1.0]
+            Log("%s after the low-HP set (%s): %s" % (who, ts[1][-40:] if ts else "none", [(round(t - ts[0], 1), hp) for t, hp in pts[::4]][:40] if ts else ""))
+            v.step("cvm the %s's HP is set low and sampled afterwards" % who, bool(ts) and len(pts) >= 10, "%d samples" % len(pts))
+            if pts:
+                Log("%s HP %d -> %d over %.1f s, rows %s" % (who, pts[0][1], pts[-1][1], pts[-1][0] - pts[0][0], sorted({x[5] for x in ser[i] if ts and x[0] >= ts[0]})[-1:]))
     check_common(v, L, "cvm")
 
 
@@ -12218,9 +12227,11 @@ def check_cvk(v, L, d: Path):
         need(v, L, "cvk the %s's kneel flag 72500329 rises" % who, i, r"test: flags.* 72500329=1 ", at or 0)
         need(v, L, "cvk the %s swears the Vileblood oath (a real choice row)" % who, i, r"npc_talk: local choice: npc 250307 .*Swear Vileblood Oath", at or 0)
         need(v, L, "cvk the %s hears \"Now, thou'rt too a Vileblood\"" % who, i, r"npc_talk: local line: talk 1700462 ", at or 0)
-    need(v, L, "cvk the guest's own talk gift trigger 9042 is its own grant", 1,
-         r"own talk gift trigger 9042 .*lot 17000 .*given to this guest", j or 0)
-    need(v, L, "cvk the guest's Caryll rune is given", 1, CV_RUNE_GIVEN % ("17000", "50000200", "50000200", "17000", "50000200"), j or 0)
+    # alone: its own grant; after the host's talk the host's shared award (a Caryll rune: "shared with the party") reached it first
+    need(v, L, "cvk the guest's own talk gift trigger 9042 is seen (own grant, or already given by the host's shared award)", 1,
+         r"own talk gift trigger 9042 .*lot 17000 .*(?:given to this guest|already given)", j or 0)
+    need(v, L, "cvk the guest's Caryll rune is given", 1, CV_RUNE_GIVEN % ("17000", "50000200", "50000200", "17000", "50000200") +
+         r"|gave #\d+ lot 17000 \(flag 50000200, award\) while summoned", j or 0)
     check_common(v, L, "cvk")
 
 
