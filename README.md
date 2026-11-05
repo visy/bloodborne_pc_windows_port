@@ -432,7 +432,8 @@ before anyone is in the game):
 - **Invasions into open public games.** The host decides: *Allow invaders* (*System -> Party access*, the launcher's Party tab,
   `party_invaders`, off by default, live) lets other players join a game from the launcher's lists as a hostile phantom
   (**Invade**, next to Join, no password): you and your guests are told, fight it, and it goes home when it dies or when the host
-  dies. One at a time, never in a boss fight, a loading screen or a cutscene, never into a full (4 player) game; you can block it
+  dies. One at a time (or two: *Max invaders*, `party_max_invaders`, default 1), away from you like a vanilla invader, never in a boss
+  fight, a loading screen or a cutscene, never into a full (4 player) game; you can block it
   for the session (*System -> Party -> Block the invader*). The invader is drawn with the game's red phantom glow, and the game's own
   rewards are paid on each player's own game: an invader that defeats the host gets Blood Echoes and +1 Insight, the host and
   guests get Blood Echoes for defeating it. See docs/party/invasions.md.

@@ -2804,7 +2804,7 @@ void PartyHud() {
                 if (!(c.same_map && c.same_world && c.connected)) continue;
                 float mc[3];
                 party::hud::MemberColour(c.slot, mc);
-                if (coop::invade::IsInvaderName(c.name, coop::invade::InvaderName())) std::memcpy(mc, coop::invade::kInvaderNameRgb, sizeof mc);
+                if (coop::invade::IsInvader(c.name)) std::memcpy(mc, coop::invade::kInvaderNameRgb, sizeof mc);
                 const ImVec2 row = ImGui::GetCursorScreenPos();
                 Arrow(draw, ImVec2(row.x + r, row.y + r + 1.0f * s), r,
                       party::hud::Bearing(b.me_pos, c.pos, axes.fx, axes.fz, axes.rx, axes.rz),
@@ -2861,7 +2861,7 @@ void PartyHud() {
         ImGui::PushFont(game_font, 17.0f);
         float mc[3];
         party::hud::MemberColour(c.slot, mc);  // the same colour as the member's tag (and I2's pings)
-        if (coop::invade::IsInvaderName(c.name, coop::invade::InvaderName())) std::memcpy(mc, coop::invade::kInvaderNameRgb, sizeof mc);
+        if (coop::invade::IsInvader(c.name)) std::memcpy(mc, coop::invade::kInvaderNameRgb, sizeof mc);
         ImGui::TextColored(here ? ImVec4(mc[0], mc[1], mc[2], 1.0f) : ImVec4(0.62f, 0.60f, 0.57f, alpha), "%s",
                            bbname::Display(c.name).c_str());
         const float name_h = ImGui::GetItemRectSize().y, name_w = ImGui::GetItemRectSize().x;
@@ -3114,7 +3114,7 @@ void PartyHud() {
         }
         bg->AddText(ImVec2(at.x + o, at.y + o), Rgba(0.02f, 0.03f, 0.03f, 0.9f * alpha), label);  // drop shadow
         float name_rgb[3] = {pp.name_rgb[0], pp.name_rgb[1], pp.name_rgb[2]};  // the plate's blue
-        const bool hostile = coop::invade::IsInvaderName(c.name, coop::invade::InvaderName());  // the invader: red, always
+        const bool hostile = coop::invade::IsInvader(c.name);  // the invader: red, always
         if (BbSettings::Get().party_name_colours.load() || hostile) {
             // The member's party colour; a stronger dark outline (diagonals too) keeps it readable on
             // bright (snow, fire) and dark scenes.
@@ -3296,7 +3296,7 @@ void PartyPings() {
             if (!sp.visible) continue;
             float rgb[3];
             party::hud::MemberColour(c.slot, rgb);
-            if (coop::invade::IsInvaderName(c.name, coop::invade::InvaderName())) std::memcpy(rgb, coop::invade::kInvaderNameRgb, sizeof rgb);
+            if (coop::invade::IsInvader(c.name)) std::memcpy(rgb, coop::invade::kInvaderNameRgb, sizeof rgb);
             const float a = 0.85f, r = 6.0f * s;
             const ImVec2 c0(sp.x, sp.y);
             const ImVec2 q[4] = {ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r),
