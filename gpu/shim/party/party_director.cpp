@@ -3,6 +3,7 @@
 // droogie/bbhost src/engine/np_test.cpp @8f2746c (GPL-3.0-or-later): world-up detection, the
 // Insight write and the bell events.
 #include "party_director.h"
+#include "../../../src/runtime_logdrain.h"
 #include "party_log_game.h"
 #include "../boot_marks.h"
 #include "../bbport_boot_watch.h"
@@ -1426,7 +1427,7 @@ void AutoContinue(State& st, const GameSnapshot& s, PartyRole role, party::Party
             Log("test: boot loop: ending the game at Cross #%d (BB_BOOT_TEST_EXIT)", st.continue_presses);
             std::fflush(stdout);
 #ifdef _WIN32
-            TerminateProcess(GetCurrentProcess(), 3);
+            BB_TERMINATE_PROCESS(3);
 #else
             _exit(3);
 #endif
