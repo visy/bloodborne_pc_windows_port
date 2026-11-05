@@ -376,7 +376,7 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
     }
     parsed.clear();
     parsed.shrink_to_fit();
-    Sections out[4];
+    Sections out[5];
     {
         StepTimer t(timings, "derive");
         IdsInput in;
@@ -386,9 +386,16 @@ Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timing
         in.infos = &infos;
         in.params = &params;
         in.events = &allrec;
-        ParallelFor(4, threads, [&](std::size_t k) {
+        ParallelFor(5, threads, [&](std::size_t k) {
             switch (k) {
-                case 0: { StepTimer s(timings, "  items"); out[0] = DeriveItems(params, allrec); break; }
+                case 0: {
+                    StepTimer s(timings, "  flags+items");
+                    const FlagCategories cats(allrec, params);
+                    out[0] = DeriveItems(params, allrec, cats);
+                    out[4] = DeriveFlagRows(cats);
+                    break;
+                }
+                case 4: break;
                 case 1: { StepTimer s(timings, "  ids"); out[1] = DeriveIds(in); break; }
                 case 2: { StepTimer s(timings, "  warper"); out[2] = DeriveWarper(params); break; }
                 default: { StepTimer s(timings, "  npcfog"); out[3] = DeriveNpcFog(fog_calls, (root / "map/mapstudio").string(), threads); break; }

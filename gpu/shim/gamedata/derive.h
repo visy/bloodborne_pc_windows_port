@@ -30,6 +30,14 @@ enum class Cat : std::uint8_t {
     cutscene_seen, world_state, session_runtime, never_sync, time_of_day, covenant_outcome
 };
 
+/// One row of the category table: {first, last, category, note}.
+struct FlagCatRow {
+    std::int64_t lo, hi;
+    Cat cat;
+    std::string note;
+};
+const char* CatName(Cat c);
+
 /// The event flag category table of the game (first match wins: covenant rows, overrides, the rows the scripts
 /// and params give, the global and per-map defaults).
 class FlagCategories {
@@ -37,10 +45,13 @@ public:
     FlagCategories(const std::vector<FileEvents>& events, const ParamSet& params);
     /// Cat::none when no row covers the flag.
     Cat Lookup(std::int64_t flag) const;
+    /// The whole ordered table (the flagRows section).
+    std::vector<FlagCatRow> Rows() const;
 
 private:
     struct Spec {
         Cat cat;
+        std::string note;
         int prio;
     };
     std::map<std::int64_t, Spec> spec_;
@@ -48,7 +59,9 @@ private:
 
 /// itemLotFlag, itemLedger, itemAwardSpot, itemUnshared, itemSharedTreasure, itemBossDrop, itemRequireShared,
 /// itemPerPlayer, itemKillAward.
-Sections DeriveItems(const ParamSet& params, const std::vector<FileEvents>& events);
+Sections DeriveItems(const ParamSet& params, const std::vector<FileEvents>& events, const FlagCategories& cats);
+/// flagRows.
+Sections DeriveFlagRows(const FlagCategories& cats);
 /// warperRight, warperLeft, warperArmor.
 Sections DeriveWarper(const ParamSet& params);
 

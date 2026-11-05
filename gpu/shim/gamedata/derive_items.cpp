@@ -321,7 +321,7 @@ std::string ReasonHead(std::string s) {
 
 }  // namespace
 
-Sections DeriveItems(const ParamSet& P, const std::vector<FileEvents>& events) {
+Sections DeriveItems(const ParamSet& P, const std::vector<FileEvents>& events, const FlagCategories& cats) {
     using bbdata::ParamTable;
     Lots rows;
     {
@@ -348,7 +348,6 @@ Sections DeriveItems(const ParamSet& P, const std::vector<FileEvents>& events) {
         const int ct = t.Col("goodsType"), cm = t.Col("maxNum");
         for (std::size_t r = 0; r < t.Rows(); ++r) goods[t.ids[r]] = {t.At(r, ct), t.At(r, cm)};
     }
-    const FlagCategories cats(events, P);
 
     std::vector<std::pair<std::int64_t, std::int64_t>> flagged;
     for (const auto& [lot, r] : rows) {

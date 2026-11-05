@@ -33,6 +33,8 @@ def derive_all(game):
     sections.update(id_sections)
     sections["npcFog"] = npcfog_tool.derive(game)
     sections.update(warper_tool.derive(game))
+    import flag_tool
+    sections["flagRows"] = [[str(lo), str(hi), cat, flag_tool.esc(note)] for lo, hi, cat, note in flag_tool.category_rows(game)[0]]
     return sections
 
 
