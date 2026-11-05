@@ -1885,6 +1885,11 @@ PARTY_OPEN_TIP = (
     "Off by default (bbport.ini party_open; in the game: System > Party access).")
 
 
+PARTY_MAX_INVADERS_CHOICES = ["1", "2"]
+PARTY_MAX_INVADERS_TIP = (
+    "Host only, with Allow invaders on: how many invaders may be in your world at once, 1 or 2. They count against Max "
+    "players and the game's four player slots (host + guests + invaders). Default 1 (bbport.ini party_max_invaders, env "
+    "BB_PARTY_MAX_INVADERS; in the game: System > Party access > Max invaders).")
 PARTY_INVADERS_TIP = (
     "Host only. Other players can invade your world as a hostile phantom from the public lists (the VPN or LAN lists, "
     "the Nightwatch VPN lobby): they need no password, you and your guests are told, one invader at a time, never in a "
@@ -1904,7 +1909,7 @@ def party_env(s: dict) -> dict:
             "BB_PARTY_UPNP", "BB_PARTY_STUN", "BB_PARTY_PUBLIC_ADDR", "BB_PARTY_MAX",
             "BB_PARTY_SEAMLESS", "BB_PARTY_DIRECT_SUMMON", "BB_PARTY_AUTO", "BB_PARTY_SAVE", "BB_PARTY_START",
             "BB_PARTY_GUEST_INSIGHT", "BB_SAVE_BACKUP_MINUTES", "BB_SAVE_BACKUP_KEEP", "BB_PARTY_RENDEZVOUS",
-            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN", "BB_PARTY_OPEN", "BB_PARTY_INVADERS", "BB_PARTY_INVADE"]
+            "BB_PARTY_MEMBER_RELAY", "BB_PARTY_IPV6", "BB_PARTY_VPN", "BB_PARTY_OPEN", "BB_PARTY_INVADERS", "BB_PARTY_MAX_INVADERS", "BB_PARTY_INVADE"]
     keys += [env_name for _, env_name, _ in PARTY_SWITCHES]
     # bbport.ini's (unset here, so a stale variable never overrides the ini; BB_PARTY_GUEST_INSIGHT too)
     keys += [env_name for _, env_name, _ in PARTY_INI_SWITCHES]
@@ -2393,6 +2398,11 @@ INI_FLAG_SETTINGS = [
 ]
 # Every BB_* variable the launcher no longer sets because its setting lives in bbport.ini.
 GAME_SETTING_ENVS = ["BB_UPSCALER", "BB_VOLUMETRIC_RES"] + [env for *_, env in INI_FLAG_SETTINGS]
+
+
+def party_max_invaders_text(ini: dict) -> str:
+    """bbport.ini party_max_invaders as the My Party tab's combo value: "1" or "2" (1 when unset or anything else)."""
+    return "2" if str(ini.get("party_max_invaders", "")).strip() == "2" else "1"
 
 
 def ini_flag_value(ini: dict, key: str, default: bool) -> bool:
@@ -3459,6 +3469,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_open = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_open", False))
         # 0.7.8 (CL-4cc63c): the host lets others invade from the public lists (bbport.ini party_invaders, off by default)
         self.party_invaders = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_invaders", False))
+        # 0.7.9 (CL-7e748c): how many invaders at once, 1 or 2 (bbport.ini party_max_invaders, default 1)
+        self.party_max_invaders_var = tk.StringVar(value=party_max_invaders_text(read_ini(bbport_ini_path())))
         self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
         self.party_port_suffix_var = tk.StringVar(value="")
         self.party_ipv6 = tk.BooleanVar(value=bool(self.settings.get("party_ipv6", False)))
@@ -4388,6 +4400,9 @@ class BloodborneLauncher(tk.Tk):
                               PARTY_OPEN_TIP, command=self.on_party_open_toggle)
         self.party_invaders_cb = self._check(sec, "Allow invaders (listed games)", self.party_invaders, PARTY_INVADERS_TIP,
                                              command=self.on_party_invaders_toggle)
+        self.party_max_invaders_combo = self._combo(sec, "Max invaders:", self.party_max_invaders_var, PARTY_MAX_INVADERS_CHOICES,
+                                                    PARTY_MAX_INVADERS_TIP, width=6)
+        self.party_max_invaders_combo.bind("<<ComboboxSelected>>", lambda _e: self.on_party_max_invaders_change())
         code_tip = (f"The code the host gave you, like {PARTY_CODE_EXAMPLE} (letters are not "
                     "case-sensitive; I, L and O count as 1, 1 and 0), or the host's address as host:port "
                     "(LAN, VPN, port forwarding). Older BBP2- / BBP1- codes work too. (BB_PARTY_CODE)")
@@ -4608,6 +4623,8 @@ class BloodborneLauncher(tk.Tk):
             self.party_open.set(ini_flag_value(ini, "party_open", False))
         if hasattr(self, "party_invaders_cb"):
             self.party_invaders.set(ini_flag_value(ini, "party_invaders", False))
+        if hasattr(self, "party_max_invaders_combo"):
+            self.party_max_invaders_var.set(party_max_invaders_text(ini))
 
     def on_live_fps_toggle(self):
         """Live FPS clock: written at once (bbport.ini live_fps); the patches it replaces are locked out."""
@@ -4797,6 +4814,14 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_open": "1" if self.party_open.get() else "0"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save party_open to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
+
+    def on_party_max_invaders_change(self):
+        value = self.party_max_invaders_var.get()
+        try:
+            update_ini(bbport_ini_path(), {"party_max_invaders": value if value in PARTY_MAX_INVADERS_CHOICES else "1"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save party_max_invaders to bbport.ini: {ex}")
         self._ini_stamp = self.ini_stamp()
 
     def on_party_invaders_toggle(self):

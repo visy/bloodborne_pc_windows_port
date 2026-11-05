@@ -251,7 +251,8 @@ static void Reported() {
     ps::SetState(ps::State::Hosting);
     P::Load();
     names = Names(access);
-    assert(names.size() == 3 && names[0] == "Nightwatch VPN lobby" && names[1] == "Open party (no password)" && names[2] == "Allow invaders");
+    assert(names.size() == 4 && names[0] == "Nightwatch VPN lobby" && names[1] == "Open party (no password)" && names[2] == "Allow invaders" &&
+           names[3] == "Max invaders");  // 0.7.9 (CL-7e748c): the host's Max invaders, 1 or 2
     context = {};
     context.party_process = context.party_save = context.in_world = true;
     ps::ResetForTest(true);
