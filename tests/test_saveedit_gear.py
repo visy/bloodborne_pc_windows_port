@@ -321,3 +321,33 @@ def test_goods_counts_stay_within_what_the_game_holds():
 def test_real_game_goods_maximum(tmp_path):
     c = N.Catalogue.load(GAME, tmp_path)
     assert c.goods_max(1000) == 20 and c.goods_max(1230) == 20 and c.goods_max(1500) == 99
+
+
+def test_guest_written_save_takes_counts_and_effects_but_not_new_gear(user, tmp_path, monkeypatch):
+    import save_editor as se
+    tk, root = _tk()
+    try:
+        from saveedit import ui
+        shown = []
+        monkeypatch.setattr(ui.messagebox, "showerror", lambda *a, **k: shown.append(a))
+        d = bytearray(gem_save())
+        struct.pack_into("<6I", d, 0x3C, 0x200, 12, 0x20C, 12, 0x20C, 16)  # a header save_editor.layout accepts
+        path = S.slot_files(user, "party")[0]
+        path.write_bytes(bytes(d))
+        assert se.world_empty(bytes(d))
+        tab = ui.SaveEditorTab(root, lambda: user, lambda: None, lambda: tmp_path, not_running, print, None,
+                               confirm=lambda t, m: True)
+        tab.kind_var.set("party")
+        tab.refresh_slots()
+        tab.open_slot()
+        tab.catalogue = catalogue()
+        assert tab.model.world_changes
+        assert not tab.add_item(0, 7000000, 1) and not tab.add_rune(700) and len(shown) == 2
+        assert tab.add_item(4, 1230, 2)  # goods only fill a free entry: nothing moves
+        assert tab.set_gem_effects(0xC0800001, [13105, 28101])
+        tab.apply()
+        after = path.read_bytes()
+        assert se.world_empty(after) and any(i.number == 1230 for i in M.SaveModel(after).items((0,)))
+        assert I.read(M.SaveModel(after)).gems[0xC0800001].effects == [13105, 28101]
+    finally:
+        root.destroy()

@@ -403,10 +403,17 @@ class SaveEditorTab(ttk.Frame):
         if self.model is not None and self.catalogue.ok:
             D.AddItemDialog(self)
 
-    def add_item(self, category, number, count):
-        if category != 4 and getattr(self.model, "world_changes", None):
+    def _can_grow(self):
+        """New weapons, armor and gems move the data behind the item table, which the guest-written save's filled-in
+        world section (editor copy) cannot take: those wait until the game has saved the character at home."""
+        if getattr(self.model, "world_changes", None):
             messagebox.showerror("Save editor", "This save was last written in another player's world. Load it in the "
-                                 "game once as host and save, then add weapons and armor.")
+                                 "game once as host and save, then add weapons, armor, gems and runes.")
+            return False
+        return True
+
+    def add_item(self, category, number, count):
+        if category != 4 and not self._can_grow():
             return False
         return self._guarded(lambda: G.add_item(self.model, self.catalogue, category, number, count))
 
@@ -456,14 +463,14 @@ class SaveEditorTab(ttk.Frame):
         return self._guarded(lambda: G.set_gem_effects(self.model, self.catalogue, handle, effects))
 
     def add_blood_gem(self, shape, effects):
-        return self._guarded(lambda: G.add_blood_gem(self.model, self.catalogue, shape, effects))
+        return self._can_grow() and self._guarded(lambda: G.add_blood_gem(self.model, self.catalogue, shape, effects))
 
     def add_rune(self, effect):
-        return self._guarded(lambda: G.add_rune(self.model, self.catalogue, effect))
+        return self._can_grow() and self._guarded(lambda: G.add_rune(self.model, self.catalogue, effect))
 
     def copy_gem(self):
         handle = self._selected_gem()
-        if handle is not None:
+        if handle is not None and self._can_grow():
             self._guarded(lambda: G.copy_gem(self.model, handle))
 
     # --- flags ------------------------------------------------------------------------------------------
