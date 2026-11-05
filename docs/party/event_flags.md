@@ -423,3 +423,11 @@ visible (overlay) tree. (A door's model follows at the next load of that map: "r
 **Effects seen:** the guest's Hunter's Dream headstone lists the host's lamps (7: 1st Floor
 Sickroom ... Old Yharnam) and no longer crashes; choosing a lamp moves the party (guest_services.md
 3.3). The world lamp prompt is **not** a flag question: see guest_services.md 3.3 (lamp type).
+
+**Boss lamps and shared lamps (bosslamp079, CL-b457f5, 2026-11-05).** A lamp a boss's death lights (Grand Cathedral
+3402953 after Laurence, ...) reaches a guest's own save from the host's world only together with that boss's defeat flag:
+all 32 boss-defeat events' completion flags (1AAB18xx) are `boss_defeated` rows (set-only C2, host -> guest, the join
+snapshot carries them) and the lamp flags go in by C2 (7AAB02xx) and the guest's own lamp tick (base+10 / +11).
+Smoke `bq` (group `boss_lamp`): host with 13401850 + the lamp's flags, guest save with Laurence alive and the lamp unlit:
+afterwards the guest's party save holds 13401850 and 13407870 / 13407871 / 73400203, so its own world has Laurence dead.
+The guest's own lamps in the other direction stay held by `HeldForBoss` (only with "Guests bring their lamps").
