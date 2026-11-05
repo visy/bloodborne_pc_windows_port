@@ -42,6 +42,14 @@ struct EventCall {
     std::string params;  // the call's argument bytes after slot + target
 };
 
+/// A condition instruction the party derivations read arguments of: 3[0] (flag state: v[3] = the flag) and
+/// 3[24] (action button: v[2] = the object's entity) and 2004[8] (SpEffect on a character: v[0] = the entity, v[1] = the
+/// effect id), in instruction order.
+struct Cond {
+    std::uint32_t bank = 0, id = 0;
+    std::vector<std::int64_t> v;
+};
+
 struct EventRec {
     std::int64_t event = 0;
     std::int32_t slot = 0;
@@ -51,6 +59,7 @@ struct EventRec {
     std::vector<Marker> markers;
     std::vector<std::vector<std::int64_t>> reads;  // flag ids of the condition instructions
     std::vector<EventCall> calls;
+    std::vector<Cond> conds;
     bool Has(MarkerKind k) const {
         for (const Marker& m : markers) {
             if (m.kind == k) return true;

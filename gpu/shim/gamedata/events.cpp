@@ -275,6 +275,9 @@ public:
                     if (def && !def->args.empty()) {
                         vals = UnpackArgs(*def, raw);
                     }
+                    if ((iv.bank == 3 && (iv.id == 0 || iv.id == 24)) || (iv.bank == 2004 && iv.id == 8)) {
+                        rec.conds.push_back({iv.bank, iv.id, vals});
+                    }
                     bool done = false;
                     for (const FlagOpDef& f : kFlagOps) {
                         if (f.bank == iv.bank && f.id == iv.id) {

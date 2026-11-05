@@ -61,12 +61,28 @@ Python derivation took 18.9 s on the same machine. Cache hit: key + parse, a few
 | flagRows | `derive_flags.cpp` `DeriveFlagRows` (the port of `flag_tool.category_rows`) | `party_progress.cpp` |
 | lamps | `DeriveLamps` | `lamp_travel_rules.h` `Lamps()` |
 | hostOnlyEvents | `DeriveHostOnlyEvents` | `party_bossfog_rules.h` |
+| bossGates gateRules | `derive_worldact.cpp` `DeriveWorldAct` | `party_worldact.cpp` `BossGates()` / `GateRules()` |
+| bossEntities | `DeriveBossEntities` | `party_balance.cpp` (the boss chrs of a pass) |
 | gestureNames | `build.cpp` (the item-name FMG, `fmg.cpp`) | `party_gamedata.h` `GestureText` |
 | item* (lot flags, ledger, award spots, unshared, shared treasure, boss drops, audit rows, kill awards) | `derive_items.cpp` + the flag category table (`derive_flags.cpp`, `flag_category_rows.inc`) | `party_items.cpp` |
 
 The ledger bit of a flagless award is `60009000 + index` in the player's own save, so an index must never change:
 `kLedgerLegacy` keeps the indices the releases up to 0.7.9 gave out (our own flag allocation) and a new lot takes
 the next free one from 43.
+
+bossGates (`guest_event host_flag guest_flag boss_flag intro_flag fog_entity landing_event`): per event named
+`ゲストがボス部屋入場`, its 3[0] flag conditions in order (boss defeated, host's first-fight entry, host entered last),
+the 3[24] action button's object (the fog) and the flag it sets (the landing event `ゲストが着地` that waits on the
+same host flag, when the entry event sets none). An entry event with two conditions takes as intro flag the host's
+`ホストがボス部屋入場_初戦` event of that boss that sets its own id. gateRules (`boss_event gate_flag also`): every
+boss-defeat event (2003[12/15/53]) and the 2000-3999 flags it sets to 1, the first event to set a gate flag owning
+it (the Omega / Patient B re-fights set the same ones), plus an event that sets a gate flag once two boss-defeat
+flags are on (`also`). On 1.09 both equal the tables that were typed into `party_worldact.cpp` (20 gates, 29 rules).
+bossEntities (`entity chalice`): the entities given SpEffect 7500 / 7501 by a 2004[8] instruction, per instance of the
+events (the chalice dungeon boss events of `m29.emevd` are expanded once more with the calls the dungeon maps make into
+them, `chalice` = 1); equal to the former arrays (34 + 66 entities) on 1.09.
+`cpp-only`: the Python oracle has no counterpart, `tests/test_party_tables.py` leaves them out of its comparison;
+`gamedata-test` covers them with made-up event records. Without the sections no gate, fog gate or rule applies.
 
 Adding a table: derive it in a new `derive_*.cpp` (or extend one), add it to `DeriveAll` in `build.cpp`, parse it in
 `Parse` of `party_gamedata.h`, bump `kDerivationVersion`, and add it to the Python oracle if it has a counterpart.
