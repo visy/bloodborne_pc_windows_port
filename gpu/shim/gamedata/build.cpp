@@ -30,26 +30,39 @@ std::string Lower(std::string s) {
     return s;
 }
 
+struct FileInfo {
+    fs::path path;
+    std::uint64_t size = 0;
+    std::int64_t mtime = 0;
+};
+
 // Files under `dir` (recursive) whose name matches, sorted like the Python tools (case folded path parts).
-std::vector<fs::path> ListFiles(const fs::path& dir, const std::function<bool(const std::string&)>& match) {
-    std::vector<fs::path> out;
+std::vector<FileInfo> ListFiles(const fs::path& dir, const std::function<bool(const std::string&)>& match) {
+    std::vector<FileInfo> out;
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return out;
     for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end; it != end; it.increment(ec)) {
         if (ec) break;
         std::error_code e2;
-        if (it->is_regular_file(e2) && match(it->path().filename().string())) out.push_back(it->path());
+        if (it->is_regular_file(e2) && match(it->path().filename().string())) {
+            FileInfo f;
+            f.path = it->path();
+            f.size = it->file_size(e2);
+            const auto t = it->last_write_time(e2);
+            f.mtime = e2 ? 0 : static_cast<std::int64_t>(t.time_since_epoch().count());
+            out.push_back(std::move(f));
+        }
     }
     // Python's sort of Windows paths: tuple of case folded parts (not the joined string)
-    std::vector<std::pair<std::vector<std::string>, fs::path>> keyed;
+    std::vector<std::pair<std::vector<std::string>, FileInfo>> keyed;
     keyed.reserve(out.size());
-    for (const fs::path& p : out) {
+    for (FileInfo& f : out) {
         std::vector<std::string> parts;
-        for (const fs::path& part : p.lexically_relative(dir)) parts.push_back(Lower(part.string()));
-        keyed.emplace_back(std::move(parts), p);
+        for (const fs::path& part : f.path.lexically_relative(dir)) parts.push_back(Lower(part.string()));
+        keyed.emplace_back(std::move(parts), std::move(f));
     }
     std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    for (std::size_t i = 0; i < out.size(); ++i) out[i] = keyed[i].second;
+    for (std::size_t i = 0; i < out.size(); ++i) out[i] = std::move(keyed[i].second);
     return out;
 }
 
@@ -133,35 +146,74 @@ std::string GameRoot(const std::string& path) {
     return fs::is_directory(p, ec) ? p.string() : path;
 }
 
-std::string ComputeKey(const std::string& game_root) {
-    const fs::path root(game_root);
+namespace {
+
+/// One pass over the game folder, shared by the cache key and the derivation.
+struct Scan {
+    fs::path root;
+    bool has_param = false;
+    std::vector<FileInfo> fixed;    // the parambnd and paramdefbnd
+    std::vector<FileInfo> events;   // every file under event/
+    std::vector<FileInfo> msbs;     // map/mapstudio files whose name holds ".msb"
+    std::vector<std::pair<std::string, bool>> map_entries;  // map/ entries (name, is a folder), sorted by name
+    std::vector<std::string> remo_names;                    // remo/ entry names, sorted
+};
+
+Scan ScanGame(const std::string& game_root) {
+    Scan sc;
+    sc.root = game_root;
+    std::error_code ec;
+    const fs::path pb = sc.root / "param/gameparam/gameparam.parambnd.dcx", db = sc.root / "paramdef/paramdef.paramdefbnd.dcx";
+    if (!fs::is_regular_file(pb, ec)) return sc;
+    sc.has_param = true;
+    sc.fixed.push_back({pb, fs::file_size(pb, ec), Mtime(pb)});
+    if (fs::is_regular_file(db, ec)) sc.fixed.push_back({db, fs::file_size(db, ec), Mtime(db)});
+    sc.events = ListFiles(sc.root / "event", [](const std::string&) { return true; });
+    sc.msbs = ListFiles(sc.root / "map/mapstudio", [](const std::string& n) { return Contains(n, ".msb"); });
+    if (fs::is_directory(sc.root / "map", ec)) {
+        for (const auto& e : fs::directory_iterator(sc.root / "map", ec)) {
+            sc.map_entries.emplace_back(e.path().filename().string(), e.is_directory(ec));
+        }
+        std::sort(sc.map_entries.begin(), sc.map_entries.end());
+    }
+    if (fs::is_directory(sc.root / "remo", ec)) {
+        for (const auto& e : fs::directory_iterator(sc.root / "remo", ec)) sc.remo_names.push_back(e.path().filename().string());
+        std::sort(sc.remo_names.begin(), sc.remo_names.end());
+    }
+    return sc;
+}
+
+std::string KeyOf(const Scan& sc) {
+    if (!sc.has_param) return std::string();
     Fnv h;
     h.Add(std::string("derivation ") + kDerivationVersion);
-    const fs::path pb = root / "param/gameparam/gameparam.parambnd.dcx", db = root / "paramdef/paramdef.paramdefbnd.dcx";
-    std::error_code ec;
-    if (!fs::is_regular_file(pb, ec)) return std::string();
-    auto file = [&](const fs::path& p, const fs::path& base) {
-        std::error_code e;
-        h.Add(fs::relative(p, base).generic_string() + "|" + std::to_string(fs::file_size(p, e)) + "|" + std::to_string(Mtime(p)));
+    auto file = [&](const FileInfo& f) {
+        h.Add(f.path.lexically_relative(sc.root).generic_string() + "|" + std::to_string(f.size) + "|" + std::to_string(f.mtime));
     };
-    file(pb, root);
-    if (fs::is_regular_file(db, ec)) file(db, root);
-    for (const fs::path& p : ListFiles(root / "event", [](const std::string&) { return true; })) file(p, root);
-    for (const fs::path& p : ListFiles(root / "map/mapstudio", [](const std::string& n) { return Contains(n, ".msb"); })) file(p, root);
-    for (const char* sub : {"map", "remo"}) {
-        std::vector<std::string> names;
-        if (fs::is_directory(root / sub, ec)) {
-            for (const auto& e : fs::directory_iterator(root / sub, ec)) names.push_back(e.path().filename().string());
-        }
-        std::sort(names.begin(), names.end());
-        h.Add(std::string(sub) + ":");
-        for (const std::string& n : names) h.Add(n);
-    }
+    for (const FileInfo& f : sc.fixed) file(f);
+    for (const FileInfo& f : sc.events) file(f);
+    for (const FileInfo& f : sc.msbs) file(f);
+    h.Add("map:");
+    for (const auto& e : sc.map_entries) h.Add(e.first);
+    h.Add("remo:");
+    for (const std::string& n : sc.remo_names) h.Add(n);
     return h.Hex();
 }
 
+Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timings* timings);
+
+}  // namespace
+
+std::string ComputeKey(const std::string& game_root) { return KeyOf(ScanGame(game_root)); }
+
 Sections DeriveAll(const std::string& game_root, unsigned threads, Progress* progress, Timings* timings) {
-    const fs::path root(game_root);
+    return DeriveFrom(ScanGame(game_root), threads, progress, timings);
+}
+
+namespace {
+
+Sections DeriveFrom(const Scan& sc, unsigned threads, Progress* progress, Timings* timings) {
+    const fs::path& root = sc.root;
     Progress local;
     Progress& prog = progress ? *progress : local;
     std::error_code ec;
@@ -173,25 +225,24 @@ Sections DeriveAll(const std::string& game_root, unsigned threads, Progress* pro
     {
         StepTimer t(timings, "list");
         prog.SetLabel("Reading the game's file list");
-        for (const fs::path& p : ListFiles(root / "event", [](const std::string& n) { return Contains(n, ".emevd"); })) {
+        for (const FileInfo& fi : sc.events) {
+            const fs::path& p = fi.path;
+            if (!Contains(p.filename().string(), ".emevd")) continue;
             EventFile f;
             const std::string name = p.filename().string();
             f.stem = name.substr(0, name.find('.'));
             f.path = p;
             f.eld = p.parent_path() / (f.stem + ".emeld" + (EndsWith(name, ".dcx") ? ".dcx" : ""));
-            f.size = fs::file_size(p, ec);
+            f.size = fi.size;
             files.push_back(std::move(f));
         }
-        if (fs::is_directory(root / "map", ec)) {
-            for (const auto& e : fs::directory_iterator(root / "map", ec)) {
-                int a, b, c, d;
-                bool ext;
-                if (e.is_directory(ec) && MapName(e.path().filename().string(), &a, &b, &c, &d, &ext)) {
-                    maps.insert(a << 24 | b << 16 | c << 8 | d);
-                }
-            }
+        for (const auto& [name, is_dir] : sc.map_entries) {
+            int a, b, c, d;
+            bool ext;
+            if (is_dir && MapName(name, &a, &b, &c, &d, &ext)) maps.insert(a << 24 | b << 16 | c << 8 | d);
         }
-        for (const fs::path& p : ListFiles(root / "map/mapstudio", [](const std::string& n) { return Contains(n, ".msb"); })) {
+        for (const FileInfo& fi : sc.msbs) {
+            const fs::path& p = fi.path;
             int a, b, c, d;
             bool ext;
             if (!MapName(p.filename().string(), &a, &b, &c, &d, &ext)) continue;
@@ -202,20 +253,18 @@ Sections DeriveAll(const std::string& game_root, unsigned threads, Progress* pro
             m.c = c;
             m.d = d;
             m.path = p.string();
-            m.size = fs::file_size(p, ec);
+            m.size = fi.size;
             msbs.push_back(std::move(m));
         }
         static const std::regex remo_re(R"(^s(\d\d)_(\d\d)_(\d{4})\.remobnd(\.dcx)?$)");
-        if (fs::is_directory(root / "remo", ec)) {
-            for (const auto& e : fs::directory_iterator(root / "remo", ec)) {
-                std::smatch m;
-                const std::string n = e.path().filename().string();
-                if (std::regex_match(n, m, remo_re)) remos.insert(std::stoll(m[1]) * 1000000 + std::stoll(m[2]) * 10000 + std::stoll(m[3]));
-            }
+        for (const std::string& n : sc.remo_names) {
+            std::smatch m;
+            if (std::regex_match(n, m, remo_re)) remos.insert(std::stoll(m[1]) * 1000000 + std::stoll(m[2]) * 10000 + std::stoll(m[3]));
         }
     }
     const fs::path pb_path = root / "param/gameparam/gameparam.parambnd.dcx", db_path = root / "paramdef/paramdef.paramdefbnd.dcx";
-    const std::uint64_t param_bytes = fs::file_size(pb_path, ec) + fs::file_size(db_path, ec);
+    std::uint64_t param_bytes = 0;
+    for (const FileInfo& f : sc.fixed) param_bytes += f.size;
     std::uint64_t total = param_bytes + 4096;
     for (const EventFile& f : files) total += 2 * f.size;
     for (const MsbFile& m : msbs) total += m.size;
@@ -354,6 +403,8 @@ Sections DeriveAll(const std::string& game_root, unsigned threads, Progress* pro
     return all;
 }
 
+}  // namespace
+
 std::string RenderCache(const std::string& key, const Sections& sections) {
     std::string t = std::string(kCacheMagic) + "\nkey " + key + "\n";
     for (const auto& [name, rows] : sections) {
@@ -425,20 +476,25 @@ std::string TimingLine(Timings& t) {
 /// Cache hit or derive + write. `text` receives the cache text.
 bool CachedText(const std::string& root, const std::string& cache_path, bool force, unsigned threads, Progress* prog,
                 std::string* text, std::string* err, std::string* log, bool* rebuilt) {
-    const std::string key = ComputeKey(root);
+    const auto k0 = std::chrono::steady_clock::now();
+    const Scan sc = ScanGame(root);
+    const std::string key = KeyOf(sc);
+    const double key_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - k0).count();
     if (key.empty()) {
         *err = "no game data under " + root;
         return false;
     }
     if (!force && ReadText(cache_path, text) && CacheTextKey(*text) == key) {
         *rebuilt = false;
+        if (log) *log += "key check " + std::to_string(static_cast<int>(key_ms)) + " ms; ";
         return true;
     }
     *rebuilt = true;
     Timings tm;
+    tm.Note("key", key_ms);
     const auto t0 = std::chrono::steady_clock::now();
     try {
-        const Sections s = DeriveAll(root, threads, prog, &tm);
+        const Sections s = DeriveFrom(sc, threads, prog, &tm);
         *text = RenderCache(key, s);
     } catch (const std::exception& e) {
         *err = e.what();
@@ -523,7 +579,7 @@ void StartBackground(const std::string& app0, const std::string& user_dir) {
                     if (rebuilt) {
                         std::printf("[party-data] done in %.1f s: %s", secs, log.c_str());
                     } else {
-                        std::printf("[party-data] tables loaded from the cache (%.2f s)\n", secs);
+                        std::printf("[party-data] tables loaded from the cache (%.2f s; %s)\n", secs, log.c_str());
                     }
                 } else {
                     err = perr;
