@@ -1103,6 +1103,54 @@ int ClearStalePeers(const std::string& online_id) {
     return cleared;
 }
 
+/// Diagnostic (BB_PARTY_PEERKEEP_LOG=1, host): logs, about twice a second, every pool peer whose keep flag
+/// (+0xe4) is set with its timer (+0xe8) and the wall time, so the timer's real rate in seconds can be read
+/// off the lines at any frame rate ("Party: Fast rejoin" sets it to 10.0 for 10 s). Main thread only.
+void LogPeerKeepTimers(Clock::time_point now) {
+    static const bool on = [] { const char* e = std::getenv("BB_PARTY_PEERKEEP_LOG"); return e && e[0] == '1'; }();
+    static Clock::time_point last{};
+    if (!on || now - last < std::chrono::milliseconds(500)) {
+        return;
+    }
+    last = now;
+    std::uint64_t fm = 0, ssm = 0, pool = 0, head = 0, node = 0;
+    if (!SafeGet(Guest(0x553b120), &fm) || !fm || !SafeGet(fm + 0xc50, &ssm) || !ssm || !SafeGet(ssm + 0x48, &pool) ||
+        !pool || !SafeGet(pool + 0x58, &head) || !head || !SafeGet(head, &node)) {
+        static int failed = 0;
+        if (failed++ % 20 == 0) Log("peerkeep: the peer pool is not reachable (fm %llx ssm %llx pool %llx)", (unsigned long long)fm, (unsigned long long)ssm, (unsigned long long)pool);
+        return;
+    }
+    static int summary = 0;
+    static bool armed = false;
+    int seen = 0;
+    for (int guard = 0; node && node != head && guard < 64; ++guard) {
+        std::uint64_t value = 0, peer = 0;
+        std::uint8_t keep = 0;
+        float timer = 0;
+        if (SafeGet(node + 0x10, &value) && value && SafeGet(value + 0x20, &peer) && peer &&
+            SafeRead(peer + 0xe4, &keep, 1) && !keep && !armed && seen == 0 && std::getenv("BB_PARTY_PEERKEEP_TEST")) {
+            // Test aid: reserve one idle peer for 10.0 like the Fast rejoin patch does, then read the countdown below.
+            const std::uint8_t on = 1;
+            const float ten = 10.0f;
+            SafeWrite(peer + 0xe8, &ten, sizeof ten);
+            SafeWrite(peer + 0xe4, &on, 1);
+            armed = true;
+            Log("peerkeep: test: peer %llx reserved with a timer of 10.0", static_cast<unsigned long long>(peer));
+        }
+        if (SafeGet(node + 0x10, &value) && value && SafeGet(value + 0x20, &peer) && peer &&
+            SafeRead(peer + 0xe4, &keep, 1) && (++seen, keep) && SafeGet(peer + 0xe8, &timer)) {
+            Log("peerkeep: peer %llx timer %.3f at %.3f s", static_cast<unsigned long long>(peer), timer,
+                std::chrono::duration<double>(now.time_since_epoch()).count());
+        }
+        if (!SafeGet(node, &node)) {
+            break;
+        }
+    }
+    if (++summary % 10 == 1) {
+        Log("peerkeep: %d peer(s) in the pool", seen);
+    }
+}
+
 void Ring(State& st, const char* event, const char* why, Clock::time_point now) {
     if (std::strcmp(event, kHostBell) != 0 && b2::ChaliceSummonStopped()) {
         st.last_ring = now;
@@ -5875,6 +5923,9 @@ void PartyDirector::Tick() {
             st.summons_seen = summons;
             st.summon_at = now;
         }
+    }
+    if (role == PartyRole::Host) {
+        LogPeerKeepTimers(now);
     }
     if (role == PartyRole::Host && st.fast_join) {
         for (std::string& name : bbnet::party::PartyHostService::instance().take_restarted()) {

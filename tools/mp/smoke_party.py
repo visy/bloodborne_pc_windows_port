@@ -1862,8 +1862,11 @@ def prep_svl(root: Path):
 
 
 def phase_svl(only):
-    host = ",".join(["god", "log_pos=2", "host_press=0@40!"])
-    return dict(name="svl", seconds=200, count=1, headless=0, prep=prep_svl, post=post_chalamp,
+    hold = int(os.environ.get("BB_SVL_SECONDS", "40"))  # texture quality runs: BB_SVL_SECONDS=240
+    # BB_SVL_STEPS: more director steps before the end, e.g. host_warp=2402950@25,host_warp=3502950@25 (texture quality runs)
+    extra = [x for x in os.environ.get("BB_SVL_STEPS", "").split(",") if x]
+    host = ",".join(["god", "log_pos=2"] + extra + ["host_press=0@%d!" % hold])
+    return dict(name="svl", seconds=max(200, hold + 160), count=1, headless=0, prep=prep_svl, post=post_chalamp,
                 env=["BB_PARTY_DIRECTOR_TEST_SOLO=1"], ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host],
                 crash=[], until=[SVL_UNTIL])
 
