@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bloodborne 1.09 item lots for the party co-op C3 (docs/party/items.md): derives the lot tables of
-the run-time cache (scripts/party_tables.py writes it from the player's own game files; read by
+the run-time cache (the engine writes it from the player's own game files; read by
 gpu/shim/party/party_gamedata.h) and checks the C3 ledger flag range. Nothing generated is committed.
 
 Game data (read-only, untrusted; run with python -I). GAME = .../dvdroot_ps4.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bloodborne 1.09 equipment for the world warper's gear rotation (I3):
-derived at run time from the player's own params (scripts/party_tables.py: cache sections warperRight /
+derived at run time from the player's own params (the engine: cache sections warperRight /
 warperLeft / warperArmor, read by gpu/shim/party/world_warper_rules.h); nothing generated is committed.
 
 Game data (read-only, untrusted; run with python -I). GAME = .../dvdroot_ps4.

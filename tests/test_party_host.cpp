@@ -1295,11 +1295,11 @@ static void test_unusable_endpoint() {
 }
 
 int main() {
-    {
-        // The sign checks need the sign's map to be a map of the game: made-up tables with that one map (no game data).
+    if (!coop::gamedata::InstallFromEnv()) {
+        // The sign checks need the sign maps to be maps of the game: made-up tables with the maps the test uses (no game data).
         coop::gamedata::Tables t;
         t.loaded = true;
-        t.maps = {402718720u};
+        t.maps = {0x15010000u, 0x18010000u, 486607628u};  // the Hunter's Dream, Cathedral Ward, a Chalice piece
         coop::gamedata::Install(std::move(t));
     }
     bbnet::party::FromApi::instance().set_min_sign_age_ms(0);  // A4's 1.5 s sign age: checked once below
