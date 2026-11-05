@@ -493,7 +493,7 @@ Features marked (0.7.9) are on the development build and come with the next rele
 | Character creation: choosing glasses no longer locks the editor; a clean Favourites portrait | In progress |
 | A guest joining the host in Yahar'gul loads in (no endless loading screen) | Needs the host's log |
 | FSR 4 white or grey picture fixed | Protective fixes built; the cause (FSR 4 with HDR on in Windows) is still being confirmed |
-| Annalise: the guest's character plays the kneel animation | Planned |
+| Annalise: the guest's character plays the kneel animation (0.7.9) | Built (both players see it) |
 | Guests load at the same time as the host on party travel (about 10-15 s less per trip) | Planned (opt-in first) |
 | Host death the ERSC way: the host loads alone, guests play on | Planned (opt-in first; today the whole party reloads) |
 
