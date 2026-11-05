@@ -2959,6 +2959,11 @@ bool invader_event_from_ok(const std::string& name, const std::string& json) {
 }
 bool invader_event_to_ok(const std::string& name, const std::string& json) {
     if (name == "invade" || name == "party_chat" || name == "host_session_end") return true;
+    // 0.7.9 (CL-7e748c): the room's membership events of the host service (a member joined / left the room). The invader's game needs
+    // them to know the other players it has to talk to: without them a second invader (or a guest) that joins while an invader is
+    // in never completes its join (the invader's game never accepts it). They hold what the join_room reply gave the invader already
+    // (the members' names and endpoints), nothing of the party's progress.
+    if (name == "room_member_joined" || name == "room_member_left") return true;
     // 0.7.9: the host's answer to the invader's room request (and the boss / cutscene hold notice), nothing else of b2.
     return name == "b2" && (json.rfind("{\"op\":\"dsum_room\"", 0) == 0 || json.rfind("{\"op\":\"dsum_busy\"", 0) == 0);
 }

@@ -15,6 +15,8 @@ team), `net/party_vpnlobby.*` and `net/party_discovery.*` (the list flag and "wh
 | Where | What |
 |---|---|
 | bbport.ini `party_invaders=1` / env `BB_PARTY_INVADERS` | the host's **Allow invaders** (live, off by default) |
+| bbport.ini `party_max_invaders=1\|2` / env `BB_PARTY_MAX_INVADERS` | the host's **Max invaders** (0.7.9, live, default 1): how many invaders may be in at once |
+| System > Party access > **Max invaders**, launcher Party tab > **Max invaders** | the same, host only (a guest does not see the row) |
 | System > Party access > **Allow invaders** | the host's row (a guest sees it hidden; its page is the "Host's access" line) |
 | Launcher Party tab > **Allow invaders (listed games)** | host only |
 | System > Party > **Block the invader** | host, only while an invader is there; press twice |
@@ -46,10 +48,36 @@ never given the party key, so:
   *another invader is already in*, *no free slot (4 players)*.
 * **Slots.** The game has four player slots (the host and three phantoms); an invader is one of them. With the host and two
   guests there is room; with three guests there is none and the invader is refused cleanly (`Capacity`, unit tested, and live with
-  Max players 2). One invader at a time (`kMaxInvaders`).
+  Max players 2). One invader at a time by default (`kMaxInvaders`); with the host's **Max invaders 2** (0.7.9, CL-7e748c,
+`kMaxInvadersCap`) two, and then both are slots of the four and count against Max players (host + 1 guest + 2 invaders = 4; with Max
+players 3 and one guest only one invader fits; the second is refused *no free slot*). The third is always refused *another invader is
+already in that world*.
 * **Before it stands in the world** the same checks run every frame; a boss fight, cutscene, loading screen or travel that begins
   while the invader is on its way turns it away with the reason (`Party: invade: invasion of slot N ends: invasion refused: ...`).
   An invader that is not in after 120 s is sent away.
+
+## Two invaders (0.7.9, CL-7e748c)
+
+The host's **Max invaders** is 1 (default: the 0.7.8 behaviour exactly) or 2. With 2 the gate admits a second invader while the first
+is pending or in, if the slots allow (`Admit`: `invaders >= max_invaders` -> *another invader is already in*, `world_players +
+invaders >= Capacity(Max players)` -> *no free slot*; `Invadable` for the lists' flag the same way). Everything else is per invader:
+* **State.** `party_invade.cpp` keeps one `Invasion` per invader slot on the host (admitted, pending / in, fell, away) and an
+  `InvaderBook` (`party_invade_rules.h`: name, state, lamp) on every game from the host's `invade` events; the event names the invader
+  (`{"s":..,"n":"<name>",...}`) so two can be told apart; a third name is ignored.
+* **Teams.** Both invaders' chrs go on the ONE invader team (a copy of the map enemies' team, made once): enemies of the host's and the
+  guests' teams, allies of each other (`party_pvp.cpp`, one `InvChr` per invader). One invader ending puts only its chr back; the cells
+  go back when the last one is gone. The red look is per chr.
+* **Notices, level range, falls, ends.** Each invader's coming / entering / ending is its own notice (*Invader NAME has entered your
+  world: fight!*), the level recheck applies to each, `invade_fell` is matched by slot, each ends on its own (`invasion of slot N
+  ends: ...`); the host's end events name the invader, so the other invader reads *The invader NAME was defeated and goes home* and
+  is paid nothing for it.
+* **Rewards.** One payout per invader (`RewardOnce` keeps one entry per name and ending): the host is paid at 0.5 for each fallen
+  invader, each guest at 0.25, each invader for the host's death once (an invader never pays itself for the other invader's end).
+* **Block.** *Block the invader* blocks every invader that is in.
+* Smoke: `iv2` (Max invaders 2: both in together, both on the one team on all three games, each falls on its own, the host paid
+  twice) and `ivm` (Max invaders 1, the default: the second dial is refused while one is in, admitted after it fell); group
+  `invade_two`. The invaders are headless there (the machine runs two rendered clients, the third game is a headless-lite instance).
+  Unit tests: `party-invade-test` (`TwoInvaders`: the table with two invaders and Max players, the book, the payouts).
 
 ## The role limits (enforced in the link, not in the game's modules)
 

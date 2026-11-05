@@ -163,6 +163,18 @@ class Client(unittest.TestCase):
         self.assertIsNone(L.parse_discovery_packet(ext))              # an old listener: junk
         self.assertIsNone(L.parse_discovery_ext(announce))
 
+    def test_max_invaders_setting(self):
+        # 0.7.9 (CL-7e748c): the host's Max invaders, 1 (default) or 2, bbport.ini party_max_invaders
+        L = self.L
+        self.assertEqual(L.party_max_invaders_text({}), "1")
+        self.assertEqual(L.party_max_invaders_text({"party_max_invaders": "2"}), "2")
+        self.assertEqual(L.party_max_invaders_text({"party_max_invaders": "3"}), "1")
+        self.assertEqual(L.party_max_invaders_text({"party_max_invaders": ""}), "1")
+        self.assertEqual(L.PARTY_MAX_INVADERS_CHOICES, ["1", "2"])
+        src = (ROOT / "launcher.py").read_text(encoding="utf-8")
+        self.assertIn('{"party_max_invaders"', src)                                   # saved to the ini like Allow invaders
+        self.assertIn('"BB_PARTY_MAX_INVADERS"', src)                                 # a stale variable never overrides the ini
+
     def test_host_toggle_exists_and_the_join_flag_is_launch_only(self):
         src = (ROOT / "launcher.py").read_text(encoding="utf-8")
         self.assertIn('update_ini(bbport_ini_path(), {"party_invaders"', src)        # the host's ini key

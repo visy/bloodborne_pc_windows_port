@@ -31,7 +31,9 @@ namespace coop::invade {
 
 constexpr const char* kEventName = "invade";
 constexpr int kGameSlots = 4;               ///< the game's player slots: the host and three phantoms (an invader is one)
-constexpr int kMaxInvaders = 1;             ///< one invader at a time
+constexpr int kMaxInvaders = 1;             ///< the default: one invader at a time (0.7.9: the host's "Max invaders" 1 or 2)
+constexpr int kMaxInvadersCap = 2;          ///< 0.7.9 (CL-7e748c): never more than this, whatever the setting
+inline int ClampMaxInvaders(int v) { return v < 1 ? 1 : v > kMaxInvadersCap ? kMaxInvadersCap : v; }
 constexpr double kRateWindowS = 600.0;      ///< an invader (address) may START this many invasions per window ...
 constexpr int kRateMax = 3;                 ///< ... then it waits for the oldest to age out
 constexpr int kSpamMax = 20;                ///< and may knock (a refused or admitted HELLO) this many times per window
@@ -141,6 +143,7 @@ struct HostView {
     int world_players = 1;          ///< the host + the guests in its world or on the way in (not invaders)
     int invaders = 0;               ///< invaders already admitted (pending or in)
     int party_max = kGameSlots;     ///< the party's "max players" setting
+    int max_invaders = kMaxInvaders;  ///< 0.7.9: the host's "Max invaders" (1 or 2): how many may be in at once
     int host_level = 0;             ///< 0.7.9: the host's Blood Echoes level (0 unknown: no level check)
 };
 
@@ -165,7 +168,7 @@ inline Deny Admit(const HostView& h, bool blocked, bool rate_limited, bool invad
     if (h.boss_fight) return Deny::BossFight;
     if (!h.alive) return Deny::HostDead;
     if (h.travelling) return Deny::Travelling;
-    if (h.invaders >= kMaxInvaders) return Deny::InvaderPresent;
+    if (h.invaders >= ClampMaxInvaders(h.max_invaders)) return Deny::InvaderPresent;
     if (h.world_players + h.invaders >= Capacity(h.party_max)) return Deny::NoSlot;
     return Deny::None;
 }
@@ -173,8 +176,8 @@ inline Deny Admit(const HostView& h, bool blocked, bool rate_limited, bool invad
 /// Is the host listed as invadable (the public list's flag, announced by the host)? A host that allows invaders,
 /// has a free slot and no invader. The lobby and the LAN list show only what the host announces; the host
 /// announces false whenever its switch is off.
-inline bool Invadable(bool allow, int world_players, int invaders, int party_max) {
-    return allow && invaders < kMaxInvaders && world_players + invaders < Capacity(party_max);
+inline bool Invadable(bool allow, int world_players, int invaders, int party_max, int max_invaders = kMaxInvaders) {
+    return allow && invaders < ClampMaxInvaders(max_invaders) && world_players + invaders < Capacity(party_max);
 }
 
 // ---- abuse limits ----
@@ -404,6 +407,54 @@ inline bool Decode(const std::string& body, Msg* out) {
     return false;
 }
 
+/// 0.7.9: the invaders a member knows from the host's "invade" events (every game keeps one: the host's own announcements, the
+/// guests' and the invaders' copies), by name, in the order they came; at most kMaxInvadersCap (a third name is ignored).
+struct SeenInvader {
+    std::string name;
+    int state = 0;             ///< 1 pending, 2 in
+    std::uint32_t apart = 0;   ///< the lamp it appears at (Msg::apart)
+};
+class InvaderBook {
+public:
+    /// Applies one message: state 0 removes the name, 1 / 2 adds or updates it. True when the book changed.
+    bool Apply(const Msg& m) {
+        for (auto it = v_.begin(); it != v_.end(); ++it) {
+            if (it->name != m.name) continue;
+            if (m.state == 0) {
+                v_.erase(it);
+                return true;
+            }
+            const bool same = it->state == m.state && it->apart == m.apart;
+            it->state = m.state, it->apart = m.apart;
+            return !same;
+        }
+        if (m.state == 0 || static_cast<int>(v_.size()) >= kMaxInvadersCap) return false;
+        v_.push_back({m.name, m.state, m.apart});
+        return true;
+    }
+    bool Has(const std::string& name) const { return Find(name) != nullptr; }
+    int State(const std::string& name) const { const SeenInvader* s = Find(name); return s ? s->state : 0; }
+    std::uint32_t Apart(const std::string& name) const { const SeenInvader* s = Find(name); return s ? s->apart : 0; }
+    bool Empty() const { return v_.empty(); }
+    std::size_t Size() const { return v_.size(); }
+    std::string First() const { return v_.empty() ? std::string() : v_.front().name; }
+    std::vector<std::string> Names() const {
+        std::vector<std::string> out;
+        for (const SeenInvader& s : v_) out.push_back(s.name);
+        return out;
+    }
+    const std::vector<SeenInvader>& All() const { return v_; }
+    void Clear() { v_.clear(); }
+
+private:
+    const SeenInvader* Find(const std::string& name) const {
+        for (const SeenInvader& s : v_)
+            if (s.name == name) return &s;
+        return nullptr;
+    }
+    std::vector<SeenInvader> v_;
+};
+
 /// The invader tells the host it fell (its HP reached 0 on its own game). The host's own read of the invader's
 /// copy is the second opinion; either one ends the invasion.
 constexpr const char* kFellEvent = "invade_fell";
@@ -576,16 +627,27 @@ inline Reward RewardFor(Role role, End end) {
 constexpr double kRewardOnceS = 120.0;
 class RewardOnce {
 public:
+    /// 0.7.9: per invader (two may end together): each (name, ending) is paid once, the others never lose their payout.
     bool Take(const std::string& name, End end, double now) {
-        if (have_ && name == name_ && end == end_ && now - at_ < kRewardOnceS) return false;
-        have_ = true, name_ = name, end_ = end, at_ = now;
+        for (auto& e : v_) {
+            if (e.name == name && e.end == end && now - e.at < kRewardOnceS) return false;
+            if (e.name == name && e.end == end) {
+                e.at = now;
+                return true;
+            }
+        }
+        v_.erase(std::remove_if(v_.begin(), v_.end(), [&](const Entry& e) { return now - e.at >= kRewardOnceS; }), v_.end());
+        if (v_.size() >= 16) v_.erase(v_.begin());
+        v_.push_back({name, end, now});
         return true;
     }
 private:
-    bool have_ = false;
-    std::string name_;
-    End end_ = End::None;
-    double at_ = 0;
+    struct Entry {
+        std::string name;
+        End end = End::None;
+        double at = 0;
+    };
+    std::vector<Entry> v_;
 };
 
 // ---- the line the invader reads in its party status when a join is refused ----
