@@ -10,10 +10,12 @@
 #include <windows.h>
 
 #define PIPE_BYTES (4u << 20)
+#define FULL_SLACK (16u << 10) /* a pipe this close to full cannot take a normal log line */
 
 static HANDLE rd, real_out;
 static volatile LONG idle;
 static volatile LONG started;
+static volatile LONG full_hits; /* drain reads that found the pipe (nearly) full: the writers dropped lines meanwhile */
 
 static uint64_t now_ms(void) { return GetTickCount64(); }
 
@@ -48,8 +50,21 @@ static DWORD WINAPI drain_thread(LPVOID arg) {
          * PeekNamedPipe on it (the flush below) behind the handle's lock. */
         DWORD avail = 0, n = 0;
         if (!PeekNamedPipe(rd, NULL, 0, NULL, &avail, NULL)) break;
-        if (!avail) { InterlockedExchange(&idle, 1); Sleep(2); continue; }
+        if (!avail) {
+            /* Idle again after a flood: say once that lines were dropped (written straight to the real stdout, the
+             * pipe may be full of the next flood by now). */
+            LONG hits = InterlockedExchange(&full_hits, 0);
+            if (hits && !dead) {
+                char msg[200];
+                int len = snprintf(msg, sizeof msg, "Log output: the log pipe was full %ld time(s) (the reader of stdout was too slow for %u MiB of log): "
+                                   "log lines were dropped, the game was not held up\n", (long)hits, PIPE_BYTES >> 20);
+                DWORD w = 0;
+                if (len > 0) WriteFile(real_out, msg, (DWORD)len, &w, NULL);
+            }
+            InterlockedExchange(&idle, 1); Sleep(2); continue;
+        }
         InterlockedExchange(&idle, 0);
+        if (avail + FULL_SLACK >= PIPE_BYTES) InterlockedIncrement(&full_hits);
         if (!ReadFile(rd, buf, avail < sizeof buf ? avail : (DWORD)sizeof buf, &n, NULL) || !n) break;
         DWORD off = 0;
         uint64_t t0 = now_ms();
@@ -89,6 +104,11 @@ void runtime_logdrain_start(void) {
     /* _dup2 onto fd 1 closes the handle fd 1 had: the drain keeps its own copy of it. */
     if (!DuplicateHandle(GetCurrentProcess(), out, GetCurrentProcess(), &own, 0, FALSE, DUPLICATE_SAME_ACCESS)) return;
     if (!CreatePipe(&r, &w, NULL, PIPE_BYTES)) { CloseHandle(own); return; }
+    /* A full pipe must drop the line, not hold the thread that printed it (the game's main or render thread):
+     * the write end never waits. (A write that finds no room returns 0 bytes written; the C runtime counts it as
+     * a failed write and goes on.) BB_LOG_BLOCK=1 keeps the old waiting writes. */
+    { DWORD nowait = PIPE_NOWAIT; const char *b = getenv("BB_LOG_BLOCK");
+      if (!(b && b[0] == '1')) SetNamedPipeHandleState(w, &nowait, NULL, NULL); }
     rd = r; real_out = own;
     HANDLE th = CreateThread(NULL, 0, drain_thread, NULL, 0, NULL);
     int wfd = th ? _open_osfhandle((intptr_t)w, _O_WRONLY | _O_BINARY) : -1;

@@ -16,6 +16,7 @@
 // bb-probe (probe.c): set while the port restarts itself through run.sh. The device fd is closed
 // before exec; Vulkan calls failing then are not errors: this thread waits for the exec instead.
 extern "C" __attribute__((weak)) volatile int runtime_restarting; // absent in the tests
+extern "C" __attribute__((weak)) void runtime_logdrain_flush(unsigned timeout_ms); // src/runtime_logdrain.c, absent in the tests
 
 namespace Common {
 // bbport: set on threads that rebuild shaders from the cache's sources: an assertion there means
@@ -44,6 +45,9 @@ void assert_fail_impl() {
     std::fflush(stderr);
 #ifdef _WIN32
     // Not _Exit: unloading the Vulkan driver while GPU threads are inside it can hang the process.
+    if (&runtime_logdrain_flush) {
+        runtime_logdrain_flush(3000);  // the last log lines (the GPU log above, the STOP line) reach the log first
+    }
     TerminateProcess(GetCurrentProcess(), 23);
 #endif
     std::_Exit(23);
