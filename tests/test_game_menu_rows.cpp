@@ -145,6 +145,8 @@ static void EveryState() {
         // 0.7.5 partyrules: the item rows stay each player's own; the Insight list is the host's rule
         const auto items = Names(PageNamed("My party: Your items"));
         assert(Has(items, "Own key items as guest") && Has(items, "Key items at once"));
+        assert(Has(Names(PageNamed("My party: Giving")), "Give items to the party") &&
+               Has(Names(PageNamed("My party: Giving")), "Give weapons and armor"));
         const auto rewards = Names(PageNamed("Party rules: Rewards"));
         assert(Has(rewards, "Full rewards for guests") && rewards.back() == "Insight for bosses");
     }

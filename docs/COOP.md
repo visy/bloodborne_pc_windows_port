@@ -316,12 +316,12 @@ before anyone is in the game):
   default, your own setting) makes the party HUD show only the compass (a direction arrow and the distance per
   companion), hides the name tags above the companions and cuts party messages to errors. *Party messages* (same
   page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
-- **Give items to a party member.** *Give items to the party* (*System -> My party: Your items*, the launcher's My Party
+- **Give items to a party member.** *Give items to the party* (*System -> My party: Giving*, the launcher's My Party
   tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give* to the command menu of an
   item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials (the blood
   stones too), never key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
   when the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
-- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> My party: Your items*, the launcher's My
+- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> My party: Giving*, the launcher's My
   Party tab, `party_give_gear`, off by default, your own setting and your consent to receive; separate from *Give items to the
   party*) adds *Give* to a weapon's or armor's command menu in the inventory: pick a hunter. A weapon keeps its upgrade level and its
   blood gems, armor moves as it is. Not worn gear, and not the gear the party shares anyway (story and unique weapons, Gascoigne's
@@ -423,7 +423,7 @@ before anyone is in the game):
   open world, Chalice Dungeons, cutscenes with the host), *Rewards* (guests' echoes and drops, boss
   Insight, boss item drops for guests), *Phantoms*, *Rot* and *Enemies* (scaling); guests see the host's values read-only, so the
   whole party plays one way. *My party* holds what each player chooses for itself: *Your save* (what
-  the party brings into your own character), *Your items* (item rewards, your key items as a guest),
+  the party brings into your own character), *Your items* (item rewards, your key items as a guest), *Giving* (giving items, weapons and armor),
   *Display* and *Look & notices*. The launcher's *Party Rules* and *My Party* tabs show the same settings
   (`bbport.ini`); its *Party* tab is for hosting, joining and the connection.
 
