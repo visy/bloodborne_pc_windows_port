@@ -677,6 +677,15 @@ class GlyphListSetting(unittest.TestCase):
         src = Path(self.L.__file__).read_text(encoding="utf-8")
         self.assertIn('("check", "party_glyph_list", "Chalice glyph list",', src)
 
+    def test_guest_altar_switch_default_off_and_ini(self):
+        """0.7.9 (CL-13f7d1): the Ritual Altar as a guest checkbox: bbport.ini party_guest_altar, off by default."""
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        self.assertEqual(switches["party_guest_altar"], ("BB_PARTY_GUEST_ALTAR", False))
+        env = self.L.party_env({"party_mode": "join", "party_name": "A", "party_code": "x"})
+        self.assertIsNone(env["BB_PARTY_GUEST_ALTAR"])
+        self.assertEqual(self.L.party_rules_ini({}, "")["party_guest_altar"], "0")
+        self.assertEqual(self.L.party_rules_ini({"party_guest_altar": True}, "")["party_guest_altar"], "1")
+
 
 if __name__ == "__main__":
     unittest.main()

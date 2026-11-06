@@ -290,6 +290,7 @@ before anyone is in the game):
   comes from the party only once your own world has reached night; Amygdala's grab takes only the player who
   holds the Eye.
 - **Chalice glyph list.** With *Chalice glyph list* on (*System -> My party: Chalice*, the launcher's My Party tab, `party_glyph_list`, off by default) the Ritual Altar's *Search by Chalice Glyph* opens with a list of the party's glyphs to pick from (your dungeons, the guests', and `patches/chalice_glyphs.json`) above the code keyboard; pick one and the whole party enters that dungeon together. An unknown code gets a clear notice. See docs/party/chalice.md 11.
+- **Ritual Altar as a guest.** With *Ritual Altar as a guest* on (*System -> My party: Chalice*, the launcher's My Party tab, `party_guest_altar`, off by default, your own setting) the Ritual Altar in the host's Hunter's Dream answers you while you are a guest: conduct a Chalice ritual with your own chalice and materials. The dungeon is made in your own save (a free slot), the host's altar offers it as *Enter the party's dungeon*, and you follow the host in.
 - **Chalice layer travel.** With the host's rule *Chalice layer travel* (*System -> Party rules: PvP & lamps*, the launcher's Party Rules tab, `party_layer_travel`, off by default) the host's Chalice Dungeon lamp lists the dungeon's other lit lamps (the layers) next to the Hunter's Dream, and the host's choice takes the party along (a guest with a dungeon of its own is summoned back in next to the host; a guest without one is carried too, by the summon or by the same lamp warp on its own game). Not for guests staying in their own world. See docs/party/chalice_layers.md.
 - **Guests can gather the party.** With the host's rule *Guests can gather* (*System -> Party rules: Travel*, the launcher's Party Rules tab, `party_guest_gather`, off by default) a guest sees *System -> Party -> Gather the party*: it asks the host and the other guests to come to it (each is asked and may say no; an in-world warp beside the guest, only players in the same map, never a loading screen). Same refusals and 30 s pause as the host's gather; not while the guest stays in its own world. See docs/party/guest_gather.md.
 - **Invasions into open public games.** The host decides: *Allow invaders* (*System -> Party access*, the launcher's Party tab,
@@ -315,12 +316,12 @@ before anyone is in the game):
   default, your own setting) makes the party HUD show only the compass (a direction arrow and the distance per
   companion), hides the name tags above the companions and cuts party messages to errors. *Party messages* (same
   page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
-- **Give items to a party member.** *Give items to the party* (*System -> My party: Your items*, the launcher's My Party
+- **Give items to a party member.** *Give items to the party* (*System -> My party: Giving*, the launcher's My Party
   tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give* to the command menu of an
   item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials (the blood
   stones too), never key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
   when the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
-- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> My party: Your items*, the launcher's My
+- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> My party: Giving*, the launcher's My
   Party tab, `party_give_gear`, off by default, your own setting and your consent to receive; separate from *Give items to the
   party*) adds *Give* to a weapon's or armor's command menu in the inventory: pick a hunter. A weapon keeps its upgrade level and its
   blood gems, armor moves as it is. Not worn gear, and not the gear the party shares anyway (story and unique weapons, Gascoigne's
@@ -422,7 +423,7 @@ before anyone is in the game):
   open world, Chalice Dungeons, cutscenes with the host), *Rewards* (guests' echoes and drops, boss
   Insight, boss item drops for guests), *Phantoms*, *Rot* and *Enemies* (scaling); guests see the host's values read-only, so the
   whole party plays one way. *My party* holds what each player chooses for itself: *Your save* (what
-  the party brings into your own character), *Your items* (item rewards, your key items as a guest),
+  the party brings into your own character), *Your items* (item rewards, your key items as a guest), *Giving* (giving items, weapons and armor),
   *Display* and *Look & notices*. The launcher's *Party Rules* and *My Party* tabs show the same settings
   (`bbport.ini`); its *Party* tab is for hosting, joining and the connection.
 
