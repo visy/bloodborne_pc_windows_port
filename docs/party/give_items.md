@@ -182,6 +182,11 @@ one (else nothing is claimed).
   again, guest -> host and the same weapon back (the same two gems after two moves, read back from the inventory); `gvwn` the same
   under `BB_NET_SIM=dsl`. Test aids: `BB_PARTY_GEAR_SETUP` (fixture), `BB_PARTY_GEAR_PROBE`, `BB_PARTY_GEAR_WATCH`, and the
   `w<id>:<slot>@s` / `a<id>:<slot>@s` / `gon@s` / `goff@s` tokens of `BB_PARTY_GIVE_TEST`.
+* Smoke group `give_armor` = phase `gva` (0.7.9): the Armor tab by REAL presses only. The test save wears Hat / Garb / Gloves / Trousers; the fixture
+  adds an unworn second Hunter Garb (same id as the worn one) and a Yharnam Garb. The menus of the worn Hat and worn Garb offer no *Give*;
+  the unworn Garb's menu (Use / Discard / Give: Down Down, the cursor starts on the disabled Use) gives that inventory entry (its handle, not
+  the worn one's): READY, then the giver removes it, COMMIT, the guest builds it, DONE; probes show the guest with both Garbs and the host
+  with the worn one only. Press timing is 6 s a key (`GVA_GAP`); the Armor tab is Right x5 (`GVA_TAB`).
 
 ## 6. Tests (goods)
 
