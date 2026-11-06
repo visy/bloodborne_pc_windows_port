@@ -259,6 +259,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_vpn_lobby = i != 0;
     } else if (key == "party_open") {
         v.party_open = i != 0;
+    } else if (key == "party_open_any_level") {
+        v.party_open_any_level = i != 0 || value == "on" || value == "true";
     } else if (key == "party_invaders") {
         v.party_invaders = i != 0 || value == "on" || value == "true";
     } else if (key == "party_max_invaders") {
@@ -492,7 +494,7 @@ void Load() {
         {"BB_REFLEX", "reflex"},  {"BB_ANTI_LAG", "anti_lag"}, {"BB_VRR", "vrr"}, {"BB_PAD_FRESH", "pad_fresh"}, {"BB_LL_PACING", "ll_pacing"},                  {"BB_PROMPT_STYLE", "prompt_style"}, {"BB_KEY_RAMP", "key_ramp"},
         {"BB_TEXTURE_QUALITY", "texture_quality"},
         {"BB_PARTY_VPN", "party_vpn"},        {"BB_PARTY_DISCOVERY", "party_discovery"},
-        {"BB_PARTY_HIDE_BAD_NAMES", "party_hide_bad_names"}, {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"}, {"BB_PARTY_INVADERS", "party_invaders"}, {"BB_PARTY_MAX_INVADERS", "party_max_invaders"},
+        {"BB_PARTY_HIDE_BAD_NAMES", "party_hide_bad_names"}, {"BB_PARTY_VPN_LOBBY", "party_vpn_lobby"}, {"BB_PARTY_OPEN", "party_open"}, {"BB_PARTY_OPEN_ANY_LEVEL", "party_open_any_level"}, {"BB_PARTY_INVADERS", "party_invaders"}, {"BB_PARTY_MAX_INVADERS", "party_max_invaders"},
         {"BB_PARTY_SPLITSCREEN", "party_splitscreen"}, {"BB_PARTY_STAY", "party_stay"}, {"BB_PARTY_MESSAGES", "party_messages"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
@@ -855,6 +857,7 @@ void Save() {
     put("party_discovery", flag(v.party_discovery));
     put("party_vpn_lobby", flag(v.party_vpn_lobby));
     put("party_open", flag(v.party_open));
+    put("party_open_any_level", flag(v.party_open_any_level));
     put("party_invaders", flag(v.party_invaders));
     put("party_max_invaders", std::to_string(std::clamp(v.party_max_invaders.load(), 1, 2)));
     put("party_splitscreen", flag(v.party_splitscreen));

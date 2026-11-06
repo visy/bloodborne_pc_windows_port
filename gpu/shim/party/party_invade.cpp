@@ -339,7 +339,7 @@ std::string HostShown() {
 }
 std::string OpenGate(int level) {
     const int host = g_own_level.load();
-    if (OpenLevelOk(host, level)) {
+    if (OpenLevelOk(host, level, BbSettings::Get().party_open_any_level.load())) {
         if (host <= 0) Log("gate: the host's level is not known: no level check for an open-party join");
         return {};
     }
@@ -751,7 +751,19 @@ void TickImpl(const GameSnapshot& s, party::PartyLink* link, bool host) {
             const int n = link->vitals(mv, party::kMaxVitals);
             for (int i = 0; i < n; ++i) {
                 if (!(mv[i].flags & party::kVitalsValid) || mv[i].level == 0 || !link->joined_open(mv[i].slot)) continue;
-                if (OpenLevelOk(s.level, mv[i].level)) continue;
+                if (OpenLevelOk(s.level, mv[i].level, BbSettings::Get().party_open_any_level.load())) {
+                    // the proof for the smoke: a member the range would have removed stays (logged once per slot and level)
+                    static int s_noted[party::kMaxVitals + 8][2];
+                    const int sl = mv[i].slot;
+                    if (sl >= 0 && sl < party::kMaxVitals + 8 && !OpenLevelOk(s.level, mv[i].level) &&
+                        (s_noted[sl][0] != s.level || s_noted[sl][1] != mv[i].level)) {
+                        s_noted[sl][0] = s.level;
+                        s_noted[sl][1] = mv[i].level;
+                        Log("open-party member in slot %d: level %d is outside the vanilla range %d-%d, kept (any level can join)", sl,
+                            int(mv[i].level), LevelLower(s.level), OpenLevelUpper(s.level));
+                    }
+                    continue;
+                }
                 Log("open-party member in slot %d: its vitals say level %d, outside the host's range %d-%d: removed", mv[i].slot,
                     int(mv[i].level), LevelLower(s.level), OpenLevelUpper(s.level));
                 link->drop_member(mv[i].slot, party::RejectCode::Level,

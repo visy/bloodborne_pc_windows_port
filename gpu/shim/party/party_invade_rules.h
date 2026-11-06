@@ -124,8 +124,9 @@ inline std::string LevelText(const std::string& host, int host_level, int invade
 // The vanilla co-op range for an OPEN party join (no password, a plain address): floor(X*0.8-20) .. floor(X*1.2+20),
 // i.e. host 100 -> 60..140, host 55 -> 24..86, host 4 -> 1..24. A password or a party code ignores it, as in the game.
 inline int OpenLevelUpper(int host) { return host + host / 5 + 20; }
-inline bool OpenLevelOk(int host, int guest) {
-    if (host <= 0 || guest <= 0) return true;
+/// `any`: the host's "Any level can join my open game" (party_open_any_level): no range at all for an open join.
+inline bool OpenLevelOk(int host, int guest, bool any = false) {
+    if (any || host <= 0 || guest <= 0) return true;
     return guest >= LevelLower(host) && guest <= OpenLevelUpper(host);
 }
 
