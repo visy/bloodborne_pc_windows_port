@@ -431,7 +431,16 @@ void TwoInvaders() {
     CHECK(ro.Take("A", End::InvaderDied, 10.0 + kRewardOnceS + 1.0));
 }
 
+// 0.7.9: the B1 fallback and the chr-type repair know the invade role.
+void FallbackRole() {
+    CHECK(FallbackPlanFor(true) == FallbackPlan::EndInvasion);
+    CHECK(FallbackPlanFor(false) == FallbackPlan::ReplayTravel);
+    CHECK(!ChrTypeRepairAllowed(true));
+    CHECK(ChrTypeRepairAllowed(false));
+}
+
 int main() {
+    FallbackRole();
     TwoInvaders();
     Apart();
     Look();

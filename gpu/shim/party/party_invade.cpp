@@ -448,6 +448,13 @@ bool LocalIsInvader() {
     return JoinAsInvader();
 }
 
+void EndInvasionAfterFallback(const char* why) {
+    Log("the invasion ends: no way into the host's world (%s); going home", why ? why : "");
+    Notice("The invasion failed: you could not get into the host's world");
+    RequestGuestSendHome("the invasion could not reach the host's world");  // a no-op when the invader is already in its own world
+    party::runtime_leave();  // the link ends (BYE): the host reads the invader as gone; this game plays on alone, never a co-op phantom
+}
+
 int HostFullHp() {
     Shared& g = G();
     std::lock_guard<std::mutex> lk(g.mu);

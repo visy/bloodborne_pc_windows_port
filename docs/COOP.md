@@ -303,7 +303,7 @@ before anyone is in the game):
   player is told the range (0.7.9). One invader at a time, or two with the host's *Max invaders* (*System -> Party access*, the
   launcher's Party tab, `party_max_invaders`, 1 or 2, default 1, live) (0.7.9); never in a boss
   fight, a loading screen or a cutscene, never into a full (4 player) game; you can block the invaders
-  for the session (*System -> Party -> Block the invader*). The invader is drawn with the game's red phantom glow, and the game's own
+  for the session (*System -> Party -> Block the invader*). An invasion that cannot get into the host's world (no world snapshot within 45 s) ends with a notice and the invader goes home; it is never turned into a co-op phantom (0.7.9). The invader is drawn with the game's red phantom glow, and the game's own
   rewards are paid on each player's own game: an invader that defeats the host gets Blood Echoes and +1 Insight, the host and
   guests get Blood Echoes for defeating it. The host's *Full health in PvP* rule also covers an invasion: with it on (the
   default) the invader is not cut to 70 % maximum health (0.7.9). See docs/party/invasions.md.
