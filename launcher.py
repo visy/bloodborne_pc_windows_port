@@ -191,6 +191,8 @@ PARTY_INI_SWITCHES = [
     ("party_layer_travel", "BB_PARTY_LAYER_TRAVEL", False),
     # 0.7.8 (CL-420d9f): the Ritual Altar's Chalice Glyph pick list (this player's own, OFF by default)
     ("party_glyph_list", "BB_PARTY_GLYPH_LIST", False),
+    # 0.7.9 (CL-13f7d1): a summoned guest can use the Ritual Altar in the host's Dream (this player's own, OFF by default)
+    ("party_guest_altar", "BB_PARTY_GUEST_ALTAR", False),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -444,6 +446,10 @@ MY_PARTY_TAB = [
          "(your own dungeons, the guests' dungeons and the shipped patches/chalice_glyphs.json), then the code "
          "keyboard: typing a code still works. Pick one and the whole party enters that dungeon together. "
          "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > My party: Chalice)."),
+        ("check", "party_guest_altar", "Ritual Altar as a guest",
+         "While you are a guest in the host's Hunter's Dream, the Ritual Altar answers you too: conduct a Chalice ritual "
+         "with your own chalice and materials. The dungeon lands in your own save and the party can enter it. "
+         "Your own setting. Default: off (bbport.ini party_guest_altar; in the game: System > My party: Chalice)."),
     ]),
     (1, 1, "Names", [
         ("check", "party_hide_bad_names", "Hide offensive names",

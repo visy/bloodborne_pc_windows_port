@@ -160,6 +160,20 @@ int main() {
     assert(!s.party_glyph_list);
     assert(bb_test_setenv("BB_PARTY_GLYPH_LIST", "") == 0);
     s.party_glyph_list = false;
+    // 0.7.9 (CL-13f7d1): the Ritual Altar as a guest: this player's own, OFF by default, ini key + variable
+    assert(bb_test_setenv("BB_PARTY_GUEST_ALTAR", "") == 0);
+    BbSettings::Load();
+    assert(!s.party_guest_altar);
+    s.party_guest_altar = true;
+    BbSettings::Save();
+    assert(Read(path).find("party_guest_altar=1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(s.party_guest_altar);
+    assert(bb_test_setenv("BB_PARTY_GUEST_ALTAR", "0") == 0);
+    BbSettings::Load();
+    assert(!s.party_guest_altar);
+    assert(bb_test_setenv("BB_PARTY_GUEST_ALTAR", "") == 0);
+    s.party_guest_altar = false;
     s.party_kill_record = true;
     s.party_gather = true;
     s.party_key_items_summoned = true;

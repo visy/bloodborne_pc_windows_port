@@ -1912,6 +1912,9 @@ void DefineAll() {
     own(&Values::party_glyph_list, "Chalice glyph list", "Список глифов чаши",
         "The Ritual Altar's glyph search lists the party's glyphs to pick from first. Off by default",
         "Поиск глифа у Алтаря ритуалов сначала показывает глифы группы. По умолчанию выкл.");
+    own(&Values::party_guest_altar, "Ritual Altar as a guest", "Алтарь ритуалов гостем",
+        "As a guest in the host's Dream you can use the Ritual Altar: conduct a ritual with your own chalice and materials. Off by default",
+        "Гость в Сне охотника может пользоваться Алтарём ритуалов: ритуал с вашей чашей и материалами. По умолчанию выкл.");
 
     // ---- My party: Names (0.7.8, namefilter): hateful member names are shown masked on this PC. ON by default (safety),
     // unlike other new party features; the real name stays the member's identity (party/name_filter.h). ----
