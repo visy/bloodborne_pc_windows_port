@@ -510,6 +510,21 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     if ((value & 0xff) != 0 && LampClientAnswer(env, value) == 0) {
         return 0;
     }
+    // CL-13f7d1 (0.7.9): bbport.ini party_guest_altar (this player's own, off by default): the Dream's chalice altars
+    // (t210050..t210110) answer a summoned guest: its own chalice, materials and dungeons (MultiFilter answers the other test).
+    if ((value & 0xff) != 0 && BbSettings::Get().party_guest_altar.load(std::memory_order_relaxed) &&
+        LocalSessionRole() == kSessionRoleClient) {  // live: the tick's g_session_role lags a load (the talk machine picks at once)
+        const std::uint32_t t = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
+        if (t >= 210050 && t <= 210110 && t % 10 == 0) {
+            g_overrides.fetch_add(1, std::memory_order_relaxed);
+            static std::atomic<std::uint32_t> logged{0};  // one line per altar script
+            if (!(logged.fetch_or(1u << ((t - 210050) / 10), std::memory_order_relaxed) & (1u << ((t - 210050) / 10)))) {
+                std::printf("[coop] Party guest services: altar talk t%u: IsClientPlayer answered 0 for this guest (party_guest_altar)\n", t);
+                std::fflush(stdout);
+            }
+            return 0;
+        }
+    }
     // D8: a guest talks to the NPCs of the host's world (their quest flags then go to the host and
     // the guest's own save as world actions, party_worldact.h).
     if ((value & 0xff) != 0 && g_world_talk.load(std::memory_order_relaxed) &&
@@ -594,7 +609,10 @@ std::uint64_t BB_COOP_SYSV MultiFilter(std::uint64_t env, std::uint64_t value) {
     // Dream the altar t210100 parked in its empty machine, no prompt, so the host could not enter
     // the party's dungeon); BB_PARTY_HOST_ALTARS=0 keeps them blocked while a guest is present.
     static const bool host_altars = !(std::getenv("BB_PARTY_HOST_ALTARS") && std::getenv("BB_PARTY_HOST_ALTARS")[0] == '0');
-    const bool altar = (altars || (host_altars && LocalSessionRole() != kSessionRoleClient)) && talk >= 210050 &&
+    // CL-13f7d1 (0.7.9): bbport.ini party_guest_altar (this player's own, off by default): a summoned guest's Dream altars too.
+    const bool guest_altar = BbSettings::Get().party_guest_altar.load(std::memory_order_relaxed) &&
+                             LocalSessionRole() == kSessionRoleClient;
+    const bool altar = (altars || guest_altar || (host_altars && LocalSessionRole() != kSessionRoleClient)) && talk >= 210050 &&
                        talk <= 210110 && talk % 10 == 0;
     // A Chalice Dungeon's lamps (t290110-t290119), both roles: the host's way out of its dungeon
     // and a guest's lamp (its warp becomes the party's travel question / request as for a world lamp).

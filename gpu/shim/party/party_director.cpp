@@ -398,6 +398,8 @@ struct Test {
     int award_lot = -1; // award_lot=N: AwardItemLot(N) once (call-shape probe, test saves)
     std::vector<std::pair<int, int>> goods; // goods=ID:N: tops goods ID up to N once (test saves)
     bool goods_done = false;
+    int approach_join = 0; // approach_join=N: approach= waits for this player's Nth party join (needs a travel step to count joins)
+    bool in_host = false; // in_host: place= / approach= / seq= wait until this player is summoned into a host's world
     bool place = false, place_done = false; // place=MAP:X:Y:Z:YAW (hex map): one forced placement
     std::uint32_t place_map = 0;
     float place_pos[3] = {0, 0, 0}, place_yaw = 0;
@@ -4497,7 +4499,8 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
         Log("test: nav: the walk was not ticked for %.1f s: stick released", Seconds(t.nav_last, now));
     }
     if (t.approach && !t.approach_done && s.world_up && !s.loading && Seconds(st.world_at, now) >= 12.0 &&
-        (!t.place || t.place_done) && Seconds(t.ap_at, now) >= 0.0) {
+        (!t.in_host || s.session_role == RoleClient) && t.joins >= t.approach_join && (!t.place || t.place_done) &&
+        Seconds(t.ap_at, now) >= 0.0) {
         std::uint32_t area = 0;
         float pos[3] = {0, 0, 0};
         if (ReadPlayerPos(&area, pos)) {
@@ -4756,7 +4759,8 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
             Log("test: approach done: the menu walk (seq) starts");
         }
     }
-    if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading) {
+    if (t.place && !t.place_done && Seconds(st.world_at, now) >= t.place_at && s.world_up && !s.loading &&
+        (!t.in_host || s.session_role == RoleClient)) {
         t.place_done = true;
         const bool ok = t.warp_point ? TravelWarpForTest(t.place_map, t.warp_point)
                                      : TravelPlaceForTest(t.place_map, t.place_pos, t.place_yaw);
@@ -4980,6 +4984,10 @@ void PartyDirector::ConfigureFromEnv() {
                     st.test.place_pos[2] = z;
                     st.test.place_yaw = yaw;
                 }
+            } else if (item.rfind("approach_join=", 0) == 0) {
+                st.test.approach_join = std::atoi(item.c_str() + 14);
+            } else if (item == "in_host") {
+                st.test.in_host = true;
             } else if (item.rfind("set_flag=", 0) == 0) {
                 for (const char* p = item.c_str() + 9; *p;) {
                     char* end = nullptr;
