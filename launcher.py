@@ -1901,6 +1901,13 @@ PARTY_OPEN_TIP = (
     "Off by default (bbport.ini party_open; in the game: System > Party access).")
 
 
+PARTY_OPEN_ANY_LEVEL_TIP = (
+    "Host only. An open game (no password, a plain address join) is normally held to the game's co-op level range: a "
+    "host at level 100 takes players from 60 to 140. On: any level can join your open game, and none is removed "
+    "later. Password and party-code joins never had a range; invaders keep theirs. Your own setting. Off by default "
+    "(bbport.ini party_open_any_level, env BB_PARTY_OPEN_ANY_LEVEL; in the game: System > Party access > Any level can join).")
+
+
 PARTY_MAX_INVADERS_CHOICES = ["1", "2"]
 PARTY_MAX_INVADERS_TIP = (
     "Host only, with Allow invaders on: how many invaders may be in your world at once, 1 or 2. They count against Max "
@@ -3491,6 +3498,8 @@ class BloodborneLauncher(tk.Tk):
         self.party_open = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_open", False))
         # 0.7.8 (CL-4cc63c): the host lets others invade from the public lists (bbport.ini party_invaders, off by default)
         self.party_invaders = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_invaders", False))
+        # 0.7.9: open joins skip the co-op level range (bbport.ini party_open_any_level, off by default)
+        self.party_open_any_level = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_open_any_level", False))
         # 0.7.9 (CL-7e748c): how many invaders at once, 1 or 2 (bbport.ini party_max_invaders, default 1)
         self.party_max_invaders_var = tk.StringVar(value=party_max_invaders_text(read_ini(bbport_ini_path())))
         self.party_vpn_info_var = tk.StringVar(value="Looking for a VPN adapter...")
@@ -4432,6 +4441,8 @@ class BloodborneLauncher(tk.Tk):
             "Stored in launcher_settings.json. Default: none (BB_PARTY_PASSWORD).", show="*")
         open_cb = self._check(sec, "Open party: no password, join by address (LAN/VPN)", self.party_open,
                               PARTY_OPEN_TIP, command=self.on_party_open_toggle)
+        self.party_open_any_level_cb = self._check(sec, "Any level can join my open game", self.party_open_any_level,
+                                                   PARTY_OPEN_ANY_LEVEL_TIP, command=self.on_party_open_any_level_toggle)
         self.party_invaders_cb = self._check(sec, "Allow invaders (listed games)", self.party_invaders, PARTY_INVADERS_TIP,
                                              command=self.on_party_invaders_toggle)
         self.party_max_invaders_combo = self._combo(sec, "Max invaders:", self.party_max_invaders_var, PARTY_MAX_INVADERS_CHOICES,
@@ -4655,6 +4666,8 @@ class BloodborneLauncher(tk.Tk):
             self.party_vpn_lobby.set(ini_flag_value(ini, "party_vpn_lobby", False))
         if hasattr(self, "party_open_cb"):
             self.party_open.set(ini_flag_value(ini, "party_open", False))
+        if hasattr(self, "party_open_any_level_cb"):
+            self.party_open_any_level.set(ini_flag_value(ini, "party_open_any_level", False))
         if hasattr(self, "party_invaders_cb"):
             self.party_invaders.set(ini_flag_value(ini, "party_invaders", False))
         if hasattr(self, "party_max_invaders_combo"):
@@ -4856,6 +4869,13 @@ class BloodborneLauncher(tk.Tk):
             update_ini(bbport_ini_path(), {"party_max_invaders": value if value in PARTY_MAX_INVADERS_CHOICES else "1"})
         except OSError as ex:
             self.log(f"[PARTY] Could not save party_max_invaders to bbport.ini: {ex}")
+        self._ini_stamp = self.ini_stamp()
+
+    def on_party_open_any_level_toggle(self):
+        try:
+            update_ini(bbport_ini_path(), {"party_open_any_level": "1" if self.party_open_any_level.get() else "0"})
+        except OSError as ex:
+            self.log(f"[PARTY] Could not save party_open_any_level to bbport.ini: {ex}")
         self._ini_stamp = self.ini_stamp()
 
     def on_party_invaders_toggle(self):
