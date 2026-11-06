@@ -427,8 +427,9 @@ RULES_PAGES = [
     ("My party: Your items", ["Host's item rewards", "Give the bells", "Own key items as guest", "Key items at once",
                                 "Shared item notices"],
      ("Give the bells", "down/", "left", "Off", "right", "party_grant_bells=0", "party_grant_bells=1", None)),
+    # 0.7.9: Giving (off by default: the change turns it on and back off)
     ("My party: Giving", ["Give items to the party", "Give weapons and armor"],
-     ("Give items to the party", "", "left", "Off", "right", "party_give_items=0", "party_give_items=1", None)),
+     ("Give items to the party", "", "right", "On", "left", "party_give_items=1", "party_give_items=0", None)),
     ("My party: Display", ["Party HUD", "Party name tags", "Pings", "Show party through walls", "Coloured name tags",
                            "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
