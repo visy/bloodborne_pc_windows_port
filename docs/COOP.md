@@ -286,7 +286,7 @@ before anyone is in the game):
   Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
-  The Bath Messenger's badge rows open with your own badges, and the Eye of a Blood-drunk Hunter (the DLC entry)
+  The Bath Messenger's badge rows open with your own badges (also one you get while summoned in the host's world: the row opens at once and stays), and the Eye of a Blood-drunk Hunter (the DLC entry)
   comes from the party only once your own world has reached night; Amygdala's grab takes only the player who
   holds the Eye.
 - **Chalice glyph list.** With *Chalice glyph list* on (*System -> My party: Chalice*, the launcher's My Party tab, `party_glyph_list`, off by default) the Ritual Altar's *Search by Chalice Glyph* opens with a list of the party's glyphs to pick from (your dungeons, the guests', and `patches/chalice_glyphs.json`) above the code keyboard; pick one and the whole party enters that dungeon together. An unknown code gets a clear notice. See docs/party/chalice.md 11.
