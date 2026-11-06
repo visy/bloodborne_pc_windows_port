@@ -7308,7 +7308,7 @@ NFH = {
     "nfr": dict(entity=3500900, map="m35_00", lamp=3502950, friendly=1722, hostile=1727, states=(1710, 1729),
                 flags=(73500620,), who="the Research Hall hunter", group="npc_hunter_research", kill_at=60),
     "nfd": dict(entity=2300710, map="m23_00", lamp=2302950, friendly=1320, hostile=1322, states=(1320, 1325),
-                flags=(), who="Djura", group="npc_djura", kill_at=60, host_far=True),
+                flags=(), who="Djura", group="npc_djura", kill_at=60, host_far=True, deg=90, hostile_alt=1323),
     "nfv": dict(entity=2700912, map="m27_00", lamp=2702950, friendly=1800, hostile=1805, states=(1790, 1809),
                 flags=(72700320,), who="Valtr", group="npc_valtr", kill_at=60, per_player=True),
 }
@@ -7323,7 +7323,7 @@ def phase_nfh(only, name):
     host = ",".join([
         "god", "log_flag=" + flags,
         "host_warp=%d@8^1" % c["lamp"],                         # 1: the party at the lamp
-        "host_chr=%d:1.5@10%%%s^1" % (e, m)]                    # 2: the host in front of the NPC (guest back in)
+        "host_chr=%d:1.5%s@10%%%s^1" % (e, c.get("deg") and ":%d" % c["deg"] or "", m)]  # 2: the host in front of the NPC (guest back in)
         + ["host_press=0x800@1.2%%%s!" % m] * 8                 # 3: the host's blows: the NPC turns hostile
         + ["host_kill=%d:hp@%d%%%s" % (e, c["kill_at"], m),     # 4: after the guest's R1s: its HP 0 (the game's own death)
            "host_press=0@150%%%s!" % m])
@@ -7331,9 +7331,11 @@ def phase_nfh(only, name):
                    "guest_chr=%d:2.5:90@12%%%s" % (e, m)]       # 2: beside it (friendly)
                   + ["guest_press=0x4:lock@1%%%s!" % m] * 2
                   + ["guest_press=0@%d%%%s!" % (c.get("gwait", 24), m)]
-                  + ["guest_chr=%d:1.2@2%%%s" % (e, m)]         # 3: in front of it after the switch
+                  + ["guest_chr=%d:1.2%s@2%%%s" % (e, c.get("deg") and ":%d" % c["deg"] or "", m)]  # 3: in front of it after the switch
                   + ["guest_press=0x4:lock@1%%%s!" % m] * 2
                   + (["guest_press=0x800@1.2%%%s!" % m] * 3 + ["guest_chr=%d:1.2@1%%%s" % (e, m)]) * 5)
+    if c.get("deg"):
+        g1 = g1.replace("guest_chr=%d:1.2@1%%%s" % (e, m), "guest_chr=%d:1.2:%d@1%%%s" % (e, c["deg"], m))
     until = r"0:(drops: shared drop roll[^\n]*entity %d|test: host_kill: [^\n]*entity %d)" % (e, e)
     return dict(
         name=name, seconds=420, count=2, headless=0,
@@ -7366,7 +7368,8 @@ def check_nfh(v, L, name):
     v.step("%s (before) %s there on both games, friendly (not team 27/23)" % (nm, c["who"]),
            bool(bh) and bool(bg) and all(tm not in (23, 27) for _, _, tm in bh + bg),
            "host teams %s, guest teams %s" % (sorted({tm for _, _, tm in bh}), sorted({tm for _, _, tm in bg})))
-    hflag = L.find(0, r"test: flags [^\n]*%d=1" % c["hostile"], prov[0] - 1)
+    # Djura's own events pick 1322 or 1323 as the hostile state (run to run); both mean hostile
+    hflag = L.find(0, r"test: flags [^\n]*\b(%d|%d)=1" % (c["hostile"], c.get("hostile_alt", c["hostile"])), prov[0] - 1)
     hteam = [(t, tm) for t, _, tm in nf_hp(L, 0, e, prov[0] - 1) if tm == 27]
     v.step("%s the host's R1s turn it hostile on the host (%d / team 27)" % (nm, c["hostile"]), bool(hflag or hteam),
            "flag at %s, team 27 at %s" % ("+%.1f" % hflag[0] if hflag else "-", "+%.1f" % hteam[0][0] if hteam else "-"))
@@ -13340,8 +13343,6 @@ FLAKY_PHASES = {
     "lt", "lf", "s2", "gd", "la", "ngp", "npf", "pvd", "sj", "kd", "s3",
     # nfw: "(before) Alfred friendly on both games" failed twice in a row and passed on the 3rd/4th run (an NPC spawn race)
     "nfw",
-    # nfd: Djura's fight is not deterministic: one of two runs ended with his death before the guest's blows (cause not found)
-    "nfd",
 }
 # (cl and ml left the set: they failed the same rows on every try, a harness / fixture fault that a retry cannot cure)
 FLAKY_TRIES = 3
