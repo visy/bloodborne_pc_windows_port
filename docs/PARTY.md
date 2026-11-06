@@ -500,6 +500,7 @@ The defaults are the recommended settings; hover any option in the launcher for 
 |---|---|
 | Your save | What the party brings into your own character: story progress, NPC quests, cutscenes and endings |
 | Your items | Item rewards from the host, the bells, your own key items as a guest, key items at once |
+| Giving | Give items, weapons and armor to party members from the inventory, and receive them |
 | Display | Party HUD, name tags, pings, show the party through walls, bloodstain marker |
 | Look & notices | Companion glow, join / leave notices, ping in the party list, NPC dialogue range, party discovery |
 

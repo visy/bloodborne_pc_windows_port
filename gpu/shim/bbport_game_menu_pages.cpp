@@ -893,8 +893,8 @@ void DefineAll() {
            Kind::List);
 
     // ---- Advanced: the reactive mask's tuning, shader compilation, debug views. ----
-    AddPage("Advanced", "Дополнительно", "Reactive mask tuning, shader compilation, debug view (bbport)",
-            "Настройка маски реактивности, компиляция шейдеров, отладка (bbport)");
+    AddPage("Advanced", "Дополнительно", "Reactive mask tuning, debug view (bbport)",
+            "Настройка маски реактивности, отладка (bbport)");
     AddRow(Scaled(&Values::reactive_scale, MaskScaleTable), "Mask scale", "Масштаб маски",
            "Reactive mask scale: 0 = 0, 4 = 1.0 (default), 10 = 4.0",
            "Масштаб маски реактивности: 0 = 0, 4 = 1.0 (по умолчанию), 10 = 4.0", {}, Kind::Slider);
@@ -904,6 +904,17 @@ void DefineAll() {
     AddRow(Scaled(&Values::reactive_max, TenthsTable), "Mask maximum", "Максимум маски",
            "Reactive mask maximum: 0 = 0.0 .. 10 = 1.0 (default 9)",
            "Максимум маски реактивности: 0 = 0.0 .. 10 = 1.0 (по умолчанию 9)", {}, Kind::Slider);
+    AddRow(Setting(
+               Kind::List, [](const Values& v) { return v.debug_view.load(); },
+               [](int i) { BbSettings::Get().debug_view = std::clamp(i, 0, BbSettings::DebugViewCount - 1); }),
+           "Debug view", "Отладочный вид",
+           "Motion vectors: red/green = motion, blue = accurate object vector",
+           "Векторы движения: красный/зелёный — движение, синий — точный вектор объекта",
+           {off, AddText("Reactive mask", "Маска"), AddText("Motion vectors", "Векторы движения")}, Kind::List);
+
+    // ---- Advanced: Shaders: compilation and the bloom NaN guard (split off Advanced, which held seven rows). ----
+    AddPage("Advanced: Shaders", "Дополнительно: шейдеры", "Shader compilation, pipeline libraries, NaN guard (bbport)",
+            "Компиляция шейдеров, библиотеки конвейеров, защита от NaN (bbport)");
     AddRow(Flag(&Values::async_shaders), "Async shaders", "Асинхронные шейдеры",
            "New shaders compile in the background: objects may miss a frame or two",
            "Новые шейдеры компилируются в фоне: объекты могут пропасть на кадр-два", toggle, Kind::Toggle);
@@ -915,13 +926,6 @@ void DefineAll() {
            "Bad (NaN / Inf) pixels become black: stops a white-out flash from bloom (after a restart)",
            "Битые пиксели (NaN / Inf) становятся чёрными: против белой вспышки от блума (после перезапуска)",
            toggle, Kind::Toggle);
-    AddRow(Setting(
-               Kind::List, [](const Values& v) { return v.debug_view.load(); },
-               [](int i) { BbSettings::Get().debug_view = std::clamp(i, 0, BbSettings::DebugViewCount - 1); }),
-           "Debug view", "Отладочный вид",
-           "Motion vectors: red/green = motion, blue = accurate object vector",
-           "Векторы движения: красный/зелёный — движение, синий — точный вектор объекта",
-           {off, AddText("Reactive mask", "Маска"), AddText("Motion vectors", "Векторы движения")}, Kind::List);
 
     // ---- Frame generation (from Supermedo/bloodborne_pc PR #69 by FIocker; after a restart). ----
     AddPage("Frame generation", "Генерация кадров", "Generated frames between rendered ones (bbport; after a restart)",
@@ -1796,6 +1800,9 @@ void DefineAll() {
            "A short notice when an item is shared with the party (key and unique items, weapons, runes)",
            "Короткое уведомление, когда предмет передан группе (ключевые и уникальные предметы, оружие, руны)", toggle,
            Kind::Toggle);
+    AddPage("My party: Giving", "Моя группа: передача",
+            "Yours: give items, weapons and armor to party members from the inventory, and receive them (bbport)",
+            "Ваше: передача предметов, оружия и брони охотникам из инвентаря и приём (bbport)");
     // 0.7.8: give items to a party member (the inventory's item menu: Use / Discard / Give); off by default, also the consent to receive.
     AddRow(Flag(&Values::party_give_items), "Give items to the party", "Передача предметов",
            "Adds Give to an item's menu in the inventory, and lets hunters give you items. Not key or story items",
@@ -1803,8 +1810,8 @@ void DefineAll() {
            toggle, Kind::Toggle);
     // 0.7.9: weapons and armor (with the weapon's upgrade level and blood gems); its own switch, off by default, also the consent to receive.
     AddRow(Flag(&Values::party_give_gear), "Give weapons and armor", "Передача оружия и брони",
-           "Adds Give to a weapon's or armor's menu in the inventory (a weapon keeps its upgrade and blood gems), and lets hunters give you gear. Not worn gear, not shared or story gear",
-           "Передача оружия и брони охотникам и приём (оружие с улучшением и кровавыми самоцветами). Не надетое, не общее и не сюжетное",
+           "Adds Give to a weapon's or armor's menu (gems kept); hunters can give you gear. Not worn or story gear",
+           "Передача оружия и брони (улучшение и самоцветы сохраняются) и приём. Не надетое и не сюжетное",
            toggle, Kind::Toggle);
 
 
@@ -1913,8 +1920,8 @@ void DefineAll() {
         "The Ritual Altar's glyph search lists the party's glyphs to pick from first. Off by default",
         "Поиск глифа у Алтаря ритуалов сначала показывает глифы группы. По умолчанию выкл.");
     own(&Values::party_guest_altar, "Ritual Altar as a guest", "Алтарь ритуалов гостем",
-        "As a guest in the host's Dream you can use the Ritual Altar: conduct a ritual with your own chalice and materials. Off by default",
-        "Гость в Сне охотника может пользоваться Алтарём ритуалов: ритуал с вашей чашей и материалами. По умолчанию выкл.");
+        "As a guest you can use the Ritual Altar in the host's Dream, with your own chalice. Off by default",
+        "Гость в Сне охотника может пользоваться Алтарём ритуалов: ритуал с вашей чашей. По умолчанию выкл.");
 
     // ---- My party: Names (0.7.8, namefilter): hateful member names are shown masked on this PC. ON by default (safety),
     // unlike other new party features; the real name stays the member's identity (party/name_filter.h). ----

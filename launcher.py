@@ -205,7 +205,7 @@ PARTY_INI_FLAGS = [
     # 0.7.8: hateful member names shown masked on this PC; ON by default (safety)
     ("party_hide_bad_names", True),
     ("party_item_notices", True),
-    # 0.7.8 (CL-63e235): give items to a party member, off by default (System > My party: Your items)
+    # 0.7.8 (CL-63e235): give items to a party member, off by default (System > My party: Giving)
     ("party_give_items", False),
     # 0.7.9 (CL-1b3b98): give weapons and armor (with upgrade level and blood gems), off by default
     ("party_give_gear", False),
@@ -610,18 +610,20 @@ MY_PARTY_TAB = [
          "right away, while you are still in the host's world. Off: it waits until "
          "you are back in your own world. Needs Own key items. Default: on "
          "(bbport.ini party_key_items_summoned; in the game: System > My party: Your items).", "party_key_view"),
+    ]),
+    (1, 1, "Giving", [
         ("check", "party_give_items", "Give items to the party",
          "Lets you give consumables (vials, bullets, throwables, materials) to a hunter in your party and receive "
          "theirs: open an item in the inventory, its menu has a Give entry (hunter, then amount). Your switch shows it; theirs is their consent. The "
          "giver loses the items only once the receiver has them (a lost link puts them back). Never key items, "
-         "unique items, badges, tools or story items. In the game: System > My party: Your items. "
+         "unique items, badges, tools or story items. In the game: System > My party: Giving. "
          "Default: off (bbport.ini party_give_items)."),
         ("check", "party_give_gear", "Give weapons and armor",
          "Lets you give a weapon (with its upgrade level and its blood gems) or an armor piece to a hunter in your party and "
          "receive theirs: open the item in the inventory, its menu has a Give entry. Your switch shows it; theirs is their "
          "consent. The giver loses the gear only once the receiver has it (a lost link puts it back, gems included). Never "
          "worn gear, nor the gear the party shares anyway (story and unique weapons, Gascoigne's set ...). In the game: "
-         "System > My party: Your items. Default: off (bbport.ini party_give_gear)."),
+         "System > My party: Giving. Default: off (bbport.ini party_give_gear)."),
     ]),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
@@ -3796,7 +3798,7 @@ class BloodborneLauncher(tk.Tk):
                     "Pixel shaders write black instead of a NaN / Inf colour, so one bad pixel cannot be "
                     "spread by bloom into a white-out frame (seen for a frame or two in the Forbidden "
                     "Woods). Costs nothing measurable. Shaders are built again once. A game setting "
-                    "(bbport.ini nan_guard; in game: System > Advanced > NaN guard). Restart required. "
+                    "(bbport.ini nan_guard; in game: System > Advanced: Shaders > NaN guard). Restart required. "
                     "Default: off.",
                     command=lambda: self.save_game_settings("nan_guard"))
         self._check(sec, "Precompile shaders at startup", self.feat_shader_precompile,
