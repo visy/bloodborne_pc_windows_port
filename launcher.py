@@ -4004,7 +4004,7 @@ class BloodborneLauncher(tk.Tk):
                     "frame (typical and worst), by part, plus any single step over 1 ms. Use with the frame "
                     "stats of the game log. Default: off (BB_PARTY_PERF).")
         self._check(sec, "GPU crash detail (transfers)", self.feat_gpu_crash_detail,
-                    "For reports of a GPU crash (device lost): the crash report in out\device_lost_*.log "
+                    "For reports of a GPU crash (device lost): the crash report in out\\device_lost_*.log "
                     "also names the buffer copy, fill, image upload or clear that was running, with its "
                     "target and size. Costs a little GPU time on every copy. Default: off "
                     "(BB_BREADCRUMBS_TRANSFERS).")
