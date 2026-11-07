@@ -3164,7 +3164,7 @@ def check_cag(v, L, full=False):
         base = 94100000
         v.step(tag + " the guest's save: slot 1 holds the ritual's dungeon", val(base, 32) == CAG_DUNGEON[0] and val(base, 64) == CAG_DUNGEON[1]
                and (val(base, 96) >> 24) == 0x1d, "record %x %x %x" % (val(base, 32), val(base, 64), val(base, 96)))
-        v.step(tag + " the guest's save: no other slot got a dungeon", all(val(94000000 + k * 100000, 96) == 0xffffffff for k in (0, 2, 3, 4, 5, 6)),
+        v.step(tag + " the guest's save: no other slot got a dungeon" + (" (slot 0 holds the quick-joined host dungeon, by design)" if full else ""), all(val(94000000 + k * 100000, 96) == 0xffffffff for k in ((2, 3, 4, 5, 6) if full else (0, 2, 3, 4, 5, 6))),
                "slot maps " + " ".join("%x" % val(94000000 + k * 100000, 96) for k in range(7)))
         g = {i: n for _, i, n in s.goods()}
         v.step(tag + " the guest's save: the Pthumeru Chalice (fixed, not consumed) is still held", g.get(6109) == 1, "6109 x%s" % g.get(6109))
