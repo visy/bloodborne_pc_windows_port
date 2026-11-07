@@ -90,7 +90,7 @@ static void test_effective_max() {
     CHECK(EffectiveMaxPlayers(3, true, true, 4) == 4);    // guest takes the host's
     CHECK(EffectiveMaxPlayers(4, true, true, 2) == 2);
     CHECK(EffectiveMaxPlayers(4, true, true, 0) == 4);    // no WELCOME value
-    CHECK(EffectiveMaxPlayers(4, true, true, 7) == 5);    // clamped (kMaxPlayers)
+    CHECK(EffectiveMaxPlayers(4, true, true, 7) == 6);    // clamped (kMaxPlayers)
 }
 
 static void test_h1() {
@@ -196,7 +196,9 @@ static void test_spots() {
     float rx = 0, fz = 0;
     SpotOffset(99, d, &rx, &fz);  // out of range: slot 3's spot
     CHECK(rx == 2 * d && fz == 0);
-    CHECK(kMaxPlayers == 5);
+    SpotOffset(5, d, &rx, &fz);  // 0.8.0: the 6th seat, 3x right
+    CHECK(rx == 3 * d && fz == 0 && SpotForTry(5, 0) == 5 && SpotForTry(5, 1) == 4);
+    CHECK(kMaxPlayers == 6);
 }
 
 static void test_player_numbers() {

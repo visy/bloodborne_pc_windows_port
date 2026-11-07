@@ -24,6 +24,7 @@
 #include "party_dsummon.h"
 #include "../net/from_api.h"
 #include "party_fourp.h"
+#include "party_sixp.h"
 #include "party_link.h"
 #include "party_story.h"
 #include "party_catchup.h"
@@ -6424,6 +6425,7 @@ void CoopTick() {
     SeamlessRulesTick(); // A6 param rules, EMEVD filter stats (seamless_rules.h)
     z.Next(Zone::Fourp);
     fourp::FourpTick(); // 4-player rules: the party's max players (party_fourp.h)
+    sixp::SixpTick();   // 6 seats: the read-only probe (party_sixp.h, BB_PARTY_SIX_PROBE)
     plog::GameTick();   // party logging: snapshots, area events (party_log_game.h; cheap at Normal)
 }
 
@@ -6441,6 +6443,7 @@ void PartyInit(unsigned char* image, std::uint64_t size) {
     OnlineDiagInit();    // FROM client drop-offline log (party_online.h)
     SeamlessRulesInit(); // A6: party patch report, EMEVD filter (seamless_rules.h)
     fourp::FourpInit();  // 4-player parties: H1-H4, E6, P5 (party_fourp.h)
+    sixp::SixpInit();    // 6 seats: the byte-checked table patches, BB_PARTY_LARGE=2 + Max players 6 only (party_sixp.h)
     PartyDirector::Get().ConfigureFromEnv();
     if (const char* t = std::getenv("BB_PARTY_TRACE_BELL"); t && t[0] == '1') {
         InstallBellTrace(std::make_integer_sequence<int, sizeof(g_trace_points) / sizeof(g_trace_points[0])>{});

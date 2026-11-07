@@ -138,7 +138,7 @@ before anyone is in the game):
 **Joining and leaving**
 
 - **No PSN, no server.** One player hosts; up to 3 guests join with the host's party code
-  (4 players; 5 with the launcher's experimental *Large parties* switch, an invader takes one of the five seats), all in the host's world. Every guest sees every other guest.
+  (4 players; 5 with the launcher's experimental *Large parties* switch, an invader takes one of the five seats; 6 is built behind `BB_PARTY_LARGE=2` but not offered yet, see docs/party/six_players.md), all in the host's world. Every guest sees every other guest.
 - **Fast join.** No bell, beckoner or summon-sign waits: a guest stands beside the host within
   seconds (about 5 s in the same area; a join that stalls restarts by itself). *Continue party
   game*, or joining from another map (the Hunter's Dream, say), takes one loading screen. If the
