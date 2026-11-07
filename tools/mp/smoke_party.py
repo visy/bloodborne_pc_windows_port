@@ -12226,9 +12226,19 @@ def check_lp(v, L, d: Path):
     # Every lamp lit in the host's world (its save at the end: lit flag 1AAB7810+20n set, name /
     # blocked flag 7000AABn clear, as lamp_travel_rules.h BuildList) is in the guest's list, but the
     # one it stands at ("lamp N (...): the warp menu").
-    src = (REPO / "gpu" / "shim" / "party" / "lamp_travel_rules.h").read_text(encoding="utf-8")
-    table = src.split("kLamps[] = {", 1)[1].split("};", 1)[0]
-    lamps = [(int(a), int(n)) for a, n in re.findall(r"\{(\d{3}), (\d), \w+\}", table)]
+    # The lamp table is derived at run time from the player's game (gamedata section `lamps`: AAB, n, group), so it is
+    # read from the host instance's party_tables.txt, not from the source.
+    lamps = []
+    tabs = Path(RUN_ROOT[0]) / "inst0" / "user" / "party_tables.txt"
+    if tabs.exists():
+        sec = None
+        for ln in tabs.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = re.match(r"\[(\w+)\] \d+", ln)
+            if m:
+                sec = m.group(1)
+            elif sec == "lamps" and re.match(r"\d+	\d+	\d+", ln):
+                a, n = ln.split("	")[:2]
+                lamps.append((int(a), int(n)))
     lit_f = {(a, n): str(10000000 + a * 10000 + 7810 + 20 * n) for a, n in lamps}
     name_f = {(a, n): str(70000000 + a * 10 + n) for a, n in lamps}
     hw = lp_save_flags(d, 0, sorted(set(lit_f.values()) | set(name_f.values())))
