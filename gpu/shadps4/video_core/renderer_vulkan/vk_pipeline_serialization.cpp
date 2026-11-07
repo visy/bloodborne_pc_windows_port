@@ -14,6 +14,7 @@
 #include <xxhash.h>
 #include "common/hash.h"
 #include "common/serdes.h"
+#include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
@@ -380,6 +381,22 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
         return false;
     }
 
+    // bbport (Mrsuss60 432d2ddb): the permutation index is only the name of the module in the
+    // store, not the shader's identity: sessions appended permutations in the order the game
+    // first used them, so the same specialization can be stored under another index. An equal
+    // specialization is the same SPIR-V: reuse the module already in memory and keep the
+    // pipeline (refusing it dropped valid preloads, which then compiled again at runtime).
+    const auto it_live = program_cache.find(program->info.pgm_hash);
+    if (it_live != program_cache.end()) {
+        Program* live = it_live.value().get();
+        const auto it = std::ranges::find(live->modules, spec, &Program::Module::spec);
+        if (it != live->modules.end()) {
+            sel.infos[stage] = &live->info;
+            sel.modules[stage] = it->module;
+            return true;
+        }
+    }
+
     std::vector<u32> spv{};
     Storage::DataBase::Instance().Load(Storage::BlobType::ShaderBinary,
                                        fmt::format("{:#018x}_{}", program->info.pgm_hash, perm_idx),
@@ -393,47 +410,36 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
         return false;
     }
 
-    // Permutation hash depends on shader variation index. To prevent collisions, we need insert it
-    // at the exact position rather than append
-
-    vk::ShaderModule module{};
     // bbport: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
     // fatal error as in CompileSPV.
-    const auto compile = [&] {
+    const vk::ShaderModule module = [&] {
         auto [result, created] = instance.GetDevice().createShaderModule(
             {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
         if (result != vk::Result::eSuccess) {
             throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
         }
         return created;
-    };
+    }();
 
-    auto [it_pgm, new_program] = program_cache.try_emplace(program->info.pgm_hash);
-    if (new_program) {
-        module = compile();
-        it_pgm.value() = std::move(program);
+    if (it_live == program_cache.end()) {
+        Program* live = program.get();
+        live->InsertPermut(module, std::move(spec), perm_idx);
+        program_cache.emplace(live->info.pgm_hash, std::move(program));
+        sel.infos[stage] = &live->info;
     } else {
-        const auto& it = std::ranges::find(it_pgm.value()->modules, spec, &Program::Module::spec);
-        if (it != it_pgm.value()->modules.end()) {
-            // A matching permutation is valid only at its original index. A different index means
-            // the store holds entries from more than one cache generation, so this pipeline is
-            // left to compile at runtime.
-            const auto idx = std::distance(it_pgm.value()->modules.begin(), it);
-            if (perm_idx != idx) {
-                LOG_WARNING(Render_Vulkan,
-                            "Cached permutation {} of {}_{:x} conflicts with index {}, skipping "
-                            "preload",
-                            perm_idx, program->info.hw_stage, program->info.pgm_hash, idx);
-                return false;
-            }
-            module = it->module;
+        Program* live = it_live.value().get();
+        // `spec` was built against the temporary program: point it at the live one before it is
+        // stored (it kept a pointer to an Info that is destroyed on return).
+        spec.info = &live->info;
+        if (perm_idx < live->modules.size() && live->modules[perm_idx].spec.Valid()) {
+            // The stored index holds a different specialization: append, so the modules of
+            // pipelines loaded earlier in this warm-up stay valid.
+            live->AddPermut(module, std::move(spec));
         } else {
-            module = compile();
+            live->InsertPermut(module, std::move(spec), perm_idx);
         }
+        sel.infos[stage] = &live->info;
     }
-    it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
-
-    sel.infos[stage] = &it_pgm.value()->info;
     sel.modules[stage] = module;
 
     return true;
@@ -1289,7 +1295,58 @@ void PipelineCache::SaveDriverPipelineCache(bool wait) {
     }
 }
 
+void PipelineCache::MaybeSaveDriverPipelineCache() {
+    if (num_new_pipelines == num_new_pipelines_at_last_save) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    // The first new pipeline is written at once (a small dump), later ones are spaced out.
+    if (last_driver_cache_save.time_since_epoch().count() != 0 &&
+        now - last_driver_cache_save < std::chrono::minutes(1)) {
+        return;
+    }
+    last_driver_cache_save = now;
+    num_new_pipelines_at_last_save = num_new_pipelines;
+    std::scoped_lock lk{driver_save_mutex};
+    if (driver_save_stop) {
+        return;
+    }
+    if (!driver_save_thread.joinable()) {
+        driver_save_thread = std::thread([this] { DriverCacheSaveLoop(); });
+    }
+    driver_save_pending = true;
+    driver_save_cv.notify_one();
+}
+
+void PipelineCache::DriverCacheSaveLoop() {
+    Common::SetCurrentThreadName("bb:DriverCacheSave");
+    std::unique_lock lk{driver_save_mutex};
+    for (;;) {
+        driver_save_cv.wait(lk, [&] { return driver_save_stop || driver_save_pending; });
+        if (driver_save_stop) {
+            return;
+        }
+        driver_save_pending = false;
+        lk.unlock();
+        SaveDriverPipelineCache(true); // the copy and the disk flush both stay off the GPU thread
+        lk.lock();
+    }
+}
+
+void PipelineCache::StopDriverCacheSaver() {
+    {
+        std::scoped_lock lk{driver_save_mutex};
+        if (!driver_save_thread.joinable()) {
+            return;
+        }
+        driver_save_stop = true;
+    }
+    driver_save_cv.notify_all();
+    driver_save_thread.join();
+}
+
 void PipelineCache::Sync() {
+    StopDriverCacheSaver();
     // bbport: no job may write to the storage after it is closed (results are published on
     // the GPU thread; queued jobs are dropped, running ones finish first).
     compiler.Stop();

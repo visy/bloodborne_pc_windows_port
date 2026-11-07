@@ -26,6 +26,12 @@ constexpr CodeRange DynamicWriters[] = {
     {ImageBase + 0x20858a0, ImageBase + 0x2085e20},
 };
 
+/// The effect ribbon / particle vertex generators (the ribbon_leaf table in src/probe.c): locals
+/// in the System V red zone. From Mrsuss60 432d2ddb.
+constexpr CodeRange RedzoneWriters[] = {
+    {ImageBase + 0x28ce7ba, ImageBase + 0x28d064e},
+};
+
 void InstallHooks(const CoreServices& services) {
     // The resource loaders' copies, the GPU memory range allocator and the heap (bbport_guest_hooks).
     BbGuestHooks::Install(services.fresh_range);
@@ -37,6 +43,7 @@ extern const Profile BloodborneProfile = {
     .serials = Serials,
     .install_hooks = InstallHooks,
     .dynamic_writers = DynamicWriters,
+    .redzone_writers = RedzoneWriters,
     // The game's buffer-copy compute shader (not the export-stage copy shader).
     .buffer_copy_shader = 0xfefebf9f,
 };

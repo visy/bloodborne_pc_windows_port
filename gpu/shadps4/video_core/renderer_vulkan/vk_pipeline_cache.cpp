@@ -427,6 +427,8 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
 
 PipelineCache::~PipelineCache() {
     driver_cache_owner.store(nullptr);
+    // bbport (Mrsuss60 ce83b806): the saver thread uses the device; join it first.
+    StopDriverCacheSaver();
     compiler.Stop();
 }
 
@@ -761,6 +763,7 @@ const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& p
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
                                                            const PreparedDraw* prepared,
                                                            bool indirect) {
+    MaybeSaveDriverPipelineCache();
     // bbport: results of the pipeline compiler (async pipelines, optimized library links).
     if (compiler.HasCompleted()) {
         PublishCompleted();
@@ -891,6 +894,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline() {
+    MaybeSaveDriverPipelineCache();
     if (!RefreshComputeKey()) {
         return nullptr;
     }

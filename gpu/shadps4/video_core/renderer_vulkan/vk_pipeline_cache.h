@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <thread>
+#include <condition_variable>
+#include <chrono>
 #include <atomic>
 #include <unordered_map>
 #include <shared_mutex>
@@ -138,6 +141,14 @@ public:
     /// before the process ends: every exit is TerminateProcess, which runs no destructor).
     /// `wait`: until the file is on disk. Skipped when nothing changed since the last write.
     void SaveDriverPipelineCache(bool wait);
+    /// bbport (Mrsuss60 ce83b806): asks the saver thread to write the driver cache about once a
+    /// minute while new pipelines exist, so a session that crashes (or is killed) leaves the
+    /// pipelines it compiled behind and the next start does not compile them again. The first
+    /// new pipeline is written at once. The dump itself runs on the saver thread, never on the
+    /// GPU thread. No-op when nothing new was compiled.
+    void MaybeSaveDriverPipelineCache();
+    void DriverCacheSaveLoop();
+    void StopDriverCacheSaver();
     /// The live cache, for the exit paths (bbgpu_save_caches); null when there is none.
     static std::atomic<PipelineCache*> driver_cache_owner;
 
@@ -267,6 +278,13 @@ private:
     ComputePipelineKey compute_key{};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
     std::mutex driver_cache_mutex; ///< bbport: SaveDriverPipelineCache
+    std::chrono::steady_clock::time_point last_driver_cache_save{};
+    u32 num_new_pipelines_at_last_save{};
+    std::mutex driver_save_mutex;
+    std::condition_variable driver_save_cv;
+    std::thread driver_save_thread;
+    bool driver_save_pending = false;
+    bool driver_save_stop = false;
     u64 driver_cache_saved_hash{}; ///< hash of the driver data last written or loaded
     bool preload_profile_changed{}; ///< bbport: WarmUp rebuilt the cache for another profile
     u32 selftest_runs{}, selftest_failures{};

@@ -122,7 +122,7 @@ Windows, MinGW-w64, CMake, Ninja: [docs/BUILDING.md](docs/BUILDING.md) (also DLS
 | Who | What |
 |---|---|
 | deadinside28 | Original Linux port (bbport) |
-| Mrsuss60 | Original Windows port, Live FPS, texture quality, crash and PM4 hardening, many fixes |
+| Mrsuss60 | Original Windows port, Live FPS, texture quality, crash and PM4 hardening, shader cache fixes, many fixes |
 | shadPS4 team | Vulkan video core, shader recompiler |
 | droogie and the bbhost team | Stability fixes, menus, summons, appearance editor, high-FPS fixes ([bbhost](https://github.com/droogie/bbhost)) |
 | Supermedo, IFreemz | DLSS bridge, Windows loader, many ported fixes ([bloodborne_pc](https://github.com/Supermedo/bloodborne_pc)) |
