@@ -645,6 +645,14 @@ const bool g_outage_replay = [] {
     const char* e = std::getenv("BB_PARTY_OUTAGE_REPLAY");
     return !(e && e[0] == '0');
 }();
+// 0.8.0: BB_PARTY_NET_SPLIT=0 goes back to the 0.7.9 rule (split only with the outage replay on or toward a
+// Nightwatch tunnel peer, at the transport's 1232 bytes). Default on: every P2P game datagram over
+// nr::kSplitPayload leaves as pieces of whole records. It is a bug fix and needs no peer support (the pieces
+// are ordinary game datagrams), so there is no capability bit; the switch exists to compare and to fall back.
+const bool g_net_split = [] {
+    const char* e = std::getenv("BB_PARTY_NET_SPLIT");
+    return !(e && e[0] == '0');
+}();
 // 0.7.6 diagnostics BB_NET_RXGAP_LOG=1 (nr_rxgap.h): was it the peer that went quiet, or this PC's
 // reader thread that did not run? One line per silence of 2 s or more when it ends, one line a minute.
 const bool g_rxgap_log = [] {
@@ -1361,18 +1369,22 @@ int dgram_send(int s, const void* buf, std::uint64_t len, int flags, const SceSo
     // over ~1430 bytes is IP-fragmented inside the tunnel and one lost fragment loses all of it. A datagram
     // that is not records, or holds one record over 1232 bytes, leaves whole (the receiver needs each in
     // one piece: cutting it would hand the game a broken record) and is counted (p2p port line "unsplit").
-    if (sock.p2p && buf && len > nr::kGameMtu && (g_outage_replay || (to && nightwatch_tunnel_peer(to->addr)))) {
+    const std::size_t split_at = g_net_split ? nr::kSplitPayload : nr::kGameMtu;
+    if (sock.p2p && buf && len > split_at &&
+        (g_net_split || g_outage_replay || (to && nightwatch_tunnel_peer(to->addr)))) {
         std::vector<std::vector<std::uint8_t>> parts;
         const bool split = nr::split_records(static_cast<const std::uint8_t*>(buf), static_cast<std::size_t>(len),
-                                             nr::kGameMtu, &parts);
+                                             split_at, &parts, nr::kGameMtu);
         if (!split || parts.size() < 2) {
-            if (sock.port) sock.port->unsplit.fetch_add(1, std::memory_order_relaxed);
-            static std::atomic<int> said{0};
-            if (said.fetch_add(1) < 10)
-                log("send: a %llu-byte game datagram left whole: %s", static_cast<unsigned long long>(len),
-                    nr::oversize_shape(static_cast<const std::uint8_t*>(buf), static_cast<std::size_t>(len),
-                                       nr::kGameMtu)
-                        .c_str());
+            if (!split && sock.port) sock.port->unsplit.fetch_add(1, std::memory_order_relaxed);
+            if (!split) {
+                static std::atomic<int> said{0};
+                if (said.fetch_add(1) < 10)
+                    log("send: a %llu-byte game datagram left whole: %s", static_cast<unsigned long long>(len),
+                        nr::oversize_shape(static_cast<const std::uint8_t*>(buf), static_cast<std::size_t>(len),
+                                           nr::kGameMtu)
+                            .c_str());
+            }
         }
         if (split && parts.size() > 1) {
             static std::atomic<int> logged{0};

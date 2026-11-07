@@ -10282,6 +10282,8 @@ def run_phase(a, ph, out: Path):
         if clear:  # flaky078: no enemies to run into / get hit by in a phase that does not test them (director clear_enemies)
             e = re.sub(r"^(\d+:)?BB_PARTY_DIRECTOR_TEST=", lambda m: m.group(0) + "clear_enemies,", e)
         cmd += ["--ienv", subst(e.replace("{hold}", hold))]
+    for e in filter(None, os.environ.get("BB_SMOKE_IENV", "").split(";")):  # "1:KEY=V;0:K2=V2" on every phase (mixed old/new peer runs)
+        cmd += ["--ienv", e]
     for w in ph.get("start_when", []):
         cmd += ["--start-when", w]
     for i in (ph.get("pads") or ((0,) if ph.get("pad") else ())):
