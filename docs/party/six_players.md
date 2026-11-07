@@ -207,7 +207,9 @@ Results (this PC, 6 games, host drawn):
 |---|---|
 | `fpi6` | 20/20: 4 guests in, the invader admitted into slot 5, in the world, falls (`invader_died`); the host's window shows six hunters (the invader red) and five party rows |
 | `fp6j` | 23/24: 6 players join (`cooperators 4 -> 5`, presentation 6 slots, room max 6, every game draws every chr), guest 3 Leaves (5 -> 4; the game's compaction plus our slot 5 -> 4 hook ran: `presentation: slot 5 moved to slot 4`). **The Rejoin fails**: the direct summon joins the room (member 7) and the guest loads into the host's world, but the host's member task stays at `FirstSyncCompleteWait` (data request 0xA repeated 20+ times), so `cooperators` never returns to 5 |
+| `fp6k` | 25/25: the same 6 players, but the LAST guest (slot 5) Leaves and Rejoins: `cooperators 5 -> 4 -> 5`, every game draws every chr, no crash. So the 6-seat Rejoin works when no slot has to be compacted |
+| `fp5x` + `fpi5x` (final set, 5 players with the 6-seat set booted) | 45/45 |
 | `fp6` (travel, boss) | not completed: memory floor |
 
-Open: the Rejoin of a middle member at 6 seats (the member id 7, the compaction, or the first-sync data of the new member), and the travel on a PC
+Open: the Rejoin of a MIDDLE member at 6 seats (a Leave of slot 3 compacts slots 4 and 5 down: the game's own block plus our slot 5 -> 4 move; the new member then stays at `FirstSyncCompleteWait`; the last member's Rejoin, `fp6k`, is fine, so it is the compaction or the member ids that follow it), and the travel on a PC
 with enough memory. `PARTY_SIX_PROVEN` stays False.
