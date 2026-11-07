@@ -67,3 +67,13 @@ only after the probe shows (a)(b)(c) are the only misses.
   A guest always takes the host's value up to 5 (host-owned).
 - Smoke `fp5` (with the toggle) and `fpi5` (host + 3 guests + invader); unit tests `party-invade-test`, `party-link-test`.
 - 6 stays a documented, designed follow-up (`kMaxPartyPlayers` stays 5; nothing offers 6).
+
+## 5. Proof (0.8.0, six080, 2026-11-07, loopback, 5 games: host + one guest drawn, three headless-lite)
+
+- `fpi5`: three guests in (`cooperators 2 -> 3`), the invader (instance 4) dials at 150 s and is admitted into slot 4 with
+  five seats full, told to every guest, never refused for room; it falls 25 s after it is in and goes home (host
+  `invasion of slot 4 ends: invader_died`). 19 steps pass. Host and guest screenshots show five hunters, the invader red, four HUD rows.
+- `fp5` with `BB_PARTY_LARGE=1`: four title joins, party lamp travel (all four guests in m24_01), Cleric Beast fight (H2 clamp), a
+  guest's death and arena revive, boss kill, Leave and Rejoin (4 -> 3 -> 4). 26 steps pass; the drawn windows ran 9-10 FPS (five
+  games on one PC, a stress test). Harness fix: fp5's `until` stopped at the travel's new session (`0 -> 3 -> 4`) before the fight.
+- Not run: six players (not possible, see above), two invaders into a 5-party (needs a 6th game; unit-tested only).

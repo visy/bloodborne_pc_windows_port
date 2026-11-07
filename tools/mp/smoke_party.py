@@ -9349,7 +9349,7 @@ def phase_fp5(only):
              ["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=" + g2,
               "3:BB_PARTY_DIRECTOR_TEST=" + g3, "4:BB_PARTY_DIRECTOR_TEST=" + g4],
         watch=["--watch", r"cooperators 3 -> 4=full@4,12", "--watch", r"up again in the arena=arena@1,4"],
-        until=[r"0:cooperators 3 -> 4[\s\S]*cooperators 3 -> 4"], until_hold=20, crash=[],
+        until=[r"0:cooperators 3 -> 4[\s\S]*cooperators 3 -> 4[\s\S]*cooperators 4 -> 3[\s\S]*cooperators 3 -> 4"], until_hold=20, crash=[],  # join, the travel's new session (0 -> 3 -> 4), then the Leave + Rejoin
     )
 
 
@@ -10046,7 +10046,7 @@ GROUP_UNTIL = {
     "lone_ai": LA_UNTIL,
     "seam_rejoin": SJ_UNTIL,
     "fourp_nat": [r"0:cooperators 2 -> 3"],
-    "fivep": [r"0:cooperators 3 -> 4[\s\S]*cooperators 3 -> 4"],
+    "fivep": [r"0:cooperators 3 -> 4[\s\S]*cooperators 3 -> 4[\s\S]*cooperators 4 -> 3[\s\S]*cooperators 3 -> 4"],
     "fivep_invader": [r"0:invasion of slot 4 ends: invader_died"],
     "lan_only": [r"0:cooperators 0 -> 1"],
     "open_party": [r"0:cooperators 0 -> 1"],
