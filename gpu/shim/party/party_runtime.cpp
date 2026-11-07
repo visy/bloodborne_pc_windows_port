@@ -1191,6 +1191,18 @@ void on_roster(const std::vector<RosterEntry>& roster) {
                 }
             }
         }
+        // NrDropSilentPeers releases every game connection whose source has been silent 1.5 s, not only the departed member's:
+        // a member that is loading is silent too. So nothing is released while another member is Joining / Loading / Dead.
+        if (!went_home.empty()) {
+            for (const RosterEntry& e : roster)
+                if (e.slot != kHostSlot && e.slot != link->local_slot() &&
+                    (e.state == MemberState::Joining || e.state == MemberState::Loading || e.state == MemberState::Dead)) {
+                    plog("%s went home, but %s is %s: no connection released now", went_home[0].c_str(), e.name.c_str(),
+                         member_state_name(e.state));
+                    went_home.clear();
+                    break;
+                }
+        }
         for (const std::string& name : went_home) {
             plog("%s went home from the host's world: releasing our game's connection to its old game", name.c_str());
             coop::b2::NrDropSilentPeers(name, 0);
