@@ -111,6 +111,10 @@ public:
     /// Marks an image as dirty if it exists at the provided address.
     void InvalidateMemoryFromGPU(VAddr address, size_t max_size);
 
+    /// Marks the images with GPU-written contents inside the provided range as maybe GPU dirty
+    /// (the buffer cache was written over them), noting a hash of their guest memory.
+    void MarkAsMaybeGpuDirty(VAddr addr, size_t size);
+
     /// Evicts any images that overlap the unmapped range.
     void UnmapMemory(VAddr cpu_addr, size_t size);
 
@@ -415,6 +419,9 @@ private:
 
     void MarkAsMaybeDirty(ImageId image_id, Image& image);
 
+    /// Marks the image CPU dirty if the guest wrote its untracked first or last page meanwhile.
+    void MarkDirtyIfEdgesModified(Image& image);
+
     /// Removes the image and any views/surface metas that reference it.
     /// bbport: now: at once, for an image the GPU is done with (ReclaimMemoryFor).
     void DeleteImage(ImageId image_id, bool now = false);
@@ -430,7 +437,7 @@ private:
     u64 ReclaimMemoryFor(VAddr addr, size_t size, u64 bytes);
 
     /// Touch the image in the LRU cache.
-    void TouchImage(const Image& image);
+    void TouchImage(Image& image);
 
     void FreeImage(ImageId image_id) {
         UntrackImage(image_id);

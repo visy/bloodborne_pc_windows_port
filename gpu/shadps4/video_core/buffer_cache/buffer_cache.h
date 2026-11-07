@@ -42,6 +42,7 @@ namespace VideoCore {
 
 class TextureCache;
 class MemoryTracker;
+struct Image;
 class PageManager;
 
 /// bbport: an IntervalList whose every change advances `generation`: lookups of the buffer
@@ -121,6 +122,13 @@ public:
 
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
+
+    /// Unmarks a region as GPU modified (its guest memory holds the newest data).
+    void UnmarkRegionAsGpuModified(VAddr device_addr, u64 size);
+
+    /// Flushes the GPU modified ranges of the pages an image shares with its neighbours (the
+    /// parts outside it) to guest memory, before the image is written back over its own.
+    u32 ReadEdgeImagePages(const Image& image); ///< flushes done (0..2)
 
     /// bbport BB_LAYER_READ_TRAPS: a CPU access hit a page whose newest data the GPU wrote into a
     /// VRAM copy only: the block's GPU data is copied back into the game's memory first (on the
