@@ -69,7 +69,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Party co-op (docs/PARTY_COOP_PLAN.md): (label, BB_PARTY value); "" = off (BB_PARTY unset)
 PARTY_MODES = [("Off", ""), ("Host a party", "host"), ("Join a party", "join")]
 PARTY_MAX_CHOICES = ["2", "3", "4"]
-PARTY_MAX_CHOICES_LARGE = PARTY_MAX_CHOICES + ["5"]  # 0.8.0 (CL-10e56b): with "Large parties" on
+PARTY_MAX_CHOICES_LARGE = PARTY_MAX_CHOICES + ["5", "6"]  # 0.8.0 (CL-10e56b): with "Large parties" on
 PARTY_DEFAULT_PORT = 9307
 PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
 PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
@@ -920,7 +920,7 @@ def where_words(area_id: int, phase: int, ng: int, boss: bool) -> tuple:
 
 # 0.7.8: the options the host owns (Max players and the hook-deciding party options): a guest starts with the
 # host's for that launch instead of being refused at the handshake. Mirrors gpu/shim/party/party_options.cpp.
-PARTY_ADOPT_KEYS = {"BB_PARTY_MAX": ("2", "3", "4", "5"), "BB_PARTY_GUEST_LAMPS": ("0", "1"),
+PARTY_ADOPT_KEYS = {"BB_PARTY_MAX": ("2", "3", "4", "5", "6"), "BB_PARTY_GUEST_LAMPS": ("0", "1"),
                     "BB_PARTY_HEADSTONES": ("0", "1"), "BB_PARTY_GUEST_TALK": ("0", "1"),
                     "BB_PARTY_SHARED_DROP_ROLL": ("0", "1")}
 PARTY_ADOPT_LABELS = {"BB_PARTY_MAX": "Max players", "BB_PARTY_GUEST_LAMPS": "Guest lamps",
@@ -933,7 +933,7 @@ def discovery_adopt_env(entry: dict) -> dict:
     """The host's options of a heard announcement as BB_PARTY_* values for this launch (only what it tells)."""
     env = {}
     try:
-        if 2 <= int(entry.get("max", 0)) <= 5:
+        if 2 <= int(entry.get("max", 0)) <= 6:
             env["BB_PARTY_MAX"] = str(int(entry["max"]))
     except (TypeError, ValueError):
         pass
@@ -1922,10 +1922,11 @@ PARTY_MAX_INVADERS_TIP = (
     "players and the game's four player slots (host + guests + invaders). Default 1 (bbport.ini party_max_invaders, env "
     "BB_PARTY_MAX_INVADERS; in the game: System > Party access > Max invaders).")
 PARTY_LARGE_TIP = (
-    "Offer 5 players in Max players: the host and four others; an invader takes one of the five seats. 5 is the most the "
-    "game can hold. Experimental: five games on one PC need about 20 GB of memory, and a 5-player party has been tested "
-    "only on one PC. Off by default (BB_PARTY_LARGE, launcher setting party_large). A player who joins uses the host's "
-    "value whatever this says.")
+    "Offer 5 and 6 players in Max players (the host and four or five others; an invader takes one of the seats). Experimental: "
+    "the game was made for 4. 5 players use the game's five seats as they are; 6 patch the game's player tables when it starts "
+    "(every player of a 6-player party runs the same patch set: a player who joins a 6-player host gets it for that start). "
+    "Games on one PC need about 4 GB of memory each. Off by default (BB_PARTY_LARGE, launcher setting party_large). A player "
+    "who joins uses the host's value whatever this says.")
 PARTY_INVADERS_TIP = (
     "Host only. Other players can invade your world as a hostile phantom from the public lists (the VPN or LAN lists, "
     "the Nightwatch VPN lobby): they need no password, you and your guests are told, one invader at a time, never in a "
@@ -1977,8 +1978,9 @@ def party_env(s: dict) -> dict:
     env["BB_PARTY_PUBLIC_ADDR"] = (public or None) if mode == "host" else None
     # 0.8.0 (CL-10e56b): 5 players (the engine's seats, invaders included) only with "Large parties" on (off by default).
     large = bool(s.get("party_large", False))
-    env["BB_PARTY_LARGE"] = "1" if large else "0"
     env["BB_PARTY_MAX"] = max_players if max_players in (PARTY_MAX_CHOICES_LARGE if large else PARTY_MAX_CHOICES) else "3"
+    # BB_PARTY_LARGE=1: 5 players (the engine's five seats); =2: 6 players (the 6-seat patch set, docs/party/six_players.md)
+    env["BB_PARTY_LARGE"] = "0" if not large else "2" if env["BB_PARTY_MAX"] == "6" else "1"
     env["BB_PARTY_SEAMLESS"] = "1" if s.get("party_seamless", True) else "0"
     env["BB_PARTY_DIRECT_SUMMON"] = "1" if s.get("party_direct_summon", True) else "0"
     env["BB_PARTY_AUTO"] = "1" if s.get("party_auto", True) else "0"
@@ -4308,7 +4310,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var,
                                            PARTY_MAX_CHOICES_LARGE if self.party_large.get() else PARTY_MAX_CHOICES,
                                            max_tip, width=6)
-        self.party_large_cb = self._check(sec, "Large parties: offer 5 players (experimental)", self.party_large,
+        self.party_large_cb = self._check(sec, "Large parties: offer 5 and 6 players (experimental)", self.party_large,
                                           PARTY_LARGE_TIP, command=self.on_party_large_toggle)
         auto_cb = self._check(sec, "Automatic summoning", self.party_auto,
                               "The party members are summoned into the host's world automatically (no "
@@ -4910,7 +4912,7 @@ class BloodborneLauncher(tk.Tk):
         """0.8.0 (CL-10e56b): Max players offers 5 only with Large parties on; turning it off drops a 5 back to 4."""
         large = self.party_large.get()
         self.party_max_combo.configure(values=PARTY_MAX_CHOICES_LARGE if large else PARTY_MAX_CHOICES)
-        if not large and self.party_max_var.get() == "5":
+        if not large and self.party_max_var.get() in ("5", "6"):
             self.party_max_var.set("4")
 
     def on_party_open_any_level_toggle(self):
@@ -6877,8 +6879,8 @@ class BloodborneLauncher(tk.Tk):
             changed = adopt_summary(adopt, env)
             for key, val in adopt.items():
                 env[key] = val
-            if adopt.get("BB_PARTY_MAX") == "5":
-                env["BB_PARTY_LARGE"] = "1"  # the host's 5 players: this start takes it (the engine's seats), nothing is saved
+            if adopt.get("BB_PARTY_MAX") in ("5", "6"):  # the host's 5 / 6 players: this start takes it, nothing is saved
+                env["BB_PARTY_LARGE"] = "2" if adopt["BB_PARTY_MAX"] == "6" else "1"
             self.log("[PARTY] Joining with the host's options for this start: "
                      + (changed if changed else "same as yours") + " (your saved settings stay as they are).")
         try:

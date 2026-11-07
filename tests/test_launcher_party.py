@@ -719,5 +719,7 @@ class LargePartiesSetting(unittest.TestCase):
         four = self.L.party_env({**base, "party_max": "4"})
         self.assertEqual((four["BB_PARTY_LARGE"], four["BB_PARTY_MAX"]), ("0", "4"))
         self.assertEqual(self.L.PARTY_MAX_CHOICES, ["2", "3", "4"])
-        self.assertEqual(self.L.PARTY_MAX_CHOICES_LARGE, ["2", "3", "4", "5"])
+        self.assertEqual(self.L.PARTY_MAX_CHOICES_LARGE, ["2", "3", "4", "5", "6"])
+        six = self.L.party_env({**base, "party_max": "6", "party_large": True})
+        self.assertEqual((six["BB_PARTY_LARGE"], six["BB_PARTY_MAX"]), ("2", "6"))
         self.assertIsNone(self.L.party_env({})["BB_PARTY_LARGE"])  # party off: unset

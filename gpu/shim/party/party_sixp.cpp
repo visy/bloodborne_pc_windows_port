@@ -211,11 +211,24 @@ void SixpTick() {
             SafeGet(pres + 0x98, &pres_state);
         }
     }
+    char slots[160] = "";
+    if (pres) {
+        int n = 0;
+        for (int i = 0; i < 6 && n < 150; ++i) {
+            std::uint32_t h = 0xdeadbeefu;
+            SafeGet(pres + 0x1c + i * 0x14, &h);
+            n += std::snprintf(slots + n, sizeof slots - n, "%s%x", i ? " " : "", h);
+        }
+        std::uint32_t th[4] = {}, tc = 0;
+        SafeRead(pres + 0xb0, th, sizeof th);
+        SafeGet(pres + 0xc0, &tc);
+        std::snprintf(slots + n, sizeof slots - n, " | tracked %x %x %x %x n%u", th[0], th[1], th[2], th[3], tc);
+    }
     ++logs;
     Log("probe: WorldChrMan %#llx ChrSet count %d entries %#llx; GameDataMan %#llx rows %#llx row count %lld occupancy %#010x; "
-        "presentation %#llx members %d state %d; set %s",
+        "presentation %#llx members %d state %d slots [%s]; set %s",
         ull(wcm), chr_count, ull(chr_entries), ull(gdm), ull(row_base), static_cast<long long>(row_count), occ, ull(pres),
-        pres_count, pres_state, g_active.load() ? "ON" : "off");
+        pres_count, pres_state, slots, g_active.load() ? "ON" : "off");
 }
 
 } // namespace coop::sixp
