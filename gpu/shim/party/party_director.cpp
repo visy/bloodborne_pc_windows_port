@@ -4876,6 +4876,7 @@ void PartyDirector::ConfigureFromEnv() {
     if (const char* m = std::getenv("BB_PARTY_MAX"); m && m[0]) {
         max_players = std::atoi(m);
     }
+    max_players = std::min(max_players, party::LocalMaxCap());  // 0.8.0: 4 unless BB_PARTY_LARGE=1
     Configure(role, max_players);
     progress::SetRole(role == PartyRole::Host    ? progress::Role::Host  // C2 progress sync
                       : role == PartyRole::Guest ? progress::Role::Guest

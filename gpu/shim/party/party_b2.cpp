@@ -10744,6 +10744,13 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         v.host_map = s.map_id;
         v.carry = dsummon::CarriesAcrossMaps(s.map_id, gather_dsum);
         v.cooperators = s.cooperators < 0 ? 0 : s.cooperators;
+        // 0.8.0 (CL-10e56b): the game's cooperator count leaves invaders out (ChrType 8), yet an invader holds one of the
+        // engine's seats (host + 4 remote): with an invader in, a party of 5 takes one cooperator fewer.
+        if (party::PartyLink* il = party::runtime_link()) {
+            for (int k = 1; k < party::kMaxPartyPlayers; ++k) {
+                if (il->is_invader(k)) ++v.cooperators;
+            }
+        }
         v.max_cooperators = dsummon::MaxCooperators(coop::fourp::FourpEffectiveMax());
         v.ms_since_sign_summon = bbnet::party::FromApi::instance().ms_since_request();
         v.ms_since_member_joined = bbnet::np::ms_since_member_joined();

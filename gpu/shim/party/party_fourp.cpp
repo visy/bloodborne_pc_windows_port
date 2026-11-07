@@ -56,7 +56,9 @@ Config ConfigFromEnv() {
     if (const char* v = std::getenv("BB_PARTY_MAX"); v && *v) {
         m = std::atoi(v);
     }
-    c.local_max = m < 2 ? 2 : m > kMaxPlayers ? kMaxPlayers : m;
+    const char* large = std::getenv("BB_PARTY_LARGE");  // 0.8.0: a local Max players is held at 4 unless BB_PARTY_LARGE=1
+    const int cap = large && large[0] == '1' && !large[1] ? kMaxPlayers : 4;
+    c.local_max = m < 2 ? 2 : m > cap ? cap : m;
     return c;
 }
 

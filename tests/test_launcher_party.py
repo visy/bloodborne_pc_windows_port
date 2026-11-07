@@ -698,3 +698,26 @@ class GlyphListSetting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LargePartiesSetting(unittest.TestCase):
+    """0.8.0 (CL-10e56b): Max players 5 only with Large parties on (off by default)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.L = load_launcher()
+        except Exception as ex:  # no tkinter here
+            raise unittest.SkipTest(f"launcher.py not importable here: {ex}")
+
+    def test_five_needs_the_switch(self):
+        base = {"party_mode": "host", "party_name": "A"}
+        off = self.L.party_env({**base, "party_max": "5"})
+        self.assertEqual((off["BB_PARTY_LARGE"], off["BB_PARTY_MAX"]), ("0", "3"))  # an unoffered 5 falls back to the default
+        on = self.L.party_env({**base, "party_max": "5", "party_large": True})
+        self.assertEqual((on["BB_PARTY_LARGE"], on["BB_PARTY_MAX"]), ("1", "5"))
+        four = self.L.party_env({**base, "party_max": "4"})
+        self.assertEqual((four["BB_PARTY_LARGE"], four["BB_PARTY_MAX"]), ("0", "4"))
+        self.assertEqual(self.L.PARTY_MAX_CHOICES, ["2", "3", "4"])
+        self.assertEqual(self.L.PARTY_MAX_CHOICES_LARGE, ["2", "3", "4", "5"])
+        self.assertIsNone(self.L.party_env({})["BB_PARTY_LARGE"])  # party off: unset
