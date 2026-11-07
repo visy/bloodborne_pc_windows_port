@@ -145,6 +145,8 @@ class LaterProc:
             self.p.terminate()
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))  # shotcheck (a run through runpy / an import has no script dir on the path)
 REPO = HERE.parent.parent
 AGENT_ROOT = REPO.parent  # agents/NAME when run from an agent worktree
 DEFAULT_ROOT = (AGENT_ROOT / "mptest") if AGENT_ROOT.parent.name == "agents" else (REPO.parent / "mptest")
@@ -10327,6 +10329,18 @@ class Verdict:
         print("%-4s %-40s %s" % ("PASS" if ok else "FAIL", name, detail), flush=True)
 
 
+def add_visual(v, name, out_dir, a):
+    """The visual check of a phase (tools/mp/shotcheck.py): one row per rendered instance, FAILED when
+    its screenshots are black / missing. Appended past the --only row filter: a black shot is never
+    "not asked for". Not run with --no-shots."""
+    if getattr(a, "no_shots", False):
+        return
+    import shotcheck
+    for row in shotcheck.visual_rows(name, out_dir):
+        v.rows.append(row)
+        print("%-4s %-40s %s" % ("PASS" if row[1] else "FAIL", row[0], row[2]), flush=True)
+
+
 def need(v, L, name, i, rx, after=0.0, before=1e9, what=""):
     hit = L.find(i, rx, after, before)
     v.step(name, hit, ("+%.1f s inst%d: %s" % (hit[0], i, hit[1][:150])) if hit else
@@ -13893,6 +13907,9 @@ def main():
                     help="with --lanes > 1: do not let the lanes' game runs exceed the machine-wide client limit (memory guard off; "
                          "the lanes then take turns)")
     ap.add_argument("--every", type=float, default=10)
+    ap.add_argument("--no-shots", action="store_true",
+                    help="no screenshot dependency check and no visual check (a smoke asking for shots otherwise stops "
+                         "at the start when Pillow is missing, and fails an instance whose shots are black)")
     ap.add_argument("--fps", default=None,
                     help="frame-rate sweep: comma list, each one rate or a per-instance mix: 30,60,90,120,60fg,60/30 (60/30 = host "
                          "at 60, guests at 30; a fg suffix = FSR frame generation 2x on that rate: 60fg, 60fg/30, uncapfg). The phases run once per entry into <out>/fps<entry, / -> x>, then one "
@@ -13910,6 +13927,12 @@ def main():
                          "once over all phases")
     ap.add_argument("--lane-id", type=int, default=-1, help=argparse.SUPPRESS)  # a lane child (--lanes)
     a = ap.parse_args()
+    if not a.no_shots:
+        import shotcheck
+        try:
+            shotcheck.require_pil()
+        except shotcheck.ShotDependencyError as e:
+            sys.exit("smoke_party: ERROR: " + str(e))
     RUN_ROOT[0] = a.root
     a.lanes = auto_lanes(a.lanes) if a.lane_id < 0 else 1
     only = {g.strip() for g in a.only.split(",") if g.strip()}
@@ -13945,6 +13968,7 @@ def main():
             # check now, while this lane's saves are the phase's (the sc / lp checks read them)
             lv = Verdict(only)
             CHECKS[name](lv, Logs(out / name), out / name)
+            add_visual(lv, name, out / name, a)
             (out / name / "rows.json").write_text(json.dumps(lv.rows), encoding="utf-8")
         return
     t_all = time.time()
@@ -13970,7 +13994,7 @@ def main():
                     name = todo.pop(0)
                 argv = [sys.executable, str(Path(__file__).resolve()), "--root", "%s_l%d" % (a.root, k),
                         "--build", str(a.build), "--game", str(a.game), "--out", str(out), "--every", str(a.every),
-                        "--phase", name, "--lane-id", str(k)] + (["--only", a.only] if a.only else []) + (
+                        "--phase", name, "--lane-id", str(k)] + (["--no-shots"] if a.no_shots else []) + (["--only", a.only] if a.only else []) + (
                         ["--sweep-fps", a.sweep_fps] if a.sweep_fps else []) + (["--real-net"] if a.real_net else [])
                 t0 = time.time()
                 with open(out / ("lane%d.log" % k), "a") as lf:
@@ -14006,6 +14030,7 @@ def main():
             continue
         n0 = len(v.rows)
         CHECKS[name](v, Logs(out / name), out / name)
+        add_visual(v, name, out / name, a)
         (out / name).mkdir(parents=True, exist_ok=True)
         (out / name / "rows.json").write_text(json.dumps(v.rows[n0:]), encoding="utf-8")
     if not a.check_only or lanes_used:
