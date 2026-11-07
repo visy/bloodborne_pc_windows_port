@@ -128,7 +128,7 @@ public:
 
     /// Flushes the GPU modified ranges of the pages an image shares with its neighbours (the
     /// parts outside it) to guest memory, before the image is written back over its own.
-    void ReadEdgeImagePages(const Image& image);
+    u32 ReadEdgeImagePages(const Image& image); ///< flushes done (0..2)
 
     /// bbport BB_LAYER_READ_TRAPS: a CPU access hit a page whose newest data the GPU wrote into a
     /// VRAM copy only: the block's GPU data is copied back into the game's memory first (on the

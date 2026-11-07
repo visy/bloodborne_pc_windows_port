@@ -41,6 +41,18 @@ static bool GcVerify() {
     return enabled;
 }
 
+// Counts of the verification's decisions, printed with the collector's report.
+static struct GcVerifyStats {
+    std::atomic<u64> gated{0};         // write-back refused: CanBeDownloaded false
+    std::atomic<u64> unverifiable{0};  // kept: buffer-written, no hash
+    std::atomic<u64> overlap_checked{0};
+    std::atomic<u64> overlap_freed{0}; // buffer data newer: freed without write-back
+    std::atomic<u64> edge_flushes{0};
+    std::atomic<u64> edge_dirty{0};    // edge pages rewritten by the guest
+    std::atomic<u64> marked{0};        // images marked maybe-GPU-dirty
+    std::atomic<u64> verified_write_backs{0};
+} g_vfy;
+
 static u64 HashBackingMemory(VAddr virtual_addr, u64 size) {
     if (virtual_addr == 0 || size == 0) {
         return 0;
@@ -406,6 +418,7 @@ void TextureCache::MarkAsMaybeGpuDirty(VAddr addr, size_t size) {
             image.gpu_hash = HashBackingMemory(image.info.guest_address, image.info.guest_size);
         }
         image.flags |= ImageFlagBits::MaybeGpuDirty;
+        g_vfy.marked.fetch_add(1, std::memory_order_relaxed);
     });
 }
 
@@ -1406,12 +1419,14 @@ void TextureCache::MarkDirtyIfEdgesModified(Image& image) {
         if (HashBackingMemory(image_begin, std::min(head_end, image_end) - image_begin) !=
             image.head_hash) {
             image.flags |= ImageFlagBits::CpuDirty;
+            g_vfy.edge_dirty.fetch_add(1, std::memory_order_relaxed);
         }
     }
     if (image.tail_hash != 0) {
         const auto tail_begin = std::max<VAddr>(tracker.GetPageAddr(image_end), image_begin);
         if (HashBackingMemory(tail_begin, image_end - tail_begin) != image.tail_hash) {
             image.flags |= ImageFlagBits::CpuDirty;
+            g_vfy.edge_dirty.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
@@ -1591,6 +1606,7 @@ void TextureCache::GarbageCollectImages() {
             bool verified_drop = false;
             if (write_back && GcVerify()) {
                 if (!image.CanBeDownloaded()) {
+                    g_vfy.gated.fetch_add(1, std::memory_order_relaxed);
                     lru_cache.Touch(image.lru_id, gc_tick);
                     ++gc_kept_gpu;
                     BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
@@ -1599,6 +1615,7 @@ void TextureCache::GarbageCollectImages() {
                 if (True(image.flags & ImageFlagBits::MaybeGpuDirty)) {
                     if (image.gpu_hash == 0) {
                         // Written over by a buffer too big to hash: cannot tell whose data is newer.
+                        g_vfy.unverifiable.fetch_add(1, std::memory_order_relaxed);
                         lru_cache.Touch(image.lru_id, gc_tick);
                         ++gc_kept_gpu;
                         BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
@@ -1610,6 +1627,10 @@ void TextureCache::GarbageCollectImages() {
                                             false, true);
                     verified_drop = HashBackingMemory(image.info.guest_address,
                                                       image.info.guest_size) != image.gpu_hash;
+                    g_vfy.overlap_checked.fetch_add(1, std::memory_order_relaxed);
+                    if (verified_drop) {
+                        g_vfy.overlap_freed.fetch_add(1, std::memory_order_relaxed);
+                    }
                 }
             }
             if (drop || verified_drop) {
@@ -1620,7 +1641,9 @@ void TextureCache::GarbageCollectImages() {
                 // there since (0x28ce9b5).
                 if (GcVerify()) {
                     // The GPU-written bytes of the pages the image shares with others.
-                    buffer_cache.ReadEdgeImagePages(image);
+                    g_vfy.edge_flushes.fetch_add(buffer_cache.ReadEdgeImagePages(image),
+                                                 std::memory_order_relaxed);
+                    g_vfy.verified_write_backs.fetch_add(1, std::memory_order_relaxed);
                 }
                 DownloadImageMemory(image_id, true);
                 if (GcVerify()) {
@@ -1662,6 +1685,18 @@ void TextureCache::GarbageCollectImages() {
                         (unsigned long long)(gc_freed_bytes >> 20),
                         (unsigned long long)gc_downloads, (unsigned long long)gc_dropped,
                         (unsigned long long)gc_kept_gpu);
+            std::printf("Texture cache: verify (BB_GC_VERIFY) totals: %llu marked maybe-GPU-dirty, "
+                        "%llu write-backs refused (not downloadable), %llu kept (no hash), %llu "
+                        "buffer-overlap checks (%llu freed without write-back), %llu verified "
+                        "write-backs (%llu edge-page flushes), %llu edge-page rewrites seen\n",
+                        (unsigned long long)g_vfy.marked.load(),
+                        (unsigned long long)g_vfy.gated.load(),
+                        (unsigned long long)g_vfy.unverifiable.load(),
+                        (unsigned long long)g_vfy.overlap_checked.load(),
+                        (unsigned long long)g_vfy.overlap_freed.load(),
+                        (unsigned long long)g_vfy.verified_write_backs.load(),
+                        (unsigned long long)g_vfy.edge_flushes.load(),
+                        (unsigned long long)g_vfy.edge_dirty.load());
             gc_report_time = now;
             gc_evictions = gc_downloads = gc_dropped = gc_kept_gpu = gc_freed_bytes = 0;
         }

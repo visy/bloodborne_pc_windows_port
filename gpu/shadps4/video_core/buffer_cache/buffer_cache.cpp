@@ -825,23 +825,27 @@ void BufferCache::UnmarkRegionAsGpuModified(VAddr device_addr, u64 size) {
     gpu_modified_ranges.Subtract(device_addr, size);
 }
 
-void BufferCache::ReadEdgeImagePages(const Image& image) {
+u32 BufferCache::ReadEdgeImagePages(const Image& image) {
     // Mrsuss60/bloodborne_pc_windows_port d81d63be (shadPS4 GC part 2). The GPU-written ranges in
     // the parts of the first and last page that lie outside the image: the image's write-back
     // leaves them as they are, and they must hold the GPU's data before anything reads them.
     const VAddr image_addr = image.info.guest_address;
     const VAddr image_end = image_addr + image.info.guest_size;
+    u32 flushed = 0;
     if (image_addr == 0 || image_end <= image_addr) {
-        return;
+        return 0;
     }
     const VAddr page_start = PageManager::GetPageAddr(image_addr);
     const VAddr page_end = PageManager::GetNextPageAddr(image_end - 1);
     if (page_start < image_addr && gpu_modified_ranges.Intersects(page_start, image_addr - page_start)) {
         ReadMemory(page_start, image_addr - page_start, false, true);
+        ++flushed;
     }
     if (image_end < page_end && gpu_modified_ranges.Intersects(image_end, page_end - image_end)) {
         ReadMemory(image_end, page_end - image_end, false, true);
+        ++flushed;
     }
+    return flushed;
 }
 
 bool BufferCache::LayerReadTrapHit(VAddr address, bool assume_locks) {
