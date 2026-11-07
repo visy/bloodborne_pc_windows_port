@@ -45,6 +45,15 @@ class SceneTargets;
 void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
                          vk::Image image, u32 width, u32 height, vk::Format format);
 
+/// bbport BB_SHOT_TRIGGER (smoke screenshots, tools/mp/shot.py): ShotDue() consumes the trigger
+/// file (polled every 4th presented frame); DumpShot() then saves the swapchain image as the
+/// player sees it (letterbox and port overlay included; General layout, 4 bytes a pixel) as
+/// f<N>_shot_<w>x<h>_<bgra|rgba>.raw in BB_SHOT_DIR. The game draws it itself, so it does not
+/// depend on the window being visible, covered or on a locked desktop.
+bool ShotDue();
+void DumpShot(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+              vk::Image image, u32 width, u32 height, vk::Format format);
+
 /// bbport BB_HDR_DUMP_TRIGGER (HDR output, I4): when the trigger file exists (consumed), the SDR
 /// frame (A2B10G10R10) and the HDR swapchain image as drawn (both in General) are saved as
 /// hdr_frame_* / hdr_out_* in BB_DUMP_DIR, for tools/windows/hdr_check.py.
