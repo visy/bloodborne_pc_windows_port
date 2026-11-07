@@ -42,11 +42,15 @@
 #include <iterator>
 #include <new>
 #include <thread>
+#include <unordered_map>
+#include <vector>
+#include <string>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 #else
 #include <sys/mman.h>
 #include <unistd.h>
@@ -674,6 +678,64 @@ constexpr u64 LiveBlockSite = 0x2018e3d, LiveGlobalDt = 0x535a908, LiveCave = 0x
 
 /// BB_LIVE_FPS_LOG=1 (diagnostics, off by default): once a second of real time one line with the clock's state, the
 /// pacer's mode fields and the presenter's limit (issue #35: Live FPS stuck near 64 FPS after a respawn load).
+#ifdef _WIN32
+/// Once a second under BB_LIVE_FPS_LOG: the CPU time every thread of the process used in the last `secs` seconds
+/// (user + kernel, ms per real second), the busy ones only, with the thread's name and priority; the process affinity
+/// and thread count once. Issue #35: which thread is the extra ~6 ms a frame in a stuck stay.
+void ThreadCpuLog(double secs) {
+    struct Prev { std::uint64_t ticks; };
+    static std::unordered_map<DWORD, Prev> prev;
+    static bool first = true;
+    if (first) {
+        first = false;
+        DWORD_PTR pm = 0, sm = 0;
+        GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm);
+        std::printf("Live clock threads: process affinity %#llx of %#llx, priority class %#lx\n", (unsigned long long)pm,
+                    (unsigned long long)sm, (unsigned long)GetPriorityClass(GetCurrentProcess()));
+    }
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    const DWORD pid = GetCurrentProcessId();
+    struct Row { double ms; DWORD tid; int prio; std::string name; };
+    std::vector<Row> rows;
+    int total = 0;
+    THREADENTRY32 te{};
+    te.dwSize = sizeof te;
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid) continue;
+        ++total;
+        HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+        if (!h) continue;
+        FILETIME c, e, k, u;
+        if (GetThreadTimes(h, &c, &e, &k, &u)) {
+            auto to_u64 = [](const FILETIME& f) { return (std::uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+            const std::uint64_t ticks = to_u64(k) + to_u64(u); // 100 ns
+            auto it = prev.find(te.th32ThreadID);
+            const double ms = it == prev.end() ? 0.0 : double(ticks - it->second.ticks) / 10000.0 / secs;
+            prev[te.th32ThreadID] = {ticks};
+            if (ms >= 20.0) {
+                std::string name = "?";
+                PWSTR w = nullptr;
+                if (SUCCEEDED(GetThreadDescription(h, &w)) && w) {
+                    name.clear();
+                    for (const wchar_t* p = w; *p && name.size() < 40; ++p) name += *p < 128 ? char(*p) : '?';
+                    LocalFree(w);
+                }
+                rows.push_back({ms, te.th32ThreadID, GetThreadPriority(h), name});
+            }
+        }
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.ms > b.ms; });
+    std::printf("Live clock threads: %d threads; busy (ms CPU per s):", total);
+    for (std::size_t i = 0; i < rows.size() && i < 14; ++i) {
+        std::printf(" [%s %lu p%d %.0f]", rows[i].name.c_str(), (unsigned long)rows[i].tid, rows[i].prio, rows[i].ms);
+    }
+    std::printf("\n");
+}
+#endif
+
 void LiveDiag(const u8* pacer, float measured, int target, float interval, float dt) {
     static const bool on = [] {
         const char* v = std::getenv("BB_LIVE_FPS_LOG");
@@ -687,6 +749,9 @@ void LiveDiag(const u8* pacer, float measured, int target, float interval, float
     const auto now = clock::now();
     const double secs = std::chrono::duration<double>(now - last).count();
     if (secs < 1.0) return;
+#ifdef _WIN32
+    ThreadCpuLog(secs);
+#endif
     std::int32_t vblanks = 0;
     std::uint8_t flip_skip = 0, no_sleep = 0;
     float pacer_target = 0;
