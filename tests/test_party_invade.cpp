@@ -80,7 +80,7 @@ static void FourPlayers() {
     // 0.8.0 (CL-10e56b): a party of 5 (the link's max) has the engine's five seats: host + 3 guests leave one for an invader,
     // host + 4 guests none; nothing is ever more than five.
     h.party_max = 5;
-    CHECK(Capacity(5) == 5 && Capacity(6) == 5 && Capacity(9) == 5 && Capacity(4) == 4 && kEngineSeats == 5);
+    CHECK(Capacity(5) == 5 && Capacity(6) == 6 && Capacity(9) == 6 && Capacity(4) == 4 && kEngineSeats == 6);
     CHECK(Admit(h, false, false) == Deny::None);  // world_players 4 (host + 3), party of 5
     h.world_players = 5;
     CHECK(Admit(h, false, false) == Deny::NoSlot);

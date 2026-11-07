@@ -988,6 +988,9 @@ def run(a):
     for (i, p, log), code in zip(procs, codes):
         log.close()
         print(f"instance {i}: exit {code}")
+    # 0.8.0: a game the party launcher restarted after a crash is not a child of the process tree killed above: end whatever
+    # still runs under this root, so no run leaves a game (or run.bat's restart loop) behind
+    stop_leftovers(a.root)
     print("[harness] teardown %.1f s" % (time.time() - t_down), flush=True)
     if real_net:
         report = real_net_report([log_text(i, starts[i]) for i in range(a.count)])
