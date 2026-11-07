@@ -50,3 +50,4 @@ push_to_github.bat
 /exe/
 /harness_pids.json
 /inst[0-9]*/
+pgo_map/
