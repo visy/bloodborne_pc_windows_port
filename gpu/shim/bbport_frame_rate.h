@@ -38,6 +38,11 @@ unsigned ApplyVrrCap(unsigned limit);
 void SetDisplayRefresh(float hz);
 /// The live clock hook is installed and steps the game.
 bool LiveActive();
+/// Sound census (BB_SOUND_CENSUS / BB_SOUND_WAKE_PER_FRAME on): totals since start. False when it is off.
+struct SoundCountsOut {
+    std::uint64_t starts = 0, decoded = 0, frames = 0, passes = 0;
+};
+bool SoundCounts(SoundCountsOut* out);
 /// The last step's dt (s; 0 when the hooks are off).
 float LastDt();
 } // namespace BbFrameRate

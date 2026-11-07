@@ -6,6 +6,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ### Changed
 
+- **diagnostic: the game's sound thread counted against the frames, and an optional once-a-frame wake** (sound080, Iosefka 14c, ported idea: droogie/bbhost eaca133, GPL-3). Measured at 30, 60 and 120 FPS: the sound thread keeps its own 30 passes a second, so at 60 FPS a pass takes two frames' sound requests, but no sound was lost (sounds started per 10 sword swings were the same at 30, 60 and 120). `BB_SOUND_CENSUS=1` logs the passes against the frames every 5 s; `BB_SOUND_WAKE_PER_FRAME=1` runs one pass per frame instead. Both are off by default and need no launcher setting.
 - **the shader cache's driver pipeline binaries are saved while you play, off the render thread** (upport080, ported from Mrsuss60's ce83b806). They were written once after the start-up warm-up and once at a normal exit, so a session that crashed or was ended from the task manager left the driver to build every pipeline of that session again at the next start. The first new pipeline of a session is now written out at once and later ones about once a minute, by a worker thread of their own (the copy of the 10+ MB driver cache and the disk write never run on the thread that draws).
 
 ### Fixed

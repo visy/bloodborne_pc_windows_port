@@ -49,6 +49,7 @@ uintptr_t runtime_memory_resolve(const char*) { std::abort(); }
 void runtime_wait_report(double) {}
 void runtime_sleep_stats(uint64_t* calls, uint64_t* ns) { *calls = 0; *ns = 0; }
 uint64_t runtime_heap_growths() { return 0; }
+void runtime_ajm_counts(uint64_t* starts, uint64_t* frames) { *starts = 0; *frames = 0; }
 // The party/net glue in bbgpu (bbnet_glue.cpp, game_state.cpp) runs only with a guest process.
 __attribute__((sysv_abi)) void restore_guest_fs() { std::abort(); }
 int runtime_setjmp(void*) { std::abort(); }
