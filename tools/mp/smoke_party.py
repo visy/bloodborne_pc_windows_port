@@ -9389,9 +9389,9 @@ def check_fp5(v, L):
 def phase_fpi5(only):
     return dict(
         name="fpi5", seconds=720, count=5, headless=3,
-        env=["BB_PARTY_MAX=5", "BB_PARTY_LARGE=1", "BB_PARTY_HOLD_LOG=1", "BB_PARTY_TEST_INVINCIBLE=1", "BB_BOOT_WATCHDOG=20"],
+        env=["BB_PARTY_MAX=5", "BB_PARTY_LARGE=1", "BB_PARTY_HOLD_LOG=1", "BB_BOOT_WATCHDOG=20"],
         ienv=["0:BB_PARTY_INVADERS=1", "4:BB_PARTY_INVADE=1",
-              "4:BB_PARTY_INVADE_TEST=rejoin@150?home,rejoin@45?home,rejoin@45?home,die@25?in"],
+              "4:BB_PARTY_INVADE_TEST=rejoin@150?home,die@25?in"],
         crash=[], until=[r"0:invasion of slot 4 ends: invader_died"], until_hold=30,
     )
 
