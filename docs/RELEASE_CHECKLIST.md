@@ -1,5 +1,7 @@
 # Release checklist
 
+See also docs/RELEASE.md (the ordered commands, tools/release/).
+
 The steps for a coop/port release (`X.Y.Z`), revised after 0.7.7. Push only with `git push fork master`.
 
 ## 1. Before the smoke
@@ -72,8 +74,8 @@ a regression.
 - [ ] Install over `E:\games\bloodborne` and leave `user\`, `mods\`, `bbport.ini` and `launcher_settings.json` alone:
       `robocopy relXYZ E:\games\bloodborne /E /XD relXYZ\user relXYZ\mods /XF bbport.ini launcher_settings.json`.
       Check `VERSION` and the exe hash.
-- [ ] GitHub release `vX.Y.Z` at the full master SHA with the zip (scratchpad `make_release.py repo tag SHA title notes zip`;
-      run it **without** `python -I`, or the SSL check fails).
+- [ ] GitHub release `vX.Y.Z` at the full master SHA with the zip: `tools/release/publish.py` (dry run by default,
+      `--yes-publish` to send; run it **without** `python -I`; see `docs/RELEASE.md`).
 - [ ] Iosefka: `cl release coop X.Y.Z --next <next>` (preview with `--dry-run`); unfinished items move to the next version.
 - [ ] No #releases post for a coop release: the Nightwatch update announcement covers it (and its retest asks).
 - [ ] Memory note `release-XYZ` with the tag, the smoke result and the gotchas.
