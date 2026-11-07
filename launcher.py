@@ -69,7 +69,10 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # Party co-op (docs/PARTY_COOP_PLAN.md): (label, BB_PARTY value); "" = off (BB_PARTY unset)
 PARTY_MODES = [("Off", ""), ("Host a party", "host"), ("Join a party", "join")]
 PARTY_MAX_CHOICES = ["2", "3", "4"]
-PARTY_MAX_CHOICES_LARGE = PARTY_MAX_CHOICES + ["5", "6"]  # 0.8.0 (CL-10e56b): with "Large parties" on
+# 0.8.0 (CL-10e56b): with "Large parties" on. 6 is offered only once a 6-game run has passed (docs/party/six_players.md section 10):
+# the 6-seat patch set is proven with 5 players in it, the 6th player itself not yet. Flip PARTY_SIX_PROVEN after fp6 / fpi6 pass.
+PARTY_SIX_PROVEN = False
+PARTY_MAX_CHOICES_LARGE = PARTY_MAX_CHOICES + ["5"] + (["6"] if PARTY_SIX_PROVEN else [])
 PARTY_DEFAULT_PORT = 9307
 PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
 PARTY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
