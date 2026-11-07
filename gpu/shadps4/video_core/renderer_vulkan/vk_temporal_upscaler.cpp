@@ -88,11 +88,12 @@ struct DumpImage {
 /// Copies `images` into host buffers after the commands recorded so far and writes them to
 /// files once the GPU is done.
 void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
-                int frame, std::initializer_list<DumpImage> images) {
-    static const std::string dir = [] {
+                int frame, std::initializer_list<DumpImage> images, const char* dir_override = nullptr) {
+    static const std::string default_dir = [] {
         const char* env = std::getenv("BB_DUMP_DIR");
         return std::string{env && env[0] ? env : "out/dump"};
     }();
+    const std::string dir = dir_override ? std::string{dir_override} : default_dir;
     const vk::MemoryBarrier2 before{
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
         .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
@@ -132,9 +133,14 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
             [allocator = instance.GetAllocator(), buffer, allocation, info, size,
              file = std::string{path}] {
                 vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
-                if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                // Written under .part and renamed: a reader (tools/mp/shot.py) polling for the
+                // .raw never sees a half-written file.
+                const std::string part = file + ".part";
+                if (FILE* f = std::fopen(part.c_str(), "wb")) {
                     std::fwrite(info.pMappedData, 1, size, f);
                     std::fclose(f);
+                    std::remove(file.c_str());
+                    std::rename(part.c_str(), file.c_str());
                 }
                 vmaDestroyBuffer(allocator, buffer, allocation);
             });
@@ -171,6 +177,23 @@ void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::Com
     const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
     DumpImages(instance, scheduler, cmdbuf, index++,
                {{image, width, height, 4, "final", bgra ? "bgra" : "rgba"}});
+}
+
+bool ShotDue() {
+    static const char* trigger = std::getenv("BB_SHOT_TRIGGER");
+    static u32 polls = 0;
+    // Every 4th presented frame looks for the file (a few ms of latency, no per-frame syscall).
+    return trigger && ++polls % 4 == 0 && std::remove(trigger) == 0;
+}
+
+void DumpShot(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+              vk::Image image, u32 width, u32 height, vk::Format format) {
+    static const char* dir = std::getenv("BB_SHOT_DIR");
+    static int index = 0;
+    const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
+    DumpImages(instance, scheduler, cmdbuf, index++,
+               {{image, width, height, 4, "shot", bgra ? "bgra" : "rgba"}},
+               dir && dir[0] ? dir : nullptr);
 }
 
 void DumpHdrIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,

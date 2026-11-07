@@ -1709,6 +1709,31 @@ bool Presenter::PresentOne(Frame* frame, vk::Image source_image, vk::ImageView s
                                    vk::DependencyFlagBits::eByRegion, {}, {}, to_present);
         }
     }
+    // BB_SHOT_TRIGGER (SDR output): the swapchain image as presented, for the smoke harness.
+    if (real && swapchain.HdrOutput() == BbHdr::Sdr && ShotDue()) {
+        const vk::Extent2D shot_extent = swapchain.GetExtent();
+        vk::ImageMemoryBarrier2 shot_barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+            .oldLayout = vk::ImageLayout::ePresentSrcKHR,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = swapchain_image,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &shot_barrier});
+        DumpShot(instance, present_scheduler, cmdbuf, swapchain_image, shot_extent.width,
+                 shot_extent.height, swapchain.GetSurfaceFormat().format);
+        shot_barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+        shot_barrier.srcAccessMask = vk::AccessFlagBits2::eNone;
+        shot_barrier.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+        shot_barrier.dstAccessMask = vk::AccessFlagBits2::eNone;
+        shot_barrier.oldLayout = vk::ImageLayout::eGeneral;
+        shot_barrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &shot_barrier});
+    }
+
     if (EmulatorSettings.IsVkHostMarkersEnabled()) {
         cmdbuf.endDebugUtilsLabelEXT();
     }
