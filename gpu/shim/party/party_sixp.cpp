@@ -8,6 +8,8 @@
 #include "../../party_env.h"
 
 #include <atomic>
+#include <mutex>
+#include <thread>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
@@ -105,11 +107,19 @@ BB_COOP_SYSV std::uint64_t PresReleaseHook(std::uint64_t obj, std::uint64_t hand
 
 } // namespace
 
+BB_COOP_SYSV std::uint64_t MenuIdFilter(std::uint64_t obj, std::uint64_t id);
+
 bool SixpActive() {
     return g_active.load();
 }
 
 void SixpInit() {
+    if (const char* pr = std::getenv("BB_PARTY_SIX_PROBE"); pr && pr[0] == '1' && bb_party_enabled() && Image()) {
+        if (!HookValueFilter(0x1bf993e, {0x4c, 0x63, 0xb4, 0x88, 0xc8, 0x15, 0x00, 0x00}, {0x48, 0x89, 0xc7, 0x4c, 0x89, 0xf6},
+                             &MenuIdFilter, 0x1bf9946, "6p probe menu event id")) {
+            Log("menu id probe not installed");
+        }
+    }
     if (!bb_party_enabled() || !EnabledFromEnv()) {
         return;
     }
@@ -166,6 +176,85 @@ void SixpInit() {
     Log("%d site(s) patched, stage %d (%s)", n, stage, kRulesTag);
 }
 
+// Crash hunt (fp6, 2026-11-07): the menu singleton 0x5562878 holds an event queue of 17 ints at +0x15c8 (values 1..17, read/write index
+// +0x160c / +0x1610); a 6th-seat run died reading the id 503 from it. With BB_PARTY_SIX_PROBE=1 every tick checks it and logs the
+// first bad state with the bytes around it, so the writer can be found.
+void CheckMenuQueue() {
+    static int logged = 0;
+    std::uint64_t menu = 0;
+    if (!SafeGet(Guest(0x5562878), &menu) || !menu) return;
+    std::int32_t q[17] = {}, rd = 0, wr = 0;
+    if (!SafeRead(menu + 0x15c8, q, sizeof q) || !SafeGet(menu + 0x160c, &rd) || !SafeGet(menu + 0x1610, &wr)) return;
+    // every change of the queue state (first 300): the last lines before a crash show the id that killed it
+    static std::int32_t last[19] = {};
+    static int changes = 0;
+    std::int32_t now[19];
+    std::memcpy(now, q, sizeof q);
+    now[17] = rd;
+    now[18] = wr;
+    if (changes < 300 && std::memcmp(now, last, sizeof now) != 0) {
+        std::memcpy(last, now, sizeof now);
+        ++changes;
+        Log("menu queue: read %d write %d [%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d]", rd, wr, q[0], q[1], q[2], q[3], q[4], q[5], q[6],
+            q[7], q[8], q[9], q[10], q[11], q[12], q[13], q[14], q[15], q[16]);
+    }
+    bool bad = rd < 0 || rd > 16 || wr < 0 || wr > 16;
+    for (int v : q) bad = bad || v < 0 || v > 17;
+    if (!bad || logged >= 3) return;
+    ++logged;
+    std::uint8_t raw[0xa0] = {};
+    SafeRead(menu + 0x1580, raw, sizeof raw);
+    char hex[0xa0 * 2 + 1];
+    for (int i = 0; i < 0xa0; ++i) std::snprintf(hex + i * 2, 3, "%02x", raw[i]);
+    Log("MENU QUEUE CORRUPT: object %#llx read %d write %d queue %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d; bytes +0x1580: %s", ull(menu), rd, wr,
+        q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11], q[12], q[13], q[14], q[15], q[16], hex);
+}
+
+// Fast sampler for the same queue (BB_PARTY_SIX_PROBE=1): the main-thread tick misses ids the menu thread consumes within a frame.
+void QueueSampler() {
+    int logs = 0;
+    std::int32_t prev[17] = {};
+    while (logs < 40) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::uint64_t menu = 0;
+        if (!SafeGet(Guest(0x5562878), &menu) || !menu) continue;
+        std::int32_t q[17] = {}, rd = 0, wr = 0;
+        if (!SafeRead(menu + 0x15c8, q, sizeof q) || !SafeGet(menu + 0x160c, &rd) || !SafeGet(menu + 0x1610, &wr)) continue;
+        for (int i = 0; i < 17; ++i) {
+            if (q[i] != prev[i] && (q[i] > 17 || q[i] < 0)) {
+                ++logs;
+                Log("menu queue SAMPLER: slot %d now %d (was %d), read %d write %d", i, q[i], prev[i], rd, wr);
+            }
+            prev[i] = q[i];
+        }
+    }
+}
+
+// Crash hunt: the menu update 0x1bf7c20 takes an event id from the queue (movsxd r14, [rax + rcx*4 + 0x15c8] at 0x1bf993e) and indexes an
+// 18-entry handler table with it; the 6th guest dies there with ids like 503 / 100. This filter logs every id outside 0..17 with the
+// queue, the read index and what the neighbours hold, and hands the menu object back (the stub continues with rax = our result).
+BB_COOP_SYSV std::uint64_t MenuIdFilter(std::uint64_t obj, std::uint64_t id) {
+    static std::atomic<int> logs{0};
+    const std::int64_t v = static_cast<std::int64_t>(id);
+    if ((v < 0 || v > 17) && logs.fetch_add(1) < 6) {
+        std::int32_t q[24] = {}, rd = -1, wr = -1;
+        SafeRead(obj + 0x15c8, q, sizeof q);
+        SafeGet(obj + 0x160c, &rd);
+        SafeGet(obj + 0x1610, &wr);
+        Log("MENU ID %lld (read %d write %d): queue+neighbours [%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d | %d %d %d %d %d %d %d]", static_cast<long long>(v), rd, wr,
+            q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11], q[12], q[13], q[14], q[15], q[16], q[17], q[18], q[19], q[20], q[21], q[22], q[23]);
+    }
+    if ((v < 0 || v > 17) && logs.load() <= 2) {
+        std::int32_t pre[0x80] = {};
+        SafeRead(obj + 0x13c8, pre, sizeof pre);
+        char b[0x80 * 9 + 8];
+        int n = 0;
+        for (int i = 0; i < 0x80; ++i) n += std::snprintf(b + n, sizeof b - n, "%x ", static_cast<unsigned>(pre[i]));
+        Log("MENU ID context: bytes +0x13c8..+0x15c8 as ints: %s", b);
+    }
+    return obj;
+}
+
 void SixpTick() {
     static const bool probe = [] {
         const char* e = std::getenv("BB_PARTY_SIX_PROBE");
@@ -174,6 +263,9 @@ void SixpTick() {
     if (!probe) {
         return;
     }
+    static std::once_flag sampler_once;
+    std::call_once(sampler_once, [] { std::thread(QueueSampler).detach(); });
+    CheckMenuQueue();
     using Clock = std::chrono::steady_clock;
     static Clock::time_point last{};
     static int logs = 0;

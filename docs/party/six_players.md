@@ -156,3 +156,28 @@ The patch set boots and runs 5 players with all three stages in (151 sites, 4 ho
 changes broke the 5-seat game. **The 6th player itself has not been run**: the 6-slot solo run needs `max_solo >= 6` in the shared
 queue (not the agent's to change) and a PC with about 24 GB free. Until `fp6` and `fpi6` pass, the launcher does not offer 6
 (`PARTY_SIX_PROVEN = False` in launcher.py; `BB_PARTY_LARGE=2` with `BB_PARTY_MAX=6` by hand still works).
+
+## 11. fp6 attempts (2026-11-07): the 6th guest crashes while entering the host's world
+
+Six runs of `fp6` (6 games, 2 drawn, ramwatch: lowest free memory 3.6 GB, never under the floor). The host and guests 1-4 join and run;
+**the 6th game (instance 5, the 5th guest) crashes 35-49 s in, at the moment its world appears with five remote chrs, every run**
+(`Guest fault`, DEP-execute at 0x5399f90 or a null call at 0x1bf9986; the harness' own restart of the guest then leaves a game running,
+kill it by hand). Evidence:
+
+- Crash site: `FUN_01bf7c20` (menu update), the dispatch of the menu event queue: `movsxd r14,[menu + 0x15c8 + read*4]` at 0x1bf993e, then
+  `call [handler table 0x298 + r14*0x58]` at 0x1bf9986 (18 entries, ids 0..17). `r14` was 503 (0x1f7), 503, 100: not an event id.
+- A value filter on that load (`BB_PARTY_SIX_PROBE=1`, `MenuIdFilter`) shows the queue really holds 503 at slot 0 (read 0, write 1) while every
+  producer of the queue (0x13813d0, 0x13835f0, 0x17c37a0, 0x203ffd0) range-checks its id to 1..17. So something writes a HP value into it: 503 is a
+  remote chr's HP, 719 its max HP (`remote chrs: ... hp 503` in the same log).
+- The dump of the 0x200 bytes before the queue (`MENU ID context`) is a table of 0x98-byte records (the enemy-gauge table `MenuMan+0x10f8 + i*0x98`,
+  8 entries, filled by 0x1644cf0 / 0x1654d80, read by the gauge menu 0x1bfb2a0, all of them bounded `< 8`); its *9th* record starts at +0x1598 and
+  already holds max HP 719 and HP 503, 503 at +0x15c8 = the queue's first int. So a writer fills a gauge record past the 8th, into the event queue.
+- The 5-player game (fp5x, fpi5x, all stages) never gets there: five remote chrs fit the table. With a 6th chr there are more chrs wanting a
+  gauge than the table has entries (6 players + the boss and others), and one writer is not bounded the way 0x1644cf0 / 0x1654d80 are. I did
+  not find that writer (no indexed access to disp 0x1108-0x112c exists, so it works through a computed pointer).
+- Not the sixp sites: the writer stores values of a chr, the sites change counts and offsets of other tables; nothing of the stages writes 503.
+
+What is left (next step for whoever continues): find the unbounded writer of the gauge records (watch +0x15b8 / +0x15c8 of the menu object: a
+VEH hardware watchpoint on the first int of the queue, or the stores of `hp` / `maxhp` of a PlayerIns into `[rax + 0x20/0x24]` of a computed
+record pointer), then either bound it or enlarge the 8-entry table (a relocation like stage 3: base 0x10f8, stride 0x98, 8 -> 10 entries,
+about 15 sites in 0x1644cf0, 0x1654d80, 0x1bfb2a0 and the writer). `PARTY_SIX_PROVEN` stays False.
