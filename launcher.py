@@ -193,6 +193,8 @@ PARTY_INI_SWITCHES = [
     ("party_glyph_list", "BB_PARTY_GLYPH_LIST", False),
     # 0.7.9 (CL-13f7d1): a summoned guest can use the Ritual Altar in the host's Dream (this player's own, OFF by default)
     ("party_guest_altar", "BB_PARTY_GUEST_ALTAR", False),
+    # 0.7.9 (gdrf079): the host's empty room stays open for a restarted guest's title join (the host's own, ON: a bug fix)
+    ("party_title_room_hold", "BB_PARTY_TITLE_ROOM_HOLD", True),
 ]
 # Party checkboxes that are one bbport.ini key each, outside PARTY_INI_SWITCHES (read again with the
 # other game settings; written one key at a time): (key, the game's default).
@@ -589,6 +591,11 @@ MY_PARTY_TAB = [
          "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
          "the ending the host gets plays for everyone. Needs to be on for the host and for "
          "each guest. Default: on (bbport.ini party_story; in the game: System > My party: Your save)."),
+        ("check", "party_title_room_hold", "Keep my room for a rejoining guest",
+         "Host: when a guest's game ended and it restarts and rejoins from its title, your game would close its empty "
+         "room about 5 s after the guest left, before the guest has joined. With this on the room stays open while "
+         "the rejoin is served. Your own setting. Default: on (bbport.ini party_title_room_hold; in the game: "
+         "System > My party: Your save)."),
     ]),
     (1, 1, "Your items", [
         ("check", "party_items", "Share the host's item rewards",

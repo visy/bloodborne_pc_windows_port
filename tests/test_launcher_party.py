@@ -686,6 +686,15 @@ class GlyphListSetting(unittest.TestCase):
         self.assertEqual(self.L.party_rules_ini({}, "")["party_guest_altar"], "0")
         self.assertEqual(self.L.party_rules_ini({"party_guest_altar": True}, "")["party_guest_altar"], "1")
 
+    def test_title_room_hold_switch_default_on_and_ini(self):
+        """0.7.9 (gdrf079): Keep my room for a rejoining guest: bbport.ini party_title_room_hold, on by default (a bug fix)."""
+        switches = {key: (env, default) for key, env, default in self.L.PARTY_INI_SWITCHES}
+        self.assertEqual(switches["party_title_room_hold"], ("BB_PARTY_TITLE_ROOM_HOLD", True))
+        env = self.L.party_env({"party_mode": "join", "party_name": "A", "party_code": "x"})
+        self.assertIsNone(env["BB_PARTY_TITLE_ROOM_HOLD"])
+        self.assertEqual(self.L.party_rules_ini({}, "")["party_title_room_hold"], "1")
+        self.assertEqual(self.L.party_rules_ini({"party_title_room_hold": False}, "")["party_title_room_hold"], "0")
+
 
 if __name__ == "__main__":
     unittest.main()
