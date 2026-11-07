@@ -150,12 +150,12 @@ coordinator owns that file. Then, from the agent's clone, with everything else o
 lamp travel, Cleric Beast fog fight (H2 clamps to 7502), a death and arena revive, the kill, a Leave and Rejoin (5 -> 4 -> 5).
 `fpi6`: host + 4 guests + an invader = 6 seats.
 
-## 10. Status at the end of round 3
+## 10. Status (rewritten after round 4, see section 12)
 
-The patch set boots and runs 5 players with all three stages in (151 sites, 4 hooks, 45/45 steps in `fp5x` / `fpi5x`), i.e. nothing it
-changes broke the 5-seat game. **The 6th player itself has not been run**: the 6-slot solo run needs `max_solo >= 6` in the shared
-queue (not the agent's to change) and a PC with about 24 GB free. Until `fp6` and `fpi6` pass, the launcher does not offer 6
-(`PARTY_SIX_PROVEN = False` in launcher.py; `BB_PARTY_LARGE=2` with `BB_PARTY_MAX=6` by hand still works).
+The patch set boots and runs with all three stages (149 sites, 4 hooks) plus the fixes of section 12. Proven so far with 6 seats: `fpi6` (host + 4 guests +
+an invader, 20/20, screenshots read) and the join, the full presentation and the Leave of `fp6j` (6 players). Not proven: a 6-player Rejoin of a middle
+member (section 12) and the travel / boss part of `fp6` (the PC runs out of memory when six games load a map together). The launcher does not offer 6
+until both are closed (`PARTY_SIX_PROVEN = False` in launcher.py; `BB_PARTY_LARGE=2` with `BB_PARTY_MAX=6` by hand works).
 
 ## 11. fp6 attempts (2026-11-07): the 6th guest crashes while entering the host's world
 
@@ -181,3 +181,33 @@ What is left (next step for whoever continues): find the unbounded writer of the
 VEH hardware watchpoint on the first int of the queue, or the stores of `hp` / `maxhp` of a PlayerIns into `[rax + 0x20/0x24]` of a computed
 record pointer), then either bound it or enlarge the 8-entry table (a relocation like stage 3: base 0x10f8, stride 0x98, 8 -> 10 entries,
 about 15 sites in 0x1644cf0, 0x1654d80, 0x1bfb2a0 and the writer). `PARTY_SIX_PROVEN` stays False.
+
+## 12. Round 4 (2026-11-08): the gauge-array overflow, the room size, the invader, the rejoin
+
+Found with the write watchpoint (`BB_PARTY_SIX_PROBE=1`: debug registers on `menu+0x15c8` / `+0x15b8` in every thread, a vectored handler that logs rip and
+the guest stack) in one fp6 run:
+
+- **The overflow** is `FUN_017692f0` (a per-GameDataMan-row HUD update): `mov [menu + 0x15b8 + row*4], hp` at 0x1769cb2, a 4-int last-HP array that sits
+  directly in front of the menu event queue (+0x15c8). Row 4 (the 5th remote player) writes the HP into the queue head, and the menu update then
+  dispatches the id 503 / 100 (the crash of section 11). Fix: the stage 2 loop bounds of that function (0x1769b60, 0x1769cc3) are NOT patched, rows 0-3 only
+  (the 5th remote has no HP-change display). Result: the 6th guest no longer crashes.
+- **The room size** the game keeps in `*(0x553d6d0)+0xc` is 5 whatever our Matching2 answer says; 0x15bc590 / 0x1e50090 refuse a member when the
+  presentation count reached it (the host counted 4 cooperators with 5 guests in the room). `SixpTick` keeps that field at 6 while the set is on.
+- **The invader** (`fpi6`): `Capacity()` counted 5 seats (now 6, Max players decides), and the direct summon counted the asking invader against the
+  cooperator cap (4 + itself = 5 = full), so it fell back to a sign that stalled 120 s. The asking slot is skipped now.
+- **Harness**: a game the party launcher restarts after a crash was left running (instances.py now ends everything under the root at teardown), and
+  smoke_party.py's `Logs` / `starts` handled 5 instances (now 8).
+- **Memory**: free memory fell under 1 GB (500, 817 and 175 MB) at the Cleric Beast's map load in three `fp6` runs (six games loading together, all
+  headless but the host, `BB_TEXTURE_QUALITY=quarter`): ramwatch killed them, which the harness reports as an "UNPLANNED CRASH" of instance 0. So `fp6`
+  with the travel cannot run on this 32 GB PC; `fp6j` is the same party without the travel.
+
+Results (this PC, 6 games, host drawn):
+
+| Phase | Result |
+|---|---|
+| `fpi6` | 20/20: 4 guests in, the invader admitted into slot 5, in the world, falls (`invader_died`); the host's window shows six hunters (the invader red) and five party rows |
+| `fp6j` | 23/24: 6 players join (`cooperators 4 -> 5`, presentation 6 slots, room max 6, every game draws every chr), guest 3 Leaves (5 -> 4; the game's compaction plus our slot 5 -> 4 hook ran: `presentation: slot 5 moved to slot 4`). **The Rejoin fails**: the direct summon joins the room (member 7) and the guest loads into the host's world, but the host's member task stays at `FirstSyncCompleteWait` (data request 0xA repeated 20+ times), so `cooperators` never returns to 5 |
+| `fp6` (travel, boss) | not completed: memory floor |
+
+Open: the Rejoin of a middle member at 6 seats (the member id 7, the compaction, or the first-sync data of the new member), and the travel on a PC
+with enough memory. `PARTY_SIX_PROVEN` stays False.
