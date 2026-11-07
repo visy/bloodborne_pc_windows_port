@@ -944,6 +944,22 @@ u64 Liverpool::HashRegisterPacket(u64 checksum, const u32* words, u32 count) {
     return checksum;
 }
 
+// Mrsuss60/bloodborne_pc_windows_port d81d63be (shadPS4 1b9d1591): an indirect buffer with the
+// chain bit set is the rest of the submission, not a call: the buffer decoded goes on in its place
+// (no nested task, no call depth). BB_PM4_CHAIN=0 calls it, as before.
+static bool Pm4ChainEnabled() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_PM4_CHAIN");
+        return !(env && env[0] == '0');
+    }();
+    return enabled;
+}
+
+void Liverpool::HandleGetLodStats(const PM4CmdGetLodStats* get_lod) {
+    LOG_DEBUG(Render, "IT_GET_LOD_STATS: buffer = {:#x}, offset = {:#x}", get_lod->Address(),
+              get_lod->DataOffset());
+}
+
 bool Liverpool::CpDecoderEnabled() {
     static const bool enabled = [] {
         // Opt-in for now: the GPU thread spends ~7 % more per draw than the old walk (3.86 vs
@@ -1545,11 +1561,11 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     if (seq != NoSeq && CpShadowEnabled()) {
         CpShadowDecode(dcb, regs);
     }
-    const auto base_addr = reinterpret_cast<uintptr_t>(dcb.data());
-    const std::size_t dcb_dwords = dcb.size();
+    auto base_addr = reinterpret_cast<uintptr_t>(dcb.data());
+    std::size_t dcb_dwords = dcb.size();
     // bbport BB_CP_DECODER=1: packets and their register writes come from the
     // translator's own decoder (gpu/cp); what each packet does stays below.
-    const u32* const dcb_end = dcb.data() + dcb.size();
+    const u32* dcb_end = dcb.data() + dcb.size();
     struct CpSink final : BbCp::Sink {
         uintptr_t base;
         std::size_t dwords;
@@ -2353,6 +2369,23 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::IndirectBuffer: {
                 const auto* indirect_buffer = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
+                if (indirect_buffer->chain && Pm4ChainEnabled()) {
+                    static std::atomic<u32> chained{0};
+                    if (chained.fetch_add(1) == 0) {
+                        std::printf("GPU: PM4 chained indirect buffer followed (BB_PM4_CHAIN=0: "
+                                    "called as before)\n");
+                    }
+                    dcb = {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size};
+                    base_addr = reinterpret_cast<uintptr_t>(dcb.data());
+                    dcb_dwords = dcb.size();
+                    dcb_end = dcb.data() + dcb.size();
+                    if (cp_cursor) {
+                        cp_sink.base = base_addr;
+                        cp_sink.dwords = dcb_dwords;
+                        cp_cursor.emplace(CpDecoder(), dcb, cp_sink, dcb_depth, false);
+                    }
+                    continue;
+                }
                 auto task = ProcessGraphics(
                     {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, {});
                 // Tasks start suspended: the nested body (and its scan) runs on this resume.
@@ -2373,7 +2406,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::WaitOnCeCounter: {
-                while (cblock.ce_count <= cblock.de_count && !ce_task.handle.done()) {
+                // (no CCB in this submission: no CE task to run)
+                while (cblock.ce_count <= cblock.de_count && ce_task.handle &&
+                       !ce_task.handle.done()) {
                     RESUME_GFX(ce_task);
                 }
                 break;
@@ -2383,16 +2418,47 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::StrmoutBufferUpdate: {
                 const auto* strmout = reinterpret_cast<const PM4CmdStrmoutBufferUpdate*>(header);
-                LOG_WARNING(Render_Vulkan,
-                            "Unimplemented IT_STRMOUT_BUFFER_UPDATE, update_memory = {}, "
-                            "source_select = {}, buffer_select = {}",
-                            strmout->update_memory.Value(),
-                            magic_enum::enum_name(strmout->source_select.Value()),
-                            strmout->buffer_select.Value());
+                const u32 buf_idx = strmout->buffer_select.Value();
+                LOG_DEBUG(Render,
+                          "IT_STRMOUT_BUFFER_UPDATE buffer_select = {}, source_select = {}, "
+                          "update_memory = {}",
+                          buf_idx, magic_enum::enum_name(strmout->source_select.Value()),
+                          strmout->update_memory.Value());
+                u32 offset = vgt_strmout_buffer_filled_size[buf_idx];
+                auto* memory = Core::Memory::Instance();
+                switch (strmout->source_select.Value()) {
+                case SourceSelect::BufferOffset:
+                    offset = strmout->buffer_offset;
+                    break;
+                case SourceSelect::VgtStrmoutBufferFilledSize:
+                    break;
+                case SourceSelect::SrcAddress: {
+                    const VAddr src_addr = strmout->SrcAddress<VAddr>();
+                    if (src_addr && memory && memory->IsValidGpuMapping(src_addr, sizeof(offset))) {
+                        std::memcpy(&offset, reinterpret_cast<const void*>(src_addr),
+                                    sizeof(offset));
+                    }
+                    break;
+                }
+                case SourceSelect::None:
+                    break;
+                }
+                if (strmout->source_select.Value() != SourceSelect::None) {
+                    vgt_strmout_buffer_filled_size[buf_idx] = offset;
+                }
+                if (strmout->update_memory.Value()) {
+                    const VAddr dst_addr = strmout->DstAddress<VAddr>();
+                    if (dst_addr && memory && memory->IsValidGpuMapping(dst_addr, sizeof(offset))) {
+                        std::memcpy(reinterpret_cast<void*>(dst_addr),
+                                    &vgt_strmout_buffer_filled_size[buf_idx], sizeof(offset));
+                    }
+                }
+                regs.cp_strmout_cntl.offset_update_done = 1;
                 break;
             }
             case PM4ItOpcode::GetLodStats: {
-                LOG_WARNING(Render_Vulkan, "Unimplemented IT_GET_LOD_STATS");
+                const auto* get_lod = reinterpret_cast<const PM4CmdGetLodStats*>(header);
+                HandleGetLodStats(get_lod);
                 break;
             }
             case PM4ItOpcode::CondExec: {
@@ -2579,6 +2645,14 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::IndirectBuffer: {
             const auto* indirect_buffer = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
+            if constexpr (is_indirect) {
+                if (indirect_buffer->chain && Pm4ChainEnabled()) {
+                    acb = {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size};
+                    base_addr = reinterpret_cast<VAddr>(acb.data());
+                    acb_size = acb.size_bytes();
+                    continue;
+                }
+            }
             auto task = ProcessCompute<true>(
                 {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, vqid);
             RESUME_ASC(task, vqid);
@@ -2887,6 +2961,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::EventWrite: {
             // const auto* event = reinterpret_cast<const PM4CmdEventWrite*>(header);
+            break;
+        }
+        case PM4ItOpcode::GetLodStats: {
+            const auto* get_lod = reinterpret_cast<const PM4CmdGetLodStats*>(header);
+            HandleGetLodStats(get_lod);
             break;
         }
         default:

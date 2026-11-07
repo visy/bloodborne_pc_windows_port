@@ -3,6 +3,7 @@
 
 #include <xxhash.h>
 
+#include <array>
 #include <bit>
 #include <cstdio>
 #include "bbport_button_prompts.h"
@@ -29,6 +30,49 @@
 namespace VideoCore {
 
 static constexpr u64 PageShift = 12;
+
+// bbport (Mrsuss60/bloodborne_pc_windows_port d81d63be, shadPS4 issue #184 "GC part 2"): the
+// collector checks what it frees. BB_GC_VERIFY=0 returns to the earlier rules.
+static bool GcVerify() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_GC_VERIFY");
+        return !(env && env[0] == '0');
+    }();
+    return enabled;
+}
+
+// Counts of the verification's decisions, printed with the collector's report.
+static struct GcVerifyStats {
+    std::atomic<u64> gated{0};         // write-back refused: CanBeDownloaded false
+    std::atomic<u64> unverifiable{0};  // kept: buffer-written, no hash
+    std::atomic<u64> overlap_checked{0};
+    std::atomic<u64> overlap_freed{0}; // buffer data newer: freed without write-back
+    std::atomic<u64> edge_flushes{0};
+    std::atomic<u64> edge_dirty{0};    // edge pages rewritten by the guest
+    std::atomic<u64> marked{0};        // images marked maybe-GPU-dirty
+    std::atomic<u64> verified_write_backs{0};
+} g_vfy;
+
+static u64 HashBackingMemory(VAddr virtual_addr, u64 size) {
+    if (virtual_addr == 0 || size == 0) {
+        return 0;
+    }
+    // Through the backing view in chunks: a page the GPU's read protection covers must not fault
+    // on the thread that would have to serve the fault (Memory::ReadBacking).
+    XXH3_state_t* state = XXH3_createState();
+    XXH3_64bits_reset(state);
+    std::array<u8, 64_KB> chunk;
+    auto* memory = Core::Memory::Instance();
+    for (u64 done = 0; done < size;) {
+        const u64 n = std::min<u64>(chunk.size(), size - done);
+        memory->ReadBacking(virtual_addr + done, chunk.data(), n);
+        XXH3_64bits_update(state, chunk.data(), n);
+        done += n;
+    }
+    const u64 hash = XXH3_64bits_digest(state);
+    XXH3_freeState(state);
+    return hash | 1; // never 0: 0 means "no hash"
+}
 static constexpr u64 NumFramesBeforeRemoval = 32;
 
 // Mrsuss60 6b2cc0e0 (shadPS4 ca36c7e3): SubresourceExtent's defaulted compare orders by levels
@@ -329,6 +373,11 @@ void TextureCache::WatchImage(const Image& image, const char* what) {
 
 void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
     std::scoped_lock lock{mutex};
+    // Images the write only overlaps (not at their start) are looked at by the collector before
+    // it writes them back (d81d63be); small ranges only: this runs for every written binding.
+    if (GcVerify() && max_size <= 1_MB) {
+        MarkAsMaybeGpuDirty(address, max_size);
+    }
     // bbport: only an image starting at `address` is affected, so the images over its first byte
     // are all there is to look at (the whole range was walked for every GPU write binding).
     ForEachImageInRegion(address, 1, [&](ImageId image_id, Image& image) {
@@ -351,6 +400,25 @@ void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
         // Ensure image is reuploaded when accessed again.
         WatchImage(image, "GPU write (marked for refresh)");
         image.flags |= ImageFlagBits::GpuDirty;
+    });
+}
+
+void TextureCache::MarkAsMaybeGpuDirty(VAddr addr, size_t size) {
+    // Collector candidates only (GPU-written, no CPU changes pending), and bounded: the walk and
+    // the hash of a big range would cost more than a write-back it guards.
+    constexpr u64 MaxHashBytes = 16_MB;
+    ForEachImageInRegion(addr, size, [&](ImageId, Image& image) {
+        if (!image.HasGpuValidData()) {
+            return;
+        }
+        if (True(image.flags & ImageFlagBits::MaybeGpuDirty)) {
+            return;
+        }
+        if (image.info.guest_size <= MaxHashBytes) {
+            image.gpu_hash = HashBackingMemory(image.info.guest_address, image.info.guest_size);
+        }
+        image.flags |= ImageFlagBits::MaybeGpuDirty;
+        g_vfy.marked.fetch_add(1, std::memory_order_relaxed);
     });
 }
 
@@ -998,7 +1066,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
     }
 
     // If there is a stencil attachment, link depth and stencil.
-    if (desc.info.stencil_addr != 0) {
+    if (desc.info.stencil_addr != 0 && desc.info.stencil_addr != desc.info.guest_address) {
         ImageId stencil_id{};
         ForEachImageInRegion(desc.info.stencil_addr, desc.info.stencil_size,
                              [&](ImageId image_id, Image& image) {
@@ -1250,6 +1318,9 @@ void TextureCache::TrackImage(ImageId image_id) {
             TrackImageTail(image_id);
         }
     }
+    MarkDirtyIfEdgesModified(image);
+    image.head_hash = 0;
+    image.tail_hash = 0;
 }
 
 void TextureCache::TrackImageHead(ImageId image_id) {
@@ -1305,6 +1376,9 @@ void TextureCache::UntrackImageHead(ImageId image_id) {
     }
     const auto addr = tracker.GetNextPageAddr(image_begin);
     const auto size = addr - image_begin;
+    if (GcVerify()) {
+        image.head_hash = HashBackingMemory(image_begin, size);
+    }
     image.track_addr = addr;
     if (image.track_addr == image.track_addr_end) {
         // This image spans only 2 pages and both are modified,
@@ -1324,6 +1398,9 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
     ASSERT(image.track_addr_end != 0);
     const auto addr = tracker.GetPageAddr(image_end);
     const auto size = image_end - addr;
+    if (GcVerify()) {
+        image.tail_hash = HashBackingMemory(addr, size);
+    }
     image.track_addr_end = addr;
     if (image.track_addr == image.track_addr_end) {
         // This image spans only 2 pages and both are modified,
@@ -1332,6 +1409,26 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
         MarkAsMaybeDirty(image_id, image);
     }
     tracker.UpdatePageWatchers<false>(addr, size);
+}
+
+void TextureCache::MarkDirtyIfEdgesModified(Image& image) {
+    const auto image_begin = image.info.guest_address;
+    const auto image_end = image.info.guest_address + image.info.guest_size;
+    if (image.head_hash != 0) {
+        const auto head_end = tracker.GetNextPageAddr(image_begin);
+        if (HashBackingMemory(image_begin, std::min(head_end, image_end) - image_begin) !=
+            image.head_hash) {
+            image.flags |= ImageFlagBits::CpuDirty;
+            g_vfy.edge_dirty.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    if (image.tail_hash != 0) {
+        const auto tail_begin = std::max<VAddr>(tracker.GetPageAddr(image_end), image_begin);
+        if (HashBackingMemory(tail_begin, image_end - tail_begin) != image.tail_hash) {
+            image.flags |= ImageFlagBits::CpuDirty;
+            g_vfy.edge_dirty.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 }
 
 void TextureCache::GarbageCollectImages() {
@@ -1486,6 +1583,10 @@ void TextureCache::GarbageCollectImages() {
             lru_cache.Touch(image.lru_id, gc_tick);
             return false;
         }
+        // An edge write means the guest reused the memory since: nothing of the GPU's to keep.
+        if (GcVerify()) {
+            MarkDirtyIfEdgesModified(image);
+        }
         const bool download = image.SafeToDownload();
         // Depth/stencil targets and shadow maps are GPU-only and never read back by the CPU: they
         // go without a write-back (from Mrsuss60/bloodborne_pc_windows_port PR #89 by ALuaNegra).
@@ -1499,19 +1600,58 @@ void TextureCache::GarbageCollectImages() {
             const bool drop =
                 tiled && rule.drop_old_tiled && image.lru_touched_tick < minute_tick;
             const bool write_back = !tiled && rule.write_back && gc_quota.write_backs == 0;
-            if (!drop && !write_back) {
-                lru_cache.Touch(image.lru_id, gc_tick);
-                ++gc_kept_gpu;
-                BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
-                return false;
+            // d81d63be (shadPS4 GC part 2): a write-back only of what reads back as the guest's
+            // data (single sample, no stencil, compatible format) and that the buffer cache did
+            // not write over since; else the image stays.
+            bool verified_drop = false;
+            if (write_back && GcVerify()) {
+                if (!image.CanBeDownloaded()) {
+                    g_vfy.gated.fetch_add(1, std::memory_order_relaxed);
+                    lru_cache.Touch(image.lru_id, gc_tick);
+                    ++gc_kept_gpu;
+                    BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
+                    return false;
+                }
+                if (True(image.flags & ImageFlagBits::MaybeGpuDirty)) {
+                    if (image.gpu_hash == 0) {
+                        // Written over by a buffer too big to hash: cannot tell whose data is newer.
+                        g_vfy.unverifiable.fetch_add(1, std::memory_order_relaxed);
+                        lru_cache.Touch(image.lru_id, gc_tick);
+                        ++gc_kept_gpu;
+                        BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
+                        return false;
+                    }
+                    // The buffer cache's GPU-written bytes over the image go to guest memory first;
+                    // if they changed it the image's contents are older than the buffer's.
+                    buffer_cache.ReadMemory(image.info.guest_address, image.info.guest_size,
+                                            false, true);
+                    verified_drop = HashBackingMemory(image.info.guest_address,
+                                                      image.info.guest_size) != image.gpu_hash;
+                    g_vfy.overlap_checked.fetch_add(1, std::memory_order_relaxed);
+                    if (verified_drop) {
+                        g_vfy.overlap_freed.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
             }
-            if (drop) {
+            if (drop || verified_drop) {
                 ++gc_dropped;
             } else {
                 // Synchronously, while the image still protects its pages. A deferred write-back
                 // landed after FreeImage had unprotected them, over whatever the game had mapped
                 // there since (0x28ce9b5).
+                if (GcVerify()) {
+                    // The GPU-written bytes of the pages the image shares with others.
+                    g_vfy.edge_flushes.fetch_add(buffer_cache.ReadEdgeImagePages(image),
+                                                 std::memory_order_relaxed);
+                    g_vfy.verified_write_backs.fetch_add(1, std::memory_order_relaxed);
+                }
                 DownloadImageMemory(image_id, true);
+                if (GcVerify()) {
+                    // The image's data is the newest in the range now: older buffer-cache copies of
+                    // it must not be read back over it later.
+                    buffer_cache.UnmarkRegionAsGpuModified(image.info.guest_address,
+                                                           image.info.guest_size);
+                }
                 ++gc_downloads;
                 ++gc_quota.write_backs;
                 BbStats::gc_write_backs_total.fetch_add(1, std::memory_order_relaxed);
@@ -1545,6 +1685,18 @@ void TextureCache::GarbageCollectImages() {
                         (unsigned long long)(gc_freed_bytes >> 20),
                         (unsigned long long)gc_downloads, (unsigned long long)gc_dropped,
                         (unsigned long long)gc_kept_gpu);
+            std::printf("Texture cache: verify (BB_GC_VERIFY) totals: %llu marked maybe-GPU-dirty, "
+                        "%llu write-backs refused (not downloadable), %llu kept (no hash), %llu "
+                        "buffer-overlap checks (%llu freed without write-back), %llu verified "
+                        "write-backs (%llu edge-page flushes), %llu edge-page rewrites seen\n",
+                        (unsigned long long)g_vfy.marked.load(),
+                        (unsigned long long)g_vfy.gated.load(),
+                        (unsigned long long)g_vfy.unverifiable.load(),
+                        (unsigned long long)g_vfy.overlap_checked.load(),
+                        (unsigned long long)g_vfy.overlap_freed.load(),
+                        (unsigned long long)g_vfy.verified_write_backs.load(),
+                        (unsigned long long)g_vfy.edge_flushes.load(),
+                        (unsigned long long)g_vfy.edge_dirty.load());
             gc_report_time = now;
             gc_evictions = gc_downloads = gc_dropped = gc_kept_gpu = gc_freed_bytes = 0;
         }
@@ -1614,12 +1766,15 @@ void TextureCache::RunGarbageCollector() {
     GarbageCollectSamplers();
 }
 
-void TextureCache::TouchImage(const Image& image) {
+void TextureCache::TouchImage(Image& image) {
     if (image.lru_touched_tick == gc_tick) {
         return;
     }
     image.lru_touched_tick = gc_tick;
     lru_cache.Touch(image.lru_id, gc_tick);
+    // In use again: its contents are what the game sees.
+    image.flags &= ~ImageFlagBits::MaybeGpuDirty;
+    image.gpu_hash = 0;
 }
 
 ImageId TextureCache::InsertImage(const ImageInfo& info) {

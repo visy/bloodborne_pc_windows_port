@@ -672,6 +672,88 @@ constexpr u8 LiveBlock[46] = {0xf3, 0x0f, 0x10, 0x83, 0x64, 0x02, 0x00, 0x00, 0x
 constexpr u8 LiveResume[5] = {0x48, 0x8d, 0x75, 0xc0, 0xe8}; // 0x2018e6b: lea rsi,[rbp-0x40]; call
 constexpr u64 LiveBlockSite = 0x2018e3d, LiveGlobalDt = 0x535a908, LiveCave = 0x5090000;
 
+/// BB_LIVE_FPS_LOG=1 (diagnostics, off by default): once a second of real time one line with the clock's state, the
+/// pacer's mode fields and the presenter's limit (issue #35: Live FPS stuck near 64 FPS after a respawn load).
+void LiveDiag(const u8* pacer, float measured, int target, float interval, float dt) {
+    static const bool on = [] {
+        const char* v = std::getenv("BB_LIVE_FPS_LOG");
+        return v && *v && std::atoi(v) > 0;
+    }();
+    if (!on) return;
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last = clock::now();
+    static u64 frames = 0, last_frames = 0;
+    ++frames;
+    const auto now = clock::now();
+    const double secs = std::chrono::duration<double>(now - last).count();
+    if (secs < 1.0) return;
+    std::int32_t vblanks = 0;
+    std::uint8_t flip_skip = 0, no_sleep = 0;
+    float pacer_target = 0;
+    std::memcpy(&vblanks, pacer + 0x10, 4);
+    std::memcpy(&flip_skip, pacer + 0x14, 1);
+    std::memcpy(&pacer_target, pacer + 0x18, 4);
+    std::memcpy(&no_sleep, pacer + 0x273, 1);
+    // The system timer resolution (100 ns units; 10000 = 1 ms, 156250 = the 15.6 ms default) and what a 1 ms sleep
+    // really takes: a 64 FPS lock is the default tick, whoever gave the millisecond back.
+    double timer_ms = 0, sleep_ms = 0;
+#ifdef _WIN32
+    using NtQueryFn = long(__stdcall*)(unsigned long*, unsigned long*, unsigned long*);
+    static const auto query = reinterpret_cast<NtQueryFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryTimerResolution")));
+    unsigned long lo = 0, hi = 0, cur = 0;
+    if (query && query(&lo, &hi, &cur) == 0) timer_ms = double(cur) / 10000.0;
+    const auto t0 = clock::now();
+    Sleep(1);
+    sleep_ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+#endif
+    // bbhost's "Enable Task Stealing" byte (its 0x2695d04 is a guest address: image + 0x2295d04), set by the Performance
+    // Patch, which Live FPS locks out: logged once.
+    static bool task_logged = false;
+    if (!task_logged && image_base && image_size > 0x2295d05) {
+        task_logged = true;
+        std::printf("Live clock diag: task stealing byte (image+0x2295d04) = %u\n",
+                    unsigned(*reinterpret_cast<const u8*>(image_base + 0x2295d04)));
+    }
+    // BB_LIVE_FPS_TEST_TOGGLE=1 (test aid): the reporter's remedy done by the game itself. After 5 s in a 55-75 FPS
+    // state the target goes to 120 for 3 s and back, and the line shows what the rate did.
+    {
+        static const bool toggle = [] { const char* v = std::getenv("BB_LIVE_FPS_TEST_TOGGLE"); return v && *v == '1'; }();
+        static int slow = 0, phase = 0, hold = 0;
+        static int saved = 0;
+        const double f = double(frames - last_frames) / secs;
+        if (toggle) {
+            if (phase == 0) {
+                const auto gs = coop::ReadGameState(false);
+                const bool in_world = gs.world_up && !gs.loading && gs.in_game_frame;
+                slow = (in_world && f >= 55.0 && f <= 75.0 && measured < 0.05f) ? slow + 1 : 0;
+                if (slow >= 5) {
+                    saved = BbSettings::Get().target_fps.load();
+                    BbSettings::Get().target_fps = 120;
+                    std::printf("Live clock diag: TOGGLE test: stuck at %.1f FPS, target %d -> 120\n", f, saved);
+                    phase = 1, hold = 0;
+                }
+            } else if (phase == 1 && ++hold >= 3) {
+                BbSettings::Get().target_fps = saved;
+                std::printf("Live clock diag: TOGGLE test: target back to %d\n", saved);
+                phase = 2, hold = 0;
+            } else if (phase == 2 && ++hold >= 4) {
+                std::printf("Live clock diag: TOGGLE test: 4 s after the toggle %.1f FPS\n", f);
+                phase = 3;
+            }
+        }
+    }
+    std::printf("Live clock diag: timer %.2f ms, Sleep(1) %.2f ms; ", timer_ms, sleep_ms);
+    std::printf("%.1f frames/s, target %d (setting %d), interval %.5f, measured %.5f, step %.5f, "
+                "carry %.5f, pacer vblanks %d skip %u target %.5f no_sleep %u, presenter limit %u\n",
+                double(frames - last_frames) / secs, target, BbSettings::Get().target_fps.load(), double(interval),
+                double(measured), double(dt), double(live_state.smoothed), vblanks, unsigned(flip_skip),
+                double(pacer_target), unsigned(no_sleep), LivePresenterLimit());
+    std::fflush(stdout);
+    last = now;
+    last_frames = frames;
+}
+
 /// The main loop's step (rdi: the pacer; rsi: where the step goes, [rbp - 0x38]).
 void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
@@ -690,6 +772,7 @@ void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     live->steady = dt;
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
+    LiveDiag(pacer, measured, target, interval, dt);
     if (live_logged_target.exchange(target, std::memory_order_relaxed) != target) {
         std::printf("Live clock: target %d FPS%s, step %.5f s (max 1/%d s)\n", target > 0 ? target : LiveCeiling,
                     target > 0 ? "" : " (uncapped)", double(dt), s.max_dt_hz.load(std::memory_order_relaxed));
