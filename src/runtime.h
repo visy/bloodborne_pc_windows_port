@@ -130,6 +130,7 @@ void runtime_low_free(void *ptr);
 void runtime_low_free_aligned(void *ptr);
 uintptr_t runtime_ajm_resolve(const char *name);
 void runtime_ajm_report(void);
+void runtime_ajm_counts(uint64_t *starts, uint64_t *frames);
 uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
 uintptr_t runtime_pad_resolve(const char *name);

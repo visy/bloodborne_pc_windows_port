@@ -35,6 +35,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -139,8 +141,146 @@ float BB_FR_SYSV ClothStiffnessFactor(const u8* set, int mode, int iteration, in
     return game * (live->dt * 30.0f);
 }
 
+// ---- The sound thread's pass, once a frame (BB_SOUND_WAKE_PER_FRAME) and its census (BB_SOUND_CENSUS) ----
+// The game's sound thread (MagicOrchestra's loop, 0x2800e30) runs a pass (FMOD's event system updated, the
+// game's sound requests taken) and then sleeps MainThreadUpdateTime (33333 us) less the pass's time (call at
+// 0x280137d; the time is taken in ms and subtracted from us, so the sleep is about the whole period). At
+// more than 30 FPS one pass gets the requests of two frames or more. Ported idea: droogie/bbhost eaca133
+// (GPL-3): the pass waits for the next frame (or for the game's own sleep when none comes) instead.
+// BB_SOUND_CENSUS=1 counts the passes against the frames and the sounds started (ATRAC9 instance starts)
+// and logs "Sound census:" every 5 s; BB_SOUND_WAKE_PER_FRAME=1 also wakes the pass by the frame.
+extern "C" void runtime_ajm_counts(std::uint64_t* starts, std::uint64_t* frames);
+bool Detour(u64 site, const u8* expected, std::size_t length, const Emitter& e);
+struct SoundCensus {
+    std::mutex mu;
+    std::condition_variable cv;
+    u64 frames = 0, seen = 0, ended_at = 0, passes_total = 0; // under mu
+    std::atomic<u64> passes{0}, by_frames[4]{}, timeouts{0}, pass_ns{0}, pass_max_ns{0};
+    u64 last_end_ns = 0, report_ns = 0, report_frames = 0, report_starts = 0, report_dec = 0;
+    int mode = 0; // 1 census, 2 wake
+};
+SoundCensus* sound = nullptr;
+
+u64 SoundNowNs() {
+    return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+/// A frame began (main thread, FrameStep / LiveClockTick): the sound thread's pass may run.
+void SoundFrame() {
+    SoundCensus* s = sound;
+    if (!s) return;
+    {
+        std::lock_guard<std::mutex> lock(s->mu);
+        ++s->frames;
+    }
+    if (s->mode == 2) s->cv.notify_one();
+}
+
+/// The sound thread, at the end of its pass (edi: the sleep the game asks, us). 1: the wait was ours, the
+/// game's sleep is skipped; 0: the game sleeps.
+int BB_FR_SYSV SoundSleepHook(u64 asked_us) {
+    SoundCensus* s = sound;
+    const u64 now = SoundNowNs();
+    std::unique_lock<std::mutex> lock(s->mu);
+    const u64 between = s->frames - s->ended_at;
+    s->ended_at = s->frames;
+    s->passes.fetch_add(1, std::memory_order_relaxed);
+    s->passes_total++;
+    s->by_frames[std::min<u64>(between, 3)].fetch_add(1, std::memory_order_relaxed);
+    if (s->last_end_ns) {
+        const u64 d = now - s->last_end_ns;
+        s->pass_ns.fetch_add(d, std::memory_order_relaxed);
+        u64 m = s->pass_max_ns.load(std::memory_order_relaxed);
+        while (d > m && !s->pass_max_ns.compare_exchange_weak(m, d, std::memory_order_relaxed)) {}
+    }
+    s->last_end_ns = now;
+    int skipped = 0;
+    if (s->mode == 2) {
+        if (s->frames == s->seen) {
+            const auto us = std::clamp<std::int64_t>(std::int64_t(std::int32_t(std::uint32_t(asked_us))), 0, 100000);
+            if (!s->cv.wait_for(lock, std::chrono::microseconds(us), [s] { return s->frames != s->seen; })) {
+                s->timeouts.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        s->seen = s->frames;
+        skipped = 1;
+    }
+    const u64 frames = s->frames;
+    lock.unlock();
+    if (s->report_ns == 0) {
+        s->report_ns = now;
+        s->report_frames = frames;
+        runtime_ajm_counts(&s->report_starts, &s->report_dec);
+    } else if (now - s->report_ns >= 5000000000ull) {
+        u64 starts = 0, dec = 0;
+        runtime_ajm_counts(&starts, &dec);
+        const double secs = double(now - s->report_ns) * 1e-9;
+        const u64 p = s->passes.exchange(0), b0 = s->by_frames[0].exchange(0), b1 = s->by_frames[1].exchange(0),
+                  b2 = s->by_frames[2].exchange(0), b3 = s->by_frames[3].exchange(0), to = s->timeouts.exchange(0),
+                  pns = s->pass_ns.exchange(0), pmax = s->pass_max_ns.exchange(0);
+        std::printf("Sound census: %s %.1f s: %.1f frames/s, %.1f passes/s (frames between passes 0/1/2/3+: %llu/%llu/%llu/%llu), "
+                    "pass period %.2f ms (max %.2f), %llu own-sleep timeouts, %llu sound starts (%.1f/s), %llu ATRAC9 frames\n",
+                    s->mode == 2 ? "wake" : "census", secs, double(frames - s->report_frames) / secs, double(p) / secs,
+                    (unsigned long long)b0, (unsigned long long)b1, (unsigned long long)b2, (unsigned long long)b3,
+                    p ? double(pns) / double(p) * 1e-6 : 0.0, double(pmax) * 1e-6, (unsigned long long)to,
+                    (unsigned long long)(starts - s->report_starts), double(starts - s->report_starts) / secs,
+                    (unsigned long long)(dec - s->report_dec));
+        std::fflush(stdout);
+        s->report_ns = now;
+        s->report_frames = frames;
+        s->report_starts = starts;
+        s->report_dec = dec;
+    }
+    return skipped;
+}
+
+/// The sleep call of the sound thread's loop replaced by SoundSleepHook (the game's sleep when it returns 0).
+bool HookSoundThread() {
+    const char* census = std::getenv("BB_SOUND_CENSUS");
+    const char* wake = std::getenv("BB_SOUND_WAKE_PER_FRAME");
+    const bool want_wake = wake && *wake && std::strcmp(wake, "0") != 0;
+    const bool want_census = census && *census && std::strcmp(census, "0") != 0;
+    if (!want_wake && !want_census) return false;
+    constexpr u64 setup = 0x2801373, call = 0x280137d;
+    constexpr u8 expected_setup[] = {0x8b, 0xbb, 0xd4, 0x08, 0x00, 0x00, 0x29, 0xc7, 0x76, 0x05};
+    const u8* at = reinterpret_cast<const u8*>(image_base);
+    if (image_size <= call + 5 || std::memcmp(at + setup, expected_setup, sizeof expected_setup) != 0 || at[call] != 0xe8) {
+        std::printf("Sound thread: %#llx is not the sleep of the sound loop: not hooked\n", (unsigned long long)setup);
+        return false;
+    }
+    std::int32_t rel = 0;
+    std::memcpy(&rel, at + call + 1, 4);
+    const u64 original = image_base + call + 5 + std::int64_t(rel);
+    auto* s = new SoundCensus();
+    s->mode = want_wake ? 2 : 1;
+    u8 site[5];
+    std::memcpy(site, at + call, 5);
+    Emitter e;
+    e.SaveVolatile();
+    e.CallAbs(reinterpret_cast<const void*>(&SoundSleepHook));
+    e.Bytes({0x49, 0x89, 0x44, 0x24, 0x48}); // mov [r12 + 72], rax (the saved rax slot: the hook's result)
+    e.RestoreVolatile();
+    e.Bytes({0x85, 0xc0});                   // test eax, eax
+    e.Bytes({0x74, 0x04});                   // jz do_call
+    e.Bytes({0x31, 0xc0, 0xeb, 0x0c});       // xor eax, eax (the sleep's result); jmp done
+    e.Bytes({0x48, 0xb8});                   // do_call: movabs rax, original
+    e.U64(original);
+    e.Bytes({0xff, 0xd0});                   // call rax (rdi as the game had it)
+    e.JmpAbs(image_base + call + 5);         // done
+    sound = s; // before the hook is live: the sound thread reads it
+    if (!Detour(call, site, 5, e)) {
+        std::printf("Sound thread: the sleep could not be hooked\n");
+        sound = nullptr;
+        return false;
+    }
+    std::printf("Sound thread: sleep hooked (%s; BB_SOUND_CENSUS logs the passes against the frames)\n",
+                want_wake ? "woken once a frame, ported idea: droogie/bbhost eaca133, GPL-3" : "census only");
+    return true;
+}
+
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void BB_FR_SYSV FrameStep(u64 pacer) {
+    SoundFrame();
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
     float dt = StepFor(measured, live->shortest);
     // BB_FRAME_DT_SMOOTH=a (diagnostics, 0 < a < 1): the step follows the measured frame time by
@@ -823,6 +963,7 @@ void LiveDiag(const u8* pacer, float measured, int target, float interval, float
 
 /// The main loop's step (rdi: the pacer; rsi: where the step goes, [rbp - 0x38]).
 void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
+    SoundFrame();
     const float measured = *reinterpret_cast<const float*>(pacer + 0x264);
     auto& s = BbSettings::Get();
     // vrr: a target at or above the display's refresh runs just under it (0 = uncapped goes to the cap too).
@@ -914,6 +1055,9 @@ void Install(unsigned char* image, std::uint64_t size) {
     live = new (data) Live{};
     sfx_step = reinterpret_cast<float*>(data + sizeof(Live)); // a float of its own after Live
     *sfx_step = Frame30;
+    StubWritable(true);
+    HookSoundThread();
+    StubWritable(false);
     if (LiveWanted(fps, std::getenv("BB_FPS_PATCH"), BbSettings::Get().live_fps.load())) {
         live_requested = true;
         // The launcher's target (BB_FPS / BB_FPS_LIMIT) is the starting one; the menu changes it live.
@@ -1051,6 +1195,16 @@ bool LiveActive() {
 
 bool Unlocked() {
     return unlocked.load(std::memory_order_relaxed);
+}
+
+bool SoundCounts(SoundCountsOut* out) {
+    SoundCensus* s = sound;
+    if (!s) return false;
+    runtime_ajm_counts(&out->starts, &out->decoded);
+    std::lock_guard<std::mutex> lock(s->mu);
+    out->frames = s->frames;
+    out->passes = s->passes_total;
+    return true;
 }
 
 double GameSeconds() {

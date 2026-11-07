@@ -13,6 +13,8 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 
 | Variable | Launcher control | Default |
 |---|---|---|
+| `BB_SOUND_CENSUS` | none | unset (off). `1`: log `Sound census:` every 5 s (sound thread passes vs frames, sound starts); with the frame sweep (`BB_FRAME_SWEEP`) also per-test sound lines. `tools/mp/sound_probe.py` runs it in one session |
+| `BB_SOUND_WAKE_PER_FRAME` | none | unset (off). `1`: the game's sound thread runs one pass per frame instead of every ~33 ms (ported idea: droogie/bbhost eaca133, GPL-3); the game's own sleep is the longest wait. Measured lossless without it, so it stays a test switch |
 | `BB_PARTY` | Party tab: Mode | unset (off); `host` / `join` |
 | `BB_PARTY_NAME` | Your name | Windows user name |
 | `BB_PARTY_MAX` | Max players. The host's value applies to the whole party: a guest takes it from the host (live at WELCOME), and the launcher's Join list / `user\party_adopt.txt` set it for the guest's launch (0.7.8, version_check.md "Host-owned options") | 3 (2..4) |

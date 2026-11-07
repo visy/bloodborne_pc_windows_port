@@ -221,6 +221,40 @@ void Pass(const std::string& name) {
         double(Steps() - s0) / (r1 - r0), Unlocked() ? (GameSeconds() - g0) / (r1 - r0) : -1.0, double(LastDt()));
     if (g_pad.empty()) return;
 
+    // Sounds (BB_SOUND_CENSUS=1): the sounds started (ATRAC9 instance starts) while idle and over 10 weapon swings
+    // (R1 taps), and over 8 s of running (footsteps), with the sound thread's passes and the frames in the window.
+    SoundCountsOut c0, c1;
+    if (SoundCounts(&c0)) {
+        Home(1.0);
+        SoundCounts(&c0);
+        std::this_thread::sleep_for(std::chrono::seconds(8));
+        SoundCounts(&c1);
+        Log("%s sound idle 8 s: %llu starts, %llu passes, %llu frames", name.c_str(), (unsigned long long)(c1.starts - c0.starts),
+            (unsigned long long)(c1.passes - c0.passes), (unsigned long long)(c1.frames - c0.frames));
+        for (int round = 0; round < 3; ++round) {
+            Home(1.5);
+            SoundCounts(&c0);
+            const double t0 = Now();
+            for (int k = 0; k < 10; ++k) {
+                Pad("r1");
+                std::this_thread::sleep_for(std::chrono::milliseconds(120));
+                Pad("");
+                std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+            }
+            SoundCounts(&c1);
+            Log("%s sound 10 swings (%.1f s): %llu starts, %llu passes, %llu frames", name.c_str(), Now() - t0,
+                (unsigned long long)(c1.starts - c0.starts), (unsigned long long)(c1.passes - c0.passes),
+                (unsigned long long)(c1.frames - c0.frames));
+        }
+        Home(1.5);
+        SoundCounts(&c0);
+        auto foot = Hold("ly=0", 8.0);
+        SoundCounts(&c1);
+        Log("%s sound run 8 s: %llu starts, %llu passes, %llu frames, %.2f m/s", name.c_str(),
+            (unsigned long long)(c1.starts - c0.starts), (unsigned long long)(c1.passes - c0.passes),
+            (unsigned long long)(c1.frames - c0.frames), Speed(foot, 1.0, 8.0));
+    }
+
     Home();
     auto run = Hold("ly=0", 3.0);
     Home();

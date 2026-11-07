@@ -4,6 +4,7 @@
  * millisecond, so waiting always finds it complete. ATRAC9 is decoded by
  * LibAtrac9 (MIT, third_party/LibAtrac9). MP3/AAC instances stop explicitly. */
 #define _GNU_SOURCE
+#include <stdatomic.h>
 #include "runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,6 +74,7 @@ static HostRecursiveMutex lock = HOST_RECURSIVE_MUTEX_INIT;
 static Context *contexts[MAX_CONTEXTS+1];
 static Batch batches[MAX_BATCHES];
 static size_t jobs_run, frames_decoded, batches_run;
+static _Atomic uint64_t sound_starts; /* at9_reset calls: a sound (re)starting on an instance */
 
 /* BB_AUDIO_TRACE=1: instance configurations and jobs that return a non-zero result. */
 static int trace_left=-1;
@@ -143,6 +145,7 @@ static ABI void *job_inline(void *buffer, const void *data, uint64_t size, const
 
 /* ---- ATRAC9 decoding ---- */
 static void at9_reset(Instance *in) {
+    atomic_fetch_add(&sound_starts,1);
     if (in->handle) Atrac9ReleaseHandle(in->handle);
     in->handle=Atrac9GetHandle();
     in->initialized = Atrac9InitDecoder(in->handle,in->config)==0;
@@ -493,6 +496,10 @@ static const RuntimeExport exports[]={
     {"sceAjmMemoryRegister",ajm_memory_register},
 };
 uintptr_t runtime_ajm_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
+/* bbport (sound census, BB_SOUND_CENSUS): sound starts and ATRAC9 frames decoded so far. */
+void runtime_ajm_counts(uint64_t *starts, uint64_t *frames) {
+    *starts=atomic_load(&sound_starts); *frames=(uint64_t)frames_decoded;
+}
 void runtime_ajm_report(void) {
     printf("Runtime: Ajm batches=%zu, jobs=%zu, ATRAC9 frames decoded=%zu\n",batches_run,jobs_run,frames_decoded);
 }
