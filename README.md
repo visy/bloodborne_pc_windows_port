@@ -136,4 +136,5 @@ Windows, MinGW-w64, CMake, Ninja: [docs/BUILDING.md](docs/BUILDING.md) (also DLS
 | Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) |
 | Thealexbarney, ocornut | LibAtrac9, Dear ImGui |
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
-| vladtepes22, zackcage6 | Co-op fixes (PRs #6 to #8), testing and bug reports |
+| vladtepes22 ([Nightwatch Coop](https://github.com/vladtepes22/NightwatchCoop)) | Co-op fixes and features in 17 PRs (#6 to #36): boss defeat while the host is dead, VPN and NAT joins, Chalice Dungeons with a party, open LAN/VPN parties, the lobby mods label, party size from the host, the save editor's health and stamina refill; testing and bug reports |
+| zackcage6 | Testing and bug reports |
