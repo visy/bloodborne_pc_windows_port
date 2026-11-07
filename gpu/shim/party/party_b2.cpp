@@ -29,6 +29,7 @@
 #include "../net/from_api.h"
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
+#include "../net/np_session.h"
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
 #include "party_chalice.h"
@@ -11757,6 +11758,7 @@ constexpr u64 kNrVtableUdpP2p = 0x52c51e0, kNrVtableUdp = 0x52c5160;  // FUN_027
 std::atomic<std::int64_t> g_nrd_at{0};  // steady ms from which to look (0 = nothing asked)
 std::mutex g_nrd_mu;
 std::string g_nrd_name;  // g_nrd_mu
+std::string g_nrd_keep;  // g_nrd_mu: a peer whose connection is never released (the host, for a guest)
 std::atomic<bool> g_nrd_busy{false};
 std::atomic<bool> g_nrd_outage{false};  // F5: the member is back after an outage (one scan)
 bool g_nrd_listed = false;  // under g_nrd_busy
@@ -11780,10 +11782,20 @@ void NrRecvHook(int sock, int where) {
     if (where == 2) return;  // inside the transport's own update: not a safe place to release
     bool expect = false;
     if (!g_nrd_busy.compare_exchange_strong(expect, true)) return;
-    std::string name;
+    std::string name, keep_name;
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         name = g_nrd_name;
+        keep_name = g_nrd_keep;
+    }
+    std::vector<nrdrop::Source> keep;
+    if (!keep_name.empty()) {
+        bbnet::session::Peer hp;
+        if (bbnet::session::peers_find_online(keep_name, &hp)) {
+            auto bs = [](std::uint16_t p) { return static_cast<std::uint16_t>((p >> 8) | ((p & 0xff) << 8)); };
+            keep.push_back({hp.addr, bs(hp.port)});
+            if (hp.local_addr) keep.push_back({hp.local_addr, bs(hp.local_port)});
+        }
     }
     if (now > at + 5000) {  // the hold (26 s) stays: the game times the connection out itself
         g_nrd_at.store(0);
@@ -11805,15 +11817,18 @@ void NrRecvHook(int sock, int where) {
         ++transports;
         // After an outage the member's last datagram is as old as the outage (up to the 130 s slot
         // keep plus the reconnect), so the window is wider.
-        const std::vector<nrdrop::Source> silent =
-            nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000);
+        const std::vector<nrdrop::Source> silent = nrdrop::Without(
+            nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000), keep);
         silent_n += silent.size();
+        std::vector<bool> has_el(silent.size(), false);  // 0.8.0 (08c): a silent source with a connection in the array
         for (std::uint32_t k = 0; k < cnt; ++k) {
             const u64 el = arr + k * 0xc0ull;
             std::uint8_t used = 0;
             std::uint8_t key[nrdrop::kKeySize] = {};
             if (!SafeRead(el + 0x2c, &used, 1) || !used || !SafeRead(el + 0x10, key, sizeof key)) continue;
             ++seen;
+            for (std::size_t si = 0; si < silent.size(); ++si)
+                if (nrdrop::KeyMatchesAny(key, {silent[si]})) has_el[si] = true;
             std::uint16_t port = 0;
             std::memcpy(&port, key + 0x18, 2);
             const bool match = nrdrop::KeyMatchesAny(key, silent);
@@ -11834,6 +11849,20 @@ void NrRecvHook(int sock, int where) {
                     Log("C6: its outage-replay state forgotten (%zu entr%s): no replay into its restarted game", n,
                         n == 1 ? "y" : "ies");
                 }
+            }
+        }
+        // 0.8.0 (Iosefka 08c, smoke iv 'second invader'): the game had already released its connection to the departed member
+        // (its room leave came first), so nothing matched above, but the outage replay's state for that source stayed. The
+        // member's next game (an invader asking again from the same address and port 20+ s later) was sent the dead session's
+        // reliable records at its first datagram ("outage resume ... 183 reliable record(s)"), stayed in trying-to-join and
+        // only the bell-sign retry (~33 s) got in. Forget the replay state of every silent source that has no connection.
+        // BB_PARTY_NR_FORGET_ORPHAN=0 restores the old behaviour.
+        static const bool forget_orphan = !(std::getenv("BB_PARTY_NR_FORGET_ORPHAN") && std::getenv("BB_PARTY_NR_FORGET_ORPHAN")[0] == '0');
+        if (forget_orphan && !outage) {
+            for (const nrdrop::Source& o : nrdrop::Orphans(silent, has_el)) {
+                const std::size_t n = bbnet::p2p_forget_source(std::uint64_t(o.addr) | (std::uint64_t(o.port_nbo) << 32));
+                Log("C6: %s: no game connection to a silent source (port %u) any more: its outage-replay state forgotten (%zu entr%s)",
+                    name.c_str(), unsigned(o.port_nbo >> 8 | (o.port_nbo & 0xff) << 8), n, n == 1 ? "y" : "ies");
             }
         }
     }
@@ -11861,10 +11890,11 @@ void NrRecvHook(int sock, int where) {
 }
 }  // namespace
 
-void NrDropSilentPeers(const std::string& name, int delay_ms) {
+void NrDropSilentPeers(const std::string& name, int delay_ms, const std::string& keep_name) {
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
+        g_nrd_keep = keep_name;
     }
     g_nrd_outage = false;
     g_nrd_listed = false;
@@ -11881,6 +11911,7 @@ void NrDropAfterOutage(const std::string& name) {
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
+        g_nrd_keep.clear();
     }
     g_nrd_listed = false;
     g_nrd_outage = true;
