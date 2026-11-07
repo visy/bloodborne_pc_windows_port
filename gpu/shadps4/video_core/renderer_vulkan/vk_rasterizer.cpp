@@ -4707,6 +4707,12 @@ bool Rasterizer::OnWriteFault(VAddr addr, bool assume_locks, u64 guest_rip) {
         return false;
     }
     buffer_cache.ExtendWriteFault(addr, guest_rip);
+    if (guest_rip && Game::IsRedzoneWriter(guest_rip)) {
+        // A PS4 vertex generator keeps locals in the System V red zone, which the Windows
+        // exception frame destroys on every handled fault: keep this page writable so the
+        // routine does not fault on it again (Mrsuss60 432d2ddb).
+        buffer_cache.MakeWriteFaultSticky(addr);
+    }
     return true;
 }
 

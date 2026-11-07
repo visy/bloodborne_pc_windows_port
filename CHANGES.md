@@ -2,6 +2,18 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.8.0 (unreleased)
+
+### Changed
+
+- **the shader cache's driver pipeline binaries are saved while you play, off the render thread** (upport080, ported from Mrsuss60's ce83b806). They were written once after the start-up warm-up and once at a normal exit, so a session that crashed or was ended from the task manager left the driver to build every pipeline of that session again at the next start. The first new pipeline of a session is now written out at once and later ones about once a minute, by a worker thread of their own (the copy of the 10+ MB driver cache and the disk write never run on the thread that draws).
+
+### Fixed
+
+- **the shader cache loses no writes when the game ends** (upport080, Mrsuss60 ce83b806). The cache's disk worker stopped on request even with writes still queued, and closing the cache did not wait for them: the keys and shaders of the last moments of a session could be missing next time. Closing the cache now writes everything queued first.
+- **cached pipelines are no longer dropped over a permutation's index** (upport080, Mrsuss60 432d2ddb). Sessions store a shader's variants in the order the game first used them, so an equal variant can sit under another index in the cache; the loader refused such a pipeline ("conflicts with index") and it was compiled again while playing. It now reuses the variant it already has. This also fixes the stored variant pointing at a shader description that was already destroyed.
+- **fewer repeated write faults in the effect ribbon and particle vertex writers** (upport080, Mrsuss60 432d2ddb; for the random crashes of long sessions, CL-cd063f). Windows writes its exception frame over the guest's red zone, so each GPU write-watch fault inside those routines can destroy their locals. A page such a routine wrote now stays writable (at most 2048 pages, `BB_STICKY_FAULT_PAGES=0` turns it off), so the routine does not fault on it again. The crash that remains possible is the first fault on a page, which the existing red-zone guards handle.
+
 ## 0.7.9 (2026-11-07)
 
 ### Added

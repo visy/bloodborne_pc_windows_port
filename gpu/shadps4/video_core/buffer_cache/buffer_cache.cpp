@@ -715,6 +715,11 @@ void BufferCache::SmallGuestCopy(const BbCopy::Item& item) {
     scheduler.NoteHostCopySource(item.source, item.size);
 }
 
+void BufferCache::MakeWriteFaultSticky(VAddr device_addr) {
+    // One byte: only the page the faulting access touched, even when the address is not aligned.
+    memory_tracker->MakeSticky(device_addr, 1);
+}
+
 void BufferCache::ExtendWriteFault(VAddr device_addr, u64 guest_rip) {
     if (GuestInPlace()) {
         NoteCpuWrite(device_addr, guest_rip);

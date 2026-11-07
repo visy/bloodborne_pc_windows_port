@@ -40,13 +40,14 @@ namespace Storage {
 void ProcessIO(const std::stop_token& stoken) {
     Common::SetCurrentThreadName("shadPS4:PipelineCacheIO");
 
-    while (!stoken.stop_requested()) {
+    for (;;) {
         {
             std::unique_lock lk{submit_mutex};
             Common::CondvarWait(request_cv, lk, stoken, [&] { return num_requests.load() != 0; });
         }
 
-        if (stoken.stop_requested()) {
+        // bbport (Mrsuss60 ce83b806): a stop request must not drop queued writes.
+        if (stoken.stop_requested() && num_requests == 0) {
             break;
         }
 
@@ -133,6 +134,10 @@ void DataBase::Close() {
     if (!IsOpened()) {
         return;
     }
+
+    // bbport (Mrsuss60 ce83b806): write out everything queued before the worker is stopped;
+    // stopping first could drop those writes.
+    Flush();
 
     io_worker.request_stop();
     io_worker.join();

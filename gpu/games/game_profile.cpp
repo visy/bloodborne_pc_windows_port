@@ -48,4 +48,11 @@ bool IsDynamicWriter(std::uint64_t guest_rip) {
            });
 }
 
+bool IsRedzoneWriter(std::uint64_t guest_rip) {
+    const Profile* profile = Active();
+    return profile && std::ranges::any_of(profile->redzone_writers, [&](const CodeRange& r) {
+               return guest_rip >= r.begin && guest_rip < r.end;
+           });
+}
+
 } // namespace Game
