@@ -10915,6 +10915,14 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
     {
         std::lock_guard<std::mutex> lk(DS().mu);
         const dsummon::Phase before = DS().g.phase;
+        {  // 0.8.0 (08c): the waits grow with the link's round trip (none on a LAN); BB_PARTY_DSUMMON_ADAPTIVE=0 = fixed
+            static const bool adaptive = dsummon::SwitchOn(std::getenv("BB_PARTY_DSUMMON_ADAPTIVE"), true);
+            party::PartyLink* rl = adaptive ? party::runtime_link() : nullptr;
+            const double slack = rl ? dsummon::WaitSlack(rl->rtt_ms()) : 0.0;
+            if (slack > 0 && DS().g.slack == 0 && DS().g.phase != dsummon::Phase::Idle)
+                Log("direct summon: slow link (rtt %u ms): the answer, entry and join waits get %.1f s more", rl->rtt_ms(), slack);
+            DS().g.slack = std::max(DS().g.slack, slack);  // never shortened while a request runs
+        }
         // Playtest 1 #9: a room of another map is never handed to the game (it would join without
         // loading the host's map and sit in its own world as a client): fail, gather, ring again.
         if (dsummon::RoomElsewhere(DS().g, now, DS().room.area, s.map_id,
