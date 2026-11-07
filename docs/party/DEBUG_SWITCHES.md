@@ -18,6 +18,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 | `BB_PARTY_MAX` | Max players. The host's value applies to the whole party: a guest takes it from the host (live at WELCOME), and the launcher's Join list / `user\party_adopt.txt` set it for the guest's launch (0.7.8, version_check.md "Host-owned options") | 3 (2..4) |
 | `BB_PARTY_AUTO` | Automatic summoning | 1 |
 | `BB_PARTY_STAY` | none (launcher My Party > Start & saves writes bbport.ini `party_stay`); `1`: this guest stays in its own world, no automatic joining (docs/party/stay_home.md; wins over the ini at start) | unset: the ini's value, off |
+| `BB_PARTY_GUEST_DROP_HOME` | `0`: a guest's game keeps its connection to a member that left the host's world (an invader sent home, a guest's Leave) instead of releasing it at once. Default on: the next game from that address and port (a second invasion) no longer meets the stale connection and stalls in "trying to join" | 1 |
 | `BB_PARTY_NR_FORGET_ORPHAN` | `0`: after a member leaves, the host no longer forgets the outage-replay state of its silent source when the game has already released its connection (the old behaviour: a second invasion could be sent the dead session's records and stall in trying-to-join). Default on | 1 |
 | `BB_PARTY_DSUMMON_ADAPTIVE` | `0`: the direct summon's answer / entry / join waits (4 s / 8 s / 8 s) stay fixed. Default on: above a 50 ms round trip to the host each wait grows by 30 round trips, at most 12 s (a LAN keeps the old values) | 1 |
 | `BB_PARTY_SEAMLESS` | Seamless party rules | 1 |
