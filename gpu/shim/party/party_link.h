@@ -39,6 +39,7 @@
 #pragma once
 
 #include <array>
+#include <cstdlib>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -56,6 +57,13 @@ constexpr int kBroadcast = -1;  // send_* target: every member (host side)
 // follows this constant. 5 = every engine table full (party_fourp H6; four_players.md); 6 needs
 // the engine's fixed tables relocated.
 constexpr int kMaxPartyPlayers = 5;
+/// 0.8.0 (CL-10e56b): the Max players a local setting may name. 4 unless the large-party toggle is on (env BB_PARTY_LARGE=1;
+/// the launcher's Party tab, bbport.ini party_large): then 5, the engine's seats. A guest always takes the host's value up
+/// to kMaxPartyPlayers (the launcher sets the toggle with an adopted 5). 6 needs the engine's tables extended (PLAN).
+inline int LocalMaxCap() {
+    const char* e = std::getenv("BB_PARTY_LARGE");
+    return e && e[0] == '1' && !e[1] ? kMaxPartyPlayers : 4;
+}
 
 // Peer input limits (bbport security pass). Every byte a peer sends is untrusted: a frame is
 // refused (connection dropped) past these, and the host meters each member.

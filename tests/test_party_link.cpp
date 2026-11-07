@@ -743,6 +743,7 @@ static void test_four_players() {
     std::string err;
     CHECK(host.start_host(&err));
     CHECK(host.max_players() == 4 && kMaxPartyPlayers == 5);
+    CHECK(LocalMaxCap() == 4);  // 0.8.0: a local Max players above 4 needs BB_PARTY_LARGE=1
     {
         LinkConfig big = base_cfg("Big", "");
         big.max_players = 9;  // clamped to kMaxPartyPlayers

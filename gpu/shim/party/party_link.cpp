@@ -722,7 +722,7 @@ void apply_link_env(LinkConfig& cfg) {
     }
     if (const char* v = std::getenv("BB_PARTY_MAX"); v && *v) {
         long m = std::strtol(v, nullptr, 10);
-        cfg.max_players = static_cast<int>(std::clamp<long>(m, 2, kMaxPartyPlayers));
+        cfg.max_players = static_cast<int>(std::clamp<long>(m, 2, LocalMaxCap()));
     }
     if (const char* v = std::getenv("BB_PARTY_PASSWORD"); v && *v) cfg.password = v;
     // F5: how long a host keeps a silent member's slot (and its events) for a resume.

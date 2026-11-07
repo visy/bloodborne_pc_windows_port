@@ -30,7 +30,8 @@
 namespace coop::invade {
 
 constexpr const char* kEventName = "invade";
-constexpr int kGameSlots = 4;               ///< the game's player slots: the host and three phantoms (an invader is one)
+constexpr int kGameSlots = 4;               ///< the default party size: the host and three phantoms (an invader is one)
+constexpr int kEngineSeats = 5;             ///< 0.8.0 (CL-10e56b): the engine's seats, host + 4 remote players (an invader is one): every fixed table is sized for it (docs/party/four_players.md)
 constexpr int kMaxInvaders = 1;             ///< the default: one invader at a time (0.7.9: the host's "Max invaders" 1 or 2)
 constexpr int kMaxInvadersCap = 2;          ///< 0.7.9 (CL-7e748c): never more than this, whatever the setting
 inline int ClampMaxInvaders(int v) { return v < 1 ? 1 : v > kMaxInvadersCap ? kMaxInvadersCap : v; }
@@ -108,7 +109,7 @@ inline std::string DenyText(Deny d) {
     case Deny::HostDead: return "the host is dead";
     case Deny::Travelling: return "the party is travelling";
     case Deny::InvaderPresent: return "another invader is already in that world";
-    case Deny::NoSlot: return "no free slot in the host's world (4 players)";
+    case Deny::NoSlot: return "no free slot in the host's world (the party is full)";
     case Deny::LevelRange: return "your level is outside this host's range";
     }
     return "";
@@ -160,10 +161,11 @@ struct HostView {
     int host_level = 0;             ///< 0.7.9: the host's Blood Echoes level (0 unknown: no level check)
 };
 
-/// Can another game slot take an invader? The game has four player slots (host + three phantoms) and an invader is one
-/// of them; a party set to fewer players than that counts that number.
+/// Can another game seat take an invader? The game has five seats (host + four remote players; 0.8.0: they were counted
+/// as four, which kept an invader out of every 5-player party) and an invader is one of them; a party set to fewer
+/// players than that counts that number.
 inline int Capacity(int party_max) {
-    return std::max(2, std::min(party_max, kGameSlots));
+    return std::max(2, std::min(party_max, kEngineSeats));
 }
 
 /// The one decision. `blocked` / `rate_limited` come from the books below. The order is the order a player is told

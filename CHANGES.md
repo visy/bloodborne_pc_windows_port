@@ -4,6 +4,10 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ## 0.8.0 (unreleased)
 
+### Added
+
+- **5-player parties, and an invader can enter one** (six080, CL-10e56b; experimental, off by default). New launcher switch *Large parties: offer 5 players* (Party tab, `party_large` in `launcher_settings.json`, env `BB_PARTY_LARGE=1`): *Max players* then offers 5 (host and four others). Without it nothing changes: 2 to 4. The game has five seats for other players (the host, four more; an invader is one of them), so the invader rule now counts five where it counted four: with Max players 5, host + 3 guests leave one seat for an invader, and a direct summon of a 4th guest waits while an invader holds a seat. A player who joins takes the host's value as before (a host with 5 starts a joining launcher with the switch on for that start). Six players are not possible yet: the game's player tables hold five, see `docs/party/six_players.md`. Smoke `fp5` (now with the switch) and `fpi5` (host + 3 guests + invader), group `fivep_invader`; unit tests `party-invade-test` and `party-link-test`.
+
 ### Changed
 
 - **two optional guest CPU savings, both off by default** (cpusave080, ideas from droogie/bbhost eaacf93 and 58af1c8, GPL-3.0-or-later; launcher Performance tab: *Job barrier steal (CPU)* and *Work-pool node cache (CPU)*, `BB_JOB_BARRIER_STEAL=1`, `BB_WORKPOOL_NODE_CACHE=1`). The main thread now keeps taking render jobs from the worker threads while it waits in GX's job barrier instead of spinning, and each work pool keeps its freed job-list nodes instead of freeing them to the engine heap under its queue lock. Measured on an RTX 3070 / i7-10700KF at Central Yharnam, uncapped, one session switching each on and off every 30 s: no change in frame rate (79.4 off / 79.8 on and 85.0 off / 86.0 on, medians) because this PC is limited by the GPU thread, so they stay off; they are for CPU-bound machines. Live FPS keeps the Performance Patch's "Enable Task Stealing" byte off (checked: it reads 0 in game), which is not changed here.

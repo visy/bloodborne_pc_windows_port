@@ -54,7 +54,15 @@ static void test_config_and_tag() {
     set_env("BB_PARTY_MAX", "3");
     CHECK(FourpRulesTag() == "4p:v2:H1,H5,H2,H3,H4,E6,H6");
     set_env("BB_PARTY_MAX", "9");
+    CHECK(ConfigFromEnv().local_max == 4);  // 0.8.0: held at 4 without BB_PARTY_LARGE
+    set_env("BB_PARTY_MAX", "5");
+    CHECK(ConfigFromEnv().local_max == 4);
+    set_env("BB_PARTY_LARGE", "1");
     CHECK(ConfigFromEnv().local_max == 5);
+    set_env("BB_PARTY_MAX", "9");
+    CHECK(ConfigFromEnv().local_max == 5);
+    set_env("BB_PARTY_LARGE", "0");
+    CHECK(ConfigFromEnv().local_max == 4);
     CHECK(FourpRulesTag() == "4p:v2:H1,H5,H2,H3,H4,E6,H6");
     set_env("BB_PARTY_MAX", "1");
     CHECK(ConfigFromEnv().local_max == 2);

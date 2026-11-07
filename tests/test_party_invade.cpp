@@ -77,10 +77,20 @@ static void FourPlayers() {
     CHECK(Admit(h, false, false) == Deny::None);
     h.world_players = 4;  // no invader slot
     CHECK(Admit(h, false, false) == Deny::NoSlot);
-    // A party of 5 (the link's max) still has the game's four slots.
+    // 0.8.0 (CL-10e56b): a party of 5 (the link's max) has the engine's five seats: host + 3 guests leave one for an invader,
+    // host + 4 guests none; nothing is ever more than five.
     h.party_max = 5;
-    CHECK(Capacity(5) == 4);
+    CHECK(Capacity(5) == 5 && Capacity(6) == 5 && Capacity(9) == 5 && Capacity(4) == 4 && kEngineSeats == 5);
+    CHECK(Admit(h, false, false) == Deny::None);  // world_players 4 (host + 3), party of 5
+    h.world_players = 5;
     CHECK(Admit(h, false, false) == Deny::NoSlot);
+    // two invaders in a party of 5: host + 2 guests + 2 invaders fills it, host + 3 guests + 1 invader too
+    h.max_invaders = 2, h.world_players = 3, h.invaders = 1;
+    CHECK(Admit(h, false, false) == Deny::None);
+    h.world_players = 4, h.invaders = 1;
+    CHECK(Admit(h, false, false) == Deny::NoSlot);
+    CHECK(Invadable(true, 4, 0, 5) && !Invadable(true, 5, 0, 5) && !Invadable(true, 4, 0, 4));
+    h = Good();
     // A party set to two players: host + guest fill it.
     h = Good();
     h.party_max = 2;
