@@ -80,7 +80,7 @@ inline std::vector<Site> Stage3Sites() {
 }
 
 /// The stages proven so far (each one by fp5x / fpi5x with 5 players, then fp6 / fpi6 for the last).
-constexpr int kDefaultStage = 1;
+constexpr int kDefaultStage = 2;
 
 /// The highest stage in force: BB_PARTY_SIX_STAGE (1, 2, 3; a test aid for proving the stages one by one), default kDefaultStage.
 inline int StageFromEnv() {
