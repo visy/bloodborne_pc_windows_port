@@ -2093,6 +2093,9 @@ def settings_env(s: dict) -> dict:
     env["BB_SAVE_LOG"] = "1" if on("feat_save_log", False) else "0"
     # Sound timing log for crackle reports: late buffers, underruns, a summary per minute
     env["BB_AUDIO_LOG"] = "1" if on("feat_audio_log", False) else "0"
+    # Guest CPU savings (ported idea: droogie/bbhost): GX job barrier steal, work-pool node cache. Off by default.
+    env["BB_JOB_BARRIER_STEAL"] = "1" if on("feat_job_barrier_steal", False) else "0"
+    env["BB_WORKPOOL_NODE_CACHE"] = "1" if on("feat_workpool_node_cache", False) else "0"
     env["BB_BOSS_LOG"] = "1" if on("feat_boss_log", False) else "0"
     # Ludwig's health and party scaling after loads (wipe reports); the peers' network event states (packet 0x31 etc.)
     env["BB_PARTY_BOSS_HP_LOG"] = "1" if on("feat_boss_hp_log", False) else "0"
@@ -3375,6 +3378,8 @@ class BloodborneLauncher(tk.Tk):
         self.feat_skip_network_choice = tk.BooleanVar(value=self.settings.get("feat_skip_network_choice", True))
         self.feat_save_log = tk.BooleanVar(value=self.settings.get("feat_save_log", False))
         self.feat_audio_log = tk.BooleanVar(value=self.settings.get("feat_audio_log", False))
+        self.feat_job_barrier_steal = tk.BooleanVar(value=self.settings.get("feat_job_barrier_steal", False))
+        self.feat_workpool_node_cache = tk.BooleanVar(value=self.settings.get("feat_workpool_node_cache", False))
         self.feat_boss_log = tk.BooleanVar(value=self.settings.get("feat_boss_log", False))
         self.feat_boss_hp_log = tk.BooleanVar(value=self.settings.get("feat_boss_hp_log", False))
         self.feat_event_sync_log = tk.BooleanVar(value=self.settings.get("feat_event_sync_log", False))
@@ -3795,6 +3800,15 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "GPU draw prep workers", self.feat_draw_prep,
                     "Prepares draw calls on parallel worker threads to take load off the GPU thread. "
                     "Default: on (BB_PREP_WORKERS).")
+        self._check(sec, "Job barrier steal (CPU)", self.feat_job_barrier_steal,
+                    "The main thread keeps taking render jobs from the worker threads while it waits for them "
+                    "instead of spinning. Saves CPU time per frame on weak or busy CPUs when the game is "
+                    "CPU-bound; no measurable change when the GPU is the limit. Idea from droogie/bbhost. "
+                    "Restart required. Default: off (BB_JOB_BARRIER_STEAL).")
+        self._check(sec, "Work-pool node cache (CPU)", self.feat_workpool_node_cache,
+                    "Each worker pool keeps its freed job-list nodes instead of returning them to the "
+                    "engine's heap, which cuts lock waits between the worker threads. Idea from "
+                    "droogie/bbhost. Restart required. Default: off (BB_WORKPOOL_NODE_CACHE).")
 
         sec = self._section(tab, 1, "Shader compilation")
         self._check(sec, "Async shader compilation", self.feat_async_shaders,
@@ -6346,6 +6360,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_skip_network_choice": self.feat_skip_network_choice.get(),
             "feat_save_log": self.feat_save_log.get(),
             "feat_audio_log": self.feat_audio_log.get(),
+            "feat_job_barrier_steal": self.feat_job_barrier_steal.get(),
+            "feat_workpool_node_cache": self.feat_workpool_node_cache.get(),
             "feat_boss_log": self.feat_boss_log.get(),
             "feat_boss_hp_log": self.feat_boss_hp_log.get(),
             "feat_event_sync_log": self.feat_event_sync_log.get(),

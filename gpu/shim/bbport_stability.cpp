@@ -24,7 +24,10 @@
 //   BB_SF_MOVIE_LOCK=0     the game's HUD update (+0x1bf7c20) runs without its movie's lock (the game's own)
 //   BB_SF_TEXT_GUARD=0     a text shown before its layout exists is not guarded (+0x12d5e0 / +0x12df80)
 //   BB_FMOD_RING_GUARD=0   a sound freed while still in FMOD's sound ring is not taken out first (+0xdab3a0)
+//   BB_JOB_BARRIER_STEAL=1 (default off; 2: installed, off at start) GX job barrier: the main thread keeps stealing
+//   BB_WORKPOOL_NODE_CACHE=1 (default off; 2: installed, off at start) work-pool job list nodes cached per pool
 #include "bbport_stability.h"
+#include "bbport_toggles.h"
 #include "bbport_stability_logic.h"
 #include "bbport_ribbons.h"
 #include "bbport_scaleform_logic.h"
@@ -1498,7 +1501,254 @@ bool InstallFmodGuard() {
     return WriteBranch(kMemPoolFree, 0xe9, PlaceStub(e), sizeof(kMemPoolFreePrologue) - 5);
 }
 
+// ======================================================================================
+// 16. Guest CPU savings (default off; BB_JOB_BARRIER_STEAL / BB_WORKPOOL_NODE_CACHE =1 on, =2 installed
+// but off at start, so BB_TOGGLE_FILE experiment bits 128 / 256 turn them on while the game runs:
+// A/B in one session).
+//
+// Ported idea: droogie/bbhost eaacf93 (GX job barrier steal) and 58af1c8 (work-pool node cache), GPL-3.
+// Reimplemented here as a wrapper around the game's code instead of a rewrite of it.
+//
+// a) The main thread waits in GX's job barrier (+0x21b8710) after each parallel-for of GX jobs. The
+// barrier calls its step (+0x21b9980, the only caller) while the main thread's own deque has jobs,
+// then spins until every worker is idle; the step steals from the other participants only when the
+// main thread comes in with an empty deque. So once its own jobs are done the main thread never
+// steals again, and whatever is queued on the workers runs there while it spins. The wrapper calls
+// the game's step and then, when the main thread's deque is empty, makes the same sweep once more
+// without taking a job (a deque it stole into keeps the barrier calling the step).
+// GX's job system (the object at +0): participant array at [+8]->[0], 0x530 bytes each, count at
+// [[+8]+8]; a participant's deque at +0x18 (count at +0x38), its index at +0xa0.
+//
+// b) CSEzWork::ProcessOne (+0x2032370): every push of a job allocates a 0x18-byte list node and every
+// pop frees one, both under the pool's queue lock and through the engine's general allocator, whose
+// heap has a lock of its own; the worker threads convoy on the queue lock. The first time a worker
+// pops from a pool whose job list still allocates from the general allocator, a stand-in allocator
+// (a copy of that object with its aligned alloc +0x58 and free +0x70 ours) goes into the list's
+// allocator slot (pool +0x28): a free keeps the node (up to 1,024 per pool), an alloc of a node
+// takes one back, anything else goes to the general allocator. Every alloc and free on a pool's list
+// runs under the pool's queue lock (a DLAdaptiveMutex at +0x30; lock = vtable +0x18, unlock +0x28)
+// or in the destructor, so the cache takes no lock of its own. ~CSEzWork frees the list's sentinel
+// last, through the slot: that free ends the pool's cache.
+// ======================================================================================
+constexpr u64 kBarrierCall = 0x21b8793;  // call +0x21b9980 in the barrier
+constexpr u64 kBarrierStep = 0x21b9980;
+constexpr u64 kDequeSteal = 0xe47d20;    // (victim deque, thief deque): al true when it moved jobs
+constexpr u8 kBarrierStepPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55};
+constexpr u64 kParticipantSize = 0x530;
+
+constexpr u64 kProcessOne = 0x2032370;
+constexpr u8 kProcessOnePrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56};
+constexpr u64 kGeneralAllocator = 0x5540420;  // pointer to the engine's general allocator object
+constexpr u64 kAllocatorVtable = 0x53aefa0;
+constexpr int kVtableSlots = 28;
+constexpr u64 kAllocSlot = 0x58, kFreeSlot = 0x70;
+constexpr u64 kNodeSize = 0x18;
+constexpr u32 kCacheCap = 1024;
+constexpr int kCaches = 32;
+
+bool barrier_start_on = false, cache_start_on = false, cpusave_installed = false;
+/// Switched at run time by BB_TOGGLE_FILE experiment bit 128 / 256 (flips the start state).
+inline bool BarrierActive() { return barrier_start_on != BbToggle::Experiment(128); }
+inline bool CacheActive() { return cache_start_on != BbToggle::Experiment(256); }
+
+struct BarrierStats {
+    std::atomic<u64> calls{0}, sweeps{0}, steals{0};
+} barrier_stats;
+
+using StepFn = BB_SYSV void (*)(u64);
+using StealFn = BB_SYSV u64 (*)(u64, u64);
+using LockFn = BB_SYSV u64 (*)(u64, u64);
+using UnlockFn = BB_SYSV u64 (*)(u64);
+using AllocFn = BB_SYSV u64 (*)(u64, u64, u64);
+using FreeFn = BB_SYSV u64 (*)(u64, u64);
+
+/// Replaces the barrier's `call +0x21b9980`: the game's step, then one more sweep.
+BB_SYSV void BarrierStep(u64 self) {
+    reinterpret_cast<StepFn>(image + kBarrierStep)(self);
+    barrier_stats.calls.fetch_add(1, std::memory_order_relaxed);
+    if (!BarrierActive() || Rd64(self + 0x38) != 0) {
+        return;
+    }
+    barrier_stats.sweeps.fetch_add(1, std::memory_order_relaxed);
+    u64 system = Rd64(self + 8);
+    u32 n = Rd32(system + 8);
+    if (n == 0) {
+        return;
+    }
+    const u32 start = u32((u64(Rd32(self + 0xa0)) + __builtin_ia32_rdtsc()) % n);
+    const auto steal = reinterpret_cast<StealFn>(image + kDequeSteal);
+    for (u32 i = 0; i < n;) {
+        const u64 p = Rd64(system) + u64((start + i) % n) * kParticipantSize;
+        if (p != self) {
+            if ((steal(p + 0x18, self + 0x18) & 0xff) != 0 || Rd64(self + 0x38) != 0) {
+                barrier_stats.steals.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            system = Rd64(self + 8);
+        }
+        ++i;
+        n = Rd32(system + 8);
+    }
+}
+
+bool InstallBarrierSteal() {
+    if (!MatchesBytes(kBarrierStep, kBarrierStepPrologue, sizeof(kBarrierStepPrologue)) ||
+        !CallsTo(kBarrierCall, kBarrierStep)) {
+        std::printf("Stability: job barrier: guest +0x%llx is not the expected code; left alone\n", ull(kBarrierStep));
+        return false;
+    }
+    Emitter e = NewStub();
+    e.JmpAbs(reinterpret_cast<const void*>(&BarrierStep));
+    return WriteBranch(kBarrierCall, 0xe8, PlaceStub(e), 0);
+}
+
+enum : u32 { kCacheFree, kCacheClaimed, kCacheInUse };
+struct alignas(64) NodeCache {
+    u64 vtable;    // -> slots
+    u64 heap;      // the general allocator's +0x8, which the methods not replaced read
+    u64 original;  // the general allocator object it stands in for
+    u64 sentinel;  // the pool's job list sentinel: its free is the pool's end
+    u64 top;       // nodes kept, linked through their first word
+    u32 count;
+    std::atomic<u32> state;
+    u64 hits, misses, kept, passed, ends;  // written under the pool's lock
+    u64 slots[kVtableSlots];
+};
+NodeCache node_caches[kCaches];
+std::atomic<u32> cache_full{0};
+
+template <class F>
+inline F Method(u64 object, u64 offset) {
+    return reinterpret_cast<F>(Rd64(Rd64(object) + offset));
+}
+
+inline NodeCache& CacheOf(u64 self) { return *reinterpret_cast<NodeCache*>(self); }
+
+BB_SYSV u64 NodeCacheAlloc(u64 self, u64 size, u64 align) {
+    NodeCache& c = CacheOf(self);
+    if (size == kNodeSize && align <= 8 && c.top && CacheActive()) {
+        const u64 node = c.top;
+        c.top = Rd64(node);
+        --c.count;
+        ++c.hits;
+        return node;
+    }
+    ++c.misses;
+    return Method<AllocFn>(c.original, kAllocSlot)(c.original, size, align);
+}
+
+BB_SYSV u64 NodeCacheFree(u64 self, u64 p) {
+    NodeCache& c = CacheOf(self);
+    const u64 original = c.original;
+    if (p != 0 && p == c.sentinel) {
+        // ~CSEzWork's last free: the pool is gone, and so is its cache.
+        for (u32 n = c.count < kCacheCap ? c.count : kCacheCap; n != 0 && c.top; --n) {
+            const u64 node = c.top;
+            c.top = Rd64(node);
+            Method<FreeFn>(original, kFreeSlot)(original, node);
+        }
+        c.top = 0;
+        c.count = 0;
+        ++c.ends;
+        c.sentinel = 0;
+        c.state.store(kCacheFree, std::memory_order_release);
+        return Method<FreeFn>(original, kFreeSlot)(original, p);
+    }
+    if (p != 0 && c.count < kCacheCap && CacheActive()) {
+        std::memcpy(reinterpret_cast<void*>(p), &c.top, 8);
+        c.top = p;
+        ++c.count;
+        ++c.kept;
+        return 0;
+    }
+    ++c.passed;
+    return Method<FreeFn>(original, kFreeSlot)(original, p);
+}
+
+/// Under the pool's queue lock: the stand-in goes into the pool's allocator slot.
+void InstallNodeCache(u64 pool, u64 general) {
+    for (NodeCache& c : node_caches) {
+        u32 expect = kCacheFree;
+        if (!c.state.compare_exchange_strong(expect, kCacheClaimed, std::memory_order_acquire)) {
+            continue;
+        }
+        const u64 vt = Rd64(general);
+        for (int i = 0; i < kVtableSlots; ++i) {
+            c.slots[i] = Rd64(vt + 8ull * u64(i));
+        }
+        c.slots[kAllocSlot / 8] = reinterpret_cast<u64>(&NodeCacheAlloc);
+        c.slots[kFreeSlot / 8] = reinterpret_cast<u64>(&NodeCacheFree);
+        c.vtable = reinterpret_cast<u64>(&c.slots[0]);
+        c.heap = Rd64(general + 8);
+        c.original = general;
+        c.sentinel = Rd64(pool + 0x18);
+        c.top = 0;
+        c.count = 0;
+        c.state.store(kCacheInUse, std::memory_order_release);
+        const u64 stand_in = reinterpret_cast<u64>(&c);
+        std::memcpy(reinterpret_cast<void*>(pool + 0x28), &stand_in, 8);
+        return;
+    }
+    cache_full.fetch_add(1, std::memory_order_relaxed);
+}
+
+/// Called at the entry of ProcessOne (rdi: the pool).
+BB_SYSV void WorkPoolSeen(u64 pool) {
+    const u64 general = Rd64(reinterpret_cast<u64>(image) + kGeneralAllocator);
+    if (general == 0 || Rd64(pool + 0x28) != general || !CacheActive()) {
+        return;
+    }
+    const u64 lock = pool + 0x30;
+    Method<LockFn>(lock, 0x18)(lock, 0xffffffffu);
+    if (Rd64(pool + 0x28) == general && Rd64(general) == reinterpret_cast<u64>(image) + kAllocatorVtable) {
+        InstallNodeCache(pool, general);
+    }
+    Method<UnlockFn>(lock, 0x28)(lock);
+}
+
+bool InstallWorkPoolCache() {
+    if (!MatchesBytes(kProcessOne, kProcessOnePrologue, sizeof(kProcessOnePrologue))) {
+        std::printf("Stability: work pool: guest +0x%llx is not the expected code; left alone\n", ull(kProcessOne));
+        return false;
+    }
+    Emitter e = NewStub();
+    e.SaveVolatile();
+    e.CallAbs(reinterpret_cast<const void*>(&WorkPoolSeen));
+    e.RestoreVolatile();
+    for (const u8 b : kProcessOnePrologue) {
+        e.Bytes({b});
+    }
+    e.JmpTo(reinterpret_cast<u64>(image) + kProcessOne + sizeof(kProcessOnePrologue));
+    return WriteBranch(kProcessOne, 0xe9, PlaceStub(e), sizeof(kProcessOnePrologue) - 5);
+}
+
+/// 0: off (default), 1: on, 2: installed but off at start (experiment bit turns it on).
+int CpuSaveMode(const char* name) {
+    const char* e = std::getenv(name);
+    return e && (e[0] == '1' || e[0] == '2') ? e[0] - '0' : 0;
+}
+
+void CpuSaveReport() {
+    u64 hits = 0, misses = 0, kept = 0, passed = 0, ends = 0, live = 0;
+    for (const NodeCache& c : node_caches) {
+        hits += c.hits, misses += c.misses, kept += c.kept, passed += c.passed, ends += c.ends;
+        live += c.state.load() == kCacheInUse;
+    }
+    std::printf("CPU save: barrier %s calls %llu sweeps %llu steals %llu | node cache %s pools %llu ended %llu hits %llu "
+                "misses %llu kept %llu passed %llu full %u\n",
+                BarrierActive() ? "on" : "off", ull(barrier_stats.calls.load()), ull(barrier_stats.sweeps.load()),
+                ull(barrier_stats.steals.load()), CacheActive() ? "on" : "off", ull(live), ull(ends), ull(hits),
+                ull(misses), ull(kept), ull(passed), cache_full.load());
+    std::fflush(stdout);
+}
+
 } // namespace
+
+void LogCpuSave() {
+    if (cpusave_installed) {
+        CpuSaveReport();
+    }
+}
 
 void PatchImage(unsigned char* image_, std::uint64_t size) {
     image = image_;
@@ -1542,10 +1792,22 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("sf-text-guard ") + (sf_guard_on ? "on" : "off"));
     const bool fmod_ring = On("BB_FMOD_RING_GUARD") && stub_page && InstallFmodGuard();
     note(std::string("fmod-ring-guard ") + (fmod_ring ? "on" : "off"));
-    if (sf_lock_on || sf_guard_on || fmod_ring) {
+    const int barrier_mode = CpuSaveMode("BB_JOB_BARRIER_STEAL");
+    const int cache_mode = CpuSaveMode("BB_WORKPOOL_NODE_CACHE");
+    barrier_start_on = barrier_mode == 1;
+    cache_start_on = cache_mode == 1;
+    const bool barrier = barrier_mode && stub_page && InstallBarrierSteal();
+    note(std::string("job-barrier-steal ") + (barrier ? (barrier_mode == 1 ? "on" : "installed, off") : "off"));
+    const bool pool_cache = cache_mode && stub_page && InstallWorkPoolCache();
+    note(std::string("workpool-node-cache ") + (pool_cache ? (cache_mode == 1 ? "on" : "installed, off") : "off"));
+    cpusave_installed = barrier || pool_cache;
+    if (sf_lock_on || sf_guard_on || fmod_ring || cpusave_installed) {
         std::atexit([] {
             SfReport();
             FmodReport();
+            if (cpusave_installed) {
+                CpuSaveReport();
+            }
         });
     }
     if (stub_page) {

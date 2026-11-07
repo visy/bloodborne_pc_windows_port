@@ -23,6 +23,7 @@
 // The party co-op layer hooks the same pacer's entry (0x2034770: party_director, lamp_travel,
 // world_warper) and fast loading writes its +0x273 "no sleep" byte; these hooks are inside the
 // function (0x203493d, 0x2034d96) and in the main loop (0x2018e36), so the bytes do not overlap.
+#include "bbport_stability.h"
 #include "bbport_frame_rate.h"
 #include "bbport_frame_rate_logic.h"
 #include "bbport_guest_code.h"
@@ -752,6 +753,7 @@ void LiveDiag(const u8* pacer, float measured, int target, float interval, float
 #ifdef _WIN32
     ThreadCpuLog(secs);
 #endif
+    BbStability::LogCpuSave();
     std::int32_t vblanks = 0;
     std::uint8_t flip_skip = 0, no_sleep = 0;
     float pacer_target = 0;
