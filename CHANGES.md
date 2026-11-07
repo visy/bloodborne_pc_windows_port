@@ -2,6 +2,12 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.8.0 (unreleased)
+
+### Fixed
+
+- **Live FPS at about 64 FPS after a respawn (GitHub issue #35): diagnostics only, not fixed yet.** After a death and respawn load the game can run at 64 to 70 FPS for a whole stay, with the frame clock, the pacer and the presenter all in their normal state. A test machine (RTX 3070, Reflex on) showed the graphics card's clock 20 to 25% lower in those stays than in the fast ones, so the card's power state is the main suspect, not the Live FPS clock. New `BB_LIVE_FPS_LOG=1` (off by default) logs the clock, pacer, timer and presenter state once a second; new smoke phase `lfd` (group `live_fps_death`) dies and respawns N times and compares the in-world rate after each respawn.
+
 ## 0.7.9 (2026-11-07)
 
 ### Added

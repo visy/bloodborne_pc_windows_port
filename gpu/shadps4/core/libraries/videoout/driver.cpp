@@ -977,6 +977,20 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     };
     u32 frame_limit = limit_wanted();
     u32 reflex_limit_sent = ~0u;
+    // BB_LIVE_FPS_LOG=1: what the presenter did in the last second (issue #35 diagnostics, off by default).
+    static const bool pace_log = [] { const char* v = std::getenv("BB_LIVE_FPS_LOG"); return v && std::atoi(v) > 0; }();
+    struct PaceStats {
+        u64 ticks = 0, flips_top = 0, flips_inner = 0, inner_timeouts = 0;
+        double flip_ms = 0, flip_max_ms = 0;
+        std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    } pace;
+    const auto timed_flip = [&](const Request& r) {
+        const auto t0 = std::chrono::steady_clock::now();
+        Flip(r);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        pace.flip_ms += ms;
+        pace.flip_max_ms = std::max(pace.flip_max_ms, ms);
+    };
     auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
                                     : std::chrono::nanoseconds(0);
     auto slack = frame_period / 16;
@@ -1056,7 +1070,8 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                     }
                 }
             } else {
-                Flip(request);
+                ++pace.flips_top;
+                timed_flip(request);
                 bbport::fastload::NoteFlip();
                 FRAME_END;
             }
@@ -1095,6 +1110,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                 std::unique_lock lk{mutex};
                 if (!request_cv.wait_until(lk, tick_deadline,
                                            [&] { return !requests.empty(); })) {
+                    ++pace.inner_timeouts;
                     break; // next vblank
                 }
             }
@@ -1107,12 +1123,29 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             const auto request = receive_request();
             if (request) {
                 next_flip = next_slot(next_flip);
-                Flip(request);
+                ++pace.flips_inner;
+                timed_flip(request);
                 bbport::fastload::NoteFlip();
                 FRAME_END;
             }
         }
         std::this_thread::sleep_until(tick_deadline);
+        ++pace.ticks;
+        if (pace_log) {
+            const auto now = std::chrono::steady_clock::now();
+            const double secs = std::chrono::duration<double>(now - pace.since).count();
+            if (secs >= 1.0) {
+                const u64 flips = pace.flips_top + pace.flips_inner;
+                std::printf("VideoOut diag: %.1f ticks/s, flips %.1f/s (top %llu, inner %llu), inner timeouts %llu, Flip avg %.2f "
+                            "max %.2f ms, limit %u, immediate %d, flip_rate %d\n",
+                            double(pace.ticks) / secs, double(flips) / secs, (unsigned long long)pace.flips_top,
+                            (unsigned long long)pace.flips_inner, (unsigned long long)pace.inner_timeouts,
+                            flips ? pace.flip_ms / double(flips) : 0.0, pace.flip_max_ms, frame_limit, int(immediate_flips),
+                            main_port.flip_rate);
+                std::fflush(stdout);
+                pace = PaceStats{};
+            }
+        }
     }
 }
 
