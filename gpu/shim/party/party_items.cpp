@@ -4905,7 +4905,7 @@ void RepairSgivePoisonTick(const GameSnapshot& gs) {
     next = now + 2.0;
     auto is_set = [man](std::uint32_t id) { return IsFlag(man, id); };
     // A key-shuffling randomizer or mod moves the keys: the vanilla source flags then prove nothing, so a goods
-    // whose source lot no longer gives it in the loaded params is left alone (a row missing counts as moved).
+    // whose source lot no longer gives it in the loaded params is left alone (only an existing row that lost it counts as moved).
     auto lot_gives = [](std::int32_t lot, std::int32_t goods) { return LotRowKeepsGoods(LotChain(lot), lot, goods); };
     const SgiveRepair r = SgivePoisonToRepair(
         is_set, GoodsHeldAnywhere, NgCycleLive(), [&lot_gives](std::int32_t goods) { return GoodsSourceIntact(goods, lot_gives); });
