@@ -11808,12 +11808,15 @@ void NrRecvHook(int sock, int where) {
         const std::vector<nrdrop::Source> silent =
             nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000);
         silent_n += silent.size();
+        std::vector<bool> has_el(silent.size(), false);  // 0.8.0 (08c): a silent source with a connection in the array
         for (std::uint32_t k = 0; k < cnt; ++k) {
             const u64 el = arr + k * 0xc0ull;
             std::uint8_t used = 0;
             std::uint8_t key[nrdrop::kKeySize] = {};
             if (!SafeRead(el + 0x2c, &used, 1) || !used || !SafeRead(el + 0x10, key, sizeof key)) continue;
             ++seen;
+            for (std::size_t si = 0; si < silent.size(); ++si)
+                if (nrdrop::KeyMatchesAny(key, {silent[si]})) has_el[si] = true;
             std::uint16_t port = 0;
             std::memcpy(&port, key + 0x18, 2);
             const bool match = nrdrop::KeyMatchesAny(key, silent);
@@ -11834,6 +11837,20 @@ void NrRecvHook(int sock, int where) {
                     Log("C6: its outage-replay state forgotten (%zu entr%s): no replay into its restarted game", n,
                         n == 1 ? "y" : "ies");
                 }
+            }
+        }
+        // 0.8.0 (Iosefka 08c, smoke iv 'second invader'): the game had already released its connection to the departed member
+        // (its room leave came first), so nothing matched above, but the outage replay's state for that source stayed. The
+        // member's next game (an invader asking again from the same address and port 20+ s later) was sent the dead session's
+        // reliable records at its first datagram ("outage resume ... 183 reliable record(s)"), stayed in trying-to-join and
+        // only the bell-sign retry (~33 s) got in. Forget the replay state of every silent source that has no connection.
+        // BB_PARTY_NR_FORGET_ORPHAN=0 restores the old behaviour.
+        static const bool forget_orphan = !(std::getenv("BB_PARTY_NR_FORGET_ORPHAN") && std::getenv("BB_PARTY_NR_FORGET_ORPHAN")[0] == '0');
+        if (forget_orphan && !outage) {
+            for (const nrdrop::Source& o : nrdrop::Orphans(silent, has_el)) {
+                const std::size_t n = bbnet::p2p_forget_source(std::uint64_t(o.addr) | (std::uint64_t(o.port_nbo) << 32));
+                Log("C6: %s: no game connection to a silent source (port %u) any more: its outage-replay state forgotten (%zu entr%s)",
+                    name.c_str(), unsigned(o.port_nbo >> 8 | (o.port_nbo & 0xff) << 8), n, n == 1 ? "y" : "ies");
             }
         }
     }
