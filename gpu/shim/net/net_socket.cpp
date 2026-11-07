@@ -17,6 +17,7 @@
 #include "net_stun.h"
 #include "netsim.h"
 #include "np_session.h"
+#include "np_sig_alive.h"
 #include "nr_loadgap.h"
 #include "nr_outage.h"
 #include "nr_rxgap.h"
@@ -3347,6 +3348,23 @@ std::int64_t p2p_game_rx_age_ms() {
     }
     if (!any) return -1;
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - last).count();
+}
+bool p2p_outage_active() { return g_outage_keepalive.load(); }
+std::int64_t p2p_peer_silence_ms(std::uint32_t addr_nbo, std::uint16_t port_host) {
+    std::shared_ptr<P2pPort> port;
+    {
+        std::lock_guard<std::mutex> lock(g_net_mu);
+        port = p2p_port_open(settings().party_port);
+    }
+    if (!port) return -1;
+    const auto now = Clock::now();
+    std::map<std::uint64_t, std::int64_t> ages;
+    {
+        std::lock_guard<std::mutex> lk(port->mu);
+        for (const auto& [k, t] : port->heard)
+            ages[k] = std::chrono::duration_cast<std::chrono::milliseconds>(now - t).count();
+    }
+    return np::sigalive::SourceAge(ages, addr_nbo, bswap16(port_host));
 }
 std::map<std::uint64_t, std::int64_t> p2p_heard(int sock) {
     std::map<std::uint64_t, std::int64_t> out;

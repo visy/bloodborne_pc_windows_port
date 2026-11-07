@@ -807,6 +807,11 @@ add_executable(frame-rate-test EXCLUDE_FROM_ALL ../tests/test_frame_rate.cpp)
 target_compile_options(frame-rate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(frame-rate-test PRIVATE shim)
 set_target_properties(frame-rate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# NpSignaling alive check (shim/net/np_sig_alive.h): dead connections are not announced up. ninja -C out/gpu np-sig-alive-test
+add_executable(np-sig-alive-test EXCLUDE_FROM_ALL ../tests/test_np_sig_alive.cpp)
+target_compile_options(np-sig-alive-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(np-sig-alive-test PRIVATE shim)
+set_target_properties(np-sig-alive-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # C6 crash rejoin: the crashed member's connections (party_nr_drop.h). ninja -C out/gpu party-nr-drop-test
 add_executable(party-nr-drop-test EXCLUDE_FROM_ALL ../tests/test_party_nr_drop.cpp)
 target_compile_options(party-nr-drop-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
