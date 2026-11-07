@@ -1120,3 +1120,8 @@ add_executable(save-policy-test EXCLUDE_FROM_ALL ../tests/test_save_policy.c ../
 target_compile_options(save-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(save-policy-test PRIVATE ../src)
 set_target_properties(save-policy-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Six-seat patch set (shim/party/party_sixp.h, header-only pure parts): ninja -C out/gpu party-sixp-test
+add_executable(party-sixp-test EXCLUDE_FROM_ALL ../tests/test_party_sixp.cpp)
+target_compile_options(party-sixp-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-sixp-test PRIVATE shim)
+set_target_properties(party-sixp-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
