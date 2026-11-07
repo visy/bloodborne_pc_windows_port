@@ -7,6 +7,8 @@
 
 using namespace BbStability;
 
+int RunGuardTests(); // tests/test_stability_guards.cpp
+
 static int g_failures = 0, g_checks = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { ++g_failures; std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 
@@ -38,6 +40,7 @@ int main() {
     CHECK(!FailTestHit(0, 0) && !FailTestHit(5, 0));
     CHECK(FailTestHit(0, 1) && FailTestHit(7, 1));
     CHECK(!FailTestHit(0, 3) && !FailTestHit(1, 3) && FailTestHit(2, 3) && FailTestHit(5, 3));
+    g_failures += RunGuardTests();
     std::printf("stability-logic-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

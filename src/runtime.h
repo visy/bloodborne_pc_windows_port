@@ -42,6 +42,8 @@ uintptr_t runtime_resolve(const char *name, int is_data);
 void runtime_report(void);
 void runtime_finalize(void *dso);
 uintptr_t runtime_mutex_resolve(const char *name);
+int runtime_guest_mutex_acquire(void **slot, uint64_t usec, uint64_t *waited_us);
+void runtime_guest_mutex_release(void **slot);
 void runtime_mutex_report(void);
 void runtime_mutex_dump_info(void *f, void *handle);
 uintptr_t runtime_memory_resolve(const char *name);

@@ -616,7 +616,7 @@ target_compile_options(party-start-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-start-test PRIVATE shim)
 set_target_properties(party-start-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Stability fixes' pure decisions (shim/bbport_stability_logic.h). ninja -C out/gpu stability-logic-test
-add_executable(stability-logic-test EXCLUDE_FROM_ALL ../tests/test_stability_logic.cpp)
+add_executable(stability-logic-test EXCLUDE_FROM_ALL ../tests/test_stability_logic.cpp ../tests/test_stability_guards.cpp)
 target_compile_options(stability-logic-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(stability-logic-test PRIVATE shim)
 set_target_properties(stability-logic-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)

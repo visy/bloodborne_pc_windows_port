@@ -322,6 +322,34 @@ static ABI int32_t posix_cond_wait(GuestCond **c, GuestMutex **m) { return posix
 static ABI int32_t posix_cond_timedwait(GuestCond **c, GuestMutex **m, const GuestTimespec *t) { return posix_result(cond_abs_timedwait(c, m, t)); }
 static ABI int32_t posix_cond_signal(GuestCond **c) { return posix_result(cond_signal(c)); }
 static ABI int32_t posix_cond_broadcast(GuestCond **c) { return posix_result(cond_broadcast(c)); }
+/* bbport (stability guards, gpu/shim/bbport_stability.cpp): lock a guest mutex from host code, the way
+ * the game's own lock does, but bounded. `slot` is the guest's mutex handle slot. Returns 0 locked
+ * (give it back with runtime_guest_mutex_release), 1 this thread holds it already (nothing to give
+ * back), 2 still busy after `usec`, 3 no usable mutex (never made, or destroyed). Never creates one. */
+int runtime_guest_mutex_acquire(void **slot, uint64_t usec, uint64_t *waited_us) {
+    if (waited_us) *waited_us = 0;
+    uintptr_t value = slot ? __atomic_load_n((uintptr_t *)slot, __ATOMIC_ACQUIRE) : 0;
+    if (value < 3) return 3;
+    NativeMutex *m = &((GuestMutex *)value)->native;
+#ifdef _WIN32
+    if (owner(m) == GetCurrentThreadId()) return 1;
+#endif
+    int r = native_trylock(m);
+    if (r == EBUSY) {
+        const uint64_t start = host_realtime_ns();
+        r = native_timedlock(m, start + usec * 1000);
+        if (waited_us) *waited_us = (host_realtime_ns() - start) / 1000;
+    }
+    if (r == 0) { ++locks; restore_guest_fs(); return 0; }
+    restore_guest_fs();
+    return r == ETIMEDOUT ? 2 : r == EDEADLK ? 1 : 3;
+}
+void runtime_guest_mutex_release(void **slot) {
+    uintptr_t value = slot ? __atomic_load_n((uintptr_t *)slot, __ATOMIC_ACQUIRE) : 0;
+    if (value < 3) return;
+    if (native_unlock(&((GuestMutex *)value)->native) == 0) ++unlocks;
+    restore_guest_fs();
+}
 uintptr_t runtime_mutex_resolve(const char *name) {
     if (!strcmp(name,"0TyVk4MSLt0#I#J")) return (uintptr_t)posix_cond_init;
     if (!strcmp(name,"RXXqi4CtF8w#I#J")) return (uintptr_t)posix_cond_destroy;
