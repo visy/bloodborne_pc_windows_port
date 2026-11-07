@@ -4795,13 +4795,18 @@ MI_ROUTE = "/".join("%.1f:%.1f:%.1f" % (x, 1000 + y, z) for x, y, z in [(137.0, 
 MI_NEAR = "106.2:1029.4:-6.4"   # 70 m of path short of the first-fight spot, outside the 32 m of his event, not in a boss room:
                                 # the full 880 m walk from the lamp is blocked by an Iron Door / lift the harness cannot open
 MI_HOLD = 40
+MI_FOG = "145.88:-14.74"   # his fog 2601850 (X:Z)
 MI_UNTIL = [r"1:travel step (?P<n>\d+)/(?P=n): guest_press 0x0"]
 
 
 def _mi_fog(role, cond, m):
     """Walk to Micolash's fog 2601850 and through it like a player (R3: the camera behind, Cross twice)."""
-    return ["%s_obj=2601850@3%s%s" % (role, m, cond), "%s_press=0x4@1%s!" % (role, m), "%s_press=0@1%s!" % (role, m),
-            "%s_press=0x4000@2%s!" % (role, m), "%s_press=0x4000@2%s!" % (role, m)]
+    # no R3 here: an enemy (2600221) stands at the fog and R3 locks on to it (run 0.7.9: the lock-on turned the player to the
+    # enemy, the fog prompt never came); the walk to the fog already faces it
+    # then through it with the fog step (stick walk until its prompt shows, Cross, held until through): neither Cross presses
+    # (the prompt never showed) nor a stick walk (a closed fog is a wall) passed this fog (0.7.9 mig: the guest stood at it
+    # for 15 s, the fight never started)
+    return ["%s_obj=2601850@3%s%s" % (role, m, cond), "%s_fog=%s@2%s" % (role, MI_FOG, m)]
 
 
 def phase_mi(only, name="mi", guest_first=False):
@@ -4861,6 +4866,20 @@ def check_mi(v, L, tag="mi"):
         return check_common(v, L, tag)
     none_of(v, L, tag + " try 1: no bar before the host came near him", r"boss health bar shown", 0, (scene or bar1) - 0.5, (0, 1))
     need(v, L, tag + " try 1: the guest's game shows the bar", 1, r"boss health bar shown", bar1 - 5)
+    if tag == "mig":
+        # guest first: the host stays at the lamp, the guest alone is in the fight and nobody dies, so there is no wipe and
+        # no try 2; his bar must agree on both games and nobody stays stuck (the 0.7.9 run expected a wipe here)
+        a, b = bar1 + 6.0, bar1 + 6.0 + float(os.environ.get("BB_MI_WINDOW", "40"))
+        hh, gg = _mi_hp(L, 0, a, b), _mi_hp(L, 1, a, b)
+        v.step(tag + " try 1: his bar has the same HP on both games (last samples within 5%)",
+               bool(hh) and bool(gg) and abs(hh[-1][1] - gg[-1][1]) <= 0.05 * max(hh[-1][1], 1),
+               "host %s, guest %s" % (hh[-1:], gg[-1:]))
+        v.step(tag + " try 1: his HP never regains on the host or the guest (no loss-then-regain)",
+               all(y <= x for (_t, x), (_u, y) in zip(hh, hh[1:])) and all(y <= x for (_t, x), (_u, y) in zip(gg, gg[1:])),
+               "host %d samples, guest %d" % (len(hh), len(gg)))
+        none_of(v, L, tag + ": no 'boss may be stuck' within 10 m of a player on either game", r"boss state: [0-9a-f]+ may be stuck.*nearest player \d\.\d m", 0, 1e9, (0, 1))
+        none_of(v, L, tag + ": every fog walk got through", r"test: fog: NOT through", 0, 1e9, (0, 1))
+        return check_common(v, L, tag)
     wipe = need(v, L, tag + " try 1: the party wipes", 0, r"a wipe", bar1)
     if wipe is None:
         return check_common(v, L, tag)
@@ -4884,7 +4903,10 @@ def check_mi(v, L, tag="mi"):
         v.step(tag + " try 2: his HP never regains on the host or the guest (no loss-then-regain)",
                all(y <= x for (_t, x), (_u, y) in zip(hh, hh[1:])) and all(y <= x for (_t, x), (_u, y) in zip(gg, gg[1:])),
                "host %d samples, guest %d" % (len(hh), len(gg)))
-    none_of(v, L, tag + ": no 'boss may be stuck' on either game", r"boss state: [0-9a-f]+ may be stuck", 0, 1e9, (0, 1))
+    # Only a boss standing idle with a player within 10 m counts: after his first-fight scene Micolash flees to a hiding spot
+    # ~25 m from the passive fixture players and idles there until chased (0.7.9 run3 / run4: "animation 0 for 15 s, nearest
+    # player 25 m" on the host and the guest alike), which is his own behaviour, not a stuck boss.
+    none_of(v, L, tag + ": no 'boss may be stuck' within 10 m of a player on either game", r"boss state: [0-9a-f]+ may be stuck.*nearest player \d\.\d m", 0, 1e9, (0, 1))
     none_of(v, L, tag + ": every fog walk got through", r"test: fog: NOT through", 0, 1e9, (0, 1))
     check_common(v, L, tag)
 
@@ -5699,6 +5721,7 @@ def phase_br(only):
         "host_obj=3401801@6!",                                       # the wall behind Ludwig's arena
         "host_press=0x4@1!", "host_press=0@1!",                      # R3: the camera behind the player
         "host_stick=obj:3401801:4:180:%s@2!" % BR_WALK,              # through it
+        "host_press=0x4@1!", "host_press=0@1!",                      # R3 again: the camera behind him for the walk back (0.7.9: he stalled 3 m short of the goal, the camera had swung)
         "host_stick=obj:3401801:4:0:%s@2!" % BR_WALK,                # and back
     ])
     g1 = ",".join([
@@ -5711,7 +5734,7 @@ def phase_br(only):
         "guest_move=%s@2%%m34_00" % BR_SIGNAL,                        # inside: the host's skull now
         "guest_press=0x4000@10%m34_00?13401850=1", "guest_press=0x4000@2%m34_00!",  # Laurence's reward box
         "guest_press=0x4000@10?9471=1", "guest_press=0x4000@2!",      # Ludwig's
-        "guest_obj=3401801@4!",                                      # at the wall behind him
+        "guest_obj=3401801@30!",                                     # at the wall behind him, after the host's walk through and back (two bodies in the doorway jam: the host's walk back GAVE UP in 0.7.9)
         "guest_press=0x4@1!", "guest_press=0@1!",                    # R3
         "guest_stick=obj:3401801:4:180:%s@2!" % BR_WALK,
         "guest_stick=obj:3401801:4:0:%s@2!" % BR_WALK,
