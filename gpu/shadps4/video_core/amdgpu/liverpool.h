@@ -23,6 +23,7 @@
 #include "common/types.h"
 #include "common/unique_function.h"
 #include "video_core/amdgpu/cb_db_extent.h"
+#include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/amdgpu/regs.h"
 
 namespace Vulkan {
@@ -279,6 +280,7 @@ private:
     Task ProcessCompute(std::span<const u32> acb, u32 vqid);
 
     void ProcessCommands();
+    void HandleGetLodStats(const PM4CmdGetLodStats* get_lod);
     void Process(std::stop_token stoken);
 
     struct GpuQueue {
@@ -296,6 +298,7 @@ private:
     VAddr indirect_args_addr{};
     u32 num_counter_pairs{};
     u64 pixel_counter{};
+    u32 vgt_strmout_buffer_filled_size[4]{}; ///< IT_STRMOUT_BUFFER_UPDATE offsets per buffer
 
     /// bbport: SET_PREDICATION. Draws and dispatches with the predicate bit in their header are
     /// skipped while it fails; it is evaluated at the first such packet, once the GPU has done

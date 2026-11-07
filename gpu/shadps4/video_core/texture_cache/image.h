@@ -7,6 +7,7 @@
 #include "common/incremental_id.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_view.h"
 
@@ -32,6 +33,7 @@ enum ImageFlagBits : u32 {
     GpuDirty = 1 << 2, ///< Contents have been modified from the GPU (valid data in buffer cache)
     Dirty = MaybeCpuDirty | CpuDirty | GpuDirty,
     GpuModified = 1 << 3, ///< Contents have been modified from the GPU
+    MaybeGpuDirty = 1 << 4, ///< A GPU write into the buffer cache may have changed its memory
     Registered = 1 << 6,  ///< True when the image is registered
     Picked = 1 << 7,      ///< Temporary flag to mark the image as picked
 };
@@ -122,6 +124,13 @@ struct Image {
         return True(flags & ImageFlagBits::GpuModified) && False(flags & ImageFlagBits::Dirty);
     }
 
+    /// Fit for a write-back to guest memory (Mrsuss60 d81d63be, shadPS4 GC part 2): single sample,
+    /// no stencil plane, and a host format that reads back as the guest's.
+    bool CanBeDownloaded() const {
+        return HasGpuValidData() && info.num_samples == 1 && !info.props.has_stencil && backing &&
+               IsVulkanFormatCompatible(info.pixel_format, backing->image.image_ci.format);
+    }
+
     bool SafeToDownload() const {
         return True(flags & ImageFlagBits::GpuModified) && False(flags & (ImageFlagBits::Dirty));
     }
@@ -188,6 +197,11 @@ public:
     /// bbport: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
     mutable u64 lru_touched_tick = ~0ULL;
     u64 tick_accessed_last{};
+    /// bbport collector verification: the hash of the guest memory under the image when the buffer
+    /// cache was written over it (gpu_hash), and of its untracked first / last page (0: none).
+    u64 gpu_hash{};
+    u64 head_hash{};
+    u64 tail_hash{};
     /// bbport: scheduler tick of the last binding that lets the GPU write it (render or depth target,
     /// storage image); 0 never.
     u64 gpu_write_tick{};
