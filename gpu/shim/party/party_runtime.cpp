@@ -1205,7 +1205,10 @@ void on_roster(const std::vector<RosterEntry>& roster) {
         }
         for (const std::string& name : went_home) {
             plog("%s went home from the host's world: releasing our game's connection to its old game", name.c_str());
-            coop::b2::NrDropSilentPeers(name, 0);
+            std::string host_name;  // never released: the host may be silent while it loads
+            for (const RosterEntry& e : roster)
+                if (e.slot == kHostSlot) host_name = e.name;
+            coop::b2::NrDropSilentPeers(name, 0, host_name);
         }
         for (const std::string& name : crashed) {
             plog("C6 (guest): %s is back at its title after being in the world (a restart): releasing our "

@@ -29,6 +29,7 @@
 #include "../net/from_api.h"
 #include "../net/bbnet_internal.h"
 #include "../net/np_hle.h"
+#include "../net/np_session.h"
 #include "party_nr_drop.h"
 #include "party_dsummon.h"
 #include "party_chalice.h"
@@ -11757,6 +11758,7 @@ constexpr u64 kNrVtableUdpP2p = 0x52c51e0, kNrVtableUdp = 0x52c5160;  // FUN_027
 std::atomic<std::int64_t> g_nrd_at{0};  // steady ms from which to look (0 = nothing asked)
 std::mutex g_nrd_mu;
 std::string g_nrd_name;  // g_nrd_mu
+std::string g_nrd_keep;  // g_nrd_mu: a peer whose connection is never released (the host, for a guest)
 std::atomic<bool> g_nrd_busy{false};
 std::atomic<bool> g_nrd_outage{false};  // F5: the member is back after an outage (one scan)
 bool g_nrd_listed = false;  // under g_nrd_busy
@@ -11780,10 +11782,20 @@ void NrRecvHook(int sock, int where) {
     if (where == 2) return;  // inside the transport's own update: not a safe place to release
     bool expect = false;
     if (!g_nrd_busy.compare_exchange_strong(expect, true)) return;
-    std::string name;
+    std::string name, keep_name;
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         name = g_nrd_name;
+        keep_name = g_nrd_keep;
+    }
+    std::vector<nrdrop::Source> keep;
+    if (!keep_name.empty()) {
+        bbnet::session::Peer hp;
+        if (bbnet::session::peers_find_online(keep_name, &hp)) {
+            auto bs = [](std::uint16_t p) { return static_cast<std::uint16_t>((p >> 8) | ((p & 0xff) << 8)); };
+            keep.push_back({hp.addr, bs(hp.port)});
+            if (hp.local_addr) keep.push_back({hp.local_addr, bs(hp.local_port)});
+        }
     }
     if (now > at + 5000) {  // the hold (26 s) stays: the game times the connection out itself
         g_nrd_at.store(0);
@@ -11805,8 +11817,8 @@ void NrRecvHook(int sock, int where) {
         ++transports;
         // After an outage the member's last datagram is as old as the outage (up to the 130 s slot
         // keep plus the reconnect), so the window is wider.
-        const std::vector<nrdrop::Source> silent =
-            nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000);
+        const std::vector<nrdrop::Source> silent = nrdrop::Without(
+            nrdrop::SilentSources(bbnet::p2p_heard(fd), now, 1500, outage ? 180000 : 60000), keep);
         silent_n += silent.size();
         std::vector<bool> has_el(silent.size(), false);  // 0.8.0 (08c): a silent source with a connection in the array
         for (std::uint32_t k = 0; k < cnt; ++k) {
@@ -11878,10 +11890,11 @@ void NrRecvHook(int sock, int where) {
 }
 }  // namespace
 
-void NrDropSilentPeers(const std::string& name, int delay_ms) {
+void NrDropSilentPeers(const std::string& name, int delay_ms, const std::string& keep_name) {
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
+        g_nrd_keep = keep_name;
     }
     g_nrd_outage = false;
     g_nrd_listed = false;
@@ -11898,6 +11911,7 @@ void NrDropAfterOutage(const std::string& name) {
     {
         std::lock_guard<std::mutex> lk(g_nrd_mu);
         g_nrd_name = name;
+        g_nrd_keep.clear();
     }
     g_nrd_listed = false;
     g_nrd_outage = true;
