@@ -8677,11 +8677,18 @@ SGB4_ROW = 12101002
 SGB4_UNTIL = r"1:test: levelup: keys done"
 
 
+def prep_sgb4(root: Path):
+    # Both games start from the plain default save: a save left in inst0 / inst1 by an earlier phase (a host that
+    # is not in the Hunter's Dream) kept the guest's walk from ever starting (full smoke 0.7.9: host in m24).
+    _cl_saves(root, CL_DEFAULT, 0)
+    _cl_saves(root, CL_DEFAULT, 1)
+
+
 def phase_sgb4(only, name="sgb4", give=True):
     keys = os.environ.get("BB_SG_KEYS", "right,right,right," + ",".join(["down"] * 8))
     watch = "log_flag=%d/12101004" % SGB4_ROW
     return dict(
-        name=name, seconds=300, count=2, headless=0,
+        name=name, seconds=300, count=2, headless=0, prep=prep_sgb4,
         env=["BB_PARTY_START=immediate"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=god",
               "1:BB_PARTY_DIRECTOR_TEST=god," + ("goods=4112:1," if give else "goods=4112:0,") + watch,
