@@ -10748,7 +10748,7 @@ void DirectSummonTick(const GameSnapshot& s, double now) {
         // engine's seats (host + 4 remote): with an invader in, a party of 5 takes one cooperator fewer.
         if (party::PartyLink* il = party::runtime_link()) {
             for (int k = 1; k < party::kMaxPartyPlayers; ++k) {
-                if (il->is_invader(k)) ++v.cooperators;
+                if (k != slot && il->is_invader(k)) ++v.cooperators;  // not the invader that is asking (it would refuse itself)
             }
         }
         v.max_cooperators = dsummon::MaxCooperators(coop::fourp::FourpEffectiveMax());

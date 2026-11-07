@@ -31,7 +31,7 @@ namespace coop::invade {
 
 constexpr const char* kEventName = "invade";
 constexpr int kGameSlots = 4;               ///< the default party size: the host and three phantoms (an invader is one)
-constexpr int kEngineSeats = 5;             ///< 0.8.0 (CL-10e56b): the engine's seats, host + 4 remote players (an invader is one): every fixed table is sized for it (docs/party/four_players.md)
+constexpr int kEngineSeats = 6;             ///< 0.8.0 (CL-10e56b): the engine seats, host + 4 remote players (5) or, with the 6-seat patch set (party_sixp.h, Max players 6), host + 5 (an invader is one); Max players decides which (docs/party/four_players.md)
 constexpr int kMaxInvaders = 1;             ///< the default: one invader at a time (0.7.9: the host's "Max invaders" 1 or 2)
 constexpr int kMaxInvadersCap = 2;          ///< 0.7.9 (CL-7e748c): never more than this, whatever the setting
 inline int ClampMaxInvaders(int v) { return v < 1 ? 1 : v > kMaxInvadersCap ? kMaxInvadersCap : v; }

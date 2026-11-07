@@ -7,6 +7,10 @@
 #include "party_async_io.h"
 #include "../../party_env.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <tlhelp32.h>
+#endif
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -222,7 +226,7 @@ void QueueSampler() {
         if (!SafeRead(menu + 0x15c8, q, sizeof q) || !SafeGet(menu + 0x160c, &rd) || !SafeGet(menu + 0x1610, &wr)) continue;
         for (int i = 0; i < 17; ++i) {
             if (q[i] != prev[i] && (q[i] > 17 || q[i] < 0)) {
-                ++logs;
+    ++logs;
                 Log("menu queue SAMPLER: slot %d now %d (was %d), read %d write %d", i, q[i], prev[i], rd, wr);
             }
             prev[i] = q[i];
@@ -255,7 +259,91 @@ BB_COOP_SYSV std::uint64_t MenuIdFilter(std::uint64_t obj, std::uint64_t id) {
     return obj;
 }
 
+#ifdef _WIN32
+// Hardware write watchpoints (BB_PARTY_SIX_PROBE=1) on the menu object's queue head (+0x15c8) and the gauge record's max HP (+0x15b8): the
+// writer of the HP values that land in the menu event queue. Debug registers are per thread: every thread gets them, new ones on the next tick.
+std::atomic<std::uint64_t> g_watch0{0}, g_watch1{0};
+std::atomic<int> g_watch_logs{0};
+LONG CALLBACK WatchVeh(EXCEPTION_POINTERS* ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    const std::uint64_t dr6 = ep->ContextRecord->Dr6;
+    if (!(dr6 & 3)) return EXCEPTION_CONTINUE_SEARCH;
+    const std::uint64_t addr = (dr6 & 1) ? g_watch0.load() : g_watch1.load();
+    std::int32_t v = 0;
+    std::memcpy(&v, reinterpret_cast<void*>(addr), 4);
+    if (g_watch_logs.load() < 24 && ((dr6 & 2) || v > 17 || v < 0)) {
+        g_watch_logs.fetch_add(1);
+        const std::uint64_t rip = ep->ContextRecord->Rip, base = Guest(0);
+        char st[600];
+        int n = 0;
+        const std::uint64_t* sp = reinterpret_cast<const std::uint64_t*>(ep->ContextRecord->Rsp);
+        for (int i = 0; i < 40 && n < 540; ++i) {
+            const std::uint64_t q = sp[i];
+            if (q > base && q < base + 0x6000000) n += std::snprintf(st + n, sizeof st - n, "+%llx ", ull(q - base));
+        }
+        Log("WATCH write %#llx = %d at rip +%llx (guest %s); rax %llx rcx %llx rdx %llx; stack: %s", ull(addr), v,
+            ull(rip - base), rip > base && rip < base + 0x6000000 ? "yes" : "no", ull(ep->ContextRecord->Rax), ull(ep->ContextRecord->Rcx),
+            ull(ep->ContextRecord->Rdx), st);
+    }
+    ep->ContextRecord->Dr6 = 0;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+void ArmWatch(std::uint64_t a0, std::uint64_t a1) {
+    static bool veh = false;
+    if (!veh) {
+        veh = true;
+        AddVectoredExceptionHandler(1, WatchVeh);
+    }
+    g_watch0 = a0;
+    g_watch1 = a1;
+    const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    THREADENTRY32 te{};
+    te.dwSize = sizeof te;
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+        HANDLE th = OpenThread(THREAD_ALL_ACCESS, FALSE, te.th32ThreadID);
+        if (!th) continue;
+        if (SuspendThread(th) != static_cast<DWORD>(-1)) {
+            CONTEXT c{};
+            c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            if (GetThreadContext(th, &c) && c.Dr0 != a0) {
+                c.Dr0 = a0;
+                c.Dr1 = a1;
+                c.Dr7 = (c.Dr7 & ~0xffull) | 0x1 | 0x4 | (0x1ull << 16) | (0x3ull << 18) | (0x1ull << 20) | (0x3ull << 22);  // write, 4 bytes, DR0 and DR1
+                SetThreadContext(th, &c);
+            }
+            ResumeThread(th);
+        }
+        CloseHandle(th);
+    }
+    CloseHandle(snap);
+    CONTEXT c{};
+    c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    HANDLE cur = GetCurrentThread();
+    if (GetThreadContext(cur, &c) && c.Dr0 != a0) {
+        c.Dr0 = a0;
+        c.Dr1 = a1;
+        c.Dr7 = (c.Dr7 & ~0xffull) | 0x1 | 0x4 | (0x1ull << 16) | (0x3ull << 18) | (0x1ull << 20) | (0x3ull << 22);
+        SetThreadContext(cur, &c);
+    }
+}
+#endif
+
 void SixpTick() {
+    // Stage 1b: the game keeps its own copy of the room size at *(0x553d6d0)+0xc (5): 0x15bc590 and 1e50090 refuse a member when
+    // the presentation count has reached it. Our Matching2 answer says 6, the game does not take it from there; keep the field at 6.
+    if (g_active.load()) {
+        std::uint64_t netman = 0;
+        std::int32_t cur = -1;
+        if (SafeGet(Guest(0x553d6d0), &netman) && netman && SafeGet(netman + 0xc, &cur) && cur == 5) {
+            const std::int32_t six = 6;
+            SafeWrite(netman + 0xc, &six, 4);
+            static int logged = 0;
+            if (logged++ < 4) Log("room size field +0xc of the session object %#llx: 5 -> 6", ull(netman));
+        }
+    }
     static const bool probe = [] {
         const char* e = std::getenv("BB_PARTY_SIX_PROBE");
         return e && e[0] == '1';
@@ -266,6 +354,17 @@ void SixpTick() {
     static std::once_flag sampler_once;
     std::call_once(sampler_once, [] { std::thread(QueueSampler).detach(); });
     CheckMenuQueue();
+#ifdef _WIN32
+    {
+        static std::chrono::steady_clock::time_point armed{};
+        const auto t = std::chrono::steady_clock::now();
+        std::uint64_t menu = 0;
+        if (t - armed > std::chrono::seconds(1) && SafeGet(Guest(0x5562878), &menu) && menu) {
+            armed = t;
+            ArmWatch(menu + 0x15c8, menu + 0x15b8);
+        }
+    }
+#endif
     using Clock = std::chrono::steady_clock;
     static Clock::time_point last{};
     static int logs = 0;
@@ -316,11 +415,15 @@ void SixpTick() {
         SafeGet(pres + 0xc0, &tc);
         std::snprintf(slots + n, sizeof slots - n, " | tracked %x %x %x %x n%u", th[0], th[1], th[2], th[3], tc);
     }
+    std::uint64_t netman = 0;
+    std::int32_t room_max = -1;
+    SafeGet(Guest(0x553d6d0), &netman);
+    if (netman) SafeGet(netman + 0xc, &room_max);
     ++logs;
     Log("probe: WorldChrMan %#llx ChrSet count %d entries %#llx; GameDataMan %#llx rows %#llx row count %lld occupancy %#010x; "
-        "presentation %#llx members %d state %d slots [%s]; set %s",
+        "presentation %#llx members %d state %d slots [%s]; room max %d; set %s",
         ull(wcm), chr_count, ull(chr_entries), ull(gdm), ull(row_base), static_cast<long long>(row_count), occ, ull(pres),
-        pres_count, pres_state, slots, g_active.load() ? "ON" : "off");
+        pres_count, pres_state, slots, room_max, g_active.load() ? "ON" : "off");
 }
 
 } // namespace coop::sixp
