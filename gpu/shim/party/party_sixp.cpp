@@ -95,6 +95,8 @@ using Release = std::uint64_t(BB_COOP_SYSV*)(std::uint64_t, std::uint64_t);
 Release g_release_original = nullptr;
 BB_COOP_SYSV std::uint64_t PresReleaseHook(std::uint64_t obj, std::uint64_t handle) {
     const std::uint64_t r = g_release_original(obj, handle);
+    static const bool skip = std::getenv("BB_PARTY_SIX_NOCOMPACT") != nullptr;  // A/B test aid (round 6)
+    if (skip) return r;
     std::uint32_t s4 = 0, s5 = 0;
     if (SafeGet(obj + 0x6c, &s4) && SafeGet(obj + 0x80, &s5) && s4 == 0xffffffffu && s5 != 0xffffffffu) {
         std::uint32_t slot[5] = {};
@@ -369,7 +371,7 @@ void SixpTick() {
     static Clock::time_point last{};
     static int logs = 0;
     const auto now = Clock::now();
-    if (logs >= 12 || now - last < std::chrono::seconds(10)) {
+    if (logs >= 40 || now - last < std::chrono::seconds(10)) {
         return;
     }
     last = now;
@@ -380,7 +382,7 @@ void SixpTick() {
     std::int64_t row_count = -1;
     std::uint64_t chr_entries = 0, row_base = 0, occ_ptr = 0, pres = 0;
     std::int32_t chr_count = -1, pres_count = -1, pres_state = -1;
-    std::uint32_t occ = 0xffffffffu;
+    std::uint64_t occ = ~0ull;
     if (wcm) {
         SafeGet(wcm + 0x30, &chr_count);
         SafeGet(wcm + 0x38, &chr_entries);
@@ -420,9 +422,9 @@ void SixpTick() {
     SafeGet(Guest(0x553d6d0), &netman);
     if (netman) SafeGet(netman + 0xc, &room_max);
     ++logs;
-    Log("probe: WorldChrMan %#llx ChrSet count %d entries %#llx; GameDataMan %#llx rows %#llx row count %lld occupancy %#010x; "
+    Log("probe: WorldChrMan %#llx ChrSet count %d entries %#llx; GameDataMan %#llx rows %#llx row count %lld occupancy %#018llx; "
         "presentation %#llx members %d state %d slots [%s]; room max %d; set %s",
-        ull(wcm), chr_count, ull(chr_entries), ull(gdm), ull(row_base), static_cast<long long>(row_count), occ, ull(pres),
+        ull(wcm), chr_count, ull(chr_entries), ull(gdm), ull(row_base), static_cast<long long>(row_count), ull(occ), ull(pres),
         pres_count, pres_state, slots, room_max, g_active.load() ? "ON" : "off");
 }
 

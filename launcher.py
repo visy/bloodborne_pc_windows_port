@@ -70,8 +70,8 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 PARTY_MODES = [("Off", ""), ("Host a party", "host"), ("Join a party", "join")]
 PARTY_MAX_CHOICES = ["2", "3", "4"]
 # 0.8.0 (CL-10e56b): with "Large parties" on. 6 is offered only once a 6-game run has passed (docs/party/six_players.md section 10):
-# the 6-seat patch set is proven with 5 players in it, the 6th player itself not yet. Flip PARTY_SIX_PROVEN after fp6 / fpi6 pass.
-PARTY_SIX_PROVEN = False
+# 6 is offered (experimental, only under Large parties) since fpi6 + fp6j + fp6k pass (round 7); fp6 (travel, boss) is a manual playtest item.
+PARTY_SIX_PROVEN = True
 PARTY_MAX_CHOICES_LARGE = PARTY_MAX_CHOICES + ["5"] + (["6"] if PARTY_SIX_PROVEN else [])
 PARTY_DEFAULT_PORT = 9307
 PARTY_DEFAULT_STUN = "stun.l.google.com:19302"
@@ -4313,7 +4313,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var,
                                            PARTY_MAX_CHOICES_LARGE if self.party_large.get() else PARTY_MAX_CHOICES,
                                            max_tip, width=6)
-        self.party_large_cb = self._check(sec, "Large parties: offer 5 and 6 players (experimental)", self.party_large,
+        self.party_large_cb = self._check(sec, "Large parties: offer 5 and 6 players (experimental, off by default)", self.party_large,
                                           PARTY_LARGE_TIP, command=self.on_party_large_toggle)
         auto_cb = self._check(sec, "Automatic summoning", self.party_auto,
                               "The party members are summoned into the host's world automatically (no "
