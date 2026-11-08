@@ -204,7 +204,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
@@ -490,6 +490,10 @@ MY_PARTY_TAB = [
          "Name tags above your companions use each hunter's party colour (the same as in the "
          "party panel and chat), with a strong outline. Off: the game's plate blue. Also in the "
          "game: System > My party: Display. Default: off (bbport.ini party_name_colours)."),
+        ("check", "party_look_sync", "Share look changes",
+         "When your appearance data changes (the Dream's mirror or any editor), the other players "
+         "rebuild your hunter from the new look at once, without a reload. Also in the game: "
+         "System > My party: Display. Default: off (bbport.ini party_look_sync)."),
     ]),
     (0, 1, "Chat & markers", [
         ("check", "party_chat", "Party chat",
@@ -3474,6 +3478,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_chat = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_chat", False))
         self.party_chat_receive = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_chat_receive", True))
         self.party_name_colours = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_colours", False))
+        self.party_look_sync = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_look_sync", False))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))
         # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).

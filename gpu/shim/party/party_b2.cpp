@@ -58,6 +58,7 @@
 #include "../bbport_camera.h"
 #include "../bbport_frame_state.h"
 #include "../bbport_settings.h"
+#include "look_sync_rules.h"
 #include "party_connwarn.h"
 #include "../bbport_toggles.h"
 
@@ -6640,8 +6641,70 @@ void MemberRevivedTick(const GameSnapshot& s) {
 std::atomic<bool> g_own_appearance_changed{false};
 std::vector<std::pair<double, std::array<float, 3>>> g_appearance_todo;  // (due, where), under g_member_revived_mu
 
+// H5 look sync (setting party_look_sync, env BB_PARTY_LOOK_SYNC, off by default): the own player record's
+// appearance block ("FACE", looksync::kFaceSize bytes) is hashed twice a second; when it has changed and held
+// for 1.5 s (any editor writes it, not only the Dream mirror whose close already notifies), the same path as the
+// mirror's close runs: the own record is re-broadcast and the peers rebuild this chr. The block is found by its
+// magic inside the record once per record pointer.
+bool LookSyncOn() {
+    static const char* env = std::getenv("BB_PARTY_LOOK_SYNC");
+    if (env && *env) return env[0] != '0';
+    return BbSettings::Get().party_look_sync.load(std::memory_order_relaxed);
+}
+
+void LookSyncTick(const GameSnapshot& s, bool session) {
+    static looksync::Detector det;
+    static double next = 0;
+    static u64 rec_ptr = 0;
+    static long face_off = -2;  // -2 not searched, -1 not found
+    const double now = Now();
+    if (now < next) return;
+    next = now + 0.5;
+    if (!LookSyncOn() || !session || !s.world_up || s.loading) {
+        det.Reset();
+        return;
+    }
+    const u64 own = Field<u64>(Slot(kSlotGameData), 8);
+    if (!own) {
+        det.Reset();
+        return;
+    }
+    if (own != rec_ptr) {
+        rec_ptr = own;
+        face_off = -2;
+    }
+    if (face_off == -2) {
+        std::vector<std::uint8_t> buf(0x20000);
+        std::size_t got = 0;
+        for (std::size_t off = 0; off < buf.size(); off += 0x1000) {
+            if (!SafeRead(own + off, buf.data() + off, 0x1000)) break;
+            got = off + 0x1000;
+        }
+        face_off = looksync::FindFace(buf.data(), got);
+        Log("look sync: the appearance block %s in the own record (record %#llx, %zu bytes read)",
+            face_off >= 0 ? ("found at +" + std::to_string(face_off)).c_str() : "NOT found", (unsigned long long)own, got);
+    }
+    if (face_off < 0) return;
+    std::uint8_t blk[looksync::kFaceSize];
+    if (!SafeRead(own + face_off, blk, sizeof blk)) {
+        det.Reset();
+        return;
+    }
+    const std::uint64_t h = looksync::HashBlock(blk, sizeof blk);
+    static std::uint64_t last_h = 0;
+    if (h != last_h) {
+        Log("look sync: appearance block hash %016llx", (unsigned long long)h);
+        last_h = h;
+    }
+    if (det.Update(true, h, now)) {
+        Log("look sync: the appearance data changed: record re-sent, the peers rebuild this chr");
+        g_own_appearance_changed = true;
+    }
+}
+
 void AppearanceTick(const GameSnapshot& s) {
     const bool session = (Role() == RoleHost && s.cooperators > 0) || Role() == RoleClient;
+    LookSyncTick(s, session);
     if (g_own_appearance_changed.load() && s.world_up && !s.loading) {
         g_own_appearance_changed = false;
         float p[3] = {0, 0, 0};

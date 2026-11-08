@@ -266,6 +266,10 @@ struct Values {
     /// Overhead name tags in each member's party colour (the party panel's / chat's MemberColour) with a strong outline,
     /// instead of the plate's blue (ini party_name_colours; off by default, 0.7.8). Live, local.
     std::atomic<bool> party_name_colours{false};
+    /// H5 look sync: a change of this player's appearance data (any editor, not only the Dream mirror's close)
+    /// re-sends the player record and the peers rebuild this hunter's chr (ini party_look_sync; env
+    /// BB_PARTY_LOOK_SYNC=0/1 over it; off by default, 0.8.0). Live, local.
+    std::atomic<bool> party_look_sync{false};
     /// I2: every party member on this map drawn through walls as a small marker with its distance
     /// in its colour (ini party_through_walls; off by default: busy next to the name plates). Live.
     std::atomic<bool> party_through_walls{false};
