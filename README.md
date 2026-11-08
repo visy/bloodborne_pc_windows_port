@@ -64,7 +64,7 @@ Direct connection, your single-player save is never touched. Everyone needs the 
 | Later | **Continue party game**: code and password are remembered |
 | Network | Host needs port 9307 UDP + TCP (UPnP is automatic); behind CGNAT use a VPN (Radmin, Tailscale, ZeroTier) |
 
-**What it does:** up to 4 players (5, experimental) in the host's world, fast join, shared kills and doors, shared progress
+**What it does:** up to 4 players (5 or 6, experimental) in the host's world, fast join, shared kills and doors, shared progress
 (lamps, quests, bosses), per-player pickups, boss-aware death and respawn, ping, gather, chat, item giving, invasions.
 
 Step by step, every feature with its toggle, deaths, network options, known issues:

@@ -231,3 +231,10 @@ back as 4) passes with the 6-seat set booted and in vanilla `fp5` since 0.7.8.
 
 Results: `fp6j` and `fp6k` 50/50 steps (6 players join, guest 3 resp. guest 5 Leaves and Rejoins, 5 -> 4 -> 5), `fp5x` see below.
 Still not run: `fp6` (travel, boss; six games loading a map need more RAM than this PC has free).
+
+## 14. Round 7: the 6-player proof and the launcher (2026-11-08)
+
+User decision: `fpi6` + `fp6j` + `fp6k` are the 6-player proof. `fpi6` rerun on the final set (the 0x178d2b9 site in, master 427a5f38 merged): 20/20.
+The launcher offers Max players 6 under *Large parties* (labelled experimental, off by default; `PARTY_SIX_PROVEN = True`).
+**Not tested: `fp6`** (the 6-player lamp travel, the Cleric Beast fight with six, a death and revive): six games loading one map need more
+memory than this 32 GB PC has free (three runs fell under 1 GB free), so it is a manual playtest item on real PCs.

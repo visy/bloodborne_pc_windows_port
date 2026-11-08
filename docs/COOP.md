@@ -138,7 +138,7 @@ before anyone is in the game):
 **Joining and leaving**
 
 - **No PSN, no server.** One player hosts; up to 3 guests join with the host's party code
-  (4 players; 5 with the launcher's experimental *Large parties* switch, an invader takes one of the five seats; 6 is built behind `BB_PARTY_LARGE=2` but not offered yet, see docs/party/six_players.md), all in the host's world. Every guest sees every other guest.
+  (4 players; 5 with the launcher's experimental *Large parties* switch, an invader takes one of the five seats; 6, experimental, under the same switch: Max players 6, see docs/party/six_players.md), all in the host's world. Every guest sees every other guest.
 - **Fast join.** No bell, beckoner or summon-sign waits: a guest stands beside the host within
   seconds (about 5 s in the same area; a join that stalls restarts by itself). *Continue party
   game*, or joining from another map (the Hunter's Dream, say), takes one loading screen. If the
@@ -304,7 +304,7 @@ before anyone is in the game):
   the host's level range can invade, `floor(level * 0.8 - 20)` to `floor(level * 1.1 + 10)` (host level 100: 60 to 120); the refused
   player is told the range (0.7.9). One invader at a time, or two with the host's *Max invaders* (*System -> Party access*, the
   launcher's Party tab, `party_max_invaders`, 1 or 2, default 1, live) (0.7.9); never in a boss
-  fight, a loading screen or a cutscene, never into a full game (every seat taken: 4 players, or 5 with *Large parties*); you can block the invaders
+  fight, a loading screen or a cutscene, never into a full game (every seat taken: 4 players, 5 or 6 with *Large parties*); you can block the invaders
   for the session (*System -> Party -> Block the invader*). An invasion that cannot get into the host's world (no world snapshot within 45 s) ends with a notice and the invader goes home; it is never turned into a co-op phantom (0.7.9). The invader is drawn with the game's red phantom glow, and the game's own
   rewards are paid on each player's own game: an invader that defeats the host gets Blood Echoes and +1 Insight, the host and
   guests get Blood Echoes for defeating it. The host's *Full health in PvP* rule also covers an invasion: with it on (the
