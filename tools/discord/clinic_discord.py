@@ -179,6 +179,26 @@ def _sha_file(path):
     return h.hexdigest()
 
 
+STREAM_CHUNK = 1 << 20
+
+
+async def _save_streamed(att, dest):
+    """discord.py's Attachment.save() reads the whole file into memory first: a few-hundred-MB video then
+    takes the bot past the server's RAM and the OOM killer ends it on every restart (2026-11-08). A real
+    attachment is streamed to disk in 1 MiB pieces instead; anything else (test fakes) uses its save()."""
+    if not type(att).__module__.startswith("discord"):
+        await att.save(dest)
+        return
+    import aiohttp  # discord.py's own dependency
+    timeout = aiohttp.ClientTimeout(total=None, sock_read=120)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(att.url) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as f:
+                async for chunk in resp.content.iter_chunked(STREAM_CHUNK):
+                    f.write(chunk)
+
+
 async def _download(att, dest, strict=True):
     """Save an attachment. `strict`: the bytes must equal attachment.size. Otherwise (pictures and videos,
     which the CDN may re-serve with other metadata) anything but empty or truncated (< 50%) is accepted.
@@ -186,7 +206,7 @@ async def _download(att, dest, strict=True):
     last = None
     for i in range(DOWNLOAD_TRIES):
         try:
-            await att.save(dest)
+            await _save_streamed(att, dest)
             got, want = Path(dest).stat().st_size, int(att.size or 0)
             if want and (got != want if strict else (got == 0 or got < want * TRUNCATED_BELOW)):
                 raise OSError(f"size mismatch {got} != {want}")
