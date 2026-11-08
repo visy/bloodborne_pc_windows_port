@@ -164,6 +164,16 @@ double Now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+/// Seconds a loading screen was up since this timer's previous call (`last`, its own state; 0 while
+/// not loading). A wall-clock timeout that waits for something other than a load shifts its start by
+/// this, so a 45 s load on a busy machine does not use the timeout up (timeouts audit 0.8.0).
+double LoadingDt(bool loading, double now, double& last) {
+    // A gap between calls (the caller idle) is not load time: at most 5 s per call.
+    const double dt = loading && last > 0 && now > last ? std::min(now - last, 5.0) : 0.0;
+    last = now;
+    return dt;
+}
+
 template <class T>
 T Field(u64 base, u64 off, T fallback = T{}) {
     T v{};
@@ -9005,9 +9015,12 @@ void JoinBesideTick(const GameSnapshot& s, double now) {
         pending_since = now;
     }
     prev_role = role;
+    static double load_last = 0;
+    const double load_dt = LoadingDt(s.loading, now, load_last);
     if (!on || pending_since <= 0 || role != RoleClient) {
         return;
     }
+    pending_since += load_dt;  // the join's own load does not count
     if (now - pending_since > 60.0) {
         pending_since = 0;
         return;
@@ -9214,10 +9227,16 @@ std::atomic<double> g_carry_gd_at{-1};  // A5: the arrival started; its GameData
 /// and its player record again so the host counts it.
 void CarryGameDataTick(const GameSnapshot& s, double now) {
     const double at = g_carry_gd_at.load();
+    static double load_last = 0;
+    const double load_dt = LoadingDt(s.loading, now, load_last);
     if (at < 0) {
         return;
     }
-    if (now - at > 60.0 || Role() != RoleClient) {
+    const double shifted = at + load_dt;  // the arrival load does not count
+    if (shifted != at) {
+        g_carry_gd_at = shifted;
+    }
+    if (now - shifted > 60.0 || Role() != RoleClient) {
         g_carry_gd_at = -1;
         return;
     }
@@ -9288,9 +9307,16 @@ bool BesideHostIntent(u32 host_map, TravelIntent* t) {
 }
 
 void CarryArrivalTick(const GameSnapshot& s, double now) {
-    const double at = g_carry_join_at.load();
+    double at = g_carry_join_at.load();
+    static double load_last = 0;
+    const double load_dt = LoadingDt(s.loading, now, load_last);
     if (at < 0) {
         return;
+    }
+    if (const double dt = load_dt; dt > 0) {
+        // The guest's own loads (the gather's, the summon's) are not "no arrival load": 60 s of waiting.
+        at += dt;
+        g_carry_join_at = at;
     }
     if (now - at > 60.0) {
         g_carry_join_at = -1;
@@ -9723,8 +9749,11 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             return;
         }
-        if (now - st.since > 45.0) {  // the flow leaves by itself after 60 s in states 1-3
-            FallbackToB1(fstate == 2 ? "no host destination within 45 s" : "no host snapshot within 45 s");
+        // The flow leaves by itself after 60 s in states 1-3. The snapshot comes at the host's travel, but
+        // the destination only after the host's own load (45 s on a busy machine): once the snapshot is
+        // applied (state 2) the wait is 55 s, just under the flow's 60 (timeouts audit 0.8.0).
+        if (now - st.since > (fstate == 2 ? 55.0 : 45.0)) {
+            FallbackToB1(fstate == 2 ? "no host destination within 55 s" : "no host snapshot within 45 s");
         }
         return;
     case GuestPhase::Loading: {
@@ -10067,10 +10096,12 @@ void HostTick(const GameSnapshot& s, double now) {
             arrived = st.arrived;
             st.arrived = false;
         }
-        const bool timeout = now - st.hsince > 60.0;
+        // A guest's own host-world load can take 45 s on a busy machine and its Loading phase gives up at
+        // 90 s: the host waits a little longer than that for the "arrived" (was 60 s; timeouts audit 0.8.0).
+        const bool timeout = now - st.hsince > 100.0;
         if (arrived || timeout) {
             const int n = RewindRemoteTasks("host");
-            Log("host: %s; %d member task(s) rewound", arrived ? "a guest arrived" : "60 s without arrival", n);
+            Log("host: %s; %d member task(s) rewound", arrived ? "a guest arrived" : "100 s without arrival", n);
             if (timeout) {
                 st.hphase = HostPhase::Idle;
                 g_rejoin = false;
@@ -12107,14 +12138,15 @@ bool TitleJoinHold(const GameSnapshot& s) {
             host_state = t.host_state;
         }
         // 10 s while the host still sits at its title; a host that is loading (its Continue
-        // pressed) or in its world opens its room soon: up to 40 s then.
-        if (now - t.since > (host_state == 1 ? 40.0 : 10.0)) {
+        // pressed) or in its world opens its room soon: up to 60 s then (its load alone can take
+        // 45 s on a busy machine; timeouts audit 0.8.0).
+        if (now - t.since > (host_state == 1 ? 60.0 : 10.0)) {
             Send(0, "{\"op\":\"title_cancel\"}");
-            TitleJoinFail(host_state == 1 ? "no room from the host within 40 s" : "the host is still at its title (10 s)");
+            TitleJoinFail(host_state == 1 ? "no room from the host within 60 s" : "the host is still at its title (10 s)");
             return false;
         }
-        if (now - t.since > 70.0) {
-            TitleJoinFail("no answer from the host within 70 s");
+        if (now - t.since > 90.0) {
+            TitleJoinFail("no answer from the host within 90 s");
             return false;
         }
         return true;
