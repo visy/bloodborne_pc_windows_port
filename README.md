@@ -64,8 +64,9 @@ Direct connection, your single-player save is never touched. Everyone needs the 
 | Later | **Continue party game**: code and password are remembered |
 | Network | Host needs port 9307 UDP + TCP (UPnP is automatic); behind CGNAT use a VPN (Radmin, Tailscale, ZeroTier) |
 
-**What it does:** up to 4 players (5 or 6, experimental) in the host's world, fast join, shared kills and doors, shared progress
-(lamps, quests, bosses), per-player pickups, boss-aware death and respawn, ping, gather, chat, item giving, invasions.
+**What it does:** up to 4 players (5 or 6, experimental, off by default) in the host's world, fast join, shared kills and doors, shared progress
+(lamps, quests, bosses), per-player pickups, boss-aware death and respawn, ping, gather, chat, item giving, invasions. Optional and off by default:
+shared look changes, shared map markers, a death debuff that can slow stamina recovery, large parties.
 
 Step by step, every feature with its toggle, deaths, network options, known issues:
 **[docs/COOP.md](docs/COOP.md)** · hosting, firewall, saves: [docs/PARTY.md](docs/PARTY.md).
@@ -76,11 +77,11 @@ Plan done vs. evidence-weighted parity with Elden Ring Seamless Co-op ([how it i
 
 | Area | Plan done | | ERSC parity (evidence-weighted) | |
 |---|---|--:|---|--:|
-| **Overall** | `████████████████████` | 98% | `██████████████████░░` | 90% |
-| Session & joining | `████████████████████` | 99% | `███████████████████░` | 94% |
+| **Overall** | `████████████████████` | 99% | `██████████████████░░` | 90% |
+| Session & joining | `████████████████████` | 99% | `███████████████████░` | 93% |
 | World & travel | `████████████████████` | 100% | `██████████████████░░` | 92% |
 | Death & respawn | `████████████████████` | 100% | `██████████████████░░` | 90% |
-| Progress (anyone can progress) | `███████████████████░` | 95% | `█████████████████░░░` | 86% |
+| Progress (anyone can progress) | `███████████████████░` | 97% | `█████████████████░░░` | 87% |
 | Services & UI | `████████████████████` | 100% | `██████████████████░░` | 90% |
 | Network & robustness | `███████████████████░` | 95% | `██████████████████░░` | 88% |
 | Bloodborne-specific (chalice, Insight) | `████████████████████` | 100% | `██████████████████░░` | 90% |

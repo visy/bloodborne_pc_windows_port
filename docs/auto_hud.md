@@ -50,3 +50,7 @@ Log lines: `Auto HUD: ...` (installed, the alpha read from the clip once, every 
 
 `BB_AUTO_HUD_TEST="S:hp=40,S:hp=100,S:stam=20,S:echoes=+500,S:peek"`: S seconds after the world is up, set the own HP / stamina
 to N % of the maximum, add echoes, or peek. Smoke phase `ah` (`--only auto_hud`).
+
+## Known gaps
+
+- The fade is applied through the clip's `SetDisplayInfo` alpha (`SetAlpha` in `auto_hud.cpp`). The smoke phase `ah` checks the clip's alpha read-back and the log lines (`Auto HUD: alpha ... set`), not the picture; a follow-up is to confirm with screenshots that every part of the HUD fades and returns (menus, cutscenes, a load, a death) and to check `SetAlpha` does not leave the clip below full alpha after a state the rules do not cover. Until then the setting stays off by default.
