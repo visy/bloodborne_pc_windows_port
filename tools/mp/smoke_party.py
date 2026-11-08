@@ -207,7 +207,7 @@ def phase_s1(only):
             "echoes=5000",
             "guest_obj=2411810@20%m24_01",
             "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
-            "guest_die@46%m24_01~",               # 40 s after the host's death: the last one down
+            "guest_die@60%m24_01~",               # ~40-55 s after the host's death: the last one down (hfix080: was @46, 19-22 s measured, under the rule's 20)
         ])
         # wipeboss (0.7.2 known issue 2): guest 2 (its scripted death always runs; guest 1's waits
         # forever when Gascoigne kills it first), back at the host's lamp after the respawn load:
@@ -216,6 +216,7 @@ def phase_s1(only):
         g2 = ",".join([
             "guest_die@16%m24_01~",
             "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!", "guest_press=0x0@10%m24_01!",
+            "guest_press=0x0@10%m24_01!",    # hfix080: a 4th wait; guest 2 is back at the lamp before guest 1 (up to ~5 s), 30 s was 25-30 s measured
             "guest_obj=2411810@2%m24_01",
             "guest_press=0x4000@2%m24_01!", "guest_press=0x4000@2%m24_01!",
         ])
@@ -2620,7 +2621,11 @@ KD_READ = "9420,9421,9423"
 
 
 def phase_kd(only):
-    host = ",".join(["host_warp=%s@8^2" % KD_LAMP,
+    # hfix080: under no sim the host's save can start AT the Ward lamp: host_warp then skips ("already at that lamp"),
+    # the guests never get a party lamp arrival and guest 1's "last lamp" stays the Dream's, so its plain death revived
+    # it alone in the Dream (kd none: no grab, no host death). First go to the Tomb of Oedon (never the start), so the
+    # warp to the Ward is a real party travel whatever the start (a skipped warp stalls the next step, so not the Dream).
+    host = ",".join(["host_warp=2412953@4^2", "host_warp=%s@6%%m24_01" % KD_LAMP,
                      # in the cell after guest 1's grab, every scene over: the kidnap undone (test) for the
                      # host's grab next (a flag step keeps the chain armed; a press would wait for a join)
                      "host_flag=9423:0@30%m28_00",
@@ -10958,7 +10963,8 @@ def check_wipe_late(v, L, hd):
     need(v, L, "s1 late wipe: guest 1 alive after the load", 1, r"guest: HP [1-9]\d* after the load", g1, arr + 1)
     none_of(v, L, "s1 late wipe: no revive of its own after the load", r"died alone: revived|revived at its own last lamp|"
             r"died alone \(no host travel|guest death redirect runs|own death in the host's world held", arr, arr + 15, insts=(1,))
-    need(v, L, "s1 late wipe: host re-join done", 0, r"host: re-join done", arr - 2)
+    # the host's re-join can end before guest 1 arrives (dsl: 5 s before), so from the wipe on
+    need(v, L, "s1 late wipe: host re-join done", 0, r"host: re-join done", g1)
     check_wipe_boss(v, L, w, arr)
 
 
@@ -12357,7 +12363,10 @@ def check_mk_host(v, L, guests_from):
         t = u[0]
         # in its own map: until the host's next step (the next walk or the travel to the Dream)
         nxt = L.find(0, r"travel step \d+/\d+: host_(stick|warp)", t)
-        end = nxt[0] if here and nxt else t + 60
+        # from another map the guests' load + arrival can take over 60 s (measured 60.1 s under no sim)
+        end = nxt[0] if here and nxt else t + (60 if here else 100)
+        if not here and k + 1 < len(uses):
+            end = min(end, uses[k + 1][0])
         if guests_from > t:
             end = min(end, guests_from)
         need(v, L, "mk %s: \"Travel with the party?\" asked" % name, 0,
