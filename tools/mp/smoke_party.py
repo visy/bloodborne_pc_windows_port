@@ -7404,7 +7404,7 @@ RR_UNTIL = r"1:stamina refill: .*recovery x1\.00, 2 rot stack"
 
 
 def _rr_block():
-    return ["guest_press=0x2000@1.4%m24_01!"] * 6 + ["guest_press=0@24%m24_01"]   # 6 backsteps, then the bar refills
+    return ["guest_press=0x2000@4%m24_01!", "guest_press=0@3%m24_01"]   # one backstep (10 points), then the bar refills
 
 
 def phase_rr(only):
@@ -7412,12 +7412,12 @@ def phase_rr(only):
         "god",
         "host_warp=2412953@8^1",
         "host_press=0@8%m24_01!", "host_press=0@8%m24_01!",
-        "host_rule=party_rot_extra:0@113%m24_01",                    # between the guest's blocks 2 and 3
+        "host_rule=party_rot_extra:0@92%m24_01",                    # between the guest's blocks 2 and 3
         "host_press=0@8%m24_01",
     ])
     g1 = ",".join(
         ["god", "guest_die@6%m24_01", "guest_press=0@8%m24_01!", "guest_die@6%m24_01", "guest_press=0@8%m24_01!"] +
-        _rr_block() + _rr_block() + _rr_block() + _rr_block())
+        _rr_block() * 14)
     return dict(
         name="rr", seconds=520, count=2, headless=0,
         env=["BB_PARTY_ROT=1", "BB_PARTY_ROT_EXTRA=1", "BB_PARTY_ROT_CLEANSE_BOSS=0", "BB_PARTY_ROT_CLEANSE_KILLER=0",
@@ -7435,7 +7435,7 @@ def check_rr(v, L):
     def rates(rx):
         out = []
         for t in L.all(1, rx):
-            m = re.search(r"refill: (\d+) -> (\d+) in ([\d.]+) s", t[1])
+            m = re.search(r"refill: (\d+) -> (\d+) in [\d.]+ s, recovering for ([\d.]+) s", t[1])
             if m and float(m.group(3)) > 0:
                 out.append((int(m.group(2)) - int(m.group(1))) / float(m.group(3)))
         return out

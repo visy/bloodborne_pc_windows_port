@@ -2041,6 +2041,11 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
                 const float rf = g_kind_hooked[kRotRecovery] && InForce().rot_extra ? g_kind_value[kRotRecovery].load() : 1.0f;
                 const int back = RotStaminaRecoveryTakeBack(prev_st, stn, prev_max, stmax, rf, &rcarry);
                 if (rf < 1.0f && prev_st >= 0 && stn > prev_st && prev_max == stmax) gained += std::uint64_t(stn - prev_st);
+                {   // BB_PARTY_ROT_TRACE=1 (diagnostic): every tick that moved the bar, with the value before and after the take-back
+                    static const bool trace = std::getenv("BB_PARTY_ROT_TRACE") && std::getenv("BB_PARTY_ROT_TRACE")[0] == '1';
+                    if (trace && prev_st >= 0 && stn != prev_st)
+                        Log("rot trace: stamina %d -> %d (take back %d, x%.2f)", prev_st, stn, back, double(rf));
+                }
                 if (back > 0) {
                     const int after2 = stn - back;
                     if (SafeWrite(dm + 0x134, &after2, sizeof after2)) {
@@ -2055,16 +2060,24 @@ void Tick(const GameSnapshot& s, party::PartyLink* link, bool host) {
                 {
                     static bool refilling = false;
                     static int from = 0;
-                    static std::chrono::steady_clock::time_point t0{};
+                    static std::chrono::steady_clock::time_point t0{}, t_rise{};
+                    static bool rising = false;
                     if (prev_st >= 0 && stn >= 0 && stn < prev_st && prev_max == stmax) {
                         refilling = true;
                         from = stn;
                         t0 = now;
-                    } else if (refilling && stmax > 0 && stn >= stmax) {
+                        rising = false;
+                    } else if (refilling && !rising && stn > prev_st) {
+                        rising = true;  // the game's recovery starts ~0.8 s after the spend
+                        t_rise = now;
+                    }
+                    if (refilling && stmax > 0 && stn >= stmax) {
                         refilling = false;
-                        if (stmax - from >= 20)
-                            Log("stamina refill: %d -> %d in %.2f s (recovery x%.2f, %d rot stack(s))", from, stn,
-                                std::chrono::duration<double>(now - t0).count(), double(rf), g_kind[kRotRecovery].load());
+                        if (stmax - from >= 8)
+                            Log("stamina refill: %d -> %d in %.2f s, recovering for %.2f s (recovery x%.2f, %d rot stack(s))", from, stn,
+                                std::chrono::duration<double>(now - t0).count(),
+                                rising ? std::chrono::duration<double>(now - t_rise).count() : 0.0, double(rf),
+                                g_kind[kRotRecovery].load());
                     }
                 }
                 if (rf < 1.0f && now >= next_rec_log) {
