@@ -375,6 +375,8 @@ before anyone is in the game):
   (a feature the game left unfinished, restored as in bbhost), in single player and for every party
   member; the others see your new look at once. Launcher switch "Hunter's Dream mirror", on by
   default; everyone in a party needs the same setting.
+  *Share look changes* (System > My party > Display, off by default) also sends a look changed any other way
+  (the editor opened without its frame, for example) once it has held for 1.5 s.
 
 **Rules, difficulty and HUD**
 

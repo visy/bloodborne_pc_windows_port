@@ -1984,6 +1984,12 @@ void PartyTab() {
              "Имена над спутниками цветом охотника (как в панели группы и чате) с контуром. Выкл.: синий цвет "
              "таблички игры."),
            on);
+    Toggle("party_look_sync", T("Share look changes", "Обновлять внешность"), s.party_look_sync,
+           T("When your appearance data changes (the Dream's mirror or any editor), the other players rebuild your "
+             "hunter from the new look at once. Off: only the mirror's own close sends it.",
+             "При смене данных вашей внешности остальные игроки сразу пересобирают вашего охотника. Выкл.: "
+             "отправляет только закрытие зеркала."),
+           on);
     Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
            T("A small diamond with the distance on every companion on your map, drawn over walls and "
              "trees, in the companion's colour.",
