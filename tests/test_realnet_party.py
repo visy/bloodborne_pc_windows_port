@@ -101,5 +101,17 @@ class PathTests(unittest.TestCase):
         self.assertFalse(r["invader: no member relay on its path"])
 
 
+class CrashRowTests(unittest.TestCase):
+    def test_crash_rx_catches_host_fault_and_exit(self):
+        import re
+        sys.path.insert(0, str(MP))
+        import smoke_party as sp
+        rx = re.compile(sp.CRASH_RX)
+        self.assertTrue(rx.search("Fault at RIP 00000001403d2ba8, address ffffffffffffffff"))
+        self.assertTrue(rx.search("Party: the game exited with 139 (a crash); restart 1 of 5"))
+        self.assertFalse(rx.search("Party: the game exited with 0"))
+        self.assertFalse(rx.search("invader: its cooperator look is back"))
+
+
 if __name__ == "__main__":
     unittest.main()
