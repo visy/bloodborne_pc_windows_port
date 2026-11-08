@@ -292,7 +292,7 @@ def check_direct(v, L):
             back = need(v, L, "direct Rejoin: back in (1 -> 2)", 0, r"cooperators 1 -> 2", rj)
             if back is not None:
                 v.step("direct Rejoin time (press -> host room)", back - rj < 45, "%.1f s (limit 45)" % (back - rj))
-    d = need(v, L, "direct guest death (scripted)", 1, r"travel step \d+/\d+: guest_die", lv or 0)
+    d = need(v, L, "direct guest death (scripted)", 1, r"travel step \d+/\d+: guest_die", 0)  # the scripted death comes before the Leave
     if d is not None:
         need(v, L, "direct guest bloodstain recorded", 1, r"guest: bloodstain recorded", d)
         need(v, L, "direct guest respawned at the host's lamp", 1,
