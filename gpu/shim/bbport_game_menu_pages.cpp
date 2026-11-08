@@ -1846,7 +1846,7 @@ void DefineAll() {
         "Off by default. Name tags above companions use each hunter's party colour (as in the party panel and chat)",
         "Выкл. по умолчанию. Имена над спутниками цветом охотника (как в панели группы и чате)");
     own(&Values::party_look_sync, "Share look changes", "Обновлять внешность",
-        "Off by default. When your appearance data changes (the mirror, any editor), the others see your new look without a reload",
+        "Off by default. A changed appearance (mirror, any editor) shows to the others without a reload",
         "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
