@@ -18,6 +18,7 @@ REMOVABLE_KINDS = {"log", "dump", "game"}
 STORE_INNER_KINDS = REMOVABLE_KINDS | {"save"}  # members of an archive that are copied into the clinic
 CLINIC_KINDS = STORE_INNER_KINDS | {"image", "video"}  # an archive holding none of these is left alone
 ARCHIVE_CAP_BYTES = 100 * 1024 * 1024  # a bigger archive is never downloaded or touched
+VIDEO_CAP_BYTES = 1024 * 1024 * 1024   # a bigger video is never downloaded or touched (no stills)
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 ARCHIVE_EXT = {".zip", ".7z", ".rar"}

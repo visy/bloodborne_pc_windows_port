@@ -187,6 +187,7 @@ PARTY_INI_SWITCHES = [
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
+    ("party_rot_extra", "BB_PARTY_ROT_EXTRA", False),
     # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party rules: World)
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
     # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party rules: Travel)
@@ -382,6 +383,10 @@ PARTY_RULES_TAB = [
          "Picking up your bloodstain removes the rot of the death that dropped it (not a "
          "second time if your killer already died). Needs Rot on death. Default: on "
          "(bbport.ini party_rot_cleanse_echoes; in the game: System > Party rules: Rot).", "party_rot"),
+        ("check", "party_rot_extra", "    Death may slow stamina recovery",
+         "A death may also add a stack that takes 15 % of the stamina you get back (the bar "
+         "refills slower). Host's rule. Needs Rot on death. Default: off (bbport.ini "
+         "party_rot_extra; in the game: System > Party rules: Rot).", "party_rot"),
     ]),
     (1, 3, "Travel", [
         ("check", "party_guest_lamps", "Guests use lamps",
