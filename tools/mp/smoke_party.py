@@ -3700,14 +3700,14 @@ def phase_mph(only):
 # with the name "Host"); 40 s after the map opened the host takes it down (markoff=40000) and the guest's board drops it.
 # BB_PARTY_MAP_MARKS=1 on both. Run under no sim and BB_NET_SIM=dsl (mmn).
 def phase_mm(only, name="mm", sim=None):
-    d = _mp_env(["0:BB_MAP_TEST=open,mark,markoff=40000,delay=6000"],
-                ["1:BB_PARTY_SPLIT_TEST=no", "1:BB_MAP_TEST=members,open,delay=22000"])
+    d = _mp_env(["0:BB_MAP_TEST=members,open,mark,markoff=25000,delay=6000"],
+                ["1:BB_PARTY_SPLIT_TEST=no", "1:BB_MAP_TEST=members,open,delay=8000"])
     d["env"] = d["env"] + ["BB_PARTY_MAP_MARKS=1"]
     if sim:
         d["env"] = d["env"] + ["BB_NET_SIM=" + sim]
     d.update(name=name, seconds=200,
-             watch=["--watch", r"Map: test marker asked=mmask@1", "--watch", r"Map: markers shown.*Host=mmshow@1"],
-             until=[r"\d:test: FAILED|1:Party: ping: from host: Host \(slot 0\) took its map marker down"], until_hold=8)
+             watch=["--watch", r"Map: test marker asked=mmask@1", "--watch", r"Map: markers shown.*Hunter0=mmshow@1"],
+             until=[r"\d:test: FAILED|1:Party: ping: from host: Hunter0 \(slot 0\) took its map marker down"], until_hold=8)
     return d
 
 
@@ -3715,12 +3715,12 @@ def check_mm(v, L, tag="mm"):
     j = need(v, L, tag + " join: the guest is in the host's world", 1, r"arrived in the host world")
     a = need(v, L, tag + " the host's map opens", 0, r"Map: opened \(area m24_01_00_00\)", j or 0)
     k = need(v, L, tag + " the host asks for a marker (the map's request)", 0, r"Map: test marker asked at", a or 0)
-    h = need(v, L, tag + " the host's board has it (local)", 0, r"Party: ping: local: Host \(slot 0\) map marker \d+ at", k or 0)
-    g = need(v, L, tag + " the guest receives the host's marker", 1, r"Party: ping: from host: Host \(slot 0\) map marker \d+ at", k or 0)
+    h = need(v, L, tag + " the host's board has it (local)", 0, r"Party: ping: local: Hunter0 \(slot 0\) map marker \d+ at", k or 0)
+    g = need(v, L, tag + " the guest receives the host's marker", 1, r"Party: ping: from host: Hunter0 \(slot 0\) map marker \d+ at", k or 0)
     o = need(v, L, tag + " the guest's map opens", 1, r"Map: opened \(area m24_01_00_00\)", g or 0)
-    need(v, L, tag + " the guest's map draws the host's marker", 1, r"Map: markers shown m24_01_00_00 \| Host \(", o or 0)
+    need(v, L, tag + " the guest's map draws the host's marker", 1, r"Map: markers shown m24_01_00_00 \| Hunter0 \(", o or 0)
     t = need(v, L, tag + " the host takes the marker down", 0, r"Map: test marker taken down", k or 0)
-    need(v, L, tag + " the guest's board drops it", 1, r"Party: ping: from host: Host \(slot 0\) took its map marker down", t or 0)
+    need(v, L, tag + " the guest's board drops it", 1, r"Party: ping: from host: Hunter0 \(slot 0\) took its map marker down", t or 0)
     none_of(v, L, tag + " no ping was drawn for the marker", r"Party: ping: .*ping \d+ at", insts=(0, 1))
     none_of(v, L, tag + " the map did not fail to read its data", r"Map: .* could not be read", insts=(0, 1))
     check_common(v, L, tag)
