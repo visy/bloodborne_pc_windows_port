@@ -273,7 +273,8 @@ async def _store_attachment_locked(clinic, att, tmp, stills):
     name = Path(att.filename or "file").name or "file"
     kind = logic.file_kind(name)
     size = int(att.size or 0)
-    if kind == "archive" and size > logic.ARCHIVE_CAP_BYTES:  # too big: not downloaded, not touched
+    if (kind == "archive" and size > logic.ARCHIVE_CAP_BYTES) or (kind == "video" and size > logic.VIDEO_CAP_BYTES):
+        # too big: not downloaded, not touched
         return {"id": att.id, "filename": name, "kind": kind, "size": size, "sha256": None, "skip": "big"}
     if not media.enough_disk(tmp, size):
         raise DiskLow(f"free disk below {size} bytes + reserve")
