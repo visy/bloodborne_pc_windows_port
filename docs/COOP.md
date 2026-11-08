@@ -138,7 +138,7 @@ before anyone is in the game):
 **Joining and leaving**
 
 - **No PSN, no server.** One player hosts; up to 3 guests join with the host's party code
-  (4 players; 5 with the launcher's experimental *Large parties* switch, an invader takes one of the five seats; 6, experimental, under the same switch: Max players 6, see docs/party/six_players.md), all in the host's world. Every guest sees every other guest.
+  (4 players; 5 or 6 are experimental and off by default, behind the launcher's *Large parties* switch and *Max players*: an invader takes one of the seats, see docs/party/six_players.md), all in the host's world. Every guest sees every other guest.
 - **Fast join.** No bell, beckoner or summon-sign waits: a guest stands beside the host within
   seconds (about 5 s in the same area; a join that stalls restarts by itself). *Continue party
   game*, or joining from another map (the Hunter's Dream, say), takes one loading screen. If the
@@ -385,6 +385,18 @@ before anyone is in the game):
   the setting on sees it on their map as a pin in your party colour with your name. One per player (a new one
   replaces it; a click on your own pin takes it down; it goes when you leave).
 
+**Optional switches (all off by default)**
+
+Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch the host decides is marked *host*.
+
+| Switch | Where | What it does |
+|---|---|---|
+| *Share look changes* | System > My party > Display, launcher Party tab, `party_look_sync` | A look changed in any editor reaches the others without a reload |
+| *Shared map markers* | System > My party > Display, launcher Party tab, `party_map_marks` | A right click / P / R3 on the open map sets your marker for every member (needs the in-game map) |
+| *Rot: stamina recovery* (*Death may slow stamina recovery*), *host* | System > Party rules: Rot, launcher Party Rules tab, `party_rot_extra` | The death debuff may also take -15% of the stamina you get back per stack |
+| *Large parties* (experimental) | Launcher Party tab, `party_large` | *Max players* may be set to 5 or 6; six games on one PC need about 24 GB of memory; 6-player travel and boss fights are not yet tested |
+| *Allow invaders* (*host*), *Party chat*, *Coloured name tags*, *Auto-hide HUD* | described in this guide | Earlier optional features, also off by default |
+
 **Rules, difficulty and HUD**
 
 - **Death can have a cost (optional).** With "rot" on, each death stacks a penalty, picked at random,
@@ -493,7 +505,7 @@ Two numbers: **plan done** is how much of the plan is built and seen working at 
 over the real Internet from one PC (through a VPN), until it has been checked on two real PCs over the
 Internet (three real Internet sessions so far: 0.6.0, 0.6.9 and a 5-hour 4-player session on 0.7.7 on 2026-11-01, which lifted the rows it passed to at most 96%; every other check ran on one PC); a row
 that failed in a real session and is fixed on one PC only scores lower still (80-88%), and rows where we
-chose to differ from ERSC (a wipe respawns everyone together, 4 players instead of 6, one shared drop roll)
+chose to differ from ERSC (a wipe respawns everyone together, 4 players by default instead of 6, one shared drop roll)
 are capped at 95% too.
 
 The score bars are in the [README](../README.md#seamless-co-op-progress).
@@ -516,8 +528,8 @@ Features marked (0.7.9) are on the development build and come with the next rele
 - **FSR 4 can show a white or grey picture** on some PCs. The cause is under investigation (suspected:
   FSR 4 with HDR turned on in Windows). Meanwhile switch to FSR 3.1, DLSS or no upscaler.
 - **Real sessions:** a 4-player playtest over the Internet (2026-11-01, 5 hours) found the bugs fixed in 0.7.8;
-  the newest features (invasions, item giving, chat, the map) were tested on one PC with several game copies and
-  simulated internet lag. Please send support bundles if something goes wrong (see
+  the newest features (invasions, item giving, chat, the map, look sync, map markers, 5 and 6 players) were tested on one PC with several game copies and
+  simulated internet lag; the 0.8.0 build also ran a party and invasions over the real Internet from one PC (a router with UPnP, a guest through a VPN exit and a member relay), which is not a second household. Please send support bundles if something goes wrong (see
   [Reporting a co-op bug](#reporting-a-co-op-bug)).
 - **Reported in real sessions and fixed in 0.7.6 or not yet, none confirmed live on two PCs:** after an ending nobody could join (fixed 0.7.6), a guest's save advancing two New Game+ cycles (fixed 0.7.6), joins over a VPN failing for a guest behind a strict NAT, a 4-player lobby with guests stuck loading, 4-10 s outages on Hamachi or a phone hotspot sending guests home, guests not seeing each other until a teleport, a wrong ending cutscene and late credits for a guest, the boss standing idle while the host is dead and a guest fights, talking to an NPC next to a lamp opening the lamp's travel prompt for a guest, and a clip on the edge of descending lifts. Open ones are tracked in [ERSC_PARITY.md](party/ERSC_PARITY.md).
 

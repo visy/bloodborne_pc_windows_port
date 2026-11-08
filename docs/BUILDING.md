@@ -39,6 +39,8 @@ build.bat
 - `-DBB_MARCH=native` (or a CPU name such as `skylake`) when configuring `out/gpu` tunes the code for your processor; the result may not start on older CPUs. Release builds leave `BB_MARCH` empty (generic x86-64, as Supermedo's port builds): the program itself then starts on CPUs without AVX2 (AMD FX, Intel Sandy / Ivy Bridge), where the game's own code runs through the Legacy CPU translation (`scripts/cpu_compat.py`).
 - Profile-guided optimization: configure a second build folder with `-DBB_PGO=generate -DBB_OUT_DIR=<folder>`, play about 20 minutes with that `bbport.exe` (it writes a profile into `pgo\` every 30 s), then reconfigure the same build folder with `-DBB_PGO=use` and build again. Only the port's own code is optimized (GPU command translation, caches, runtime), so it helps in CPU-limited scenes.
 
+**Known gap: agent builds.** `tools/agent/build.py` (the agents' shared build, no LTO) applies the patches in `gpu/patches/fsr-vulkan/` but not `patches/fsr_vulkan_mingw.patch`, which `build.bat` and `build.sh` apply to the FSR-Vulkan submodule for MinGW. A build made with `build.py` therefore differs from a release build in that submodule only; release builds always go through `build.bat` / `build.sh`.
+
 ## Bundled Python for a release
 
 Releases ship a trimmed CPython 3.12 x64 with Tk in `python\`, so players need no installed Python: `launch_gui.bat` runs the launcher on `python\pythonw.exe` and `run.bat` runs the scripts on `python\python.exe`, falling back to an installed Python 3.10+ when the folder is missing (a source checkout). python.org's embeddable zip has no tkinter, so the bundle is made from a full python.org install (3.12.x, 64-bit):
