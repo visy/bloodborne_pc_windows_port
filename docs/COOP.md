@@ -378,6 +378,13 @@ before anyone is in the game):
   *Share look changes* (System > My party > Display, off by default) also sends a look changed any other way
   (the editor opened without its frame, for example) once it has held for 1.5 s.
 
+**Map markers**
+
+- *Shared map markers* (System > My party > Display, launcher Party tab, off by default; needs the in-game map): with
+  the map open, a right click (P with the pointer on it, R3 on a pad) puts your marker on that spot; every member with
+  the setting on sees it on their map as a pin in your party colour with your name. One per player (a new one
+  replaces it; a click on your own pin takes it down; it goes when you leave).
+
 **Rules, difficulty and HUD**
 
 - **Death can have a cost (optional).** With "rot" on, each death stacks a penalty, picked at random,

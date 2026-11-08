@@ -1848,6 +1848,9 @@ void DefineAll() {
     own(&Values::party_look_sync, "Share look changes", "Обновлять внешность",
         "Off by default. A changed appearance (mirror, any editor) shows to the others without a reload",
         "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
+    own(&Values::party_map_marks, "Shared map markers", "Общие метки на карте",
+        "Off by default. A spot you mark on the map (right click, R3 or P) shows on every companion's map",
+        "Выкл. по умолчанию. Метка на карте (ПКМ, R3 или P) видна на картах всех спутников");
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 5); },

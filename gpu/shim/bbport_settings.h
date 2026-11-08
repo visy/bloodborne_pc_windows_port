@@ -270,6 +270,9 @@ struct Values {
     /// re-sends the player record and the peers rebuild this hunter's chr (ini party_look_sync; env
     /// BB_PARTY_LOOK_SYNC=0/1 over it; off by default, 0.8.0). Live, local.
     std::atomic<bool> party_look_sync{false};
+    /// I7/E3 map markers: a spot a player puts on the in-game map (right click / R3 / P) is seen on every party
+    /// member's map (party_ping.h; ini party_map_marks; env BB_PARTY_MAP_MARKS=0/1 over it; off by default, 0.8.0). Live.
+    std::atomic<bool> party_map_marks{false};
     /// I2: every party member on this map drawn through walls as a small marker with its distance
     /// in its colour (ini party_through_walls; off by default: busy next to the name plates). Live.
     std::atomic<bool> party_through_walls{false};
