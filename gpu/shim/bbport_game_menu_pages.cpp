@@ -1699,6 +1699,14 @@ void DefineAll() {
                "Правило хоста: подобранные отголоски снимают гниль той смерти"},
               {"The host's rule: off, picking up your Blood Echoes leaves the rot",
                "Правило хоста: выкл., подобранные отголоски гниль не снимают"});
+    host_rule(&Values::party_rot_extra, "Rot: stamina recovery", "Гниль: восстан. выносл.",
+              AddText("A death may also slow your stamina recovery by 15 % a stack. Needs Rot. Party rule",
+                      "Смерть может замедлить восстановление выносливости на 15 % за раз. Нужна гниль. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::RotExtra); },
+              {"The host's rule: a death may also slow your stamina recovery",
+               "Правило хоста: смерть может замедлить восстановление выносливости"},
+              {"The host's rule: off, rot never touches your stamina recovery",
+               "Правило хоста: выкл., гниль не трогает восстановление выносливости"});
 
 
     // ---- Party rules: Enemies (party_balance.h): per extra hunter, the host's values count. ----
@@ -1846,7 +1854,7 @@ void DefineAll() {
         "Off by default. Name tags above companions use each hunter's party colour (as in the party panel and chat)",
         "Выкл. по умолчанию. Имена над спутниками цветом охотника (как в панели группы и чате)");
     own(&Values::party_look_sync, "Share look changes", "Обновлять внешность",
-        "Off by default. When your appearance data changes (the mirror, any editor), the others see your new look without a reload",
+        "Off by default. A changed appearance (mirror, any editor) shows to the others without a reload",
         "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(

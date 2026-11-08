@@ -387,7 +387,9 @@ before anyone is in the game):
   Echoes, the rot from that death goes. Each save slot keeps its own. Your current rot and what it
   does ("Rot 2/5: max HP -20 %") show on the *Party* page and under the party HUD, and a notice says
   when some is cleansed. Off by default; the host turns it and each of the three cleanses on or off on
-  the *Party rules: Rot* page (or in the launcher's *Party Rules* tab).
+  the *Party rules: Rot* page (or in the launcher's *Party Rules* tab). A fourth host switch there,
+  *Rot: stamina recovery* (off by default), adds a sixth penalty to the random pick: −15% of the stamina
+  you get back, per stack, so the bar refills slower.
 - **Enemies scale with the party, harder than vanilla.** Bosses get more health (and a little more
   damage) per extra hunter; normal enemies get tougher too. Six values (boss / enemy health, damage,
   poise) on the *Party rules: Enemies* page.
