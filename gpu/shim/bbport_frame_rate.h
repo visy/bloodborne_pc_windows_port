@@ -45,4 +45,15 @@ struct SoundCountsOut {
 bool SoundCounts(SoundCountsOut* out);
 /// The last step's dt (s; 0 when the hooks are off).
 float LastDt();
+/// Whether the frame in progress closes a whole 1/30 s of game time (30 such frames a game second at any rate; every
+/// frame at 30 and while the hooks are off): the water wakes and the lights' blink step only on these, as at 30
+/// (bbport_hifps.cpp, droogie/bbhost 57d2b9f, f24d18f).
+bool WholeStep30();
+/// The same with a step closed only once a whole 1/30 s has passed (not three quarters of it): for what counts the time
+/// between steps, the lights' blink.
+bool WholeStep30Exact();
+/// Diagnostics (the sweep): the live / patched wind stub halves the step (on) or leaves it (off); the steps it saw summed (s)
+/// and counted (needs BB_HIFPS_SWEEP or BB_HIFPS_LOG at start).
+void SetWindPace(bool on);
+void WindStats(double* sum, unsigned long long* calls);
 } // namespace BbFrameRate

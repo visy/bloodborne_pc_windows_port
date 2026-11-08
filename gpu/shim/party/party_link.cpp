@@ -612,7 +612,8 @@ bool diagnostic_hook_name(const std::string& name) {
 }
 
 bool host_world_hook_name(const std::string& name) {
-    return name.rfind("progress:", 0) == 0 || name.rfind("story capture", 0) == 0;
+    return name.rfind("progress:", 0) == 0 || name.rfind("story capture", 0) == 0 ||
+           name.rfind("hifps:", 0) == 0;  // presentation only (bbport_hifps.cpp), not part of the party identity
 }
 
 std::string hook_option_label(const std::string& name) {

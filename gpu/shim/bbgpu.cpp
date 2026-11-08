@@ -5,6 +5,7 @@
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
 #include "bbport_frame_rate.h"
+#include "bbport_hifps.h"
 #include "bbport_latency.h"
 #include "bbport_fast_loading.h"
 #include "core/libraries/videoout/video_out.h"
@@ -423,6 +424,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     // reads took 112 FPS to 40 (GitHub issue #3).
     bbnet::set_guest_reader(&coop::SafeRead);
     coop::HooksInit(image, size);  // the image for game-state reads (the performance HUD's menu / banner check, solo too)
+    BbHiFps::Install();  // high-FPS fixes from droogie/bbhost: lights' blink, water wakes, boxes' OK (needs HooksInit)
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
     coop::autohud::Install();  // the auto-hide HUD (0.7.8; setting off by default)
     coop::mirror::Install();  // the Dream mirror's editor in character creation's frame (H5)
