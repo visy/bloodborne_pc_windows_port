@@ -7404,7 +7404,7 @@ RR_UNTIL = r"1:stamina refill: .*recovery x1\.00, 2 rot stack"
 
 
 def _rr_block():
-    return ["guest_press=0x2000@1.4%m24_01!"] * 7 + ["guest_press=0@24%m24_01"]   # 7 backsteps, then the bar refills
+    return ["guest_press=0x2000@1.4%m24_01!"] * 6 + ["guest_press=0@24%m24_01"]   # 6 backsteps, then the bar refills
 
 
 def phase_rr(only):
@@ -7412,14 +7412,14 @@ def phase_rr(only):
         "god",
         "host_warp=2412953@8^1",
         "host_press=0@8%m24_01!", "host_press=0@8%m24_01!",
-        "host_rule=party_rot_extra:0@78%m24_01",                     # between the guest's blocks 2 and 3
+        "host_rule=party_rot_extra:0@113%m24_01",                    # between the guest's blocks 2 and 3
         "host_press=0@8%m24_01",
     ])
     g1 = ",".join(
         ["god", "guest_die@6%m24_01", "guest_press=0@8%m24_01!", "guest_die@6%m24_01", "guest_press=0@8%m24_01!"] +
-        _rr_block() + _rr_block() + _rr_block())
+        _rr_block() + _rr_block() + _rr_block() + _rr_block())
     return dict(
-        name="rr", seconds=420, count=2, headless=0,
+        name="rr", seconds=520, count=2, headless=0,
         env=["BB_PARTY_ROT=1", "BB_PARTY_ROT_EXTRA=1", "BB_PARTY_ROT_CLEANSE_BOSS=0", "BB_PARTY_ROT_CLEANSE_KILLER=0",
              "BB_PARTY_ROT_CLEANSE_ECHOES=0"],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "1:BB_PARTY_ROT_KIND=5,5",
@@ -7432,15 +7432,20 @@ def check_rr(v, L):
     need(v, L, "rr join: 2 players", 0, r"cooperators 0 -> 1")
     need(v, L, "rr the host's rule reaches the guest", 1, r"the host.s rules: .*\"rot_extra\":true")
     d2 = need(v, L, "rr second death: a stamina recovery stack", 1, r"death 2; rot on, 2 stack\(s\) \(this one: stamina recovery\)")
-    on = [float(m.group(1)) for m in (re.search(r"in ([\d.]+) s \(recovery x0\.70", t[1]) for t in L.all(1, r"stamina refill: .*recovery x0\.70"))
-          if m]
-    off = [float(m.group(1)) for m in (re.search(r"in ([\d.]+) s \(recovery x1\.00, 2", t[1]) for t in L.all(1, r"stamina refill: .*recovery x1\.00, 2 rot"))
-           if m]
-    v.step("rr a refill timed with the rule on (x0.70)", bool(on), "%s s" % on)
-    v.step("rr a refill timed with the rule off (x1.00)", bool(off), "%s s" % off)
+    def rates(rx):
+        out = []
+        for t in L.all(1, rx):
+            m = re.search(r"refill: (\d+) -> (\d+) in ([\d.]+) s", t[1])
+            if m and float(m.group(3)) > 0:
+                out.append((int(m.group(2)) - int(m.group(1))) / float(m.group(3)))
+        return out
+    on = rates(r"stamina refill: .*recovery x0\.70")
+    off = rates(r"stamina refill: .*recovery x1\.00, 2 rot")
+    v.step("rr a refill timed with the rule on (x0.70)", bool(on), "%s points/s" % [round(x, 2) for x in on])
+    v.step("rr a refill timed with the rule off (x1.00)", bool(off), "%s points/s" % [round(x, 2) for x in off])
     if on and off:
-        v.step("rr the bar refills slower with the stack in force", sum(on) / len(on) > sum(off) / len(off) * 1.2,
-               "on %.2f s, off %.2f s" % (sum(on) / len(on), sum(off) / len(off)))
+        v.step("rr the bar refills slower (points/s) with the stack in force", sum(on) / len(on) < sum(off) / len(off) * 0.85,
+               "on %.2f /s, off %.2f /s" % (sum(on) / len(on), sum(off) / len(off)))
     need(v, L, "rr the take-back is logged", 1, r"rot stamina recovery x0\.70: \d+ points came back, \d+ taken")
     check_common(v, L, "rr")
 
