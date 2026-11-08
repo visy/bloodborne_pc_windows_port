@@ -4313,7 +4313,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_max_combo = self._combo(sec, "Max players:", self.party_max_var,
                                            PARTY_MAX_CHOICES_LARGE if self.party_large.get() else PARTY_MAX_CHOICES,
                                            max_tip, width=6)
-        self.party_large_cb = self._check(sec, "Large parties: offer 5 and 6 players (experimental, off by default)", self.party_large,
+        self.party_large_cb = self._check(sec, "Large parties: offer 5 and 6 players (experimental)", self.party_large,
                                           PARTY_LARGE_TIP, command=self.on_party_large_toggle)
         auto_cb = self._check(sec, "Automatic summoning", self.party_auto,
                               "The party members are summoned into the host's world automatically (no "
