@@ -9942,6 +9942,7 @@ def check_iv(v, L, name="iv"):
     inn = need(v, L, n + " host: the invader is in the world", 0, r"invade: invader slot \d+: in the world", adm or 0)
     need(v, L, n + " guest: told of the invader", 1, r"invade: notice: (An invader is coming|Invader .* has entered)", adm or 0)
     need(v, L, n + " invader: told it invades", 2, r"invade: notice: You invade ", adm or 0)
+    none_of(v, L, n + " invader: always gets the host's world snapshot (08b: no snapshot fallback)", r"no host snapshot within \d+ s|early loading screen dropped", 0, 1e9, (2,))
     need(v, L, n + " invader: no shared progress or items arrive (the host's rules are not sent)", 2,
          r"invade: this game invades the host's world", 0)
     # teams: the invader's chr is on its own team (a copy of the map enemies) on every game
