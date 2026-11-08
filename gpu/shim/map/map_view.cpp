@@ -871,6 +871,7 @@ void Draw(float dw, float dh) {
             const ImVec2 c0(p.x, p.y - r * 2.4f);
             d->AddQuadFilled(ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r), ImVec2(c0.x - r, c0.y), col);
             d->AddQuad(ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r), ImVec2(c0.x - r, c0.y), Col(10, 8, 6, 255), 2.0f * sc);
+            d->AddCircle(c0, r * 1.7f, Col(255, 255, 255, 230), 20, std::max(1.2f, 1.6f * sc));  // a ring: not a lamp
             d->AddCircleFilled(ImVec2(p.x, p.y), 3.0f * sc, Col(10, 8, 6, 255), 12);
             DrawText(d, 15 * sc, {p.x + r + 5 * sc, c0.y - 8 * sc}, col, m.name);
             char t[64];

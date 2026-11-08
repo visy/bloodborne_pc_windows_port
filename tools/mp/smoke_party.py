@@ -3717,7 +3717,7 @@ def check_mm(v, L, tag="mm"):
     k = need(v, L, tag + " the host asks for a marker (the map's request)", 0, r"Map: test marker asked at", a or 0)
     h = need(v, L, tag + " the host's board has it (local)", 0, r"Party: ping: local: Hunter0 \(slot 0\) map marker \d+ at", k or 0)
     g = need(v, L, tag + " the guest receives the host's marker", 1, r"Party: ping: from host: Hunter0 \(slot 0\) map marker \d+ at", k or 0)
-    o = need(v, L, tag + " the guest's map opens", 1, r"Map: opened \(area m24_01_00_00\)", g or 0)
+    o = need(v, L, tag + " the guest's map opens", 1, r"Map: opened \(area m24_01_00_00\)", j or 0)
     need(v, L, tag + " the guest's map draws the host's marker", 1, r"Map: markers shown m24_01_00_00 \| Hunter0 \(", o or 0)
     t = need(v, L, tag + " the host takes the marker down", 0, r"Map: test marker taken down", k or 0)
     need(v, L, tag + " the guest's board drops it", 1, r"Party: ping: from host: Hunter0 \(slot 0\) took its map marker down", t or 0)
