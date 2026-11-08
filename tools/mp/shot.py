@@ -329,7 +329,10 @@ def main():
         for p in logs:
             if not p.exists():
                 continue
-            size = p.stat().st_size
+            try:
+                size = p.stat().st_size
+            except OSError:  # hfix080: the instance's run.log was replaced between exists() and stat() (a restart)
+                continue
             if size < pos.get(p, 0):
                 pos[p] = 0
             with open(p, "rb") as f:

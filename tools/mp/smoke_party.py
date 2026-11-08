@@ -2623,9 +2623,9 @@ KD_READ = "9420,9421,9423"
 def phase_kd(only):
     # hfix080: under no sim the host's save can start AT the Ward lamp: host_warp then skips ("already at that lamp"),
     # the guests never get a party lamp arrival and guest 1's "last lamp" stays the Dream's, so its plain death revived
-    # it alone in the Dream (kd none: no grab, no host death). First leave for the Dream, so the warp to the Ward is a
-    # real party travel whatever the start (a no-op skip when the host already is in the Dream).
-    host = ",".join(["host_warp=2102961@4^2", "host_warp=%s@4" % KD_LAMP,
+    # it alone in the Dream (kd none: no grab, no host death). First go to the Tomb of Oedon (never the start), so the
+    # warp to the Ward is a real party travel whatever the start (a skipped warp stalls the next step, so not the Dream).
+    host = ",".join(["host_warp=2412953@4^2", "host_warp=%s@6%%m24_01" % KD_LAMP,
                      # in the cell after guest 1's grab, every scene over: the kidnap undone (test) for the
                      # host's grab next (a flag step keeps the chain armed; a press would wait for a join)
                      "host_flag=9423:0@30%m28_00",
