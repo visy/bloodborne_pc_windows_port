@@ -386,6 +386,7 @@ struct Values {
     std::atomic<bool> party_rot_cleanse_boss{true};   ///< a boss's death: all of it, for the whole party
     std::atomic<bool> party_rot_cleanse_killer{true}; ///< your killer's death: that death's stack
     std::atomic<bool> party_rot_cleanse_echoes{true}; ///< your bloodstain picked up: its death's stack
+    std::atomic<bool> party_rot_extra{false};         ///< 0.8.0 (C4): the rot may also take stamina recovery (host's rule)
     /// Each player's own (applies while it is a guest, or to its own world):
     std::atomic<bool> party_guest_revive_inplace{true}; ///< a guest gets up at the lamp without a load
     std::atomic<bool> party_guest_respawn{true};  ///< a dead guest comes back at the host's lamp

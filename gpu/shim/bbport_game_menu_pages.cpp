@@ -1699,6 +1699,14 @@ void DefineAll() {
                "Правило хоста: подобранные отголоски снимают гниль той смерти"},
               {"The host's rule: off, picking up your Blood Echoes leaves the rot",
                "Правило хоста: выкл., подобранные отголоски гниль не снимают"});
+    host_rule(&Values::party_rot_extra, "Rot: stamina recovery", "Гниль: восстан. выносл.",
+              AddText("A death may also slow your stamina recovery by 15 % a stack. Needs Rot. Party rule",
+                      "Смерть может замедлить восстановление выносливости на 15 % за раз. Нужна гниль. Правило группы"),
+              [] { return ps::HostRuleOn(ps::HostRule::RotExtra); },
+              {"The host's rule: a death may also slow your stamina recovery",
+               "Правило хоста: смерть может замедлить восстановление выносливости"},
+              {"The host's rule: off, rot never touches your stamina recovery",
+               "Правило хоста: выкл., гниль не трогает восстановление выносливости"});
 
 
     // ---- Party rules: Enemies (party_balance.h): per extra hunter, the host's values count. ----

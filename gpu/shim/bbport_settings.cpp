@@ -69,6 +69,7 @@ const PartySwitch PartySwitches[] = {
     {"party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", &Values::party_rot_cleanse_boss, false},
     {"party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", &Values::party_rot_cleanse_killer, false},
     {"party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", &Values::party_rot_cleanse_echoes, false},
+    {"party_rot_extra", "BB_PARTY_ROT_EXTRA", &Values::party_rot_extra, false},
 };
 const int PartySwitchCount = int(std::size(PartySwitches));
 
