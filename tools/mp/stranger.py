@@ -27,6 +27,7 @@ Exit code 0 = PASS, 1 = FAIL. Lines "ok   name: detail" / "FAIL name: detail" an
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import random
 import socket
@@ -398,8 +399,12 @@ def main(argv=None) -> int:
     ap.add_argument("--log", default="")
     ap.add_argument("--only", default="", help="comma list of: garbage,oversize,truncated,badhello,wrongkey,replay,flood,udp")
     o = ap.parse_args(argv)
-    if not o.host.startswith("127."):
-        ap.error("loopback only: --host must be 127.x.x.x")
+    try:
+        loop = ipaddress.ip_address(o.host).is_loopback and ipaddress.ip_address(o.host).version == 4
+    except ValueError:  # a host name (even "127.example.com") is never accepted
+        loop = False
+    if not loop:
+        ap.error("loopback only: --host must be a literal 127.x.x.x address")
     if o.log:
         LOG_FH = open(o.log, "w", encoding="utf-8")
     seed = o.seed if o.seed is not None else int(time.time())
