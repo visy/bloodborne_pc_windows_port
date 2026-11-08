@@ -375,12 +375,12 @@ before anyone is in the game):
   (a feature the game left unfinished, restored as in bbhost), in single player and for every party
   member; the others see your new look at once. Launcher switch "Hunter's Dream mirror", on by
   default; everyone in a party needs the same setting.
-  *Share look changes* (System > My party > Display, off by default) also sends a look changed any other way
+  *Share look changes* (System > My party > Names, off by default) also sends a look changed any other way
   (the editor opened without its frame, for example) once it has held for 1.5 s.
 
 **Map markers**
 
-- *Shared map markers* (System > My party > Display, launcher Party tab, off by default; needs the in-game map): with
+- *Shared map markers* (System > My party > Chat & markers, launcher Party tab, off by default; needs the in-game map): with
   the map open, a right click (P with the pointer on it, R3 on a pad) puts your marker on that spot; every member with
   the setting on sees it on their map as a pin in your party colour with your name. One per player (a new one
   replaces it; a click on your own pin takes it down; it goes when you leave).
@@ -391,8 +391,8 @@ Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch t
 
 | Switch | Where | What it does |
 |---|---|---|
-| *Share look changes* | System > My party > Display, launcher Party tab, `party_look_sync` | A look changed in any editor reaches the others without a reload |
-| *Shared map markers* | System > My party > Display, launcher Party tab, `party_map_marks` | A right click / P / R3 on the open map sets your marker for every member (needs the in-game map) |
+| *Share look changes* | System > My party > Names, launcher Party tab, `party_look_sync` | A look changed in any editor reaches the others without a reload |
+| *Shared map markers* | System > My party > Chat & markers, launcher Party tab, `party_map_marks` | A right click / P / R3 on the open map sets your marker for every member (needs the in-game map) |
 | *Rot: stamina recovery* (*Death may slow stamina recovery*), *host* | System > Party rules: Rot, launcher Party Rules tab, `party_rot_extra` | The death debuff may also take -15% of the stamina you get back per stack |
 | *Large parties* (experimental) | Launcher Party tab, `party_large` | *Max players* may be set to 5 or 6; six games on one PC need about 24 GB of memory; 6-player travel and boss fights are not yet tested |
 | *Allow invaders* (*host*), *Party chat*, *Coloured name tags*, *Auto-hide HUD* | described in this guide | Earlier optional features, also off by default |

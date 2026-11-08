@@ -539,7 +539,7 @@ static void RulesPages() {
                   u"Shared item notices"};
     const V giving = {u"Give items to the party", u"Give weapons and armor"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings",
-                       u"Show party through walls", u"Coloured name tags", u"Share look changes", u"Shared map markers", u"Above companions"};
+                       u"Show party through walls", u"Coloured name tags", u"Above companions"};
     for (const ps::Role role : {ps::Role::Host, ps::Role::Guest}) {
         ps::ResetForTest(true);
         ps::SetRole(role);
@@ -578,7 +578,7 @@ static void RulesPages() {
         assert(names(u"My party: Giving") == giving);
         assert(names(u"Party rules: Rewards") == rewards);
         assert(names(u"My party: Display") == display);
-        assert(names(u"My party: Chat & markers") == (V{u"Party chat", u"Show others' chat", u"Bloodstain marker"}));
+        assert(names(u"My party: Chat & markers") == (V{u"Party chat", u"Show others' chat", u"Bloodstain marker", u"Shared map markers"}));
         assert(names(u"My party: Look & notices") == look);
         assert(names(u"My party: Splitscreen") == (V{u"Splitscreen mode", u"Party messages"}));
         assert(kinds(u"My party: Splitscreen").back() == P::Kind::List);

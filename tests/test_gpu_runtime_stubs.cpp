@@ -26,6 +26,10 @@ void runtime_memory_set_gpu_hooks(void (*)(uintptr_t, uint64_t),
 void runtime_thread_attach_host(const char*) {}
 int runtime_win_thread_name(uint32_t, char*, size_t) { return -1; }  // party_fourp A7 logs
 void runtime_pad_director_mask(uint32_t) {}  // party_director.cpp holds the title Cross back
+void runtime_guest_mutex_release(void**) {}  // bbport_stability.cpp gives a held guest mutex back (no guest here)
+int runtime_memory_is_mapped(uintptr_t, uint64_t) { return 0; }  // no guest memory in renderer tests
+double runtime_pad_confirm_press_age(void) { return 1e9; }
+int runtime_guest_mutex_acquire(void**, uint64_t, uint64_t* waited_us) { if (waited_us) *waited_us = 0; return 0; }  // no guest mutexes here  // bbport_hifps: no pad, no recent press
 void runtime_logdrain_flush(unsigned) {}  // bbgpu.cpp flushes the log drain before it ends the process
 void runtime_memory_gpu_protect(uintptr_t, uint64_t, int, int) { std::abort(); }
 void runtime_restart() { std::abort(); }

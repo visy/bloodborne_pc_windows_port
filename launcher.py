@@ -468,6 +468,10 @@ MY_PARTY_TAB = [
          "code on your screen: in the party list, the games found and the party notices. Only how you see them; the "
          "Nightwatch VPN lobby does the same for everyone. Your own setting. Default: on, unlike most new party "
          "features, for safety (bbport.ini party_hide_bad_names; in the game: System > My party: Names)."),
+        ("check", "party_look_sync", "Share look changes",
+         "When your appearance data changes (the Dream's mirror or any editor), the other players "
+         "rebuild your hunter from the new look at once, without a reload. Also in the game: "
+         "System > My party: Names. Default: off (bbport.ini party_look_sync)."),
     ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
@@ -495,14 +499,6 @@ MY_PARTY_TAB = [
          "Name tags above your companions use each hunter's party colour (the same as in the "
          "party panel and chat), with a strong outline. Off: the game's plate blue. Also in the "
          "game: System > My party: Display. Default: off (bbport.ini party_name_colours)."),
-        ("check", "party_look_sync", "Share look changes",
-         "When your appearance data changes (the Dream's mirror or any editor), the other players "
-         "rebuild your hunter from the new look at once, without a reload. Also in the game: "
-         "System > My party: Display. Default: off (bbport.ini party_look_sync)."),
-        ("check", "party_map_marks", "Shared map markers",
-         "A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and theirs "
-         "on yours. Needs the in-game map. Also in the game: System > My party: Display. Default: off "
-         "(bbport.ini party_map_marks)."),
     ]),
     (0, 1, "Chat & markers", [
         ("check", "party_chat", "Party chat",
@@ -520,6 +516,10 @@ MY_PARTY_TAB = [
          "echoes in the host's world, drawn over walls. The bloodstain is there either "
          "way. Also in the game: System > My party: Chat & markers. Default: off (bbport.ini "
          "party_stain_marker)."),
+        ("check", "party_map_marks", "Shared map markers",
+         "A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and theirs "
+         "on yours. Needs the in-game map. Also in the game: System > My party: Chat & markers. Default: off "
+         "(bbport.ini party_map_marks)."),
     ]),
     (0, 2, "Look & notices", [
         ("check", "party_glow_off", "Companions without glow",

@@ -1260,9 +1260,11 @@ void DefineAll() {
            [] { return member_rows + 2 <= int(RowsPerPage); });
     // 0.7.6: connection warnings (party/party_connwarn.h): the firewall / router / address hints (a player's
     // own switch; Look & notices has no free slot).
-    AddRow(Flag(&Values::party_conn_warnings), "Connection warnings", "Предупреждения о связи",
-           "A notice with the fix when the firewall, router or address keeps the party from working",
-           "Уведомление с решением, когда брандмауэр, роутер или адрес мешают группе", toggle, Kind::Toggle);
+    // 0.8.0: with six hunters the member rows fill the page: the switch steps aside (launcher and overlay keep it).
+    AddRow(Flag(&Values::party_conn_warnings), AddText("Connection warnings", "Предупреждения о связи"),
+           AddText("A notice with the fix when the firewall, router or address keeps the party from working",
+                   "Уведомление с решением, когда брандмауэр, роутер или адрес мешают группе"),
+           toggle, Kind::Toggle, [] { return member_rows + 1 <= int(RowsPerPage); });
 
     // ---- Party network (F2, 0.7.1, party_netroute.h): the link's path, the member relay, IPv6 ----
     AddPage("Party network", "Сеть группы", "The link's path, the public DHT, relaying for members, IPv6 (bbport)",
@@ -1853,12 +1855,6 @@ void DefineAll() {
     own(&Values::party_name_colours, "Coloured name tags", "Цветные имена",
         "Off by default. Name tags above companions use each hunter's party colour (as in the party panel and chat)",
         "Выкл. по умолчанию. Имена над спутниками цветом охотника (как в панели группы и чате)");
-    own(&Values::party_look_sync, "Share look changes", "Обновлять внешность",
-        "Off by default. A changed appearance (mirror, any editor) shows to the others without a reload",
-        "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
-    own(&Values::party_map_marks, "Shared map markers", "Общие метки на карте",
-        "Off by default. A spot you mark on the map (right click, R3 or P) shows on every companion's map",
-        "Выкл. по умолчанию. Метка на карте (ПКМ, R3 или P) видна на картах всех спутников");
     // A list opens a pop-up over the rows below it: last on the page.
     AddRow(Setting(
                Kind::List, [](const Values& v) { return std::clamp(v.party_overhead.load(), 0, 5); },
@@ -1873,8 +1869,8 @@ void DefineAll() {
 
 
     // ---- My party: Chat & markers (0.7.8): the party text chat and the bloodstain marker (the Display page holds 6 rows at most) ----
-    AddPage("My party: Chat & markers", "Моя группа: чат, метки", "Yours: party text chat, the bloodstain marker (bbport)",
-            "Ваше: текстовый чат группы, метка пятна крови (bbport)");
+    AddPage("My party: Chat & markers", "Моя группа: чат, метки", "Yours: party text chat, the bloodstain marker, shared map markers (bbport)",
+            "Ваше: текстовый чат группы, метка пятна крови, общие метки на карте (bbport)");
     // Party text chat (party_chat.h), off by default.
     own(&Values::party_chat, "Party chat", "Чат группы",
         "Off by default. T (keyboard) or touchpad + L1 (pad: short lines) writes to the party, in your colour",
@@ -1886,6 +1882,9 @@ void DefineAll() {
     own(&Values::party_stain_marker, "Bloodstain marker", "Метка пятна крови",
         "A marker with Blood Echoes and distance on your lost echoes' bloodstain, also behind walls",
         "Метка с отголосками и расстоянием на пятне крови с вашими отголосками, и за стенами");
+    own(&Values::party_map_marks, "Shared map markers", "Общие метки на карте",
+        "Off by default. A spot you mark on the map (right click, R3 or P) shows on every companion's map",
+        "Выкл. по умолчанию. Метка на карте (ПКМ, R3 или P) видна на картах всех спутников");
 
     // ---- My party: Look & notices: how companions are drawn on this screen, the join / leave notices ----
     AddPage("My party: Look & notices", "Моя группа: вид, оповещ.", "Yours: how the other hunters look on your screen, join/leave notices, NPC dialogue (bbport)",
@@ -1948,11 +1947,14 @@ void DefineAll() {
     // ---- My party: Names (0.7.8, namefilter): hateful member names are shown masked on this PC. ON by default (safety),
     // unlike other new party features; the real name stays the member's identity (party/name_filter.h). ----
     AddPage("My party: Names", "Моя группа: имена",
-            "Yours: hateful player names are shown as Hunter and a short code (bbport)",
-            "Ваше: оскорбительные имена игроков показываются как Hunter и короткий код (bbport)");
+            "Yours: hateful names shown as Hunter + a code, sharing your look changes (bbport)",
+            "Ваше: грубые имена как Hunter + код, обновление вашей внешности у других (bbport)");
     own(&Values::party_hide_bad_names, "Hide offensive names", "Скрывать грубые имена",
         "On: a hateful name shows as Hunter + a code on your screen (display only; others still see it)",
         "Вкл.: оскорбительное имя показано как Hunter и код (только на вашем экране)");
+    own(&Values::party_look_sync, "Share look changes", "Обновлять внешность",
+        "Off by default. A changed appearance (mirror, any editor) shows to the others without a reload",
+        "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.
