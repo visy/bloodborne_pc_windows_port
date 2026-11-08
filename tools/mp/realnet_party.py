@@ -507,14 +507,16 @@ def main():
         sys.exit("never the user's game folder as the test game")
     root = Path(a.root).resolve()
     a.root = str(root)
-    if a.print_exe or not (root / "inst1" / "out" / "bbport.exe").exists():
+    if a.check_only:
+        a.print_exe = a.dry_run = False  # verdict from saved logs only: no setup, no launch, no network
+    elif a.print_exe or not (root / "inst1" / "out" / "bbport.exe").exists():
         subprocess.run([sys.executable, str(HERE / "instances.py"), "setup", "--count", "3", "--root", str(root),
                         "--build", str(a.build), "--game", str(a.game)], check=True)
-    for i, who in enumerate(("host", "guest 1 (VPN split tunnel: include this one)", "guest 2")):
+    for i, who in enumerate(() if a.check_only else ("host", "guest 1 (VPN split tunnel: include this one)", "guest 2")):
         print("[realnet] inst%d %-46s %s" % (i, who, root / f"inst{i}" / "out" / "bbport.exe"), flush=True)
     if a.print_exe:
         return
-    port0 = instances.base_port(root)
+    port0 = 0 if a.check_only else instances.base_port(root)  # base_port runs netsh
     out = Path(a.out)
     v = MaskedVerdict()
     for name in [p.strip() for p in a.phase.split(",") if p.strip()]:
