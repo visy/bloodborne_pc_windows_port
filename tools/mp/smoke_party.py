@@ -10235,7 +10235,7 @@ IVC3_UNTIL = [r"2:invader: arrived [\d.]+ m from the host; put at lamp"]
 
 def phase_ivc3(only, name="ivc3", sim=None):
     ienv = ["2:BB_PARTY_INVADE=1", "0:BB_PARTY_INVADERS=1", "0:BB_PARTY_INVADE_APART_ANY=1",
-            "0:BB_PARTY_DIRECTOR_TEST=god,place=0x18010000:-193.5:-28.6:68.6:0", "2:BB_PARTY_INVADE_TEST=rejoin@80?home"]
+            "0:BB_PARTY_DIRECTOR_TEST=god,place=0x18010000:-193.5:-28.6:68.6:0", "2:BB_PARTY_INVADE_TEST=rejoin@140?home"]
     if sim:
         ienv += ["%d:BB_NET_SIM=%s" % (i, sim) for i in range(3)]
     return dict(name=name, seconds=720, count=3, headless=1, env=[], ienv=ienv, crash=[], until=IVC3_UNTIL, until_hold=30)
