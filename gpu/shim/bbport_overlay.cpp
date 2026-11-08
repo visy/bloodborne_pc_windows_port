@@ -1990,6 +1990,12 @@ void PartyTab() {
              "При смене данных вашей внешности остальные игроки сразу пересобирают вашего охотника. Выкл.: "
              "отправляет только закрытие зеркала."),
            on);
+    Toggle("party_map_marks", T("Shared map markers", "Общие метки на карте"), s.party_map_marks,
+           T("A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and "
+             "theirs on yours. Needs the in-game map.",
+             "Метка на карте (ПКМ, R3 или P) видна на картах всех спутников, и их метки на вашей. Нужна "
+             "карта игры."),
+           on);
     Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
            T("A small diamond with the distance on every companion on your map, drawn over walls and "
              "trees, in the companion's colour.",
@@ -2069,6 +2075,7 @@ void PartyTab() {
         rule_note("  Rot: a boss kill cleanses it", "  Гниль: смерть босса снимает", ps::HostRule::RotCleanseBoss);
         rule_note("  Rot: kill your killer", "  Гниль: убить своего убийцу", ps::HostRule::RotCleanseKiller);
         rule_note("  Rot: retrieve your Blood Echoes", "  Гниль: вернуть отголоски крови", ps::HostRule::RotCleanseEchoes);
+        rule_note("  Rot: may slow stamina recovery", "  Гниль: восстан. выносл.", ps::HostRule::RotExtra);
     } else {
     Toggle("party_rot", T("Rot on death", "Гниль при смерти"), s.party_rot,
            T("Each death stacks one penalty (max HP or stamina -10 %, stamina costs +10 %, rally -15 % or "
@@ -2096,6 +2103,10 @@ void PartyTab() {
              "already died). Default: on.",
              "Подобранное пятно крови снимает гниль смерти, оставившей его (не дважды, если убийца уже погиб). "
              "По умолчанию: вкл."),
+           on);
+    Toggle("party_rot_extra", T("  Rot: may slow stamina recovery", "  Гниль: восстан. выносл."), s.party_rot_extra,
+           T("A death may also add a stack that takes 15 % of your stamina recovery. Default: off.",
+             "Смерть может добавить штраф: -15 % к восстановлению выносливости. По умолчанию: выкл."),
            on);
     }
     // I1 friendly fire / PvP (party_pvp.h): the host's switch; a guest sees the host's rule.
@@ -2949,7 +2960,7 @@ void PartyHud() {
             static const ImVec4 kEffect[party::status::kRotKinds] = {
                 ImVec4(0.86f, 0.30f, 0.27f, 0.95f), ImVec4(0.46f, 0.76f, 0.40f, 0.95f),
                 ImVec4(0.88f, 0.74f, 0.34f, 0.95f), ImVec4(0.96f, 0.56f, 0.24f, 0.95f),
-                ImVec4(0.58f, 0.72f, 0.92f, 0.95f)};
+                ImVec4(0.58f, 0.72f, 0.92f, 0.95f), ImVec4(0.62f, 0.86f, 0.62f, 0.95f)};
             ImGui::Dummy(ImVec2(0.0f, 3.0f * s));
             ImGui::PushFont(game_font, 14.0f);
             const float x0 = ImGui::GetCursorPosX();

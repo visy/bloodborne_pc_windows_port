@@ -322,6 +322,16 @@ def test_big_archive_is_not_downloaded(tmp_path):
     assert rec["skip"] == "big" and rec["sha256"] is None
 
 
+def test_big_video_is_not_downloaded(tmp_path):
+    c, ch, _ = mk(tmp_path)
+    att = F.Att(6, "huge.mp4", b"x", size=cd.logic.VIDEO_CAP_BYTES + 1)
+    m = F.Msg(1, ch, F.User(7), "big", [att])
+    res = run(cd.archive_message(c, m, tmpdir=tmp_path / "tmp"))
+    assert att.saves == 0 and not res["removable"]
+    rec = c.message(1)["attachments"][0]
+    assert rec["skip"] == "big" and rec["sha256"] is None
+
+
 def test_archive_with_nothing_relevant_is_left_be(tmp_path):
     c, ch, _ = mk(tmp_path)
     m = F.Msg(1, ch, F.User(7), "mod pack", [F.Att(5, "mods.zip", _zip_of(["mod/a.dll", "readme.md"]))])

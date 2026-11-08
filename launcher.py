@@ -187,6 +187,7 @@ PARTY_INI_SWITCHES = [
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
+    ("party_rot_extra", "BB_PARTY_ROT_EXTRA", False),
     # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party rules: World)
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
     # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party rules: Travel)
@@ -204,7 +205,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
@@ -382,6 +383,10 @@ PARTY_RULES_TAB = [
          "Picking up your bloodstain removes the rot of the death that dropped it (not a "
          "second time if your killer already died). Needs Rot on death. Default: on "
          "(bbport.ini party_rot_cleanse_echoes; in the game: System > Party rules: Rot).", "party_rot"),
+        ("check", "party_rot_extra", "    Death may slow stamina recovery",
+         "A death may also add a stack that takes 15 % of the stamina you get back (the bar "
+         "refills slower). Host's rule. Needs Rot on death. Default: off (bbport.ini "
+         "party_rot_extra; in the game: System > Party rules: Rot).", "party_rot"),
     ]),
     (1, 3, "Travel", [
         ("check", "party_guest_lamps", "Guests use lamps",
@@ -494,6 +499,10 @@ MY_PARTY_TAB = [
          "When your appearance data changes (the Dream's mirror or any editor), the other players "
          "rebuild your hunter from the new look at once, without a reload. Also in the game: "
          "System > My party: Display. Default: off (bbport.ini party_look_sync)."),
+        ("check", "party_map_marks", "Shared map markers",
+         "A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and theirs "
+         "on yours. Needs the in-game map. Also in the game: System > My party: Display. Default: off "
+         "(bbport.ini party_map_marks)."),
     ]),
     (0, 1, "Chat & markers", [
         ("check", "party_chat", "Party chat",
@@ -3479,6 +3488,7 @@ class BloodborneLauncher(tk.Tk):
         self.party_chat_receive = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_chat_receive", True))
         self.party_name_colours = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_colours", False))
         self.party_look_sync = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_look_sync", False))
+        self.party_map_marks = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_map_marks", False))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))
         # I1 friendly fire / PvP: a host rule (bbport.ini party_friendly_fire, off by default).

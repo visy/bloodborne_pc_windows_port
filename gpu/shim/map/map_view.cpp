@@ -8,6 +8,7 @@
 #include "../bbport_settings.h"
 #include "../party/lamp_travel.h"
 #include "../party/party_hud.h"
+#include "../party/party_ping.h"
 #include "../party/party_status.h"
 
 #include "imgui.h"
@@ -171,6 +172,9 @@ bool g_mouse_in = false;
 bool g_dragging = false, g_dragged = false;
 bbmap::Pt g_drag_last{};
 bool g_click = false;     // a left click (no drag) to act on in Draw
+// Shared map markers (I7/E3): 0 none, 1 at g_mark_pt (a right click, P with the pointer in), 2 at the view's centre (R3, P).
+int g_cmd_mark = 0;
+bbmap::Pt g_mark_pt{};
 std::set<SDL_Keycode> g_keys;
 float g_pad[4] = {};      // left stick x, y, right stick x, y
 int g_cmd_area = 0, g_cmd_layer = 0;
@@ -186,7 +190,8 @@ BbMapControllerChord g_chord;
 
 // Test driver (BB_MAP_TEST): "open", "travel=ID|any", "delay=MS" (first action after the world is up).
 struct TestScript {
-    bool parsed = false, on = false, open = false, travel = false, members = false;
+    bool parsed = false, on = false, open = false, travel = false, members = false, mark = false, mark_done = false, off_done = false;
+    int mark_off_ms = 0;
     std::uint32_t to = 0;
     std::int64_t delay_ms = 4000, world_since = 0, opened_at = 0, travelled_at = 0, closed_at = 0;
     bool travel_done = false;
@@ -205,6 +210,8 @@ void ParseTest() {
         if (end == std::string::npos) end = s.size();
         const std::string part = s.substr(at, end - at);
         if (part == "open") g_test.open = true;
+        else if (part == "mark") g_test.mark = g_test.open = true;  // 3 s after the map opened: a marker 6 m east of the player
+        else if (part.rfind("markoff=", 0) == 0) g_test.mark_off_ms = std::atoi(part.c_str() + 8);  // then takes it down again
         else if (part == "members") g_test.members = true;  // not before a party member's position is known
         else if (part.rfind("delay=", 0) == 0) g_test.delay_ms = std::atoll(part.c_str() + 6);
         else if (part.rfind("close=", 0) == 0) g_test.close_after_ms = std::atoi(part.c_str() + 6);
@@ -256,6 +263,7 @@ void Close() {
     g_open = false;
     g_keys.clear();
     g_dragging = g_dragged = g_click = false;
+    g_cmd_mark = 0;
     g_dialog = -1;
     g_pad[0] = g_pad[1] = g_pad[2] = g_pad[3] = 0;
     g_cmd_area = g_cmd_layer = g_cmd_nav_x = g_cmd_nav_y = 0;
@@ -338,6 +346,10 @@ bool HandleEvent(const SDL_Event& e, float density) {
         case SDLK_F: g_cmd_recenter = true; break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER: g_cmd_confirm = true; break;
+        case SDLK_P:
+            if (g_mouse_in) g_mark_pt = g_mouse;
+            g_cmd_mark = g_mouse_in ? 1 : 2;
+            break;
         case SDLK_EQUALS:
         case SDLK_PLUS:
         case SDLK_KP_PLUS: g_cmd_wheel += 1; break;
@@ -354,6 +366,7 @@ bool HandleEvent(const SDL_Event& e, float density) {
         case SDL_GAMEPAD_BUTTON_EAST: g_cmd_back = true; break;           // Circle / B
         case SDL_GAMEPAD_BUTTON_SOUTH: g_cmd_confirm = true; break;       // Cross / A
         case SDL_GAMEPAD_BUTTON_NORTH: g_cmd_recenter = true; break;      // Triangle / Y
+        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: g_cmd_mark = 2; break;       // R3: a marker at the view's centre
         case SDL_GAMEPAD_BUTTON_WEST: g_cmd_area += 1; break;             // Square / X
         case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: g_cmd_layer -= 1; break;
         case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: g_cmd_layer += 1; break;
@@ -407,7 +420,12 @@ bool HandleEvent(const SDL_Event& e, float density) {
                 g_dragging = false;
             }
         } else if (e.button.button == SDL_BUTTON_RIGHT && e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-            g_cmd_back = true;
+            if (coop::ping::MarksEnabled()) {
+                g_mark_pt = g_mouse;  // a right click puts (or takes down) a shared marker; Esc / M close
+                g_cmd_mark = 1;
+            } else {
+                g_cmd_back = true;
+            }
         }
         return true;
     }
@@ -804,6 +822,70 @@ void Draw(float dw, float dh) {
         d->AddCircle(ImVec2(p.x, p.y), 8.5f * sc, Col(255, 255, 255, same_floor ? 220 : 90), 20, std::max(1.0f, 1.2f * sc));
         DrawText(d, 15 * sc, {p.x + 11 * sc, p.y - 8 * sc}, same_floor ? col : ((col & 0x00ffffffu) | (150u << 24)), c.name);
     }
+    // Shared markers (I7/E3): this player's command first, then every member's marker on this map.
+    if (coop::ping::MarksEnabled()) {
+        party::ping::MapMark marks[party::ping::kMaxSlots];
+        int nm = party::ping::ReadMarks(marks);
+        if (g_test.mark && !g_test.mark_done && g_test.opened_at && now - g_test.opened_at >= 3000 && player_here) {
+            g_test.mark_done = true;
+            coop::ping::RequestMapMark(area.packed, pose.pos[0] + 6.0f, pose.pos[2], false);
+            std::printf("Map: test marker asked at (%.1f %.1f)\n", double(pose.pos[0] + 6.0f), double(pose.pos[2]));
+        }
+        if (g_test.mark_off_ms && g_test.mark_done && !g_test.off_done && now - g_test.opened_at >= g_test.mark_off_ms) {
+            g_test.off_done = true;
+            coop::ping::RequestMapMark(0, 0, 0, true);
+            std::printf("Map: test marker taken down\n");
+        }
+        if (g_cmd_mark) {
+            const Pt at = g_cmd_mark == 1 ? g_mark_pt : Pt{g_view.x0 + g_view.w * 0.5f, g_view.y0 + g_view.h * 0.5f};
+            g_cmd_mark = 0;
+            if (InRect(at, g_view.x0, g_view.y0, g_view.w, g_view.h)) {
+                bool own_hit = false;
+                for (int i = 0; i < nm; ++i) {
+                    if (!marks[i].mine || (marks[i].map & 0xffff0000u) != (area.packed & 0xffff0000u)) continue;
+                    const Pt mp = bbmap::ToScreen(g_view, marks[i].x, marks[i].z);
+                    if (std::fabs(mp.x - at.x) < 18 * sc && std::fabs(mp.y - at.y) < 18 * sc) own_hit = true;
+                }
+                float wx = 0, wz = 0;
+                bbmap::ToWorld(g_view, at, &wx, &wz);
+                if (own_hit) {
+                    coop::ping::RequestMapMark(0, 0, 0, true);
+                    std::printf("Map: marker taken down\n");
+                } else if (wx >= area.bounds[0] && wx <= area.bounds[2] && wz >= area.bounds[1] && wz <= area.bounds[3]) {
+                    coop::ping::RequestMapMark(area.packed, wx, wz, false);
+                    std::printf("Map: marker asked at (%.1f %.1f)\n", double(wx), double(wz));
+                }
+            }
+        }
+        std::string shown_marks;
+        for (int i = 0; i < nm; ++i) {
+            const party::ping::MapMark& m = marks[i];
+            if ((m.map & 0xffff0000u) != (area.packed & 0xffff0000u)) continue;
+            const Pt p = bbmap::ToScreen(g_view, m.x, m.z);
+            if (p.x < g_view.x0 - 40 || p.x > g_view.x0 + g_view.w + 40 || p.y < g_view.y0 - 40 || p.y > g_view.y0 + g_view.h + 40) continue;
+            const ImU32 col = SlotColor(m.slot);
+            const float r = (m.mine ? 9.0f : 8.0f) * sc;
+            // A pin: a dark-edged diamond on a pole, in the member's colour; the name beside it.
+            d->AddLine(ImVec2(p.x, p.y), ImVec2(p.x, p.y - r * 2.4f), Col(10, 8, 6, 255), 3.5f * sc);
+            d->AddLine(ImVec2(p.x, p.y), ImVec2(p.x, p.y - r * 2.4f), col, 1.6f * sc);
+            const ImVec2 c0(p.x, p.y - r * 2.4f);
+            d->AddQuadFilled(ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r), ImVec2(c0.x - r, c0.y), col);
+            d->AddQuad(ImVec2(c0.x, c0.y - r), ImVec2(c0.x + r, c0.y), ImVec2(c0.x, c0.y + r), ImVec2(c0.x - r, c0.y), Col(10, 8, 6, 255), 2.0f * sc);
+            d->AddCircle(c0, r * 1.7f, Col(255, 255, 255, 230), 20, std::max(1.2f, 1.6f * sc));  // a ring: not a lamp
+            d->AddCircleFilled(ImVec2(p.x, p.y), 3.0f * sc, Col(10, 8, 6, 255), 12);
+            DrawText(d, 15 * sc, {p.x + r + 5 * sc, c0.y - 8 * sc}, col, m.name);
+            char t[64];
+            std::snprintf(t, sizeof t, " | %s (%.1f %.1f)", m.name, double(m.x), double(m.z));
+            shown_marks += t;
+        }
+        static std::int64_t marks_logged = 0;
+        if (!shown_marks.empty() && now - marks_logged >= 1000) {
+            marks_logged = now;
+            std::printf("Map: markers shown %s%s\n", area.id.c_str(), shown_marks.c_str());
+        }
+    } else {
+        g_cmd_mark = 0;
+    }
     {
         // One line a second while the map is open: what is drawn (the smoke checks the dots move).
         static std::int64_t logged = 0;
@@ -851,12 +933,18 @@ void Draw(float dw, float dh) {
     // Footer: the keys, and the last answer.
     {
         const float fs = 16 * sc;
+        std::string keys_str;
         const char* keys =
             g_use_pad_glyphs
                 ? BbSettings::MenuText("Left stick: move   Right stick: zoom   D-pad: lamp   Cross: travel   L1/R1: floor   Square: area   Triangle: me   Circle: close",
                                        "Лев. стик: сдвиг   Прав. стик: масштаб   Крест: фонарь   Cross: переход   L1/R1: этаж   Square: область   Triangle: я   Circle: закрыть")
                 : BbSettings::MenuText("Drag/WASD: move   Wheel: zoom   Click a lamp: travel   Q/E: floor   Tab: area   Space: me   M/Esc: close",
                                        "Тяните/WASD: сдвиг   Колесо: масштаб   Клик по фонарю: переход   Q/E: этаж   Tab: область   Пробел: я   M/Esc: закрыть");
+        if (coop::ping::MarksEnabled()) {
+            keys_str = std::string(keys) + (g_use_pad_glyphs ? BbSettings::MenuText("   R3: marker", "   R3: метка")
+                                                             : BbSettings::MenuText("   Right click: marker", "   ПКМ: метка"));
+            keys = keys_str.c_str();
+        }
         const Pt ks = TextSize(fs, keys);
         DrawText(d, fs, {(dw - ks.x) * 0.5f, dh - foot + 10 * sc}, Col(190, 170, 130), keys);
         if (!g_message.empty() && now < g_message_until) {

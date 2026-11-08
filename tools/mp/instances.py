@@ -626,7 +626,7 @@ def run(a):
         if not a.party:
             sys.exit("--real-net needs --party")
         here = stun_public_ipv4()
-        print("[real-net] this PC's public IPv4 outside any VPN (STUN from the harness): %s" % (here or "no STUN answer"),
+        print("[real-net] this PC's public IPv4 outside any VPN (STUN from the harness): %s" % (mask_ipv4(here) or "no STUN answer"),
               flush=True)
         for i in range(a.count):
             print("[real-net] instance %d exe: %s" % (i, Path(a.root).resolve() / f"inst{i}" / "out" / "bbport.exe"),
@@ -861,7 +861,7 @@ def run(a):
                 for key, line in real_net_lines(log_text(i, starts[i])):
                     if net_seen.get((i, key)) != line:
                         net_seen[(i, key)] = line
-                        print("[real-net +%.0f s] inst%d %s: %s" % (time.time() - ts0, i, key, line), flush=True)
+                        print("[real-net +%.0f s] inst%d %s: %s" % (time.time() - ts0, i, key, mask_ipv4(line)), flush=True)
         if until:
             for i in range(a.count):
                 if len(crash_rx.findall(log_text(i, starts[i]))) > planned_kills[i]:
@@ -993,7 +993,7 @@ def run(a):
     stop_leftovers(a.root)
     print("[harness] teardown %.1f s" % (time.time() - t_down), flush=True)
     if real_net:
-        report = real_net_report([log_text(i, starts[i]) for i in range(a.count)])
+        report = mask_ipv4(real_net_report([log_text(i, starts[i]) for i in range(a.count)]))
         print(report, flush=True)
         try:
             (Path(a.root) / "realnet_report.txt").write_text(report + "\n", encoding="utf-8")
@@ -1055,6 +1055,11 @@ def real_net_lines(text):
         for m in re.finditer(rx, text):
             out[key] = " ".join(g for g in m.groups() if g)
     return list(out.items())
+
+
+def mask_ipv4(text):
+    """Every dotted IPv4 in text as a.b.x.x: the harness's console output and reports never hold a real address."""
+    return re.sub(r"\b(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}\b", r"\1.\2.x.x", text) if text else text
 
 
 def _ip(v):
