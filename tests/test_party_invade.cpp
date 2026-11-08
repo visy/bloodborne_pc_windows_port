@@ -240,6 +240,7 @@ static void Script() {
     CHECK(st[2].kind == TestStep::Kind::Rejoin && st[2].cond == 2 && st[2].delay == 20);
     CHECK(st[3].kind == TestStep::Kind::Die && st[3].cond == 1 && st[3].nth == 0);
     CHECK(st[4].cond == 1 && st[4].nth == 2);
+    CHECK(ParseTest("die@5?other,rejoin@3?other#2", &st, &bad) && st.size() == 2 && st[0].cond == 3 && st[0].delay == 5 && st[1].nth == 2);
     CHECK(ParseTest(nullptr, &st) && st.empty());
     CHECK(ParseTest("", &st) && st.empty());
     for (const char* b : {"allow=2", "view=maybe", "rejoin=1", "die#2", "die?out", "jump@1", "die@x", "die@-1", "die?in#0", "die?in#21"})

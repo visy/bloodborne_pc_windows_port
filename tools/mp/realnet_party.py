@@ -185,7 +185,9 @@ def phase_invade2(a, port0):
     return dict(
         name="invade2", seconds=900, count=3, headless=1 if a.guest2_headless else 0, env=[], crash=[],
         ienv=["0:BB_PARTY_INVADERS=1", "0:BB_PARTY_MAX_INVADERS=2", "1:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE=1",
-              "1:BB_PARTY_INVADE_TEST=rejoin@30?home,die@25?in",
+              # over the Internet B gets in 20-30 s after A: A dies 5 s after B is in the world too (?other), so the
+              # overlap (A falls while B stands in the host's world) is what is tested, not left to the link speeds
+              "1:BB_PARTY_INVADE_TEST=rejoin@30?home,die@5?other",
               "2:BB_PARTY_INVADE_TEST=rejoin@45?home,die@35?in"] + G1_ENV,
         args=["--reserve", "3"],
         until=[r"0:invasion of slot 2 ends: invader_died"], until_hold=40,
@@ -419,12 +421,17 @@ def check_invade2(v, L):
     a_in = need(v, L, n + " host: invader A (inst1, VPN) is in the world", 0, r"invade: invader slot 1: in the world")
     public_path_checks(v, L, n)
     b_in = need(v, L, n + " host: invader B (inst2, LAN) is in the world too", 0, r"invade: invader slot 2: in the world", a_in or 0)
-    a_end = need(v, L, n + " host: invader A falls", 0, r"invasion of slot 1 ends: invader_died", b_in or 0)
+    # either order is fine: A's death waits for B (?other), but a run where A fell first is still judged on its own rows
+    a_end = need(v, L, n + " host: invader A falls", 0, r"invasion of slot 1 ends: invader_died", a_in or 0)
     if b_in is not None and a_end is not None:
-        v.step(n + " host: both were in together (B came before A fell)", b_in < a_end, "in +%.1f s, A ends +%.1f s" % (b_in, a_end))
-    need(v, L, n + " host: invader B falls on its own", 0, r"invasion of slot 2 ends: invader_died", a_end or 0)
+        v.step(n + " overlap: A fell while B was in the world: " + ("yes" if b_in < a_end else "no"), b_in < a_end,
+               "B in +%.1f s, A ends +%.1f s" % (b_in, a_end))
+    need(v, L, n + " host: invader B falls on its own", 0, r"invasion of slot 2 ends: invader_died", b_in or 0)
     teams = len(L.all(0, r"invader: team \d+ is a copy of team 23", 0, 1e9))
-    v.step(n + " host: both invaders share ONE invader team", teams == 1, "%d copy(ies)" % teams)
+    # one copy when B came in while A was in; two when A had already gone (a fresh copy per stay): only the overlap run shares
+    overlap = b_in is not None and a_end is not None and b_in < a_end
+    v.step(n + " host: both invaders share ONE invader team" + ("" if overlap else " (no overlap: 1 or 2 copies)"),
+           teams == 1 if overlap else teams in (1, 2), "%d copy(ies)" % teams)
     for i, who in ((1, "invader A"), (2, "invader B")):
         need(v, L, n + " %s: told it invades" % who, i, r"invade: notice: You invade ", a_in or 0)
         need(v, L, n + " %s: falls and goes home" % who, i, r"invade: the invader fell: going home", a_in or 0)
