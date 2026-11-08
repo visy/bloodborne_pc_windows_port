@@ -213,3 +213,21 @@ Results (this PC, 6 games, host drawn):
 
 Open: the Rejoin of a MIDDLE member at 6 seats (a Leave of slot 3 compacts slots 4 and 5 down: the game's own block plus our slot 5 -> 4 move; the new member then stays at `FirstSyncCompleteWait`; the last member's Rejoin, `fp6k`, is fine, so it is the compaction or the member ids that follow it), and the travel on a PC
 with enough memory. `PARTY_SIX_PROVEN` stays False.
+
+## 13. Round 6 (2026-11-08): the middle-member Rejoin
+
+Root cause: **one missed row bound.** A leaving member's row is freed in `0x178b5e0` (`cmp eax, 3; ja` at 0x178d2b9, then row id -1, occupancy byte
+0, slot flags 0): that compare was not in the stage 2 list, because a `mov` sits between the `cmp` and the `ja` and the first scan only took a `cmp`
+followed directly by a jump. So at 6 seats a leaver on row 4 freed nothing (the `fp6k` last-guest Rejoin worked because the guest kept its own number),
+and a leaver on a middle row stayed marked used: after the leave all five occupancy bytes still read 0x1f, the host found no free row for the
+rejoiner (it sent player number 7 instead of 4: `packet 7 from the host gives 7`) and the new member's first sync never completed
+(`FirstSyncCompleteWait`, data request 0xA repeated). Evidence: the probe now prints the 8 occupancy bytes (`occupancy 0x0000001f1f1f1f1f` before and after
+the Leave). A/B: with our slot 5 -> 4 compaction hook off (`BB_PARTY_SIX_NOCOMPACT=1`, a test aid) the Rejoin failed the same way, so the hook was not
+the cause. Fix: site 0x178d2b9 `83 f8 03` -> `83 f8 04` in `Stage2Sites` (78 compare sites now; a rescan with up to three instructions between `cmp`
+and the jump finds no other).
+
+5 players have no such gap: rows 0-3 are all inside the vanilla guard, and `fp5x` (guest 3 of 4 Leaves and Rejoins, the player number comes
+back as 4) passes with the 6-seat set booted and in vanilla `fp5` since 0.7.8.
+
+Results: `fp6j` and `fp6k` 50/50 steps (6 players join, guest 3 resp. guest 5 Leaves and Rejoins, 5 -> 4 -> 5), `fp5x` see below.
+Still not run: `fp6` (travel, boss; six games loading a map need more RAM than this PC has free).
