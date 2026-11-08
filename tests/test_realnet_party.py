@@ -113,5 +113,29 @@ class CrashRowTests(unittest.TestCase):
         self.assertFalse(rx.search("invader: its cooperator look is back"))
 
 
+class CheckOnlyTests(unittest.TestCase):
+    def test_check_only_sets_up_and_launches_nothing(self):
+        from unittest import mock
+        boom = mock.Mock(side_effect=AssertionError("must not be called"))
+        seen = []
+
+        def fake_check(v, L):
+            seen.append(L)
+            v.step("fake", True, "ok")
+
+        with tempfile.TemporaryDirectory() as d:
+            root, out = Path(d) / "root", Path(d) / "out"
+            (out / "relay").mkdir(parents=True)
+            argv = ["realnet_party.py", "--check-only", "--phase", "relay", "--root", str(root),
+                    "--out", str(out), "--game", str(Path(d) / "game")]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(rn.subprocess, "run", boom),                     mock.patch.object(rn, "phase_direct", boom), mock.patch.object(rn.sp, "run_phase", boom),                     mock.patch.object(rn.instances, "stun_public_ipv4", boom), mock.patch.object(rn, "upnp", boom),                     mock.patch.object(rn, "VpnGuard", boom), mock.patch.object(rn, "mask_files", boom),                     mock.patch.dict(rn.CHECKS, {"relay": fake_check}),                     mock.patch.object(sys, "stdout", sys.stdout), mock.patch.object(sys, "stderr", sys.stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    rn.main()
+            self.assertEqual(cm.exception.code, 0)
+            self.assertEqual(len(seen), 1)
+            self.assertFalse(root.exists())  # no instance root was created
+            self.assertIn("PASS  fake", (out / "verdict.txt").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
