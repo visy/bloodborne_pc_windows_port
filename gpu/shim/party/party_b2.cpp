@@ -6669,11 +6669,15 @@ void LookSyncTick(const GameSnapshot& s, bool session) {
         det.Reset();
         return;
     }
+    static double retry_at = 0;
     if (own != rec_ptr) {
         rec_ptr = own;
         face_off = -2;
+    } else if (face_off == -1 && now >= retry_at) {
+        face_off = -3;  // the record may not have been filled yet: search again (logged only on a find)
     }
-    if (face_off == -2) {
+    if (face_off <= -2) {
+        const bool quiet = face_off == -3;
         std::vector<std::uint8_t> buf(0x20000);
         std::size_t got = 0;
         for (std::size_t off = 0; off < buf.size(); off += 0x1000) {
@@ -6681,7 +6685,8 @@ void LookSyncTick(const GameSnapshot& s, bool session) {
             got = off + 0x1000;
         }
         face_off = looksync::FindFace(buf.data(), got);
-        Log("look sync: the appearance block %s in the own record (record %#llx, %zu bytes read)",
+        retry_at = now + 5.0;
+        if (!quiet || face_off >= 0) Log("look sync: the appearance block %s in the own record (record %#llx, %zu bytes read)",
             face_off >= 0 ? ("found at +" + std::to_string(face_off)).c_str() : "NOT found", (unsigned long long)own, got);
     }
     if (face_off < 0) return;
