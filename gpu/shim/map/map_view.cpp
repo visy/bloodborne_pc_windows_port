@@ -829,14 +829,12 @@ void Draw(float dw, float dh) {
         if (g_test.mark && !g_test.mark_done && g_test.opened_at && now - g_test.opened_at >= 3000 && player_here) {
             g_test.mark_done = true;
             coop::ping::RequestMapMark(area.packed, pose.pos[0] + 6.0f, pose.pos[2], false);
-            std::printf("Map: test marker asked at (%.1f %.1f)
-", double(pose.pos[0] + 6.0f), double(pose.pos[2]));
+            std::printf("Map: test marker asked at (%.1f %.1f)\n", double(pose.pos[0] + 6.0f), double(pose.pos[2]));
         }
         if (g_test.mark_off_ms && g_test.mark_done && !g_test.off_done && now - g_test.opened_at >= g_test.mark_off_ms) {
             g_test.off_done = true;
             coop::ping::RequestMapMark(0, 0, 0, true);
-            std::printf("Map: test marker taken down
-");
+            std::printf("Map: test marker taken down\n");
         }
         if (g_cmd_mark) {
             const Pt at = g_cmd_mark == 1 ? g_mark_pt : Pt{g_view.x0 + g_view.w * 0.5f, g_view.y0 + g_view.h * 0.5f};
@@ -852,12 +850,10 @@ void Draw(float dw, float dh) {
                 bbmap::ToWorld(g_view, at, &wx, &wz);
                 if (own_hit) {
                     coop::ping::RequestMapMark(0, 0, 0, true);
-                    std::printf("Map: marker taken down
-");
+                    std::printf("Map: marker taken down\n");
                 } else if (wx >= area.bounds[0] && wx <= area.bounds[2] && wz >= area.bounds[1] && wz <= area.bounds[3]) {
                     coop::ping::RequestMapMark(area.packed, wx, wz, false);
-                    std::printf("Map: marker asked at (%.1f %.1f)
-", double(wx), double(wz));
+                    std::printf("Map: marker asked at (%.1f %.1f)\n", double(wx), double(wz));
                 }
             }
         }
@@ -884,8 +880,7 @@ void Draw(float dw, float dh) {
         static std::int64_t marks_logged = 0;
         if (!shown_marks.empty() && now - marks_logged >= 1000) {
             marks_logged = now;
-            std::printf("Map: markers shown %s%s
-", area.id.c_str(), shown_marks.c_str());
+            std::printf("Map: markers shown %s%s\n", area.id.c_str(), shown_marks.c_str());
         }
     } else {
         g_cmd_mark = 0;
