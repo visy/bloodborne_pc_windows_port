@@ -14067,6 +14067,10 @@ def check_amy(v, L):
 
 
 def check_pr(v, L):
+    r = need(v, L, "pr the host refuses while in its prologue", 0, r"refused.*prologue")
+    g = need(v, L, "pr the guest is told to wait for the host's prologue", 1, r"Waiting: the host is in its prologue|prologue", 0)
+    rd = need(v, L, "pr the host becomes start-ready after the flag", 0, r"step ready", r or 0)
+    need(v, L, "pr the guest arrives in the host's world after that", 1, r"join: arrived [0-9.]+ m from the host", rd or 0)
     check_common(v, L, "pr")
 
 
