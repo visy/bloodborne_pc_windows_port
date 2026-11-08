@@ -23,9 +23,16 @@ time target (`[pacer + 0x18]`) is set to 1/target (1/240 for uncapped); the meas
 which is also what the game steps by (`[rbp - 0x38]`). The pacer's four mode setups carry 1/240 s as their frame time (the
 patch since 83a168ee; older patch bytes are lowered at start), so 90 / 120 / uncapped can exceed 60 FPS. The presenter
 (`videoout/driver.cpp`) takes its frame limit from `BbFrameRate::LivePresenterLimit()` every iteration. The effects' step in
-whole 1/60 s (bbhost fix) runs from the live step; the plants' wind force is fixed at the authored 1/30 as in the hooks mode (`GrassWind()`, installed in live mode too since
-0.7.8: the Deltatime patch had made the force V * the live step, so every long frame bent the plants by its own length and they shook;
-the wave time keeps the live step).
+whole 1/60 s (bbhost fix) runs from the live step. The plants' wind (`GrassWind()`, `WindPace()`, installed in live mode too) follows bbhost 5cee912:
+the game steps it a fixed 1/60 s each 1/30 s frame and bends it by 1/60, so above 30 the wind takes half the frame's step (a stub at 0x2313d8d after the
+Deltatime patch's `min(frame time, 1/30)`) and the force the game's own 1/60 constant (0x4929e70); the Deltatime patch had made the force V * the live step,
+so every long frame bent the plants by its own length and they shook (0.7.8), and the step itself ran at twice 30's pace (`BB_WIND_PACE=0`: as before 0.8.0).
+The lights' blink (0xea25f0), the water wakes' wave step (0x2277780 / 0x2277e50) and the boxes' OK (0x1beaad0) are in `gpu/shim/bbport_hifps.cpp`
+(bbhost f24d18f, 57d2b9f, 3b7668b, 602a958): the blink's cycles and the water's wave steps follow `BbFrameRate::WholeStep30()`, 30 whole 1/30 s steps a
+game second at any rate (every frame at 30; `Live::whole30`, `Step30Gate`), `BB_BLINK_HOLD=0` / `BB_WATER_GATE=0` / `BB_MENU_OK_AT_ONCE=0` switch them off.
+`BB_HIFPS_SWEEP="30/on,120/on,120/off,..."` (diagnostics, with `BB_HIFPS_SWEEP_AFTER`, `BB_HIFPS_SWEEP_SECONDS`) measures them in one session: blink cycles,
+wave steps and the wind's summed step per game second at each rate with the fixes on and off; `BB_HIFPS_LOG=1` prints their counters every 5 s.
+The static FPS++ path (`BB_FRAME_HOOKS=0`) gets only the wind stub; the blink, water and box fixes need the live clock or the frame hooks.
 
 ## Switches
 

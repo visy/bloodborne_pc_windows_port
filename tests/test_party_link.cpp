@@ -1049,6 +1049,7 @@ static void test_identity() {
         CHECK(host_world_hook_name("progress: SetEventFlag"));
         CHECK(host_world_hook_name("progress: CompleteEvent (BroadcastSetFlag)"));
         CHECK(host_world_hook_name("story capture (EMEVD bank 2002 handler)"));
+        CHECK(host_world_hook_name("hifps: water wakes update"));  // presentation fixes are not part of the party identity
         CHECK(!host_world_hook_name("travel funnel (SessionWorldTransition)"));
         CHECK(!host_world_hook_name("lamp multiplayer gate +0x49 (party lamps)"));
         // 0.7.8: a known option is named in plain words with both values.

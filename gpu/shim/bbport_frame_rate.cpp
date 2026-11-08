@@ -278,6 +278,12 @@ bool HookSoundThread() {
     return true;
 }
 
+/// BB_WIND_PACE=0 (diagnostics): the plants' wind as before droogie/bbhost 5cee912 - the frame's step, bent by 1/30.
+bool WindPaceOn() {
+    static const bool on = !EnvOff("BB_WIND_PACE");
+    return on;
+}
+
 /// The pacer at the main loop's step (rdi: it): this frame's values.
 void BB_FR_SYSV FrameStep(u64 pacer) {
     SoundFrame();
@@ -311,8 +317,10 @@ void BB_FR_SYSV FrameStep(u64 pacer) {
     static const bool steady_off = EnvOff("BB_STEADY_TIME");
     if (steady_off) {
         live->steady = dt;
+        live->wind = WindStep(dt);
         live->cloth_ratio = 1.0f;
     }
+    if (!WindPaceOn()) live->wind = live->steady;
     if (sweep_step_pending.load(std::memory_order_relaxed)) SweepOnStep();
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
@@ -351,7 +359,8 @@ constexpr Redirect Redirects[] = {
     // The plants' wind (0x2313870: the grass wind's step, its 60 Hz mode path; bbhost b2818b4's
     // frame-time site 0x2713d8d): a simulation step, 1/60 in the game's 60 Hz mode, 1/30 otherwise.
     // The steady time, not the frame's (Supermedo e0bf9f48): frames of uneven length made them jolt.
-    {0x2313d8d, 0x4929e70, LIVE(steady)},
+    // The slot-age step (0x2313d8d): half the steady time, 30's pace (WindStep; droogie/bbhost 5cee912).
+    {0x2313d8d, 0x4929e70, LIVE(wind)},
     {0x2313dad, 0x4929e70, LIVE(steady)},
     {0x2313db7, 0x4929e74, LIVE(steady)},
     {0x2315d71, 0x4929e74, LIVE(steady)},
@@ -695,16 +704,21 @@ bool HookSfxStep(bool hooks) {
     return sfx_source != SfxSource::Measured || WriteCode(code - 2, jne, 2);
 }
 
-/// The grass wind (0x2313870 builds the block the grass vertex shader reads) uses its one step twice:
-/// as the wave time (t += step) and as the force (V * step) the shader bends the grass by. With the
-/// frame's time in both the grass bent by each frame's length (22% of the authored bend at 134 FPS,
-/// shaking from frame to frame); with the patches' fixed 1/60, by half. bbhost b2818b4: the force
-/// takes the authored 1/30 (0x4926364) and only the time the step ([rbp - 0x170]).
+/// The plants' wind (0x2313870 builds the block the grass and tree vertex shaders read) moves every swaying
+/// model's wind by one step a frame: its gusts' and point winds' times (the w lane the shaders sway by), the
+/// point winds' lives (how long a push takes to fade) and their ramps; and it weighs the force it uploads
+/// (V * step, the shaders' bend) by the same step. With the GX device's +0x100 at 1, as the game sets it, that
+/// step is a fixed 1/60 (0x4929e70): at 30 the wind runs 1/60 s each 1/30 s of game time and bends by 1/60.
+/// Above 30 the frame-time site (0x2313d8d) gave it the frame's whole step, twice 30's pace (slot ages 0.999
+/// game s a game second at 60 and 120 against 0.500 at 30; a push the player's walk makes faded in 0.75 s
+/// against 1.5 s) and the force site (0x23149ea) weighed it by the authored 1/30, twice the game's 1/60.
+/// droogie/bbhost b2818b4 (the force off the frame's time) and 5cee912 (30's pace and bend): the step site
+/// reads half the step (WindPace), the force site the game's own 1/60.
 bool GrassWind() {
-    // vmovdqa xmm14, [rbp - 0x170] -> vmovss xmm14, [0x4926364]
+    // vmovdqa xmm14, [rbp - 0x170] -> vmovss xmm14, [0x4929e70] (the game's 1/60)
     constexpr u64 force_site = 0x23149ea;
+    const u64 force_constant = WindPaceOn() ? 0x4929e70 : 0x4926364; // the game's 1/60, or the authored 1/30
     constexpr u8 force_was[] = {0xc5, 0x79, 0x6f, 0xb5, 0x90, 0xfe, 0xff, 0xff};
-    constexpr u8 force_now[] = {0xc5, 0x7a, 0x10, 0x35, 0x72, 0x19, 0x61, 0x02};
     // lea rax, [0x5540df9]; cmp byte [rax], 0; vxorps xmm10, xmm10, xmm10; mov r8d, [rbp - 0x1b8];
     // jne +5; vmovdqa xmm10, xmm14 -> mov r8d, [rbp - 0x1b8]; vxorps xmm10, xmm10, xmm10;
     // cmp byte [0x5540df9], 0; jne +8; vmovdqa xmm10, [rbp - 0x170] (rax is written before it is read)
@@ -716,26 +730,70 @@ bool GrassWind() {
     static_assert(sizeof(time_was) == sizeof(time_now));
     u8* force = reinterpret_cast<u8*>(image_base + force_site);
     u8* time = reinterpret_cast<u8*>(image_base + time_site);
-    float authored = 0;
-    std::memcpy(&authored, reinterpret_cast<const void*>(image_base + 0x4926364), 4);
+    float sixtieth = 0;
+    std::memcpy(&sixtieth, reinterpret_cast<const void*>(image_base + force_constant), 4);
     if (std::memcmp(force, force_was, sizeof(force_was)) != 0 || std::memcmp(time, time_was, sizeof(time_was)) != 0 ||
-        std::fabs(authored - Frame30) > 1e-6f) {
+        std::fabs(sixtieth - (WindPaceOn() ? Frame30 * 0.5f : Frame30)) > 1e-6f) {
         return false;
     }
+    // vmovss xmm14, [rip + disp]: c5 7a 10 35 disp32, 8 bytes; the displacement from the next instruction.
+    const std::int32_t disp = std::int32_t(std::int64_t(force_constant) - std::int64_t(force_site + 8));
+    u8 force_now[8] = {0xc5, 0x7a, 0x10, 0x35};
+    std::memcpy(force_now + 4, &disp, 4);
     return WriteCode(time, time_now, sizeof(time_now)) && WriteCode(force, force_now, sizeof(force_now));
+}
+
+float wind_scale = 0.5f;           // the stub's factor (the sweep sets 1 for the game's own step)
+double wind_sum = 0.0;             // diagnostics: the steps the stub saw, summed
+std::uint64_t wind_calls = 0;      // ... and counted
+
+/// The wind's step in the patched / live code: 0x2313d8d is the patch's `jmp 0x2315d79` after
+/// xmm4 = min(the measured frame time, 1/30) (the Deltatime and FPS++ lists, which replaced the game's load of the
+/// 1/60). A stub halves xmm4 first: 30's pace at every rate, the wind still moving every frame. In the hooks'
+/// mode that site still holds the game's load, which the redirect table points at Live::wind (2 here).
+/// 1 = stub installed, 0 = other code.
+int WindPace() {
+    constexpr u64 site = 0x2313d8d, back = 0x2315d79;
+    constexpr u8 patched_jump[] = {0xe9, 0xe7, 0x1f, 0x00, 0x00}; // jmp 0x2315d79
+    constexpr u8 game_load[] = {0xc5, 0xfa, 0x10, 0x25};          // vmovss xmm4, [rip + disp]
+    const u8* code = reinterpret_cast<const u8*>(image_base + site);
+    if (!WindPaceOn()) return 0;
+    if (std::memcmp(code, game_load, sizeof(game_load)) == 0) return 2;
+    if (std::memcmp(code, patched_jump, sizeof(patched_jump)) != 0) return 0;
+    Emitter e;
+    e.Bytes({0x50, 0x48, 0xb8}); // push rax; movabs rax, &wind_scale
+    e.U64(reinterpret_cast<u64>(&wind_scale));
+    e.Bytes({0xc5, 0xda, 0x59, 0x20}); // vmulss xmm4, xmm4, [rax]
+    if (std::getenv("BB_HIFPS_SWEEP") || std::getenv("BB_HIFPS_LOG")) {
+        // Diagnostics: the steps the wind takes summed (a double) and counted, per game second in the sweep.
+        e.Bytes({0x48, 0x83, 0xec, 0x10, 0xc5, 0xf8, 0x11, 0x04, 0x24}); // sub rsp, 16; vmovups [rsp], xmm0
+        e.Bytes({0x48, 0xb8});                                             // movabs rax, &wind_sum
+        e.U64(reinterpret_cast<u64>(&wind_sum));
+        e.Bytes({0xc5, 0xfa, 0x5a, 0xc4, 0xc5, 0xfb, 0x58, 0x00, 0xc5, 0xfb, 0x11, 0x00}); // vcvtss2sd xmm0, xmm0, xmm4; vaddsd xmm0, xmm0, [rax]; vmovsd [rax], xmm0
+        e.Bytes({0x48, 0xb8});                                             // movabs rax, &wind_calls
+        e.U64(reinterpret_cast<u64>(&wind_calls));
+        e.Bytes({0xf0, 0x48, 0xff, 0x00});                                 // lock inc qword [rax]
+        e.Bytes({0xc5, 0xf8, 0x10, 0x04, 0x24, 0x48, 0x83, 0xc4, 0x10});   // vmovups xmm0, [rsp]; add rsp, 16
+    }
+    e.Bytes({0x58});                                                       // pop rax
+    e.JmpAbs(image_base + back);
+    return Detour(site, patched_jump, sizeof(patched_jump), e) ? 1 : 0;
 }
 
 /// The bbhost fixes (both modes); `hooks`: the frame rate is the hooks'. Needs the stub page.
 void HighRateFixes(bool hooks) {
     const bool sfx = sfx_step && HookSfxStep(hooks);
     const bool grass = GrassWind();
+    const int pace = grass ? WindPace() : 0;
     std::printf("Frame rate: high-FPS fixes (bbhost): effects step in whole 1/60 s %s, grass wind force at "
-                "1/30 %s, the Bloodletter's L2 self-hit 0.6 m when its table loads\n",
+                "1/60 %s, wind step at half the frame's (30's pace) %s, the Bloodletter's L2 self-hit 0.6 m when its "
+                "table loads\n",
                 !sfx ? "NOT installed (other code at 0x1f77d4a)"
                 : sfx_source == SfxSource::Hooks    ? "(from the frame's time)"
                 : sfx_source == SfxSource::Constant ? "(from the patch's fixed step)"
                                                     : "(from the measured frame time, Uncap FPS++)",
-                grass ? "on" : "NOT installed (other code or constant)");
+                grass ? "on" : "NOT installed (other code or constant)",
+                pace == 1 ? "by a stub" : pace == 2 ? "by the redirect" : "NOT installed (other code at 0x2313d8d)");
 }
 
 /// A mapping within rel32 reach of the image (the redirected operands are RIP-relative).
@@ -978,6 +1036,9 @@ void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     *out = dt;
     live->dt = dt;
     live->steady = dt;
+    live->wind = WindStep(dt);
+    __atomic_store_n(&live->whole30, Step30Gate(live->banked30, dt) ? 1u : 0u, __ATOMIC_RELAXED);
+    __atomic_store_n(&live->whole30x, Step30Gate(live->banked30x, dt, 0.98f) ? 1u : 0u, __ATOMIC_RELAXED);
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
     LiveDiag(pacer, measured, target, interval, dt);
@@ -1072,9 +1133,13 @@ void Install(unsigned char* image, std::uint64_t size) {
             std::printf("Live clock: effects step from the patch's global step (no 1/60 s quantising)\n");
             // The plants' wind force: the Deltatime patch hands the wind code the live step, which the wind uses
             // as the force too (V * step), so every long or short frame bent the plants by its own length (they
-            // shook). The force takes the authored 1/30 (bbhost b2818b4), the wave time keeps the live step.
-            std::printf("Live clock: grass wind force at the authored 1/30 %s\n",
-                        GrassWind() ? "on" : "NOT installed (other code or constant)");
+            // shook). The force takes the game's 1/60 (bbhost b2818b4, 5cee912), the wind's step half the live step.
+            const bool grass = GrassWind();
+            const int pace = grass ? WindPace() : 0;
+            std::printf("Live clock: grass wind force at the game's 1/60 %s, wind step at half the frame's (30's pace, "
+                        "droogie/bbhost 5cee912) %s\n",
+                        grass ? "on" : "NOT installed (other code or constant)",
+                        pace == 1 ? "by a stub" : "NOT installed (other code at 0x2313d8d)");
         }
         StubWritable(false);
         if (ok) {
@@ -1229,5 +1294,20 @@ bool SetTargetRate(int rate) {
 
 float LastDt() {
     return live && Unlocked() ? live->dt : 0.0f;
+}
+
+bool WholeStep30() {
+    return !live || !Unlocked() || __atomic_load_n(&live->whole30, __ATOMIC_RELAXED) != 0;
+}
+
+void SetWindPace(bool on) { wind_scale = on ? 0.5f : 1.0f; }
+
+void WindStats(double* sum, unsigned long long* calls) {
+    *sum = wind_sum;
+    *calls = wind_calls;
+}
+
+bool WholeStep30Exact() {
+    return !live || !Unlocked() || __atomic_load_n(&live->whole30x, __ATOMIC_RELAXED) != 0;
 }
 } // namespace BbFrameRate

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
@@ -84,7 +85,30 @@ struct alignas(64) Live {
     float cloth_in = 0.0f;            ///< diagnostics: the last cloth update's time as given / as stepped
     float cloth_out = 0.0f;
     float steady = Frame30;           ///< the steady time: the frame's, 5% a frame at most (SteadyStep)
+    float wind = Frame30 * 0.5f;      ///< the plants' wind step: half the steady time (30's pace, WindStep)
+    float banked30 = 0.0f;            ///< game time not yet closed into a whole 1/30 s (Step30Gate)
+    std::uint32_t whole30 = 1;        ///< this frame closes a whole 1/30 s of game time (Step30Gate)
+    float banked30x = 0.0f;           ///< the same, closing a step only when it is whole (Step30Exact)
+    std::uint32_t whole30x = 1;
 };
+
+/// The plants' wind (sub_2313870) steps 1/60 s for each 1/30 s frame at 30 (its step is a fixed 1/60 with
+/// the GX device's +0x100 at 1), so above 30 half the task step keeps 30's pace. droogie/bbhost 5cee912.
+inline float WindStep(float step) { return step * 0.5f; }
+
+/// Whole 1/30 s steps of game time, however many frames they take: a frame closes a step once the
+/// time banked reaches three quarters of one, and a step takes a whole 1/30 s from the bank, so the
+/// steps are 30 a game second at any rate and every frame at 30 (the quarter is for the clock's
+/// rounding; `closes` 0.98: a step is closed only when whole, for what counts the time between the steps, the
+/// lights' blink). The water wakes and the lights' blink begin their steps only on these frames, as at
+/// 30 (droogie/bbhost 57d2b9f, f24d18f).
+inline bool Step30Gate(float& banked, float dt, float closes = 0.75f) {
+    banked += dt;
+    if (!(banked >= closes * Frame30)) return false;
+    banked -= Frame30;
+    if (banked > Frame30) banked = Frame30;
+    return true;
+}
 
 /// A steady time step (Supermedo/bloodborne_pc 7a39487f, cloth_time.py): the frame's time held to
 /// 0.95..1.05 x the one before, never above 1/30 s. A stutter (a 15-35 ms frame, then 4 ms frames
@@ -118,6 +142,9 @@ inline void Compute(Live& live, float dt, float cloth_override = -1.0f) {
     // (the value the community's 60 FPS patches settled on).
     live.cloth = cloth_override > 0.0f ? cloth_override : std::clamp(frames, 0.5f, 1.0f);
     live.steady = SteadyStep(live.steady, dt);
+    live.wind = WindStep(live.steady);
+    live.whole30 = Step30Gate(live.banked30, dt) ? 1u : 0u;
+    live.whole30x = Step30Gate(live.banked30x, dt, 0.98f) ? 1u : 0u;
     live.cloth_ratio = dt > 0.0f ? live.steady / dt : 1.0f;
 }
 

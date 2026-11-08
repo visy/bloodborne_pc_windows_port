@@ -973,6 +973,14 @@ void runtime_pad_director_sticks(int lx, int ly, int rx, int ry) {
 /* runtime_pad_last_buttons: the buttons of the last sample the game read (test aids' logs). */
 static volatile uint32_t last_sample_buttons;
 uint32_t runtime_pad_last_buttons(void) { return last_sample_buttons; }
+/* When Cross or Circle last went down in what the game was handed (monotonic us, 0 = never): a
+ * confirm box tells a fresh press from one still held from the window before it
+ * (gpu/shim/bbport_hifps.cpp; droogie/bbhost 602a958's idea). */
+static volatile uint64_t confirm_down_us;
+double runtime_pad_confirm_press_age(void) {
+    const uint64_t at=confirm_down_us;
+    return at ? (double)(now_us()-at)/1e6 : 1e9;
+}
 /* runtime_pad_last_left: the left stick of the last sample the game read, lx | ly << 8 (0..255,
  * 128 neutral; the party's host-death lock log compares it with the chr's movement). */
 static volatile uint32_t last_sample_left=0x8080u;
@@ -1249,6 +1257,7 @@ static void sample(PadData *d) {
     d->buttons&=~(director_mask & ~(injected.buttons|director_buttons));
     d->buttons|=injected.buttons|director_buttons;
     if ((d->buttons & BTN_CROSS) && !(last_sample_buttons & BTN_CROSS)) cross_presses=cross_presses+1;
+    if (d->buttons & ~last_sample_buttons & (BTN_CROSS|BTN_CIRCLE)) confirm_down_us=now_us();
     last_sample_buttons=d->buttons;
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);
     else if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);

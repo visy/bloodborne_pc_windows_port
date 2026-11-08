@@ -228,6 +228,46 @@ int main() {
         assert(Near(LiveClockStep(st5, 1.0f / 120, 120, 30, interval), 1.0f / 120, 1e-6f));
     }
 
+    // The wind's step is half the task step (30's 1/60 per 1/30 s) and the whole-1/30-s gate steps 30 times a
+    // game second at any rate, every frame at 30 (droogie/bbhost 5cee912, 57d2b9f, f24d18f).
+    {
+        assert(Near(WindStep(Frame30), 1.0f / 60, 1e-9f) && Near(WindStep(1.0f / 120), 1.0f / 240, 1e-9f));
+        for (const int fps : {30, 60, 90, 120, 144, 240}) {
+            float banked = 0.0f;
+            int steps = 0, frames = fps * 600;
+            for (int i = 0; i < frames; ++i) {
+                const bool whole = Step30Gate(banked, 1.0f / float(fps));
+                steps += whole;
+                if (fps == 30) assert(whole);
+            }
+            assert(std::abs(steps - 30 * 600) <= 2);
+        }
+        // Uneven frames (1/240 .. 1/30 s) still give 30 steps a game second.
+        float banked = 0.0f, game = 0.0f;
+        int steps = 0;
+        for (int i = 0; i < 100000; ++i) {
+            const float dt = 1.0f / 240 + (1.0f / 30 - 1.0f / 240) * float((i * 7919) % 101) / 100.0f;
+            steps += Step30Gate(banked, dt);
+            game += dt;
+        }
+        assert(std::fabs(double(steps) / double(game) - 30.0) < 0.05);
+        // The exact gate (the blink's) closes a step only on a whole 1/30 s: every 4th frame at 120, every frame at 30.
+        for (const int fps : {30, 60, 120}) {
+            float banked = 0.0f;
+            int steps = 0;
+            for (int i = 0; i < fps * 10; ++i) {
+                const bool whole = Step30Gate(banked, 1.0f / float(fps), 0.98f);
+                steps += whole;
+                if (fps == 30) assert(whole);
+                if (whole && fps > 30) assert(i % (fps / 30) == fps / 30 - 1);
+            }
+            assert(steps == 300);
+        }
+        Live l;
+        Compute(l, 1.0f / 120);
+        assert(Near(l.wind, l.steady * 0.5f, 1e-9f));
+    }
+
     // The layout the game's code reads.
     static_assert(offsetof(Live, decay95) % 16 == 0, "decay95 is read as one vector");
     static_assert(alignof(Live) == 64);
