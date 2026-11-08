@@ -2652,7 +2652,7 @@ def phase_kd(only):
 # scene plays for it only and nothing travels (0.7.8: a guest's grab no longer carries the host into the DLC). (2) The party is
 # put back at the lamp; the host then walks into the region: the scene on the host, the question "Travel with the party?"
 # (auto-answered yes here), one load each into the Hunter's Nightmare (m34_00).
-AMY_CHR_DEFAULT = "20.2"   # run with AMY_CHR=20.2: warp 20.2 m from Amygdala 2400899 = over the grab region 2402018 (the documented region coords fall through)
+AMY_CHR_DEFAULT = "20.2"   # default (AMY_CHR="" uses the old region coords): warp 20.2 m from Amygdala 2400899 = over the grab region 2402018 (the documented region coords fall through)
 AMY_REGION = os.environ.get("AMY_REGION", "-20.5:-15.5:95.1:2.09:native:pin=25:ground")   # onto the steps by the game's own warp (a bare warp 38 m away lands on no collision; the nav walker stalls 11 m from the lamp)
 AMY_LAMP = "2402950"
 AMY_UNTIL = r"0:travel step (\d+)/\1: "
@@ -2660,8 +2660,8 @@ AMY_UNTIL = r"0:travel step (\d+)/\1: "
 
 def phase_amy(only):
     host = ["god", "goods=4311:1", "log_flag=12401000/12405263/12404001", "host_flag=12404001@1%m24_00", "host_warp=%s@70%%m24_00" % AMY_LAMP,
-            ("host_chr=2400899:%s@5%%m24_00" % os.environ["AMY_CHR"]) if os.environ.get("AMY_CHR") else ("host_move=%s@5%%m24_00" % AMY_REGION), "host_press=0@40%m34_00!"]
-    g1 = ["god", "goods=4311:1", "log_flag=12401000/12405263/12404001", "guest_flag=12404001@2%m24_00", ("guest_chr=2400899:%s@14%%m24_00" % os.environ["AMY_CHR"]) if os.environ.get("AMY_CHR") else ("guest_move=%s@14%%m24_00" % AMY_REGION)]
+            ("host_chr=2400899:%s@5%%m24_00" % os.environ.get("AMY_CHR", AMY_CHR_DEFAULT)) if os.environ.get("AMY_CHR", AMY_CHR_DEFAULT) else ("host_move=%s@5%%m24_00" % AMY_REGION), "host_press=0@40%m34_00!"]
+    g1 = ["god", "goods=4311:1", "log_flag=12401000/12405263/12404001", "guest_flag=12404001@2%m24_00", ("guest_chr=2400899:%s@14%%m24_00" % os.environ.get("AMY_CHR", AMY_CHR_DEFAULT)) if os.environ.get("AMY_CHR", AMY_CHR_DEFAULT) else ("guest_move=%s@14%%m24_00" % AMY_REGION)]
     return dict(
         name="amy", seconds=int(os.environ.get("AMY_SECONDS", "420")), count=2, headless=0,
         env=["BB_PARTY_TRAVEL_CHOICE=party", "BB_PARTY_PROGRESS_TEST_SET=12404001",
@@ -14065,7 +14065,7 @@ def check_ngj(v, L):
 
 def check_amy(v, L):
     need(v, L, "amy join: the guest is in", 0, r"cooperators 0 -> 1")
-    if os.environ.get("AMY_CHR"):   # the grab itself (needs the entity-relative warp, AMY_CHR=20.2)
+    if os.environ.get("AMY_CHR", AMY_CHR_DEFAULT):   # the grab itself (needs the entity-relative warp, AMY_CHR=20.2)
         need(v, L, "amy guest's own grab scene sent to the host", 1, r"own cutscene 24000000 sent to the host")
         need(v, L, "amy the guest's grab does not carry the host", 0, r"story_up from slot 1 refused: the grab into the DLC is per player")
         need(v, L, "amy host's own grab set 12401000", 0, r"test: flags 12401000=1")
