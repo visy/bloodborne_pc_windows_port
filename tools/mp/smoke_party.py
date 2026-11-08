@@ -2689,6 +2689,7 @@ def phase_pr(only):
         env=env,
         ienv=["0:BB_PARTY_PROGRESS_TEST_CLEAR=" + PR_FLAG, "0:BB_PARTY_DIRECTOR_TEST=god,log_state,host_flag=%s@%s" % (PR_FLAG, os.environ.get("PR_WAIT", "60")),
               "1:BB_PARTY_DIRECTOR_TEST=god"],
+        args=["--stagger", os.environ.get("PR_STAGGER", "35")],   # the guest starts after the host's test clear of the flag (else the host reads ready for a second first)
         watch=["--watch", r"refused.*prologue=refused@1,2,6", "--watch", r"join: arrived [0-9.]+ m from the host=arrive@1,4"],
         crash=[], until=[r"1:join: arrived [0-9.]+ m from the host|1:test: FAILED"], until_hold=10,
     )
