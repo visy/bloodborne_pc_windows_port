@@ -1990,6 +1990,12 @@ void PartyTab() {
              "При смене данных вашей внешности остальные игроки сразу пересобирают вашего охотника. Выкл.: "
              "отправляет только закрытие зеркала."),
            on);
+    Toggle("party_map_marks", T("Shared map markers", "Общие метки на карте"), s.party_map_marks,
+           T("A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and "
+             "theirs on yours. Needs the in-game map.",
+             "Метка на карте (ПКМ, R3 или P) видна на картах всех спутников, и их метки на вашей. Нужна "
+             "карта игры."),
+           on);
     Toggle("party_through_walls", T("Show party through walls", "Группа сквозь стены"), s.party_through_walls,
            T("A small diamond with the distance on every companion on your map, drawn over walls and "
              "trees, in the companion's colour.",

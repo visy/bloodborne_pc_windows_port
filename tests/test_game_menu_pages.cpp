@@ -539,7 +539,7 @@ static void RulesPages() {
                   u"Shared item notices"};
     const V giving = {u"Give items to the party", u"Give weapons and armor"};
     const V display = {u"Party HUD", u"Party name tags", u"Pings",
-                       u"Show party through walls", u"Coloured name tags", u"Share look changes", u"Above companions"};
+                       u"Show party through walls", u"Coloured name tags", u"Share look changes", u"Shared map markers", u"Above companions"};
     for (const ps::Role role : {ps::Role::Host, ps::Role::Guest}) {
         ps::ResetForTest(true);
         ps::SetRole(role);
