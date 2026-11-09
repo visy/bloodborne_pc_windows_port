@@ -77,7 +77,9 @@ def local_checks(repo, tag, commit, notes, zip_path, git_repo=REPO):
     except RuntimeError:
         tagged = ""
     if tagged and tagged != commit:
-        die(f"local tag {tag} points at {tagged}, not {commit}")
+        die(f"local tag {tag} points at {tagged}, not {commit}. Only the fork's tags matter for a release: "
+            f"delete it here (git -C {git_repo} tag -d {tag}; it is likely an upstream tag fetched with the clone), "
+            f"or release from a clone made by build_release.py (git clone --no-tags)")
     notes_path = Path(notes)
     if not notes_path.is_file() or not notes_path.read_text(encoding="utf-8").strip():
         die(f"notes file missing or empty: {notes}")

@@ -6,10 +6,21 @@
 set(id "")
 find_program(GIT git)
 if (GIT)
-    execute_process(COMMAND "${GIT}" -C "${SRC}" describe --always --dirty --abbrev=10
+    # Not `describe --dirty`: the FSR-Vulkan patches are applied inside the submodule's working tree
+    # (build.bat, configure_pgo.py), which would mark every release build -dirty. Submodules are
+    # ignored; the main tree's own tracked changes still add -dirty.
+    execute_process(COMMAND "${GIT}" -C "${SRC}" describe --always --abbrev=10
                     OUTPUT_VARIABLE id ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE rc)
     if (NOT rc EQUAL 0)
         set(id "")
+    else()
+        execute_process(COMMAND "${GIT}" -C "${SRC}" update-index -q --refresh
+                        OUTPUT_QUIET ERROR_QUIET RESULT_VARIABLE rc_refresh)
+        execute_process(COMMAND "${GIT}" -C "${SRC}" diff-index --quiet --ignore-submodules=all HEAD --
+                        OUTPUT_QUIET ERROR_QUIET RESULT_VARIABLE rc_dirty)
+        if (NOT rc_dirty EQUAL 0)
+            set(id "${id}-dirty")
+        endif()
     endif()
 endif()
 if (id STREQUAL "")

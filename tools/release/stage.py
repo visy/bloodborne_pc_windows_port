@@ -19,6 +19,7 @@ bb-gpu-capabilities.exe) go to <symbols dir>\<ver> (default <stage parent>\rel\s
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -35,6 +36,7 @@ TRACKED_FILES = ["CHANGES.md", "LICENSE", "README.md", "README.ru.md", "VERSION"
 TRACKED_DIRS = ("docs/", "scripts/", "patches/", "licenses/")
 TRACKED_SKIP = ("docs/superpowers/",)
 FROM_BASE = ["out", "fsr4_shaders", "python", "map_generator", "mods", "user"]
+MINGW = r"C:\msys64\mingw64\bin"  # the exe's DLLs when the build dir has none (out/release holds the exe only)
 REQUIRED = ["out/bbport.exe", "out/SDL3.dll", "out/libgcc_s_seh-1.dll", "VERSION", "launcher.py"]
 
 
@@ -55,12 +57,34 @@ def copy_file(src, dst):
     shutil.copy2(src, dst)
 
 
+def check_changes_dated(repo, ver):
+    """CHANGES.md as committed (the zip takes it from git) must not call this version (unreleased)."""
+    try:
+        text = rc.git(repo, "show", "HEAD:CHANGES.md")
+    except RuntimeError:
+        return
+    check_changes_text(text, ver)
+
+
+def check_changes_text(text, ver):
+    """Dies when CHANGES.md text calls version `ver` (unreleased) in its heading."""
+    for line in text.splitlines():
+        m = re.match(r"##\s+" + re.escape(ver) + r"\b(.*)$", line.strip())
+        if m and "unreleased" in m.group(1).lower():
+            die(f"CHANGES.md still says '{line.strip()}': put the release date in the heading and commit it "
+                f"before the build (the zip takes CHANGES.md from git)")
+
+
 def verify_exe(exe, ver, repo, allow_dirty, run_exe=True):
     """(full commit, build id) the exe was built from; dies when that cannot be proven."""
     if run_exe:
-        r = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=60)
+        env = dict(os.environ)
+        env["PATH"] = str(exe.parent) + os.pathsep + MINGW + os.pathsep + env.get("PATH", "")
+        r = subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=60, env=env)
         if f"bbport {ver} " not in r.stdout:
-            die(f"{exe} --version says {r.stdout.strip()!r}, not {ver}")
+            die(f"{exe} --version exit code {r.returncode} (0x{r.returncode & 0xFFFFFFFF:08X}), stdout "
+                f"{r.stdout.strip()!r}, stderr {r.stderr.strip()!r}, not {ver} "
+                f"(a missing DLL exits silently: is {MINGW} there?)")
     ident = rc.exe_build_id(exe, ver)
     if not ident:
         die(f"no embedded build id for {ver} in {exe}")
@@ -97,6 +121,7 @@ def main(argv=None):
     have = (repo / "VERSION").read_text(encoding="utf-8").strip()
     if have != ver:
         die(f"VERSION file says {have}, not {ver}")
+    check_changes_dated(repo, ver)
     exe = build / "bbport.exe"
     if not exe.is_file():
         die(f"no {exe}")

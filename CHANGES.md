@@ -2,6 +2,16 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.8.1 (unreleased)
+
+### Added
+
+### Changed
+
+### Fixed
+
+- **builds with older miniz and with GCC 15/16** (ported from Mrsuss60's 2cc3764f / ac726e63 by HatsyRei, and the srt.h / types.h part of 9cee8c6d; no change for players). The shader cache archive is opened with `MZ_ZIP_FLAG_WRITE_ALLOW_READING`, which exists in miniz before 3.1 (the cache stays writable: it is reopened for writing after the preload); the shader walker function pointer type uses a new `PS4_SYSV_ABI_PTR` without `nothrow`, which GCC 15/16 rejected.
+
 ## 0.8.0 (2026-11-09)
 
 ### Added
