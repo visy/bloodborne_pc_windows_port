@@ -40,6 +40,12 @@ int main() {
     CHECK(!FailTestHit(0, 0) && !FailTestHit(5, 0));
     CHECK(FailTestHit(0, 1) && FailTestHit(7, 1));
     CHECK(!FailTestHit(0, 3) && !FailTestHit(1, 3) && FailTestHit(2, 3) && FailTestHit(5, 3));
+    // BB_GX_REGION_MB (Nightwatch c6305d7 semantics)
+    CHECK(GxRegionRequest(nullptr) == 288 && GxRegionRequest("") == 288 && GxRegionRequest("x1") == 288);
+    CHECK(GxRegionApplied(GxRegionRequest("0")) == 0 && GxRegionApplied(160) == 0 && GxRegionApplied(100) == 0);
+    CHECK(GxRegionApplied(GxRegionRequest("224")) == 224 && GxRegionApplied(GxRegionRequest("9999999999")) == 416);
+    CHECK(GxRegionApplied(288) == 288 && GxRegionImmediate(288) == (256u << 20) && GxRegionImmediate(416) == (384u << 20));
+    CHECK(GxRegionHeapMore(288, true) == 128 && GxRegionHeapMore(288, false) == 0 && GxRegionHeapMore(416, true) == 256);
     g_failures += RunGuardTests();
     std::printf("stability-logic-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
