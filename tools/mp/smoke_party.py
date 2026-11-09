@@ -10218,7 +10218,7 @@ def check_ivc(v, L, n="ivc", inv=1):
     rj = need(v, L, n + " invader: travels into the host's map by the arrival re-join", inv, r"guest: travels alone \(join\) to .*, the host's area", cross or 0)
     need(v, L, n + " host: the invader's re-join reached it (snapshot again)", 0, r"host: slot \d+ travels alone into this area; re-sending the snapshot", max(0, (rj or 0) - 3))  # the games' clocks start a few ms apart
     need(v, L, n + " invader: the host's destination arrived", inv, r"guest: host destination stage", rj or 0)
-    adm = need(v, L, n + " host: the invader is in the world", 0, r"invade: invader slot \d+: in the world", cross or 0)
+    adm = need(v, L, n + " host: the invader is in the world", 0, r"invade: invader slot \d+: in the world", max(0, (cross or 0) - 3))
     need(v, L, n + " invader: told it invades", inv, r"invade: notice: You invade ", adm or 0)
     put = need(v, L, n + " invader: put at a lamp apart from the host", inv, r"invader: arrived [\d.]+ m from the host; put at lamp \d+, ([3-9]\d|\d{3})\.\d m from the host", adm or 0)
     need(v, L, n + " invader: stays apart (>= 25 m)", inv, r"invade: apart: ([2-9]\d|\d{3}) m from the host", put or 0)
