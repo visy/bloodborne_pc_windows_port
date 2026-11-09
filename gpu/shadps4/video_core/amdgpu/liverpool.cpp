@@ -632,6 +632,65 @@ void RunZpassDone(Vulkan::Rasterizer& rasterizer, const u8* data) {
     rasterizer.OcclusionEvent(event.address, event.pairs);
 }
 
+// bbport: the stand-in occlusion counts (real queries off) in stream order.
+// Ported from Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine),
+// Nightwatch 12de90e, modified. Lantern Engine is GPL-3 with the GPL section 7 additional terms
+// of its NOTICE file, which apply to this code.
+// The game starts every query with a DMA_DATA that zeroes its 128-byte block, a WAIT_REG_MEM for
+// the zero, then the counter dump, and reads the query as done only when all counters have bit 63.
+// With the draw pipe the DMA runs later, on the recording thread, but the dump was written at
+// decode: the zeroing could land after the counts and the query never finished; the game then
+// piled up unfinished queries (FPS falling over a session, in the end a query with no handle).
+// BB_ZPASS_IN_ORDER=0: written at decode, as before.
+struct ZpassDump {
+    VAddr address;
+    u64 value;
+    u32 num_pairs;
+};
+
+std::atomic<u64> zpass_dumps{0}, zpass_dumps_in_order{0};
+
+bool ZpassInOrder() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_ZPASS_IN_ORDER");
+        return !env || env[0] != '0';
+    }();
+    return enabled;
+}
+
+void WriteZpassCounters(Vulkan::Rasterizer* rasterizer, const ZpassDump& dump, bool in_order) {
+    u64* results = reinterpret_cast<u64*>(dump.address);
+    const u64 size = u64(dump.num_pairs) * 2 * sizeof(u64);
+    bool waited = false;
+    for (u32 i = 0; i < dump.num_pairs; ++i, results += 2) {
+        const VAddr address = reinterpret_cast<VAddr>(results);
+        if (!in_order || !rasterizer) {
+            *results = dump.value;
+            if (rasterizer) {
+                rasterizer->NoteLateCommandWrite(address, results, sizeof(*results));
+            }
+            continue;
+        }
+        // As a WRITE_DATA: after the DMA before it, wherever that DMA wrote.
+        if (rasterizer->WriteDataOnGpu(address, &dump.value, sizeof(dump.value))) {
+            continue;
+        }
+        if (!waited) {
+            rasterizer->WaitHostCopiesFor(dump.address, size);
+            rasterizer->WaitDeferredSignals();
+            waited = true;
+        }
+        StoreLabel(results, dump.value, sizeof(dump.value));
+        rasterizer->NoteCommandWrite(address, &dump.value, sizeof(dump.value), true);
+    }
+}
+
+void RunZpassDump(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    ZpassDump dump;
+    std::memcpy(&dump, data, sizeof(dump));
+    WriteZpassCounters(&rasterizer, dump, true);
+}
+
 // bbport: COPY_DATA from memory or GDS, or of a value into GDS, on the recording thread in stream
 // order, as DMA_DATA (RunDmaData).
 struct CopyDataTask {
@@ -770,6 +829,12 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
     }
 }
 } // namespace
+
+// bbport: occlusion counter dumps so far, and those written in stream order.
+void OcclusionDumpCounts(u64& dumps, u64& in_order) {
+    dumps = zpass_dumps.load(std::memory_order_relaxed);
+    in_order = zpass_dumps_in_order.load(std::memory_order_relaxed);
+}
 
 void Liverpool::NotePendingFences(const auto& event) {
     const u64 position = rasterizer->DrawPipeHead();
@@ -2060,15 +2125,23 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                         }
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
                         static constexpr u64 OcclusionCounterStep = 0x2FFFFFFULL;
-                        u64* results = event->Address<u64*>();
-                        for (s32 i = 0; i < num_counter_pairs; ++i, results += 2) {
-                            *results = pixel_counter | OcclusionCounterValidMask;
-                            if (rasterizer) {
-                                rasterizer->NoteLateCommandWrite(reinterpret_cast<VAddr>(results),
-                                                                 results, sizeof(*results));
-                            }
-                        }
+                        // Ported from Lantern Engine (Nightwatch 12de90e), modified: in order with
+                        // the DMA that zeroed the block (ZpassDump above).
+                        const ZpassDump dump{event->Address<VAddr>(),
+                                             pixel_counter | OcclusionCounterValidMask,
+                                             u32(num_counter_pairs)};
                         pixel_counter += OcclusionCounterStep;
+                        zpass_dumps.fetch_add(1, std::memory_order_relaxed);
+                        if (rasterizer && ZpassInOrder()) {
+                            if (rasterizer->RunInOrder(&RunZpassDump, &dump, sizeof(dump),
+                                                       BbToggle::PipelinedMemoryWrites, false)) {
+                                zpass_dumps_in_order.fetch_add(1, std::memory_order_relaxed);
+                                rasterizer->NotePendingGpuWrite(
+                                    dump.address, u64(dump.num_pairs) * 2 * sizeof(u64));
+                            }
+                        } else {
+                            WriteZpassCounters(rasterizer, dump, false);
+                        }
                     }
                 }
                 break;

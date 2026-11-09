@@ -2,6 +2,12 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
+## 0.8.1 (unreleased)
+
+### Fixed
+
+- **the game's occlusion queries finish again, so the frame rate no longer falls over a long session** (zpass081, ported from Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine), Nightwatch 12de90e, modified; GPL-3 with the GPL section 7 additional terms of its NOTICE). With real occlusion queries off (the default), the stand-in counts were written the moment the command was read, while the DMA that zeroes each query's block runs later on the recording thread: the zeroing could land after the counts and the query never finished. The game then kept polling its unfinished queries and made new ones in their place, and in the end began a query with no handle (the crash at guest +0x2169edc, guarded since CL-9666e3). The counts are now written in command-stream order, like a WRITE_DATA. `BB_ZPASS_IN_ORDER=0` restores the old behaviour; the `Occlusion dumps` log line shows how many were written in order.
+
 ## 0.8.0 (2026-11-09)
 
 ### Added
