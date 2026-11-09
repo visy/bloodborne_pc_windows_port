@@ -55,6 +55,13 @@ static void TestTable() {
     assert(u.Size() == SampleTable::kSlots && u.Other() == 5 && u.Total() == unsigned(SampleTable::kSlots + 5));
     u.Clear();
     assert(u.Total() == 0 && u.Size() == 0 && FormatTop(u, mods, 1, 3).empty());
+    // A system-DLL row with the first return address into our exe.
+    SampleTable w;
+    w.Add(0, 0x1628a4, 0x109ed6c, 0x7b3712 + 1);
+    w.Add(0, 0x1628a4, 0x109ed6c, 0x7b3712 + 1);
+    w.Add(0, 0x1628a4, 0x109ed6c, 0);  // same place, no exe frame: its own row
+    assert(w.Size() == 2);
+    assert(FormatTop(w, mods, 1, 1) == "host:ucrtbase.dll+0x1628a4 via exe+0x7b3712 (from +0x109ed6c) 67%");
     // A module index without a name prints "?".
     SampleTable v;
     v.Add(7, 0x10, 0);

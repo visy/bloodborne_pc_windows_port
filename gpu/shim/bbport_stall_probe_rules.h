@@ -75,23 +75,24 @@ public:
         u64 caller = 0;   ///< host rows: the first guest return address (offset), 0 if none
         int module = -1;  ///< -1: guest code; else an index into the caller's module name list
         unsigned count = 0;
+        u64 via = 0;      ///< host rows in a system DLL: the first return address into our exe (offset + 1), 0 if none
     };
     void Clear() {
         n_ = 0;
         total_ = 0;
         other_ = 0;
     }
-    void Add(int module, u64 a, u64 caller) {
+    void Add(int module, u64 a, u64 caller, u64 via = 0) {
         ++total_;
         for (int i = 0; i < n_; ++i) {
             Row& r = rows_[i];
-            if (r.module == module && r.a == a && r.caller == caller) {
+            if (r.module == module && r.a == a && r.caller == caller && r.via == via) {
                 ++r.count;
                 return;
             }
         }
         if (n_ < kSlots) {
-            rows_[n_++] = Row{a, caller, module, 1};
+            rows_[n_++] = Row{a, caller, module, 1, via};
             return;
         }
         ++other_;
@@ -132,12 +133,16 @@ inline std::string FormatTop(const SampleTable& t, const char* const* modules, i
             std::snprintf(b, sizeof b, "%s+0x%llx %d%%", i ? "; " : "", static_cast<unsigned long long>(r.a), pct);
         } else {
             const char* m = (r.module < module_count && modules[r.module]) ? modules[r.module] : "?";
+            char via[48] = "";
+            if (r.via) {
+                std::snprintf(via, sizeof via, " via exe+0x%llx", static_cast<unsigned long long>(r.via - 1));
+            }
             if (r.caller) {
-                std::snprintf(b, sizeof b, "%shost:%s+0x%llx (from +0x%llx) %d%%", i ? "; " : "", m,
-                              static_cast<unsigned long long>(r.a), static_cast<unsigned long long>(r.caller), pct);
+                std::snprintf(b, sizeof b, "%shost:%s+0x%llx%s (from +0x%llx) %d%%", i ? "; " : "", m,
+                              static_cast<unsigned long long>(r.a), via, static_cast<unsigned long long>(r.caller), pct);
             } else {
-                std::snprintf(b, sizeof b, "%shost:%s+0x%llx %d%%", i ? "; " : "", m, static_cast<unsigned long long>(r.a),
-                              pct);
+                std::snprintf(b, sizeof b, "%shost:%s+0x%llx%s %d%%", i ? "; " : "", m, static_cast<unsigned long long>(r.a),
+                              via, pct);
             }
         }
         out += b;

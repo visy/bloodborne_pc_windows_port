@@ -165,9 +165,25 @@ bool SampleThread(HANDLE th, SampleTable& t) {
             break;
         }
     }
+    // Outside our exe (a kernel wait in ntdll ...): which of our functions waits there.
+    static const u64 exe_lo = reinterpret_cast<u64>(GetModuleHandleA(nullptr));
+    static const u64 exe_hi = [] {
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(exe_lo);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(exe_lo + dos->e_lfanew);
+        return exe_lo + nt->OptionalHeader.SizeOfImage;
+    }();
+    u64 via = 0;
+    if (rip < exe_lo || rip >= exe_hi) {
+        for (SIZE_T i = 0; i < got / 8; ++i) {
+            if (stack[i] >= exe_lo && stack[i] < exe_hi) {
+                via = stack[i] - exe_lo + 1;
+                break;
+            }
+        }
+    }
     u64 off = 0;
     const int m = ModuleIndex(rip, &off);
-    t.Add(m < 0 ? kMaxModules - 1 : m, off, caller);  // unknown module: the last slot's name ("?")
+    t.Add(m < 0 ? kMaxModules - 1 : m, off, caller, via);  // unknown module: the last slot's name ("?")
     return true;
 }
 #endif
