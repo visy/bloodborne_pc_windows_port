@@ -65,7 +65,7 @@ fault again) and, for a fault inside 0x1a21100, a **site decode**: the animation
 behaviour module's listener / table / entry count, the last 10 behaviour events (animation ids), and
 the owner chr found by its back pointer (`[module+k] = chr` with `chr +0x3b0 -> +0x18 == module`),
 with its map entity id (+0x1f0) and entity id (+0x3b8). The next dump answers "boss part, remote
-player or other". Crash time only, no cost while playing; `BB_CRASH_REGMEM=0` leaves it out.
+player or other". Crash time only, no cost while playing. The raw register bytes are opt-in (`BB_CRASH_REGMEM=1`, on in the test harness) since they can hold player text; the ids-only decode always runs.
 Test: `crash-regmem-test` (tests/test_crash_regmem.c, fake memory) via tests/test_crash_regmem.py.
 
 No guard added: a guard in 0x1a21100 would need a valid-object test on a freed pointer (the reused

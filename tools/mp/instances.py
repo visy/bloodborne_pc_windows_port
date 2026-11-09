@@ -650,7 +650,7 @@ def run(a):
         env.update({
             "BB_GAME_DIR": str(a.game), "BB_FROM_LAUNCHER": "1", "BB_NO_LAUNCHER_SETTINGS": "1",
             "BB_FULLSCREEN": "0", "BB_TIMEOUT": str(a.seconds), "BB_VRAM_LIMIT_MB": str(a.vram),
-            "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1",
+            "BB_SHADER_PRECOMPILE": "1", "BB_MUTE_UNFOCUSED": "1", "BB_WINDOW_BACKGROUND": "1", "BB_CRASH_REGMEM": "1",
             "BB_AUDIO": "none",  # test games are silent (timer audio backend, also less CPU)
             # The game writes its own presented frame when tools/mp/shot.py creates the trigger file
             # (renderer_vulkan/vk_temporal_upscaler.cpp DumpShot): a covered / background window cannot be black.
