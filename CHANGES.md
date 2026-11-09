@@ -10,6 +10,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ### Fixed
 
+- **texture quality: no GPU stop on a reduced texture** (ported from Nightwatch d9a81bd, Lantern Engine by Awaken). A layout change of a texture made without its largest levels (texture quality Half / Quarter) can no longer name levels or layers past the image's own, which tripped the subresource check. `BB_TEXTURE_RANGE_CLAMP=0` restores the old behaviour.
 - **builds with older miniz and with GCC 15/16** (ported from Mrsuss60's 2cc3764f / ac726e63 by HatsyRei, and the srt.h / types.h part of 9cee8c6d; no change for players). The shader cache archive is opened with `MZ_ZIP_FLAG_WRITE_ALLOW_READING`, which exists in miniz before 3.1 (the cache stays writable: it is reopened for writing after the preload); the shader walker function pointer type uses a new `PS4_SYSV_ABI_PTR` without `nothrow`, which GCC 15/16 rejected.
 
 ## 0.8.0 (2026-11-09)
