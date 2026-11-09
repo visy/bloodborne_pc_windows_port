@@ -28,6 +28,7 @@
 #include "bbport_frame_rate_logic.h"
 #include "bbport_guest_code.h"
 #include "bbport_settings.h"
+#include "bbport_toggles.h"
 #include "party/game_state.h"
 #include "party/seamless_rules.h"
 
@@ -1007,6 +1008,26 @@ void LiveDiag(const u8* pacer, float measured, int target, float interval, float
                 phase = 3;
             }
         }
+    }
+    // restab081 (#35): a stuck stay costs ~2x CPU a frame in the draw recording, the command processor and the Vulkan
+    // recorders (livefps080 round 3). More draws or costlier ones, more GPU frames per game step or more uploads: the
+    // counters below are always kept (no BB_FRAME_STATS needed), per game step of this second.
+    {
+        static u64 last_draws = 0, last_dispatches = 0, last_subs = 0, last_flips = 0, last_gpu_frames = 0;
+        static u64 last_buf = 0, last_img = 0;
+        const u64 draws = BbStats::draws.load(), dispatches = BbStats::dispatches.load(),
+                  subs = BbStats::submissions.load(), flips = BbStats::flips.load(),
+                  gpu_frames = BbStats::gpu_frames.load(), buf = BbStats::buffer_upload_bytes.load(),
+                  img = BbStats::image_upload_bytes.load();
+        const double n = double(std::max<u64>(1, frames - last_frames));
+        std::printf("Live clock diag: per step %.0f draws, %.0f dispatches, %.2f submissions, %.2f flips, %.2f GPU "
+                    "frames, uploads %.0f KB buffer %.0f KB image\n",
+                    double(draws - last_draws) / n, double(dispatches - last_dispatches) / n,
+                    double(subs - last_subs) / n, double(flips - last_flips) / n,
+                    double(gpu_frames - last_gpu_frames) / n, double(buf - last_buf) / n / 1024.0,
+                    double(img - last_img) / n / 1024.0);
+        last_draws = draws, last_dispatches = dispatches, last_subs = subs, last_flips = flips;
+        last_gpu_frames = gpu_frames, last_buf = buf, last_img = img;
     }
     std::printf("Live clock diag: timer %.2f ms, Sleep(1) %.2f ms; ", timer_ms, sleep_ms);
     std::printf("%.1f frames/s, target %d (setting %d), interval %.5f, measured %.5f, step %.5f, "
