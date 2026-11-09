@@ -549,6 +549,12 @@ if (WIN32)
 endif()
 set_target_properties(sema-test content-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# src/crash_regmem.h (crash dump register memory, site decodes): cmake --build out/gpu --target crash-regmem-test
+add_executable(crash-regmem-test EXCLUDE_FROM_ALL ../tests/test_crash_regmem.c)
+target_include_directories(crash-regmem-test PRIVATE .. ../src)
+target_compile_options(crash-regmem-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+set_target_properties(crash-regmem-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+
 # src/runtime_pad.c with the button prompts' sets and labels (src/pad_prompts.h); build.bat also
 # builds it as out/pad-test.exe. cmake --build out/gpu --target pad-test
 add_executable(pad-test EXCLUDE_FROM_ALL ../tests/test_pad.c)
