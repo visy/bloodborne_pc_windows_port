@@ -1879,8 +1879,10 @@ def phase_lfd(only):
     live = os.environ.get("LFD_LIVE", "1")
     return dict(name="lfd", seconds=240 + LFD_DEATHS * (LFD_HOLD + 40), count=1, headless=0, fps=fps, prep=prep_lfd,
                 post=post_chalamp,
+                # BB_BREADCRUMBS_TRANSFERS: a device lost ("invalid write at 0" between the presenter's post process
+                # and the next HLE copy shader, CL-ab12f5) came once in a Live FPS respawn run; then it names the copy.
                 env=["BB_PARTY_DIRECTOR_TEST_SOLO=1", "BB_LIVE_FPS=" + live, "BB_FRAME_RATE_LOG=2",
-                     "BB_LIVE_FPS_LOG=1"],
+                     "BB_LIVE_FPS_LOG=1", "BB_BREADCRUMBS_TRANSFERS=1"],
                 ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
                 crash=[], until=LFD_UNTIL)
 

@@ -19,6 +19,7 @@
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "bbport_toggles.h"
 
 extern "C" int runtime_memory_vma_info(uintptr_t address, int* prot, int* type, uintptr_t* end);
 
@@ -454,6 +455,18 @@ void ReportMemory() {
             (unsigned long long)(budgets[h].statistics.allocationBytes >> 20));
     }
     Out("\n");
+    // The game's GPU range allocators (BbStats, noted by bbport_guest_hooks under BB_FRAME_STATS=1): how
+    // full they were. Nightwatch c6305d7 (Lantern Engine by Awaken, https://github.com/Awakenchan/LanternEngine,
+    // GPL-3.0-or-later with its section 7 terms; modified: into our report file, after the heaps) found
+    // Ebrietas' effect drove one to under 1 MB free right before its device losses (the GX region).
+    for (std::size_t i = 0; i < BbStats::range_allocators.size(); ++i) {
+        if (const u64 allocator = BbStats::range_allocators[i].load()) {
+            Out("GPU range allocator %#llx at the report: %llu live, %.1f MB free\n",
+                static_cast<unsigned long long>(allocator),
+                static_cast<unsigned long long>(BbStats::range_live[i].load()),
+                BbStats::range_bytes[i].load() / 1e6);
+        }
+    }
 }
 
 /// Command buffers cut short by a bad packet header (NoteDroppedCommands).
