@@ -14487,6 +14487,12 @@ def main():
         a.phase = ",".join(p for p in (*JN_PHASES, "pc", "vm", "yj", "yjc", "s1", "s2", "h5", "rr", "rules", "ss", "sh", "iv", "ivn", "ivx", "ivl", "ivp", "ivc", "ivc3", "ivc3n", "ivc3m", "ivf", "iv2", "ivm", "ojl", "ojla", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cag", "cage", "cgt", "cgp", "cgu", "caa", "cas", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
                                      "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "mp", "mpg", "mph", "mm", "mmn", "jl", "ml", "mg", "ll", "llp", "hlq", "hlr", "bq", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "emf", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvm", "cvc", "cva", "cvf", "cvk", "cvl", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "gv", "gvg", "gvr", "gvl", "gvn", "gvm", "gvs", "gvt", "gvw", "gvwn", "gva", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "nfn", "nfr", "nfv", "nfd", "nfb", "nfh", "nfn2", "nfnk", "nfn2k", "nfrk", "nfhk", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "stg", "gdr", "gdrd", "gdrb", "gdrf", "mesh", "oum", "meshm", "fp", "fp5", "oj", "lo", "po", "pos", "sg", "sg2", "sgb", "sgb2", "sgb3", "sgb4", "sgb4n", "sgp", "csh", "csh2", "csh3", "cis", "cim", "ba", "bh", "bk", "hg", "bg", "lr", "lrg", "mi", "mig", "lw", "lwf", "amp", "la", "lb", "lc")
                            if p in {n for g in only for n in GROUPS[g].split(",")})
+        # Phases the ordered list above does not name (newer ones: fp5x, fp6j, ...) still run, after it.
+        wanted = [n for g in sorted(only) for n in GROUPS[g].split(",")]
+        listed = set(a.phase.split(",")) if a.phase else set()
+        extra = [n for n in dict.fromkeys(wanted) if n not in listed and n in PHASES]
+        if extra:
+            a.phase = ",".join(([a.phase] if a.phase else []) + extra)
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
