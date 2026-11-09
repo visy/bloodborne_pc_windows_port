@@ -15,7 +15,7 @@ The run ends when the route's last step is done (+20 s), ~61 min for --minutes 6
 The route (one cycle ~8 min, repeated; all by the in-process director, pad file for the walks, no human input):
   lamp warp to the Great Bridge (m24_01), walk bridge arena <-> lamp twice (stick), die (host_die) and respawn
   by the game's own death load, lamp warps Cathedral Ward, 2302950, 2102950, Yahar'gul, Tomb of Oedon, then
-  3.5 min idle in the Tomb of Oedon, then the next cycle starts with the lamp warp back to the bridge.
+  4 min idle in the Tomb of Oedon, then the next cycle starts with the lamp warp back to the bridge.
 In the 2-player variant the host runs the route and the guest follows by the party travel (and shares the death
 load); both are rendered.
 
@@ -57,7 +57,7 @@ def cycle(variant, lead=20, first=False):
     return s
 
 
-def chain(minutes, variant, idle=210):
+def chain(minutes, variant, idle=255):
     steps = []
     n = max(1, int(round(minutes * 60 / CYCLE_S)))
     for i in range(n):
@@ -210,6 +210,21 @@ def report(a):
                     r["gpu_dedicated_mb"], r["gpu_shared_mb"]))
             if len(rs) > 6:
                 lines.append("  handle growth sample 5 -> last: %+d" % (int(rs[-1]["handles"]) - int(rs[5]["handles"])))
+    # the same scene every cycle: the idle dwell in the Tomb of Oedon (the gap after a load that lasts > 150 s to the
+    # next load): its FPS per cycle is the drift metric, free of what the route shows at the 5 / 30 / 60 min marks
+    for i in range(count):
+        fps = [(t, f) for (ii, t, f, w) in fps_rows if ii == i]
+        ld = [(r[1], r[2]) for r in lt if r[0] == i]
+        idle = []
+        for (u0, g0), (u1, g1) in zip(ld, ld[1:]):
+            if u1 - g0 > 150:
+                v = [f for t, f in fps if g0 + 20 <= t <= u1 - 5]
+                if v:
+                    idle.append((round(g0 / 60, 1), statistics.mean(v), pct(v, 1)))
+        if idle:
+            lines.append("idle-dwell FPS inst%d (start min: mean / p1): %s" % (i, "; ".join("%.0f: %.1f / %.1f" % x for x in idle)))
+            if len(idle) > 1:
+                lines.append("  idle-dwell drift first -> last: %+.1f %%" % (100 * (idle[-1][1] / idle[0][1] - 1)))
     with open(out / "loads.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["inst", "up_t_s", "gone_t_s", "load_s"])
