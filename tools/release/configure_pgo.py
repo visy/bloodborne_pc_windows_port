@@ -66,6 +66,9 @@ def plan(clone, src=MAIN_SRC):
     # Where the profile of the source build lives: BB_PGO_DIR / <mangled source build dir>.
     pgo_root = Path(cache.get("BB_PGO_DIR", ("", str(src / "pgo")))[1])
     pgo_src = pgo_root / mangle(src / "out" / BUILD_NAME)
+    # The committed profile (pgo-profile/, flat .gcda files) wins: the build then needs only git.
+    if (repo / "pgo-profile").is_dir() and any((repo / "pgo-profile").glob("*.gcda")):
+        pgo_src = repo / "pgo-profile"
     args = ["cmake", "-S", str(repo / "gpu"), "-B", str(build), "-G", "Ninja"]
     for key, (typ, value) in FORCED.items():
         have = cache.get(key, (typ, None))[1]

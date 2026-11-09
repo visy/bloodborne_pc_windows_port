@@ -26,6 +26,8 @@ Paths below are the usual ones (`E:\games\bbport`); `<clone>` is `agents\NAME` (
 - [ ] The tree is clean when the exe is built: the exe embeds `git describe --dirty`; staging refuses a `-dirty`
       id or one that is not the repo's HEAD. Do not commit after the build (or rebuild).
 - [ ] An LTO build matters: asm-only symbols are only discarded by LTO (see `__attribute__((used))` notes).
+- [ ] The profile is committed in `pgo-profile\` (flat `.gcda` files). After re-recording, copy
+      `src\pgo\E~\gamesbport\src\out\gpu-pgo-gen\*.gcda` over it and commit.
 - [ ] To re-record the profile instead of reusing it, see the `release-066` memory note (train in the same build dir).
 
 ## 3. Short smoke on the release exe
