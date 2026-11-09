@@ -16,14 +16,14 @@ The steps for a coop/port release (`X.Y.Z`), revised after 0.7.7. Push only with
 ## 2. Full smoke on master
 
 - [ ] Run the release gate: `BB_MP_FPS=60 python tools/mp/smoke_party.py --release --lanes auto --out <dir>`. `--release` is
-      the **full** list (all 155 phases, nothing hidden; the old default was a 40-phase quick list, now `--tier quick`).
-      The run prints `tier full: N of 155 phases`, then `progress done/total` with an ETA after every phase, and writes
+      the **full** list (every phase, nothing hidden; the old default was a 40-phase quick list, now `--tier quick`).
+      The run prints `tier full: N of M phases` (`--list-tiers` prints the current counts and time estimates), then `progress done/total` with an ETA after every phase, and writes
       the usual `verdict.txt`, per-phase `rows.json` and `retries.txt`.
       - Time (measured 2026-10-31, 60 FPS, one lane): a phase is a real-time game session, about 107 s on average
         (boot to world is only 13 s of it), so game speed cannot be raised and the 1 h goal is not reachable on this PC.
         `--tier quick` (40 phases) took 2 h 50 min with 16 failed rows (retries of failing flaky phases are the biggest
-        single cost: lfw and lfwc 24 min each, s3 17 min). `--tier release` (136 phases, variants of `RELEASE_SKIP`
-        left out) is about 5 h, full (155) about 5.5 h when the phases pass. A second lane needs ~20 GB of commit per
+        single cost: lfw and lfwc 24 min each, s3 17 min). `--tier release` (variants of `RELEASE_SKIP`
+        left out) and full: see `--list-tiers`; the last full run (0.8.0, 272 phases) took about 12.5 h. A second lane needs ~20 GB of commit per
         3-game phase on top of the first; this 32 GB PC has no room for it while anything else runs, so `--lanes auto`
         picks 1 lane (2 only with 40 GB free). The game queue's memory guard (`game_queue.py`, only for guarded jobs) is
         what allows 2; it never goes over 6 clients, keeps 3 GB free and waits for other agents' runs first.

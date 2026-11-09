@@ -45,6 +45,9 @@ static DWORD WINAPI drain_thread(LPVOID arg) {
     const char *s = getenv("BB_LOG_STALL_MS");
     unsigned stall_ms = s && *s ? (unsigned)atoi(s) : 0;
     int dead = 0;
+    uint64_t last_data = now_ms();
+    /* Idle poll: 2 ms while lines come, 10 ms after 0.1 s without any (500 wake-ups a second at above-normal
+     * priority all game otherwise). Idea from Nightwatch 5c29916. */
     for (;;) {
         /* Peek, then read what is there: a ReadFile that blocks on the pipe would also block every
          * PeekNamedPipe on it (the flush below) behind the handle's lock. */
@@ -61,9 +64,12 @@ static DWORD WINAPI drain_thread(LPVOID arg) {
                 DWORD w = 0;
                 if (len > 0) WriteFile(real_out, msg, (DWORD)len, &w, NULL);
             }
-            InterlockedExchange(&idle, 1); Sleep(2); continue;
+            InterlockedExchange(&idle, 1);
+            Sleep(now_ms() - last_data >= 100 ? 10 : 2);
+            continue;
         }
         InterlockedExchange(&idle, 0);
+        last_data = now_ms();
         if (avail + FULL_SLACK >= PIPE_BYTES) InterlockedIncrement(&full_hits);
         if (!ReadFile(rd, buf, avail < sizeof buf ? avail : (DWORD)sizeof buf, &n, NULL) || !n) break;
         DWORD off = 0;
