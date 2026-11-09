@@ -188,6 +188,11 @@ def main(argv=None):
         stage_mod.check_changes_text(changes, ver)
     except SystemExit as e:
         raise SystemExit(str(e).replace("stage: REFUSED", "build_release: REFUSED")) from None
+    listing = git(a.src, "ls-tree", "-r", "--name-only", commit, "changes.d/", check=False).stdout
+    try:
+        stage_mod.check_fragment_names(listing.splitlines(), ver)
+    except SystemExit as e:
+        raise SystemExit(str(e).replace("stage: REFUSED", "build_release: REFUSED")) from None
     if not notes_from_changes(changes, ver):
         die(f"CHANGES.md has no '## {ver}' section with text")
 
