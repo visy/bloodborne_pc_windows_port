@@ -87,6 +87,9 @@ def _git_applied(fsr, patch, env):
 
 def prepare(repo, env):
     """build.bat's source prep, from git only: submodules, libatrac9.a, FSR-Vulkan patches."""
+    # Windows resolves a bare program name on the parent's PATH, not env's: name mingw64's tools in full.
+    gcc = shutil.which("gcc", path=env["PATH"]) or "gcc"
+    ar = shutil.which("ar", path=env["PATH"]) or "ar"
     fsr = repo / "gpu" / "third_party" / "fsr-vulkan"
     at9 = repo / "third_party" / "LibAtrac9" / "C" / "src"
     if not (fsr / "CMakeLists.txt").is_file() or not at9.is_dir():
@@ -99,11 +102,11 @@ def prepare(repo, env):
         objs = []
         for c in sorted(at9.glob("*.c")):
             o = objdir / (c.stem + ".o")
-            subprocess.run(["gcc", "-std=c99", "-O2", "-g", "-w", "-c", str(c), "-o", str(o)], env=env, check=True)
+            subprocess.run([gcc, "-std=c99", "-O2", "-g", "-w", "-c", str(c), "-o", str(o)], env=env, check=True)
             objs.append(str(o))
         if not objs:
             raise SystemExit(f"no LibAtrac9 sources in {at9}")
-        subprocess.run(["ar", "rcs", str(lib)] + objs, env=env, check=True)
+        subprocess.run([ar, "rcs", str(lib)] + objs, env=env, check=True)
         print(f"built {lib}")
     patches = sorted((repo / "gpu" / "patches" / "fsr-vulkan").glob("*.patch"))
     patches.append(repo / "patches" / "fsr_vulkan_mingw.patch")
