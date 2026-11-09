@@ -28,6 +28,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_common as rc  # noqa: E402
+import changelog  # noqa: E402
+import changelog  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 # Tracked paths that ship (exact file names and directory prefixes of git ls-files).
@@ -64,6 +66,20 @@ def check_changes_dated(repo, ver):
     except RuntimeError:
         return
     check_changes_text(text, ver)
+    try:
+        listing = rc.git(repo, "ls-tree", "-r", "--name-only", "HEAD", "changes.d/")
+    except RuntimeError:
+        return
+    check_fragment_names(listing.splitlines(), ver)
+
+
+def check_fragment_names(names, ver):
+    """Dies when committed changes.d/ fragments are still waiting to be assembled into CHANGES.md."""
+    frags = [n.strip() for n in names if n.strip() and changelog.is_fragment_path(n.strip())]
+    if frags:
+        die(f"changes.d/ still holds {len(frags)} changelog fragment(s) ({', '.join(sorted(frags)[:3])}"
+            f"{', ...' if len(frags) > 3 else ''}): run `python tools/release/changelog.py assemble {ver} "
+            f"--date YYYY-MM-DD` and commit before the build (the zip takes CHANGES.md from git)")
 
 
 def check_changes_text(text, ver):

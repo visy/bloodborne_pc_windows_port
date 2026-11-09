@@ -10,6 +10,10 @@ Paths below are the usual ones (`E:\games\bbport`); `<clone>` is `agents\NAME` (
       `python -m pytest tests/test_version.py -q` passes.
 - [ ] `CHANGES.md` for the version is grouped `### Added` / `### Changed` / `### Fixed`, plain player-facing
       wording, no player names, IPs or log excerpts, upstream authors by public handle.
+- [ ] Changelog fragments: agents add `changes.d/<slug>.md` instead of editing CHANGES.md (see `changes.d/README.md`).
+      `python tools/release/changelog.py check`, then `python tools/release/changelog.py assemble X.Y.Z --date YYYY-MM-DD`
+      (merges the fragments into the `## X.Y.Z` section, deletes them), review `git diff CHANGES.md`, commit. `stage.py` and
+      `build_release.py` refuse while `changes.d/` still holds fragments in the commit.
 - [ ] Release notes file (for GitHub) = the same three sections, same text.
 - [ ] Commit the bump on the release branch, merge master into it, `python -m pytest tests -q` is green.
 
@@ -24,7 +28,7 @@ Paths below are the usual ones (`E:\games\bbport`); `<clone>` is `agents\NAME` (
       1. clone of `src` at the commit into `agentselcloneXYZ` with `git clone --no-tags`, then tags from the
          `fork` remote only (an upstream tag such as Mrsuss60's `v0.8.0` at another commit must not reach the
          clone; `publish.py` refuses a local tag on another commit). Refuses a `src` with modified tracked files;
-      2. checks `VERSION` and that `CHANGES.md` at the commit does not say `(unreleased)` for X.Y.Z;
+      2. checks `VERSION` and that `CHANGES.md` at the commit does not say `(unreleased)` for X.Y.Z and `changes.d/` holds no fragments;
       3. `configure_pgo.py` (submodules, `libatrac9`, FSR patches, committed `pgo-profile\`);
       4. `cmake --build` of `out\gpu-pgo-gen` with `C:\msys64\mingw64in` on PATH, below-normal priority,
          through the machine-wide build queue (`tools/mp/game_queue.py`, pool `build`, same as `tools/agent/build.py`);
@@ -72,7 +76,7 @@ Paths below are the usual ones (`E:\games\bbport`); `<clone>` is `agents\NAME` (
 
 | Tool | Refuses when |
 | --- | --- |
-| `stage.py` | `VERSION` or `bbport.exe --version` is not X.Y.Z (it runs the exe with mingw64 on PATH and prints the exit code and stderr when that fails); `CHANGES.md` still says `## X.Y.Z (unreleased)`; exe build id is `-dirty` or not the repo's HEAD; the stage fails the zip rules; the stage dir exists (without `--replace`) |
+| `stage.py` | `VERSION` or `bbport.exe --version` is not X.Y.Z (it runs the exe with mingw64 on PATH and prints the exit code and stderr when that fails); `CHANGES.md` still says `## X.Y.Z (unreleased)` or `changes.d/` still holds fragments; exe build id is `-dirty` or not the repo's HEAD; the stage fails the zip rules; the stage dir exists (without `--replace`) |
 | `make_zip.py` | the stage rules above; the output exists; the exe changed after staging |
 | `publish.py` | short sha; commit is not the exe's; tag is not `vX.Y.Z`; local tag on another commit (the message says to delete it or use a `build_release.py` clone, which has no upstream tags); zip or exe differs from the stamp; empty notes; release or tag exists; no `--yes-publish` means dry run |
 ## Appendix: the manual steps (what build_release.py runs)
