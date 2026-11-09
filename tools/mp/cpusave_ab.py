@@ -25,10 +25,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 AGENT_ROOT = REPO.parent
 
-BITS = {"barrier": 128, "cache": 256, "both": 128 + 256}
+BITS = {"barrier": 128, "cache": 256, "both": 128 + 256, "tasksteal": 512}
 RATE = re.compile(r"Frame rate: [\d.]+ s real, \d+ steps \(([\d.]+) per s\)")
 STATE = re.compile(r"CPU save: barrier (on|off) calls (\d+) sweeps (\d+) steals (\d+) \| node cache (on|off) pools (\d+) "
-                   r"ended (\d+) hits (\d+) misses (\d+) kept (\d+) passed (\d+)")
+                   r"ended (\d+) hits (\d+) misses (\d+) kept (\d+) passed (\d+)(?: full \d+)?(?: \| task steal (on|off))?")
 THREADS = re.compile(r"Live clock threads: \d+ threads; busy \(ms CPU per s\):(.*)")
 THREAD = re.compile(r"\[(.*?) (\d+) p(-?\d+) (\d+)\]")
 
@@ -64,6 +64,7 @@ def run(a):
     env.update({"BB_TOGGLE_FILE": str(toggle), "BB_LIVE_FPS_LOG": "1", "BB_FRAME_RATE_LOG": "2",
                 "BB_JOB_BARRIER_STEAL": "2" if a.feature in ("barrier", "both") else "0",
                 "BB_WORKPOOL_NODE_CACHE": "2" if a.feature in ("cache", "both") else "0",
+                "BB_TASK_STEAL": "2" if a.feature == "tasksteal" else "0",
                 "BB_FRAME_STATS": "1", "BB_AUDIO": "none", "BB_WINDOW_BACKGROUND": "1",
                 "BB_SVL_FIXTURE": "E:/games/bbport/test_saves/cathedral_day",
                 "BB_SVL_SECONDS": str(int(a.blocks * a.period + 40)),
@@ -108,7 +109,7 @@ def report(path: Path):
             cur["threads"] = {(n, tid): int(ms) for n, tid, _p, ms in THREAD.findall(m.group(1))}
         m = STATE.search(l)
         if m:
-            cur["barrier"], cur["cache"] = m.group(1), m.group(5)
+            cur["barrier"], cur["cache"], cur["task"] = m.group(1), m.group(5), m.group(12) or "-"
             cur["counts"] = tuple(int(x) for x in m.groups()[1:4]) + tuple(int(x) for x in m.groups()[7:11])
             rows.append(dict(cur))
             cur = {"fps": cur.get("fps")}
@@ -118,7 +119,7 @@ def report(path: Path):
     prev = None
     skip = 0
     for r in rows:
-        key = (r["barrier"], r["cache"])
+        key = (r["barrier"], r["cache"], r["task"])
         if key != prev:
             prev, skip = key, 4
         if skip:
@@ -132,8 +133,8 @@ def report(path: Path):
             for k, ms in r.get("threads", {}).items():
                 busy.setdefault(k, []).append(ms)
         top = sorted(busy.items(), key=lambda kv: -statistics.mean(kv[1]))[:8]
-        print("barrier=%s cache=%s: %d s, rate median %.1f mean %.1f/s | busiest threads (ms CPU/s): %s" % (
-            key[0], key[1], len(rs), statistics.median(fps) if fps else 0, statistics.mean(fps) if fps else 0,
+        print("barrier=%s cache=%s task=%s: %d s, rate median %.1f mean %.1f/s | busiest threads (ms CPU/s): %s" % (
+            key[0], key[1], key[2], len(rs), statistics.median(fps) if fps else 0, statistics.mean(fps) if fps else 0,
             " ".join("%s:%d" % (k[0][:10], statistics.mean(v)) for k, v in top)))
     if rows:
         print("last counters (barrier calls/sweeps/steals, cache hits/misses/kept/passed):", rows[-1]["counts"])

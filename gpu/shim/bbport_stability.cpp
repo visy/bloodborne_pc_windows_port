@@ -26,6 +26,7 @@
 //   BB_SF_TEXT_GUARD=0     a text shown before its layout exists is not guarded (+0x12d5e0 / +0x12df80)
 //   BB_FMOD_RING_GUARD=0   a sound freed while still in FMOD's sound ring is not taken out first (+0xdab3a0)
 //   BB_MOVIE_DRAW_WAIT=0   the attract movie's frame draw / close (+0x28fe7c0 / +0x28fe2e0) do not wait for GXRenderThread
+//   BB_TASK_STEAL=1        (default off, pending an A/B) render task stealing byte on; 2 = A/B test aid (experiment bit 512)
 //   BB_JOB_BARRIER_STEAL=1 (default off; 2: installed, off at start) GX job barrier: the main thread keeps stealing
 //   BB_WORKPOOL_NODE_CACHE=1 (default off; 2: installed, off at start) work-pool job list nodes cached per pool
 #include "bbport_stability.h"
@@ -1622,9 +1623,10 @@ void MovieWaitIdle(u64 rt, const char* what, u64 n, std::atomic<u64>& busy) {
             std::printf("Stability: movie: the %s %llu waited %llu ms for GXRenderThread to go idle and goes ahead without it\n",
                         what, ull(n), ull(us / 1000));
         }
-    } else if (k == 0) {
-        std::printf("Stability: movie: the %s %llu waited %llu us for GXRenderThread to finish its frame first\n", what, ull(n),
-                    ull(us));
+    } else if (k == 0 || ((k + 1) & k) == 0) {
+        // The first wait, then the 2nd, 4th, 8th ... (the exit report is lost when the game is killed).
+        std::printf("Stability: movie: the %s %llu waited %llu us for GXRenderThread to finish its frame first (wait %llu, %llu ms "
+                    "in all)\n", what, ull(n), ull(us), ull(k + 1), ull(movie_waited_us.load() / 1000));
     }
 }
 
@@ -1693,6 +1695,48 @@ bool InstallMovieWait() {
     movie_close_orig = reinterpret_cast<MovieCloseFn>(close_orig);
     return WriteBranch(kMovieDraw, 0xe9, draw_stub, sizeof(kMovieDrawPrologue) - 5) &&
            WriteBranch(kMovieClose, 0xe9, close_stub, sizeof(kMovieClosePrologue) - 5);
+}
+
+// ======================================================================================
+// 18. Render task stealing (the scene's "Enable Task Stealing", byte +0x78bd of the graphics manager, which
+// the game's constructor clears). The community Performance Patch v3 sets it (its site: the constructor's
+// immediate at +0x2295d04); Live FPS locks that patch out, so it stays 0 here. droogie/bbhost (render_queue.cpp,
+// graphics_patch.cpp, GPL-3.0) cuts the render queue's runs into GX jobs by that byte: with it every
+// run the table cuts is one job that GX's job system splits as it runs (a pop takes a grain, a steal the
+// upper half), which evens the load between the worker threads.
+// BB_TASK_STEAL=1: the immediate is 1 (set at load); =2: A/B test aid, the manager's byte follows the
+// experiment bit 512 (off at start), written once a second by LogCpuSave (BB_LIVE_FPS_LOG); 0: the game's.
+// ======================================================================================
+constexpr u64 kTaskStealImm = 0x2295d04;
+constexpr u64 kGraphicsManagerSlot = 0x5540dd8; // pointer to the graphics manager
+constexpr u64 kManagerTaskSteal = 0x78bd;
+int task_steal_mode = 0;
+inline bool TaskStealWanted() { return (task_steal_mode == 1) != BbToggle::Experiment(512); }
+
+bool InstallTaskSteal(int mode) {
+    // mov byte [rbx + 0x78bd], 0: the immediate is the instruction's last byte.
+    if (!Matches(kTaskStealImm - 6, {0xc6, 0x83, 0xbd, 0x78, 0x00, 0x00, 0x00})) {
+        std::printf("Stability: task steal: guest +0x%llx is not the expected code (%02x %02x %02x %02x %02x %02x %02x); left alone\n",
+                    ull(kTaskStealImm), image[kTaskStealImm - 6], image[kTaskStealImm - 5], image[kTaskStealImm - 4],
+                    image[kTaskStealImm - 3], image[kTaskStealImm - 2], image[kTaskStealImm - 1], image[kTaskStealImm]);
+        return false;
+    }
+    task_steal_mode = mode;
+    if (mode == 1) {
+        image[kTaskStealImm] = 1;
+    }
+    return true;
+}
+
+/// Mode 2: the manager's byte follows the experiment bit (once a second).
+void TaskStealTick() {
+    if (task_steal_mode != 2) {
+        return;
+    }
+    const u64 gm = Rd64(reinterpret_cast<u64>(image) + kGraphicsManagerSlot);
+    if (gm >= 0x10000) {
+        *reinterpret_cast<volatile u8*>(gm + kManagerTaskSteal) = TaskStealWanted() ? 1 : 0;
+    }
 }
 
 // ======================================================================================
@@ -1929,16 +1973,18 @@ void CpuSaveReport() {
         live += c.state.load() == kCacheInUse;
     }
     std::printf("CPU save: barrier %s calls %llu sweeps %llu steals %llu | node cache %s pools %llu ended %llu hits %llu "
-                "misses %llu kept %llu passed %llu full %u\n",
+                "misses %llu kept %llu passed %llu full %u | task steal %s\n",
                 BarrierActive() ? "on" : "off", ull(barrier_stats.calls.load()), ull(barrier_stats.sweeps.load()),
                 ull(barrier_stats.steals.load()), CacheActive() ? "on" : "off", ull(live), ull(ends), ull(hits),
-                ull(misses), ull(kept), ull(passed), cache_full.load());
+                ull(misses), ull(kept), ull(passed), cache_full.load(),
+                task_steal_mode == 0 ? "off" : TaskStealWanted() ? "on" : "off");
     std::fflush(stdout);
 }
 
 } // namespace
 
 void LogCpuSave() {
+    TaskStealTick();
     if (cpusave_installed) {
         CpuSaveReport();
     }
@@ -1997,7 +2043,10 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("job-barrier-steal ") + (barrier ? (barrier_mode == 1 ? "on" : "installed, off") : "off"));
     const bool pool_cache = cache_mode && stub_page && InstallWorkPoolCache();
     note(std::string("workpool-node-cache ") + (pool_cache ? (cache_mode == 1 ? "on" : "installed, off") : "off"));
-    cpusave_installed = barrier || pool_cache;
+    const int steal_mode = CpuSaveMode("BB_TASK_STEAL");
+    const bool steal = steal_mode && InstallTaskSteal(steal_mode);
+    note(std::string("task-steal ") + (steal ? (steal_mode == 1 ? "on" : "installed, off") : "off"));
+    cpusave_installed = barrier || pool_cache || steal;
     if (sf_lock_on || sf_guard_on || fmod_ring || movie_wait_on || cpusave_installed) {
         std::atexit([] {
             SfReport();
