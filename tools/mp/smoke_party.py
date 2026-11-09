@@ -1879,8 +1879,10 @@ def phase_lfd(only):
     live = os.environ.get("LFD_LIVE", "1")
     return dict(name="lfd", seconds=240 + LFD_DEATHS * (LFD_HOLD + 40), count=1, headless=0, fps=fps, prep=prep_lfd,
                 post=post_chalamp,
+                # BB_BREADCRUMBS_TRANSFERS: a device lost ("invalid write at 0" between the presenter's post process
+                # and the next HLE copy shader, CL-ab12f5) came once in a Live FPS respawn run; then it names the copy.
                 env=["BB_PARTY_DIRECTOR_TEST_SOLO=1", "BB_LIVE_FPS=" + live, "BB_FRAME_RATE_LOG=2",
-                     "BB_LIVE_FPS_LOG=1"],
+                     "BB_LIVE_FPS_LOG=1", "BB_BREADCRUMBS_TRANSFERS=1"],
                 ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(host)],
                 crash=[], until=LFD_UNTIL)
 
@@ -10288,7 +10290,7 @@ GROUPS = {"invade_race": "ivr", "join_stagger": ",".join(JN_PHASES), "join_stagg
           "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "leave_gap": "lv", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "lifts2": "lfx", "lift_apart": "lfa", "lift_walk": "lfw,lfwc", "lift_walk_far": "lfwf,lfwcf", "lift_walk_slow": "lfws,lfwcs,lfwbs,lfwcbs", "lift_down": "lu", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd,kg", "drop_far": "fdr", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "amygdala": "amy", "prologue_refusal": "pr", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_layers": "cy,cyn", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_enter": "cae,cao", "chalice_altar_guest": "cag", "chalice_altar_guest_full": "cage", "chalice_boss": "cab", "chalice_queen": "caq,caw", "chalice_wipe": "clw", "chalice_alias": "cla,caa,cam,camo,camh,cas", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "live_fps_death": "lfd", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "guest_rest": "gr,gr2,gr3,gr4", "atlas": "mp,mpg,mph", "map_marks": "mm,mmn", "map_marks": "mm,mmn", "guest_rest_off": "gro,gr2o,gr3o,gr4o", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "lecture_lamp": "ll", "host_lamp": "hlq", "boss_lamp": "bq", "host_lamp_repair": "hlr", "boss_lamp": "bq", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
 
           "rot": "rt", "boss_rooms": "br", "rom_fog": "rf", "rom_jump": "rj", "emissary": "em", "emissary_first": "emf", "boss_drops": "bd", "boss_drops_off": "bdo", "scene_mirror": "sm", "ending_flow": "ef", "ngplus_ending": "ngp", "moon_music": "mb", "gehrman_music": "gb", "moon_music_stop": "mbs", "gehrman_music_stop": "gbs", "dream_apart": "da", "covenant": "cv",
-          "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "covenant_seq": "cvs,cvo", "covenant_runes": "cvr", "covenant_measure": "cvm", "covenant_chalice": "cvc", "covenant_annalise": "cva", "covenant_alfred": "cvf", "covenant_kneel": "cvk", "covenant_staff": "cvl", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "guest_gates": "gag", "look_sync": "h5", "give_items": "gv,gvg", "give_rollback": "gvr,gvl", "give_netsim": "gvn", "give_menu": "gvm,gvs,gvt", "give_gear": "gvw", "give_armor": "gva", "give_gear_netsim": "gvwn", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_eileen": "nfe", "npc_alfred_ward": "nfw", "npc_hunter_nightmare": "nfn", "npc_hunter_research": "nfr", "npc_valtr": "nfv", "npc_djura": "nfd", "npc_brador": "nfb", "npc_hamlet": "nfh", "npc_hunter_nightmare2": "nfn2", "npc_guest_kill": "nfnk,nfn2k,nfrk,nfhk", "npc_invader": "npi", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "npc_fog": "npf", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "death_poison": "px,pxg", "seam_rejoin": "sj", "outage_short": "ou", "stranger_port": "stg", "guest_restart": "gdr,gdrd,gdrb,gdrf", "guest_mesh": "mesh", "vpn_mtu": "oum,meshm", "fourp_nat": "fp", "fivep": "fp5", "fivep_invader": "fpi5", "six_stage": "fp5x,fpi5x", "six": "fp6,fpi6", "six_join": "fp6j,fp6k", "open_party": "oj", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "shop_badge": "sgb", "shop_badge_sync": "sgb2", "badge_guard": "sgb3", "badge_gate": "sgb4,sgb4n", "sgive_owner": "sgp", "chalice_shop": "csh,csh2", "chalice_shop3": "csh3", "chalice_insight": "cis", "chalice_madman": "cim", "chalice_glyph": "cgt,cgp,cgu", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_guest": "bg", "boss_laurence_wipe": "lr", "boss_laurence_guest_first": "lrg", "micolash": "mi", "micolash_guest": "mig", "boss_visible": "bv,bw", "ludwig_wipe": "lw", "ludwig_refight": "lwf", "amelia_phase": "amp", "lone_ai": "la,lc", "scurry_beasts": "scb", "rot_recovery": "rr"}
+          "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "covenant_seq": "cvs,cvo", "covenant_runes": "cvr", "covenant_measure": "cvm", "covenant_chalice": "cvc", "covenant_annalise": "cva", "covenant_alfred": "cvf", "covenant_kneel": "cvk", "covenant_staff": "cvl", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "guest_gates": "gag", "look_sync": "h5", "give_items": "gv,gvg", "give_rollback": "gvr,gvl", "give_netsim": "gvn", "give_menu": "gvm,gvs,gvt", "give_gear": "gvw", "give_armor": "gva", "give_gear_netsim": "gvwn", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_eileen": "nfe", "npc_alfred_ward": "nfw", "npc_hunter_nightmare": "nfn", "npc_hunter_research": "nfr", "npc_valtr": "nfv", "npc_djura": "nfd", "npc_brador": "nfb", "npc_hamlet": "nfh", "npc_hunter_nightmare2": "nfn2", "npc_guest_kill": "nfnk,nfn2k,nfrk,nfhk", "npc_invader": "npi", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "npc_fog": "npf", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "death_poison": "px,pxg", "seam_rejoin": "sj", "outage_short": "ou", "stranger_port": "stg", "guest_restart": "gdr,gdrd,gdrb,gdrf", "guest_mesh": "mesh", "vpn_mtu": "oum,meshm", "fourp_nat": "fp", "fivep": "fp5", "fivep_invader": "fpi5", "six_stage": "fp5x,fpi5x", "six": "fp6,fpi6", "six_join": "fp6j,fp6k", "open_party": "oj", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "shop_badge": "sgb", "shop_badge_sync": "sgb2", "badge_guard": "sgb3", "badge_gate": "sgb4,sgb4n", "sgive_owner": "sgp", "chalice_shop": "csh,csh2", "chalice_shop3": "csh3", "chalice_insight": "cis", "chalice_madman": "cim", "chalice_glyph": "cgt,cgp,cgu", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_guest": "bg", "boss_laurence_wipe": "lr", "boss_laurence_guest_first": "lrg", "micolash": "mi", "micolash_guest": "mig", "boss_visible": "bv,bw", "ludwig_wipe": "lw", "ludwig_refight": "lwf", "amelia_phase": "amp", "lone_ai": "la,lb,lc", "scurry_beasts": "scb", "rot_recovery": "rr"}
 GROUP_ROWS = {"map_marks": r"^mmn? ", "invade_race": r"^ivr ", "join_stagger": r"^jn\d[a-d][ :]", "join_stagger_sim": r"^jn\dd[ :]", "invade_cross": r"^ivc ", "invade_cross3": r"^ivc3[nm]? ", "invade_fallback": r"^ivf ", "open_level_any": r"^ojla ", "invade_two": r"^(iv2|ivm) ", "invade_place": r"^ivp ", "invade": r"^iv ", "invade_sim": r"^ivn ", "invade_refuse": r"^ivx ", "invade_level": r"^ivl ", "open_level": r"^ojl ", "auto_hud": r"^ah ", "party_chat": r"^pc ", "version_options": r"^vm ", "yahargul_join": r"^yj ", "yahargul_join_other": r"^yj ", "lecture_lamp_party": r"^ll ", "join": r"^s1 join", "leave": r"s1 (Leave|Rejoin)", "death": r"guest death|bloodstain|revived",
               "travel": r"travel", "boss": r"Gascoigne|intro", "host_death": r"host death|limbo",
               "wipe": r"wipe", "wipe_late": r"late wipe", "kill": r"s2 boss kill|party stays", "arena": r"arena", "itembox": r"item box|reward on the summoned",
@@ -14363,6 +14365,40 @@ def phase_list_for(a):
 SEED_TIMES = HERE / "phase_times_seed.json"  # per-phase wall seconds of a full run (the ETA before this machine has its own)
 
 
+def tier_table(known):
+    """[(tier, phase count, estimated seconds at one lane)] from the phase times in `known` (300 s when unknown)."""
+    rows = []
+    for tier, names in (("fast", FAST_PHASES.split(",")), ("quick", QUICK_PHASES.split(",")),
+                        ("release", [p for p in PHASES if p not in RELEASE_SKIP]), ("full", list(PHASES))):
+        rows.append((tier, len(names), sum(known.get(n, 300) for n in names)))
+    return rows
+
+
+def phases_for_groups(only):
+    """The phases of the --only groups, in PHASES' own order (so a new phase needs no second list)."""
+    wanted = {n for g in only for n in GROUPS[g].split(",")}
+    return [n for n in PHASES if n in wanted]
+
+
+def record_times(times_file, out, names):
+    """Merge the wall seconds of the phases in `names` (out/<name>/wall.txt) into the times file."""
+    try:
+        cur = {}
+        try:
+            cur = json.loads(Path(times_file).read_text())
+        except (OSError, ValueError):
+            pass
+        for name in names:
+            try:
+                cur[name] = float((Path(out) / name / "wall.txt").read_text())
+            except (OSError, ValueError):
+                pass
+        Path(times_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(times_file).write_text(json.dumps(cur, indent=1))
+    except OSError:
+        pass
+
+
 def load_times(times_file):
     known = {}
     for f in (SEED_TIMES, times_file):
@@ -14462,7 +14498,15 @@ def main():
                          "client limit only while the memory guard (game_queue.py) finds the RAM for them. The verdict is made "
                          "once over all phases")
     ap.add_argument("--lane-id", type=int, default=-1, help=argparse.SUPPRESS)  # a lane child (--lanes)
+    ap.add_argument("--list-tiers", action="store_true",
+                    help="print each tier's phase count and estimated time (seed times, then this machine's own "
+                         "smoke/phase_times.json), then exit; docs/SMOKE_TIERS.md refers to this instead of numbers")
     a = ap.parse_args()
+    if a.list_tiers:
+        known = load_times(AGENT_ROOT / "smoke" / "phase_times.json")
+        for tier, n, secs in tier_table(known):
+            print("%-8s %4d phases  about %.1f h" % (tier, n, secs / 3600))
+        return
     if not a.no_shots:
         import shotcheck
         try:
@@ -14484,15 +14528,7 @@ def main():
     if bad:
         sys.exit("unknown --only group(s): " + ",".join(sorted(bad)))
     if only and a.lane_id < 0:  # (a lane child keeps the one phase it was given)
-        a.phase = ",".join(p for p in (*JN_PHASES, "pc", "vm", "yj", "yjc", "s1", "s2", "h5", "rr", "rules", "ss", "sh", "iv", "ivn", "ivx", "ivl", "ivp", "ivc", "ivc3", "ivc3n", "ivc3m", "ivf", "iv2", "ivm", "ojl", "ojla", "gg", "bv", "bw", "sc", "summonfail", "s3", "sk", "lg", "lv", "ga", "gl", "lf", "lfa", "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs", "lu", "mk", "kd", "kw", "fl", "fd", "fdj", "cd", "iw", "iwn", "an", "ld", "cl", "clg", "clw", "cla", "cpr", "chc", "chn", "chw", "cpa", "cae", "cao", "cag", "cage", "cgt", "cgp", "cgu", "caa", "cas", "cab", "el", "lt", "bf", "ch", "md", "mds", "svl",
-                                     "lp", "gd", "gh", "gm", "gr", "gr2", "gr3", "gr4", "gro", "gr2o", "gr3o", "gr4o", "mp", "mpg", "mph", "mm", "mmn", "jl", "ml", "mg", "ll", "llp", "hlq", "hlr", "bq", "hs", "ngj", "nl", "ff", "lk", "lkc", "rt", "br", "rf", "rj", "em", "emf", "bd", "bdo", "sm", "ef", "ngp", "mb", "gb", "mbs", "gbs", "da", "cv", "cvr", "cvm", "cvc", "cva", "cvf", "cvk", "cvl", "cvt", "cvh", "cvs", "cvo", "ie", "il", "rw", "rwe", "rwt", "rwl", "gv", "gvg", "gvr", "gvl", "gvn", "gvm", "gvs", "gvt", "gvw", "gvwn", "gva", "rh", "rs", "fw", "fwg", "fwb", "fwe", "fh", "tv", "nf", "nfa", "nfe", "nfw", "nfn", "nfr", "nfv", "nfd", "nfb", "nfh", "nfn2", "nfnk", "nfn2k", "nfrk", "nfhk", "npi", "npa", "npd", "pvd", "pvh", "pvn", "npf", "eh", "bl", "mw", "px", "pxg", "sj", "ou", "stg", "gdr", "gdrd", "gdrb", "gdrf", "mesh", "oum", "meshm", "fp", "fp5", "oj", "lo", "po", "pos", "sg", "sg2", "sgb", "sgb2", "sgb3", "sgb4", "sgb4n", "sgp", "csh", "csh2", "csh3", "cis", "cim", "ba", "bh", "bk", "hg", "bg", "lr", "lrg", "mi", "mig", "lw", "lwf", "amp", "la", "lb", "lc")
-                           if p in {n for g in only for n in GROUPS[g].split(",")})
-        # Phases the ordered list above does not name (newer ones: fp5x, fp6j, ...) still run, after it.
-        wanted = [n for g in sorted(only) for n in GROUPS[g].split(",")]
-        listed = set(a.phase.split(",")) if a.phase else set()
-        extra = [n for n in dict.fromkeys(wanted) if n not in listed and n in PHASES]
-        if extra:
-            a.phase = ",".join(([a.phase] if a.phase else []) + extra)
+        a.phase = ",".join(phases_for_groups(only))
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():
         sys.exit("never the user's game folder as the test game (agents/RULES_062.txt)")
     out = Path(a.out)
@@ -14543,6 +14579,7 @@ def main():
                     subprocess.call(argv, stdout=lf, stderr=subprocess.STDOUT, env=base_env)
                 with lock:
                     prog.finish(name, time.time() - t0, "lane %d" % k, wait=queue_wait(out / name))
+                    record_times(times_file, out, [name])
         print("[smoke] %d lanes, %d phases, estimate %s" % (a.lanes, len(names), fmt_hms(prog.eta())), flush=True)
         threads = [threading.Thread(target=lane, args=(k,)) for k in range(a.lanes)]
         for th in threads:
@@ -14563,6 +14600,7 @@ def main():
             run_phase_retrying(a, name, ph, out / name, CHECKS[name], only)
             (out / name / "wall.txt").write_text("%.0f" % (time.time() - t_ph))
             prog.finish(name, time.time() - t_ph, wait=queue_wait(out / name))
+            record_times(times_file, out, [name])  # kept even when the run is stopped later
         print("[smoke] verdict %s" % name, flush=True)
         if lanes_used:
             try:
@@ -14576,22 +14614,8 @@ def main():
         (out / name).mkdir(parents=True, exist_ok=True)
         (out / name / "rows.json").write_text(json.dumps(v.rows[n0:]), encoding="utf-8")
     if not a.check_only or lanes_used:
-        # this machine's measured phase wall times: the next run's ETA
-        try:
-            cur = {}
-            try:
-                cur = json.loads(times_file.read_text())
-            except (OSError, ValueError):
-                pass
-            for name in names:
-                try:
-                    cur[name] = float((out / name / "wall.txt").read_text())
-                except (OSError, ValueError):
-                    pass
-            times_file.parent.mkdir(parents=True, exist_ok=True)
-            times_file.write_text(json.dumps(cur, indent=1))
-        except OSError:
-            pass
+        # this machine's measured phase wall times: the next run's ETA and the tier cut
+        record_times(times_file, out, names)
     fails = [r for r in v.rows if not r[1]]
     text = "\n".join("%s  %s  %s" % ("PASS" if ok else "FAIL", n, d) for n, ok, d in v.rows)
     text += "\n\n%d steps, %d failed\n" % (len(v.rows), len(fails))

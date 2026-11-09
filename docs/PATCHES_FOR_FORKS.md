@@ -146,6 +146,7 @@ image + 0x400000 and the file uses guest offsets (image + 0), e.g. bbhost 0x2aaa
 | Fix | Switch (default on) | Site (guest offset) |
 |---|---|---|
 | Heap size table growth (SprjMemory heaps for Scaleform/MENU; GFX above 1080p) | `BB_HEAP_TABLE=0`; GFX_GraphicsPrivate growth `BB_GFX_HEAP_MORE_MIB=N` | heap table, `runtime_memory.c` |
+| GX range allocator 160 -> 288 MiB (Nightwatch c6305d7, Lantern Engine by Awaken) | `BB_GX_REGION_MB=160` or `0`; `BB_GX_REGION=0` | `GxRegion()` in `bbport_stability.cpp` |
 | GX resource-table reclaim wait (GPU catch-up wait) | `BB_GX_RECLAIM_WAIT=0`, bound `BB_GX_RECLAIM_WAIT_MS` (default 100) | GX table block reclaim |
 | Frame-pool borrow fix | `BB_FRAME_POOL_FIX=0` | +0x1067F60 |
 | Red-zone-free effect ribbon writers | `BB_RIBBON_FIX=0` | +0x28CE7B0, +0x28CEEC0 |

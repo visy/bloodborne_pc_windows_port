@@ -245,3 +245,37 @@ def test_only_runs_every_phase_of_its_groups(monkeypatch):
         except SystemExit:
             pass
         assert set(seen.get("phase", "").split(",")) >= set(sp.GROUPS[group].split(",")), group
+
+
+def test_every_phase_is_reachable_through_a_group():
+    """No hand-written order list: --only <group> orders by PHASES, and every phase belongs to some group."""
+    import smoke_party as sp
+    in_groups = {n for g in sp.GROUPS.values() for n in g.split(",")}
+    assert not set(sp.PHASES) - in_groups, sorted(set(sp.PHASES) - in_groups)
+    assert not in_groups - set(sp.PHASES), sorted(in_groups - set(sp.PHASES))
+    every = sp.phases_for_groups(set(sp.GROUPS))
+    assert every == list(sp.PHASES)  # PHASES' own order, nothing dropped or duplicated
+    assert sp.phases_for_groups({"six_join"}) == [n for n in sp.PHASES if n in sp.GROUPS["six_join"].split(",")]
+
+
+def test_record_times_merges_and_keeps_old_entries(tmp_path):
+    import json
+    import smoke_party as sp
+    out = tmp_path / "run"
+    for name, secs in (("s1", "101"), ("s2", "202")):
+        (out / name).mkdir(parents=True)
+        (out / name / "wall.txt").write_text(secs)
+    times = tmp_path / "smoke" / "phase_times.json"
+    times.parent.mkdir()
+    times.write_text(json.dumps({"s1": 5.0, "ga": 77.0}))
+    sp.record_times(times, out, ["s1", "s2", "missing"])
+    assert json.loads(times.read_text()) == {"s1": 101.0, "ga": 77.0, "s2": 202.0}
+    sp.record_times(tmp_path / "new" / "t.json", out, ["s2"])  # creates the folder
+    assert json.loads((tmp_path / "new" / "t.json").read_text()) == {"s2": 202.0}
+
+
+def test_tier_table_counts(monkeypatch):
+    import smoke_party as sp
+    rows = {t: (n, secs) for t, n, secs in sp.tier_table({})}
+    assert rows["full"][0] == len(sp.PHASES) and rows["full"][1] == 300 * len(sp.PHASES)
+    assert rows["release"][0] == len(sp.PHASES) - len(sp.RELEASE_SKIP)

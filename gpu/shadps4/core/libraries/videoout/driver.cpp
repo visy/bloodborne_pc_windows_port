@@ -54,6 +54,10 @@ extern std::atomic<u64> g_bb_compile_ns;
 extern std::atomic<u32> g_bb_compiles;
 } // namespace Vulkan
 
+namespace AmdGpu {
+void OcclusionDumpCounts(u64& dumps, u64& in_order); // liverpool.cpp (Lantern 12de90e, modified)
+} // namespace AmdGpu
+
 namespace Libraries::VideoOut {
 
 constexpr static bool Is32BppPixelFormat(PixelFormat format) {
@@ -775,6 +779,18 @@ void VideoOutDriver::Flip(const Request& req) {
             if (const u64 early = BbStats::idle_flushes.exchange(0)) {
                 std::printf("Honest labels: %.1f submissions/frame sent early (GPU idle)\n",
                             early / double(frames));
+            }
+            {
+                static u64 last_dumps = 0, last_in_order = 0;
+                u64 dumps = 0, in_order = 0;
+                AmdGpu::OcclusionDumpCounts(dumps, in_order);
+                if (dumps != last_dumps && frames != 0) {
+                    std::printf("Occlusion dumps: %.1f a frame (%.1f in order)\n",
+                                double(dumps - last_dumps) / frames,
+                                double(in_order - last_in_order) / frames);
+                }
+                last_dumps = dumps;
+                last_in_order = in_order;
             }
             {
                 uint64_t sleeps = 0, sleep_ns = 0;

@@ -8,6 +8,7 @@
 #include <cpuid.h>
 #include "runtime.h"
 #include "runtime_logdrain.h"
+#include "crash_regmem.h"
 #include "gpu/bbgpu.h"
 #include "gpu/bbnet.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
@@ -1413,6 +1414,23 @@ static void write_crash_dump(EXCEPTION_POINTERS *ep, void *fault_addr, uintptr_t
         fprintf(f, "  [rbp frame %2d] ret=%016llx (%s)\n", frame, (unsigned long long)ret_addr, loc);
         if (next_rbp <= rbp) break;
         rbp = next_rbp;
+    }
+
+    /* restab081: what the registers point at, and the decode of a known site (crash_regmem.h).
+     * Crash time only (no cost while the game runs). */
+    {
+        /* Raw bytes at the registers can hold player text: off by default (diagnostics rule), on in our test
+         * harness (tools/mp/instances.py) and with BB_CRASH_REGMEM=1. The ids-only decode below always runs. */
+        const char *regmem = getenv("BB_CRASH_REGMEM");
+        if (regmem && regmem[0] == '1') {
+            static const char *const reg_names[] = {"RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "R8",
+                                                    "R9",  "R10", "R11", "R12", "R13", "R14", "R15"};
+            const uint64_t reg_values[] = {c->Rax, c->Rbx, c->Rcx, c->Rdx, c->Rsi, c->Rdi, c->Rbp, c->R8,
+                                           c->R9,  c->R10, c->R11, c->R12, c->R13, c->R14, c->R15};
+            crash_dump_register_memory(f, read_host_memory, reg_names, reg_values, 15);
+        }
+        if (off >= 0x1a21100 && off < 0x1a213ba) crash_decode_hkb_event(f, read_host_memory, c->R14, c->R15);
+        fflush(f);
     }
 
     fprintf(f, "\n--- LAST 32 IMPORTS OF FAULTING THREAD ---\n");

@@ -6,6 +6,7 @@
 // Each site is compared byte for byte with the 1.09 code first; a site that differs (another
 // version, or a patch file that changed it) is left alone with a log line. Switches (default on):
 //   BB_HEAP_TABLE=0        the SprjMemory heap size growth (Scaleform/MENU; GFX above 1080p)
+//   BB_GX_REGION_MB=N      the GX range allocator (default 288; 0 or 160: the game's 160); BB_GX_REGION=0 off
 //   BB_GFX_HEAP_MORE_MIB=N the GFX_GraphicsPrivate growth (runtime_memory.c; 0: none)
 //   BB_ARENA_PROBE=0       the log when the frame arena allocator (+0xe45560) returns NULL
 //   BB_ARENA_GUARD=0       the NULL checks at +0x21d5b35 and +0x2199303 (drop the render command)
@@ -335,6 +336,50 @@ std::string HeapTable() {
     std::printf("Stability: heap table: GFX_GraphicsPrivate %llu -> %llu MiB (direct memory %llu MiB)\n",
                 ull(kGfxPrivateStock / kMiB), ull(gfx / kMiB), ull(pool_mib));
     return result + ", gfx-heap +" + std::to_string(more) + "MiB";
+}
+
+// The GX range allocator (BB_GX_REGION_MB, default 288 MiB; <=160 or 0: the game's). Ported from
+// Nightwatch c6305d7 (engine/start/patches.cpp), Lantern Engine by Awaken
+// (https://github.com/Awakenchan/LanternEngine; GPL-3.0-or-later with its section 7 additional terms,
+// see its NOTICE: attribution kept, marked as modified), modified: it is applied here to the loaded image,
+// after HeapTable(), and GFX_GraphicsPrivate grows only when HeapTable() (or a patch) left it at the
+// stock size, so the heap is never grown twice. The region is the GX manager's default 128 MiB
+// (mov dword [rbx+0x88], 0x8000000 at +0x1d9933d) plus 32 MiB; Ebrietas' trail effect took it to
+// 0.5 MB free before her device losses. Its +128 MiB comes from the 6 GiB direct memory (the stock
+// heaps end near 4.6 GB; the direct-memory pool is not resized).
+constexpr u64 kGxRegionSite = 0x1d9933d;
+
+std::string GxRegion() {
+    if (!On("BB_GX_REGION")) {
+        return "gx-region off";
+    }
+    const unsigned mib = BbStability::GxRegionApplied(BbStability::GxRegionRequest(std::getenv("BB_GX_REGION_MB")));
+    if (!mib) {
+        std::printf("Stability: GX range allocator at the game's %u MiB (BB_GX_REGION_MB)\n", BbStability::kGxRegionGame);
+        return "gx-region stock";
+    }
+    u64 gfx = 0;
+    std::memcpy(&gfx, image + kGfxPrivate, 8);
+    const bool heap_stock = gfx == kGfxPrivateStock;
+    const u64 more = BbStability::GxRegionHeapMore(mib, heap_stock);
+    // Direct memory: the stock heaps end near 4.6 GB, so a 5056 MiB pool holds the growth; a heap
+    // another growth enlarged already carries it.
+    if (!Matches(kGxRegionSite, {0xc7, 0x83, 0x88, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08}) ||
+        (heap_stock && runtime_memory_pool_size() / kMiB < 5056 + more)) {
+        std::printf("Stability: GX range allocator left at the game's size: this executable differs at guest +0x%llx, "
+                    "or the direct memory is too small\n",
+                    ull(kGxRegionSite));
+        return "gx-region skipped";
+    }
+    const std::uint32_t imm = BbStability::GxRegionImmediate(mib);
+    std::memcpy(image + kGxRegionSite + 6, &imm, 4);
+    if (more) {
+        gfx = kGfxPrivateStock + (more << 20);
+        std::memcpy(image + kGfxPrivate, &gfx, 8);
+    }
+    std::printf("Stability: GX range allocator %u MiB (the game's %u), GFX_GraphicsPrivate %llu MiB%s\n", mib,
+                BbStability::kGxRegionGame, ull(gfx / kMiB), more ? "" : " (already enlarged: not grown again)");
+    return "gx-region " + std::to_string(mib) + "MiB";
 }
 
 // ======================================================================================
@@ -1759,6 +1804,7 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     };
     note("dmem " + std::to_string(runtime_memory_pool_size() / kMiB) + "MiB");
     note(HeapTable());
+    note(GxRegion());
     stub_page = MapNear(StubPageSize);
     if (!stub_page) {
         std::printf("Stability: no memory near the image for stubs; code fixes off\n");
