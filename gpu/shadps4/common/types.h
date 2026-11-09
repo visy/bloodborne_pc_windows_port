@@ -27,8 +27,10 @@ using PAddr = uintptr_t;
 
 #ifdef _WIN32
 #define PS4_SYSV_ABI __attribute__((sysv_abi, nothrow))
+#define PS4_SYSV_ABI_PTR __attribute__((sysv_abi))
 #else
 #define PS4_SYSV_ABI __attribute__((sysv_abi))
+#define PS4_SYSV_ABI_PTR __attribute__((sysv_abi))
 #endif
 
 // UDLs for memory size values
