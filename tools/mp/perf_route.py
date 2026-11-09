@@ -68,7 +68,7 @@ def chain(minutes, variant, idle=255):
 def settings_text(a, secs):
     return "\n".join([
         "variant=%s minutes=%s seconds=%d" % (a.variant, a.minutes, secs),
-        "build=%s" % a.build, "fps=%s live_fps=%s" % (a.fps, a.live_fps),
+        "build=%s" % a.build, "fps=%s live_fps=%s extra_env=%s" % (a.fps, a.live_fps, a.env or []),
         "env: BB_PARTY_PERF=1 BB_PARTY_PERF_SECONDS=60 BB_FRAME_STATS=1 BB_AUDIO=none BB_WINDOW_BACKGROUND=1 (harness)",
         "chain=" + chain(a.minutes, a.variant), ""])
 
