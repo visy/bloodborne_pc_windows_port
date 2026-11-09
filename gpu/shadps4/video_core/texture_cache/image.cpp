@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "bbport_toggles.h"
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <cstdlib>
 #include <ranges>
 #include "common/assert.h"
@@ -310,6 +312,24 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                         std::optional<SubresourceRange> subres_range) {
     auto& last_state = backing->state;
     auto& subresource_states = backing->subresource_states;
+    // Ported from Nightwatch d9a81bd (texture quality crash): a reduced image (info.skip_levels) never
+    // takes a range past its own levels; a range of the whole texture's levels failed the
+    // subresource assertion below (GPU stop at the first bind of a reduced texture). Modified from
+    // Nightwatch's Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine), GPL-2.0-or-later
+    // as this file. BB_TEXTURE_RANGE_CLAMP=0 restores the old behaviour.
+    static const bool clamp_reduced_range = [] {
+        const char* v = std::getenv("BB_TEXTURE_RANGE_CLAMP");
+        return !(v && std::strcmp(v, "0") == 0);
+    }();
+    if (clamp_reduced_range && subres_range && info.skip_levels != 0) {
+        auto& range = *subres_range;
+        const u32 levels = info.resources.levels;
+        range.base.level = std::min(range.base.level, levels - 1);
+        range.extent.levels = std::clamp(range.extent.levels, 1u, levels - range.base.level);
+        const u32 layers = info.resources.layers;
+        range.base.layer = std::min(range.base.layer, layers - 1);
+        range.extent.layers = std::clamp(range.extent.layers, 1u, layers - range.base.layer);
+    }
 
     const bool needs_partial_transition =
         subres_range &&
