@@ -10216,7 +10216,7 @@ def phase_ivc(only):
 def check_ivc(v, L, n="ivc", inv=1):
     cross = need(v, L, n + " invader: its own world is in another map block than the host's (the cross-map arrival)", inv, r"A5: joined from another map \(own .*, the host's room in .*\): the arrival load follows")
     rj = need(v, L, n + " invader: travels into the host's map by the arrival re-join", inv, r"guest: travels alone \(join\) to .*, the host's area", cross or 0)
-    need(v, L, n + " host: the invader's re-join reached it (snapshot again)", 0, r"host: slot \d+ travels alone into this area; re-sending the snapshot", rj or 0)
+    need(v, L, n + " host: the invader's re-join reached it (snapshot again)", 0, r"host: slot \d+ travels alone into this area; re-sending the snapshot", max(0, (rj or 0) - 3))  # the games' clocks start a few ms apart
     need(v, L, n + " invader: the host's destination arrived", inv, r"guest: host destination stage", rj or 0)
     adm = need(v, L, n + " host: the invader is in the world", 0, r"invade: invader slot \d+: in the world", cross or 0)
     need(v, L, n + " invader: told it invades", inv, r"invade: notice: You invade ", adm or 0)
