@@ -5,12 +5,15 @@ import json
 import subprocess
 import sys
 import tempfile
+import shutil
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from paths import ROOT
 
 sys.path.insert(0, str(ROOT / 'tools' / 'release'))
+import build_release  # noqa: E402
 import configure_pgo  # noqa: E402
 import make_zip  # noqa: E402
 import publish  # noqa: E402
@@ -227,6 +230,37 @@ class StageTests(unittest.TestCase):
             self.run_stage()
         self.assertEqual(self.run_stage('--allow-dirty'), 0)
 
+    def commit_changes(self, text):
+        touch(self.repo, 'CHANGES.md', text.encode())
+        git(self.repo, 'add', 'CHANGES.md')
+        git(self.repo, 'commit', '-q', '-m', 'changes')
+        self.head = git(self.repo, 'rev-parse', 'HEAD')
+        self.set_exe(f'v0.1-6-g{self.head[:10]}')
+
+    def test_refuses_unreleased_changes_heading(self):
+        self.commit_changes(f'## {VERSION} (unreleased)\n\n### Fixed\n')
+        with self.assertRaises(SystemExit) as cm:
+            self.run_stage()
+        self.assertIn('unreleased', str(cm.exception))
+        self.assertFalse((self.tmp / 'rel9').exists())
+        self.commit_changes(f'## 9.8.8 (unreleased)\n\n## {VERSION} (2026-11-09)\n')  # another version may be open
+        self.assertEqual(self.run_stage(), 0)
+
+    def test_version_check_gets_mingw_path_and_reports_failure(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen['env'] = kw.get('env')
+            return subprocess.CompletedProcess(cmd, 3221225781, stdout='', stderr='')
+        with mock.patch.object(stage_mod.subprocess, 'run', fake_run):
+            with self.assertRaises(SystemExit) as cm:
+                stage_mod.verify_exe(self.build / 'bbport.exe', VERSION, self.repo, False, True)
+        self.assertIn(stage_mod.MINGW, seen['env']['PATH'])
+        msg = str(cm.exception)
+        self.assertIn('exit code 3221225781', msg)
+        self.assertIn('0xC0000135', msg)
+        self.assertIn('stderr', msg)
+
     def test_refuses_wrong_version_and_existing_stage(self):
         with self.assertRaises(SystemExit):
             stage_mod.main(['1.2.3', str(self.build), str(self.tmp / 'rel9'), '--repo', str(self.repo), '--no-run'])
@@ -328,6 +362,7 @@ class PublishTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             self.run_main(self.argv())
         self.assertIn('local tag', str(cm.exception))
+        self.assertIn('tag -d', str(cm.exception))  # says what to do
 
     def test_refuses_changed_zip_and_missing_notes(self):
         with open(self.zip, 'ab') as f:
@@ -372,6 +407,95 @@ class ConfigurePgoTests(unittest.TestCase):
                 self.assertIn(want, args)
             self.assertIn(f'-DBB_PGO_DIR:PATH={pgo_dst.as_posix()}', args)
             self.assertEqual(notes, [])
+
+
+class BuildReleaseTests(unittest.TestCase):
+    def test_notes_from_changes(self):
+        text = '# t\n## 0.8.1 (2026-11-10)\n\n### Added\n- a\n\n### Fixed\n- b\n## 0.8.0 (2026-11-09)\n- old\n'
+        self.assertEqual(build_release.notes_from_changes(text, '0.8.1'), '### Added\n- a\n\n### Fixed\n- b\n')
+        self.assertEqual(build_release.notes_from_changes(text, '0.8.0'), '- old\n')
+        self.assertEqual(build_release.notes_from_changes(text, '0.9.0'), '')
+        self.assertEqual(build_release.notes_from_changes('## 0.8.1 (x)\n\n## 0.8.0 (y)\n', '0.8.1'), '')
+
+    def test_exe_and_stamp_match(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            commit = 'ab12cd34ef' + '0' * 30
+            exe = touch(t, 'bbport.exe', b'MZ' + f'{VERSION} (v0.1-5-g{commit[:10]})'.encode() + bytes([0]))
+            self.assertTrue(build_release.exe_matches(exe, VERSION, commit))
+            self.assertFalse(build_release.exe_matches(exe, VERSION, 'ffffffffff' + '0' * 30))
+            dirty = touch(t, 'd.exe', b'MZ' + f'{VERSION} (v0.1-5-g{commit[:10]}-dirty)'.encode() + bytes([0]))
+            self.assertFalse(build_release.exe_matches(dirty, VERSION, commit))
+            self.assertFalse(build_release.exe_matches(t / 'none.exe', VERSION, commit))
+            stamp = t / 's.json'
+            self.assertFalse(build_release.stamp_ok(stamp, commit))
+            stamp.write_text(json.dumps({'commit': commit, 'exe_sha256': rc.sha256(exe)}))
+            self.assertTrue(build_release.stamp_ok(stamp, commit, exe))
+            self.assertFalse(build_release.stamp_ok(stamp, 'f' * 40, exe))
+            self.assertFalse(build_release.stamp_ok(stamp, commit, dirty))
+
+    def test_tracked_dirty_ignores_untracked(self):
+        with tempfile.TemporaryDirectory() as t:
+            repo = Path(t) / 'r'
+            repo.mkdir()
+            git(repo, 'init', '-q')
+            touch(repo, 'a.txt')
+            git(repo, 'add', '.')
+            git(repo, 'commit', '-q', '-m', 'c')
+            touch(repo, 'untracked.txt')
+            self.assertFalse(build_release.tracked_dirty(repo))
+            touch(repo, 'a.txt', b'changed')
+            self.assertTrue(build_release.tracked_dirty(repo))
+
+    def test_clone_has_no_source_tags(self):
+        """The release clone must not carry the source repository's (upstream) tags."""
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            src = t / 'src'
+            src.mkdir()
+            git(src, 'init', '-q')
+            touch(src, 'a.txt')
+            git(src, 'add', '.')
+            git(src, 'commit', '-q', '-m', 'c')
+            git(src, 'tag', 'v9.9.9')
+            ns = type('A', (), {'src': str(src)})()
+            head = git(src, 'rev-parse', 'HEAD')
+            build_release.step_clone(ns, t / 'clone' / 'repo', head, False)
+            self.assertEqual(git(t / 'clone' / 'repo', 'tag'), '')
+            build_release.step_clone(ns, t / 'clone' / 'repo', head, False)  # second call: no-op (resumable)
+
+
+@unittest.skipUnless(shutil.which('cmake') and shutil.which('git'), 'needs cmake and git')
+class BuildIdTests(unittest.TestCase):
+    """gpu/cmake/bbport_build_id.cmake: tracked changes mark -dirty, a changed submodule does not."""
+
+    def build_id(self, repo, out):
+        subprocess.run(['cmake', f'-DSRC={repo}', f'-DOUT={out}', '-DVERSION=1.0', '-P',
+                        str(ROOT / 'gpu' / 'cmake' / 'bbport_build_id.cmake')], check=True, capture_output=True)
+        return Path(out).read_text()
+
+    def test_dirty_only_for_the_main_tree(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            sub = t / 'sub'
+            sub.mkdir()
+            git(sub, 'init', '-q')
+            touch(sub, 'f.txt')
+            git(sub, 'add', '.')
+            git(sub, 'commit', '-q', '-m', 's')
+            repo = t / 'repo'
+            repo.mkdir()
+            git(repo, 'init', '-q')
+            touch(repo, 'a.txt')
+            git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', str(sub), 'dep')
+            git(repo, 'add', '.')
+            git(repo, 'commit', '-q', '-m', 'c')
+            out = t / 'id.c'
+            self.assertNotIn('dirty', self.build_id(repo, out))
+            touch(repo, 'dep/f.txt', b'patched inside the submodule')  # the FSR patches do this
+            self.assertNotIn('dirty', self.build_id(repo, out))
+            touch(repo, 'a.txt', b'changed')
+            self.assertIn('-dirty', self.build_id(repo, out))
 
 
 if __name__ == '__main__':
