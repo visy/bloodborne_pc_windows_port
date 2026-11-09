@@ -415,7 +415,8 @@ RULES_PAGES = [
     ("Party rules: Rewards", ["Full rewards for guests", "Boss drops for guests", "Insight for bosses"],
      ("Full rewards for guests", "", "left", "Off", "right", "party_full_rewards=0", "party_full_rewards=1", None)),
     # 0.7.2: rot (off by default: the change turns it on and back off) and its three cleanses (on)
-    ("Party rules: Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back"],
+    ("Party rules: Rot", ["Rot on death", "Rot: boss kill cleanses", "Rot: kill your killer", "Rot: echoes back",
+                          "Rot: stamina recovery"],
      ("Rot on death", "", "right", "On", "left", "party_rot=1", "party_rot=0", '"rot":true')),
     ("Party rules: Enemies", ["Boss health", "Boss damage", "Enemy health", "Enemy damage", "Boss poise", "Enemy poise"],
      ("Boss health", "", "right", "7", "left", "party_boss_hp=200", "party_boss_hp=150", '"boss_hp":200')),
@@ -425,7 +426,8 @@ RULES_PAGES = [
     # 0.7.5: level sync and the phantom health cut (on by default: the change turns level sync off and back on)
     ("Party rules: Phantoms", ["Level sync", "Phantom health cut", "Skip the prologue"],
      ("Level sync", "", "left", "Off", "right", "party_level_sync=0", "party_level_sync=1", '"level_sync":false')),
-    ("My party: Your save", ["Share story progress", "Share NPC quests", "Share cutscenes, endings"],
+    ("My party: Your save", ["Share story progress", "Share NPC quests", "Share cutscenes, endings",
+                             "Room for rejoin guest"],
      ("Share story progress", "", "left", "Off", "right", "party_progress=0", "party_progress=1", None)),
     ("My party: Your items", ["Host's item rewards", "Give the bells", "Own key items as guest", "Key items at once",
                                 "Shared item notices"],
@@ -437,7 +439,8 @@ RULES_PAGES = [
                            "Above companions"],
      ("Pings", "down/down/", "left", "Off", "right", "party_pings=0", "party_pings=1", None)),
     # 0.7.8: the chat rows and the bloodstain marker moved off the full Display page
-    ("My party: Chat & markers", ["Party chat", "Show others' chat", "Bloodstain marker"],
+    ("My party: Chat & markers", ["Party chat", "Show others' chat", "Bloodstain marker",
+                                  "Shared map markers"],
      ("Party chat", "", "right", "On", "left", "party_chat=1", "party_chat=0", None)),
     ("My party: Look & notices", ["No companion glow", "Ping in the party list", "Join/leave notices",
                                   "Share NPC dialogue", "NPC dialogue range", "Party discovery"],
@@ -10098,7 +10101,9 @@ IVM_UNTIL = [r"0:invasion of slot \d+ ends: invader_died"]  # the first invader 
 def phase_iv2(only, name="iv2", maxi=2):
     ienv = ["0:BB_PARTY_INVADERS=1", "1:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE=1"]
     if maxi == 2:
-        ienv += ["0:BB_PARTY_MAX_INVADERS=2", "1:BB_PARTY_INVADE_TEST=rejoin@30?home,die@25?in",
+        # invader 1 falls 20 s after invader 2 is in too (?other), not on a fixed timer: a slow second arrival
+        # (fullsmoke080: B in at +75.8 s, A fell at +78.8 s) left A no time to see B's copy
+        ienv += ["0:BB_PARTY_MAX_INVADERS=2", "1:BB_PARTY_INVADE_TEST=rejoin@30?home,die@20?other",
                  "2:BB_PARTY_INVADE_TEST=rejoin@45?home,die@35?in"]
         until = IV2_UNTIL
     else:
@@ -10896,8 +10901,17 @@ CRASH_RX = (r"(?i)unhandled exception|assertion failed|EXCEPTION_ACCESS|fatal er
             r"the game exited with (?:-?[1-9]\d*|0x[0-9a-f]*[1-9a-f][0-9a-f]*)")
 
 
-def check_common(v, L, tag):
-    none_of(v, L, tag + ": no crash / assert", CRASH_RX)
+def check_common(v, L, tag, kills=()):
+    """kills: harness_crashes(d) of a phase whose crash plan kills games on purpose. The supervisor's "the game exited
+    with N" line within 15 s after such a kill of that instance is the planned kill, not a crash (fullsmoke080 s2)."""
+    if not kills:
+        none_of(v, L, tag + ": no crash / assert", CRASH_RX)
+    else:
+        planned = re.compile(r"the game exited with ")
+        bad = [(i, h) for i in (0, 1, 2) for h in L.all(i, CRASH_RX, 0, 1e9)
+               if not (planned.search(h[1]) and any(k == i and k_t <= h[0] <= k_t + 15 for k_t, k in kills))]
+        v.step(tag + ": no crash / assert", not bad, "none" if not bad else "inst%d +%.1f s: %s (%d in all)" % (
+            bad[0][0], bad[0][1][0], bad[0][1][1][:150], len(bad)))
     none_of(v, L, tag + ": no 'Session lost'", r"Session lost")
     none_of(v, L, tag + ": no boot stall (BB_BOOT_WATCHDOG)", r"\[WATCHDOG\] Boot stalled|asking for a boot snapshot")
 
@@ -11130,7 +11144,7 @@ def check_s2(v, L, d: Path):
         if hl is not None:
             for i in (1, 2):
                 t = need(v, L, "s2 host Leave: guest %d out" % i, i, r"the host ended the party|host lost \(the host left its room\)", hl, hl + 15)
-    check_common(v, L, "s2")
+    check_common(v, L, "s2", crashes)
 
 
 def check_sc(v, L, d: Path):
