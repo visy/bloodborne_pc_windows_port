@@ -9448,7 +9448,7 @@ def check_gdr(v, L, d, tag="gdr"):
         none_of(v, L, "%s no failed title join" % tag, r"title join: FAILED", g[0], 1e9, (1,))
         none_of(v, L, "%s nobody kicked" % tag, r"KickoutRoomMember req", g[0], 1e9, (0,))
         need(v, L, "%s guest in the host's world (game joined the room)" % tag, 1, r"apply gate open: summoned|load mode 1", g[0])
-    check_common(v, L, tag)
+    check_common(v, L, tag, crashes)
 
 
 # ---- Phases oum / meshm (0.7.8, CL-79fe9c): ou and mesh over a VPN-like path ----
