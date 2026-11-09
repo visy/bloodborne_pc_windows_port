@@ -25,6 +25,7 @@
 //   BB_SF_MOVIE_LOCK=0     the game's HUD update (+0x1bf7c20) runs without its movie's lock (the game's own)
 //   BB_SF_TEXT_GUARD=0     a text shown before its layout exists is not guarded (+0x12d5e0 / +0x12df80)
 //   BB_FMOD_RING_GUARD=0   a sound freed while still in FMOD's sound ring is not taken out first (+0xdab3a0)
+//   BB_MOVIE_DRAW_WAIT=0   the attract movie's frame draw / close (+0x28fe7c0 / +0x28fe2e0) do not wait for GXRenderThread
 //   BB_JOB_BARRIER_STEAL=1 (default off; 2: installed, off at start) GX job barrier: the main thread keeps stealing
 //   BB_WORKPOOL_NODE_CACHE=1 (default off; 2: installed, off at start) work-pool job list nodes cached per pool
 #include "bbport_stability.h"
@@ -1547,6 +1548,154 @@ bool InstallFmodGuard() {
 }
 
 // ======================================================================================
+// 17. The title's attract movie waits for GXRenderThread (bbhost 41d725b, droogie/bbhost, GPL-3.0;
+// ported by intent). BB_MOVIE_DRAW_WAIT=0: the game's own calls. The movie player's frame draw
+// (+0x28fe7c0, called every frame by CSMovieIns::STEP_Wait_Play on the main thread with GX's
+// immediate context) and its close (+0x28fe2e0, from STEP_Finish_Play) use that context while
+// GXRenderThread still works on it (its last batch's pending state, the rename map's resolve): a
+// null read in GX's commit (+0x26c01c3) or a null write in the map's resolve (+0x26ae211) a minute
+// or two into the attract movie. The game's other main-thread code waits for the render thread's
+// idle event first; these two do not. Now they do, the way those callers do: the event's wait (vtable
+// slot +0x18, 100 ms steps), bounded at 5 s (then the game's call goes ahead, logged). From the render
+// thread itself nothing is waited for. GX manager +0x348 = GXRenderThread; its idle event at +0x68
+// (set once a batch and its flip are done); the thread object at +8, its pthread at thread +0x18.
+// ======================================================================================
+constexpr u64 kMovieDraw = 0x28fe7c0;
+constexpr u64 kMovieClose = 0x28fe2e0;
+constexpr u8 kMovieDrawPrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,
+                                     0x41, 0x54, 0x53, 0x48, 0x81, 0xe4, 0xe0, 0xff, 0xff, 0xff};
+constexpr u8 kMovieClosePrologue[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56, 0x53, 0x50, 0x48, 0x89, 0xfb};
+constexpr u64 kGxManager = 0x55406c8;      // pointer to GX's manager
+constexpr u64 kGxImmediateWrapper = 0x10;  // its immediate context's wrapper; the context at +8
+constexpr u64 kGxRenderThread = 0x348;
+constexpr u64 kRtThread = 0x8, kThreadPthread = 0x18, kRtIdleEvent = 0x68;
+constexpr u64 kEventFlags = 0x18, kEventVtableWait = 0x18;
+constexpr u32 kEventSet = 2;
+constexpr u64 kEventVtable = 0x52b97a0;    // the Dantelion2 event's vtable
+constexpr u64 kPthreadSelf = 0x208ba90;    // j_scePthreadSelf
+constexpr u32 kMovieWaitStepUs = 100000;
+constexpr auto kMovieWaitBound = std::chrono::seconds(5);
+
+using MovieDrawFn = BB_SYSV u64 (*)(u64, u64, u64);
+using MovieCloseFn = BB_SYSV u64 (*)(u64);
+using EventWaitFn = BB_SYSV u64 (*)(u64, u64);
+using SelfFn = BB_SYSV u64 (*)();
+bool movie_wait_on = false;
+MovieDrawFn movie_draw_orig = nullptr;
+MovieCloseFn movie_close_orig = nullptr;
+std::atomic<u64> movie_draws{0}, movie_immediate{0}, movie_busy{0}, movie_closes{0}, movie_closes_busy{0},
+    movie_bounded{0}, movie_waited_us{0}, movie_longest_us{0};
+
+/// Waits until GXRenderThread (object `rt`) is idle; no wait from the render thread itself. `busy` counts
+/// the call when it had to wait. Bounded; the game's call goes ahead after the bound (logged).
+void MovieWaitIdle(u64 rt, const char* what, u64 n, std::atomic<u64>& busy) {
+    const u64 event = rt + kRtIdleEvent;
+    if ((Rd32(event + kEventFlags) & kEventSet) != 0) {
+        return;
+    }
+    const u64 base = reinterpret_cast<u64>(image);
+    const u64 thread = Rd64(rt + kRtThread);
+    if (thread >= 0x10000 && Rd64(thread + kThreadPthread) == reinterpret_cast<SelfFn>(image + kPthreadSelf)()) {
+        return; // the render thread itself
+    }
+    if (Rd64(event) != base + kEventVtable) {
+        return; // not the event we know
+    }
+    const u64 k = busy.fetch_add(1, std::memory_order_relaxed);
+    const auto wait = reinterpret_cast<EventWaitFn>(Rd64(Rd64(event) + kEventVtableWait));
+    const auto t0 = std::chrono::steady_clock::now();
+    bool done = true;
+    while ((Rd32(event + kEventFlags) & kEventSet) == 0) {
+        if (std::chrono::steady_clock::now() - t0 > kMovieWaitBound) {
+            done = false;
+            break;
+        }
+        wait(event, kMovieWaitStepUs);
+    }
+    const u64 us = u64(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+    movie_waited_us.fetch_add(us, std::memory_order_relaxed);
+    u64 longest = movie_longest_us.load(std::memory_order_relaxed);
+    while (us > longest && !movie_longest_us.compare_exchange_weak(longest, us, std::memory_order_relaxed)) {
+    }
+    if (!done) {
+        if (movie_bounded.fetch_add(1, std::memory_order_relaxed) < 8) {
+            std::printf("Stability: movie: the %s %llu waited %llu ms for GXRenderThread to go idle and goes ahead without it\n",
+                        what, ull(n), ull(us / 1000));
+        }
+    } else if (k == 0) {
+        std::printf("Stability: movie: the %s %llu waited %llu us for GXRenderThread to finish its frame first\n", what, ull(n),
+                    ull(us));
+    }
+}
+
+/// GX's render thread object, or 0 before GX is up; `immediate` = GX's immediate context.
+u64 MovieRenderThread(u64* immediate) {
+    const u64 gx = Rd64(reinterpret_cast<u64>(image) + kGxManager);
+    if (gx < 0x10000) {
+        return 0;
+    }
+    const u64 wrapper = Rd64(gx + kGxImmediateWrapper);
+    *immediate = wrapper >= 0x10000 ? Rd64(wrapper + 8) : 0;
+    return wrapper >= 0x10000 ? Rd64(gx + kGxRenderThread) : 0;
+}
+
+BB_SYSV u64 MovieDraw(u64 player, u64 ctx, u64 out) {
+    const u64 n = movie_draws.fetch_add(1, std::memory_order_relaxed);
+    u64 immediate = 0;
+    const u64 rt = MovieRenderThread(&immediate);
+    if (rt >= 0x10000 && ctx && ctx == immediate) {
+        movie_immediate.fetch_add(1, std::memory_order_relaxed);
+        MovieWaitIdle(rt, "draw", n, movie_busy);
+    }
+    return movie_draw_orig(player, ctx, out);
+}
+
+BB_SYSV u64 MovieClose(u64 player) {
+    const u64 n = movie_closes.fetch_add(1, std::memory_order_relaxed);
+    u64 immediate = 0;
+    const u64 rt = MovieRenderThread(&immediate);
+    if (rt >= 0x10000) {
+        MovieWaitIdle(rt, "close", n, movie_closes_busy);
+    }
+    return movie_close_orig(player);
+}
+
+void MovieReport() {
+    if (movie_draws || movie_closes) {
+        std::printf("Stability: movie: %llu frame draws (%llu on the immediate context, %llu waited for GXRenderThread), "
+                    "%llu closes (%llu waited); waited %llu ms in all, longest %llu ms, %llu went ahead after the bound\n",
+                    ull(movie_draws), ull(movie_immediate), ull(movie_busy), ull(movie_closes), ull(movie_closes_busy),
+                    ull(movie_waited_us / 1000), ull(movie_longest_us / 1000), ull(movie_bounded));
+        std::fflush(stdout);
+    }
+}
+
+bool InstallMovieWait() {
+    if (!MatchesBytes(kMovieDraw, kMovieDrawPrologue, sizeof(kMovieDrawPrologue)) ||
+        !MatchesBytes(kMovieClose, kMovieClosePrologue, sizeof(kMovieClosePrologue))) {
+        std::printf("Stability: movie: guest +0x%llx / +0x%llx is not the expected code; left alone\n", ull(kMovieDraw),
+                    ull(kMovieClose));
+        return false;
+    }
+    const u64 draw_orig = PlaceTrampoline(kMovieDraw, kMovieDrawPrologue, sizeof(kMovieDrawPrologue));
+    const u64 close_orig = PlaceTrampoline(kMovieClose, kMovieClosePrologue, sizeof(kMovieClosePrologue));
+    Emitter d = NewStub();
+    d.JmpAbs(reinterpret_cast<const void*>(&MovieDraw));
+    const u64 draw_stub = PlaceStub(d);
+    Emitter c = NewStub();
+    c.JmpAbs(reinterpret_cast<const void*>(&MovieClose));
+    const u64 close_stub = PlaceStub(c);
+    if (!draw_orig || !close_orig || !draw_stub || !close_stub) {
+        std::printf("Stability: movie: no stub space; left alone\n");
+        return false;
+    }
+    movie_draw_orig = reinterpret_cast<MovieDrawFn>(draw_orig);
+    movie_close_orig = reinterpret_cast<MovieCloseFn>(close_orig);
+    return WriteBranch(kMovieDraw, 0xe9, draw_stub, sizeof(kMovieDrawPrologue) - 5) &&
+           WriteBranch(kMovieClose, 0xe9, close_stub, sizeof(kMovieClosePrologue) - 5);
+}
+
+// ======================================================================================
 // 16. Guest CPU savings (default off; BB_JOB_BARRIER_STEAL / BB_WORKPOOL_NODE_CACHE =1 on, =2 installed
 // but off at start, so BB_TOGGLE_FILE experiment bits 128 / 256 turn them on while the game runs:
 // A/B in one session).
@@ -1838,6 +1987,8 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("sf-text-guard ") + (sf_guard_on ? "on" : "off"));
     const bool fmod_ring = On("BB_FMOD_RING_GUARD") && stub_page && InstallFmodGuard();
     note(std::string("fmod-ring-guard ") + (fmod_ring ? "on" : "off"));
+    movie_wait_on = On("BB_MOVIE_DRAW_WAIT") && stub_page && InstallMovieWait();
+    note(std::string("movie-wait ") + (movie_wait_on ? "on" : "off"));
     const int barrier_mode = CpuSaveMode("BB_JOB_BARRIER_STEAL");
     const int cache_mode = CpuSaveMode("BB_WORKPOOL_NODE_CACHE");
     barrier_start_on = barrier_mode == 1;
@@ -1847,10 +1998,11 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     const bool pool_cache = cache_mode && stub_page && InstallWorkPoolCache();
     note(std::string("workpool-node-cache ") + (pool_cache ? (cache_mode == 1 ? "on" : "installed, off") : "off"));
     cpusave_installed = barrier || pool_cache;
-    if (sf_lock_on || sf_guard_on || fmod_ring || cpusave_installed) {
+    if (sf_lock_on || sf_guard_on || fmod_ring || movie_wait_on || cpusave_installed) {
         std::atexit([] {
             SfReport();
             FmodReport();
+            MovieReport();
             if (cpusave_installed) {
                 CpuSaveReport();
             }
