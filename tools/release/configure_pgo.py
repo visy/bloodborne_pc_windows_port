@@ -80,6 +80,40 @@ def plan(clone, src=MAIN_SRC):
     return repo, args, (pgo_src, pgo_dst), notes
 
 
+def _git_applied(fsr, patch, env):
+    return subprocess.run(["git", "-C", str(fsr), "apply", "--reverse", "--check", str(patch)],
+                          env=env, capture_output=True).returncode == 0
+
+
+def prepare(repo, env):
+    """build.bat's source prep, from git only: submodules, libatrac9.a, FSR-Vulkan patches."""
+    fsr = repo / "gpu" / "third_party" / "fsr-vulkan"
+    at9 = repo / "third_party" / "LibAtrac9" / "C" / "src"
+    if not (fsr / "CMakeLists.txt").is_file() or not at9.is_dir():
+        subprocess.run(["git", "-C", str(repo), "submodule", "update", "--init", "--recursive"],
+                       env=env, check=True)
+    lib = repo / "out" / "libatrac9.a"
+    if not lib.is_file():
+        objdir = repo / "out" / "atrac9"
+        objdir.mkdir(parents=True, exist_ok=True)
+        objs = []
+        for c in sorted(at9.glob("*.c")):
+            o = objdir / (c.stem + ".o")
+            subprocess.run(["gcc", "-std=c99", "-O2", "-g", "-w", "-c", str(c), "-o", str(o)], env=env, check=True)
+            objs.append(str(o))
+        if not objs:
+            raise SystemExit(f"no LibAtrac9 sources in {at9}")
+        subprocess.run(["ar", "rcs", str(lib)] + objs, env=env, check=True)
+        print(f"built {lib}")
+    patches = sorted((repo / "gpu" / "patches" / "fsr-vulkan").glob("*.patch"))
+    patches.append(repo / "patches" / "fsr_vulkan_mingw.patch")
+    for patch in patches:
+        if not patch.is_file() or _git_applied(fsr, patch, env):
+            continue
+        subprocess.run(["git", "-C", str(fsr), "apply", str(patch)], env=env, check=True)
+        print(f"applied {patch.name}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("clone")
@@ -101,12 +135,13 @@ def main(argv=None):
     if a.dry_run:
         print("dry run: nothing changed")
         return 0
+    env = os.environ.copy()
+    env["PATH"] = MINGW + os.pathsep + env.get("PATH", "")
+    prepare(repo, env)
     pgo_dst.mkdir(parents=True, exist_ok=True)
     for f in gcda:
         shutil.copy2(f, pgo_dst / f.name)
     print(f"copied {len(gcda)} profile files")
-    env = os.environ.copy()
-    env["PATH"] = MINGW + os.pathsep + env.get("PATH", "")
     subprocess.run(args, check=True, env=env)
     build = repo / "out" / BUILD_NAME
     exe_dir = repo / "out" / "release"

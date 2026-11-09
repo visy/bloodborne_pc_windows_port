@@ -15,7 +15,8 @@ Paths below are the usual ones (`E:\games\bbport`); `<clone>` is `agents\NAME` (
 
 ## 2. PGO configure and build (in a clone, from the exact commit to release)
 
-- [ ] `python tools/release/configure_pgo.py <clone>` copies the profile from `src\pgo` into
+- [ ] `python tools/release/configure_pgo.py <clone>` first does build.bat's source prep from git (submodules,
+      `out\libatrac9.a` from `third_party\LibAtrac9`, the FSR-Vulkan patches), then copies the profile from `src\pgo` into
       `<repo>\pgo_map\<mangled build dir>` (gcc keys `.gcda` files by absolute object path) and configures
       `<repo>\out\gpu-pgo-gen`: Ninja, RelWithDebInfo, `BB_LTO=ON`, `BB_STRIP=ON`, `BB_PGO=use`, `VMA_INC`,
       `MINIZ_INC` and the compilers from `src\out\gpu-pgo-gen\CMakeCache.txt`; no `-march` (older CPUs, game
