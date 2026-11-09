@@ -51,4 +51,51 @@ inline bool FailTestHit(std::uint64_t n, std::uint64_t every) {
     return every != 0 && n % every == every - 1;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The GX range allocator size (BB_GX_REGION_MB). Ported from Nightwatch c6305d7 (engine/start/
+// patches.cpp), Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine); modified
+// (a pure decision here, applied by GxRegion() in bbport_stability.cpp). The game's range
+// allocator for CPU-updated GPU buffers is the GX manager's 128 MiB plus 32 MiB, carved at start
+// from GFX_GraphicsPrivate; Ebrietas' second phase drives it empty (device lost).
+// ---------------------------------------------------------------------------------------------
+constexpr unsigned kGxRegionGame = 160, kGxRegionDefault = 288, kGxRegionMax = 416; // MiB
+
+/// The size asked for by BB_GX_REGION_MB's text (null/empty/not digits: the default).
+inline unsigned GxRegionRequest(const char* env) {
+    if (!env || !*env) {
+        return kGxRegionDefault;
+    }
+    unsigned long long v = 0;
+    for (const char* c = env; *c; ++c) {
+        if (*c < '0' || *c > '9') {
+            return kGxRegionDefault;
+        }
+        v = v * 10 + unsigned(*c - '0');
+        if (v > 100000) {
+            v = 100000;
+        }
+    }
+    return unsigned(v);
+}
+
+/// The size to apply in MiB: 0 when the game's own (request <= 160) is kept, else the request capped.
+inline unsigned GxRegionApplied(unsigned request) {
+    if (request <= kGxRegionGame) {
+        return 0;
+    }
+    return request > kGxRegionMax ? kGxRegionMax : request;
+}
+
+/// The immediate the allocator's size is written as: the GX manager's default 128 MiB plus the growth.
+inline std::uint32_t GxRegionImmediate(unsigned mib) {
+    return std::uint32_t(mib - kGxRegionGame + 128) << 20;
+}
+
+/// MiB GFX_GraphicsPrivate must grow by for the region: the growth itself, unless the heap is already
+/// enlarged (a resolution growth or the Increased Graphics Heap Sizes patch: it holds the region),
+/// so nothing grows twice.
+inline std::uint64_t GxRegionHeapMore(unsigned mib, bool heap_stock) {
+    return heap_stock ? mib - kGxRegionGame : 0;
+}
+
 } // namespace BbStability
