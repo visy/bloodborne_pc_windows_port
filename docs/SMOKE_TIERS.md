@@ -5,10 +5,12 @@
 | Tier | Flag | Phases | Time (one lane, no queue wait) | Use |
 |---|---|---|---|---|
 | fast | `--tier fast` | 20, one per feature area (`FAST_PHASES`) | see "Measured" | every merge into master, every agent before handing back, a changed test harness |
-| quick | `--tier quick` (default) | 40, the core party flow | about 1.5 to 2.8 h | a game-code change with no `CHANGED_MAP` entry |
+| quick | `--tier quick` (default) | 40, the core party flow | see `--list-tiers` | a game-code change with no `CHANGED_MAP` entry |
 | changed | `--changed-since TAG` | the phases the changed files map to | varies | a release candidate, to find what to rerun |
-| release | `--tier release` | every phase but the variants in `RELEASE_SKIP` | about 5 h | the release gate (docs/RELEASE_CHECKLIST.md) |
-| full | `--tier full` / `--release` | all phases | about 5.5 h | the release gate when nothing may be hidden |
+| release | `--tier release` | every phase but the variants in `RELEASE_SKIP` | see `--list-tiers` | the release gate (docs/RELEASE_CHECKLIST.md) |
+| full | `--tier full` / `--release` | all phases | see `--list-tiers` | the release gate when nothing may be hidden |
+
+The phase counts and time estimates change with every new phase, so they are not written here: `python tools/mp/smoke_party.py --list-tiers` prints them (seed times from `phase_times_seed.json`, overridden by this machine's own `smoke/phase_times.json`, which every run now updates after each phase). The last full run (0.8.0, 272 phases) took about 12.5 h.
 
 A tier only chooses which phases run. Every phase keeps all of its checks.
 

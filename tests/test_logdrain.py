@@ -9,9 +9,9 @@ import unittest
 EXE = test_exe('logdrain-test')
 
 
-def run(lines, stall_s, async_on, kill=False, width=None):
+def run(lines, stall_s, async_on, kill=False, width=None, mode=None):
     env = dict(os.environ, BB_LOG_ASYNC='1' if async_on else '0')
-    p = subprocess.Popen([str(EXE.resolve()), str(lines)] + ((['kill'] if kill else ['go']) + [str(width)] if (kill or width) else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    p = subprocess.Popen([str(EXE.resolve()), str(lines)] + (([mode or 'kill'] if kill else ['go']) + [str(width)] if (kill or width) else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     err = []
     import threading
     t = threading.Thread(target=lambda: err.append(p.stderr.read()), daemon=True)
@@ -39,6 +39,13 @@ class LogDrainTests(unittest.TestCase):
     def test_fatal_stop_flushes_the_last_line(self):
         code, data, ms = run(self.N, 1, True, kill=True)
         self.assertEqual(code, 23)
+        self.assertTrue(data.rstrip().endswith(b'LAST LINE before the fatal stop'))
+
+    def test_lines_after_an_idle_pause_arrive_and_flush(self):
+        # the drain polls every 10 ms after 0.1 s idle; the burst after a 1 s pause and the last line still arrive
+        code, data, ms = run(2000, 0, True, kill=True, mode='idle')
+        self.assertEqual(code, 23)
+        self.assertEqual(data.count(b'line 0'), 2000)
         self.assertTrue(data.rstrip().endswith(b'LAST LINE before the fatal stop'))
 
     def test_a_full_pipe_drops_lines_instead_of_stalling(self):
