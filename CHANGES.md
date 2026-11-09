@@ -8,6 +8,8 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ### Changed
 
+- **crash and GPU-crash reports carry more detail** (restab081; no change for players). A crash in the game's Havok animation-event code (0x1a21100) is decoded: the animation object, the last animation ids and the owner's map / entity ids; device-lost and stuck-GPU reports list the game's GPU range allocators (idea from Nightwatch c6305d7) when `BB_FRAME_STATS=1`; `BB_LIVE_FPS_LOG` prints draws, dispatches, submissions, flips and upload KB per game step (for GitHub #35). The raw memory at the registers is opt-in (`BB_CRASH_REGMEM=1`), since it can hold player text.
+
 ### Fixed
 
 - **the game's occlusion queries finish again, so the frame rate no longer falls over a long session** (zpass081, ported from Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine), Nightwatch 12de90e, modified; GPL-3 with the GPL section 7 additional terms of its NOTICE). With real occlusion queries off (the default), the stand-in counts were written the moment the command was read, while the DMA that zeroes each query's block runs later on the recording thread: the zeroing could land after the counts and the query never finished. The game then kept polling its unfinished queries and made new ones in their place, and in the end began a query with no handle (the crash at guest +0x2169edc, guarded since CL-9666e3). The counts are now written in command-stream order, like a WRITE_DATA. `BB_ZPASS_IN_ORDER=0` restores the old behaviour; the `Occlusion dumps` log line shows how many were written in order.
