@@ -11590,7 +11590,7 @@ QR_UNTIL = {"qr0": r"1:guest_rejoin: Party > Rejoin pressed[\s\S]*Party seam: (I
 
 
 def phase_qr(only, name):
-    g = "god,guest_leave@15,guest_rejoin@5" if name == "qr0" else "god,guest_rejoin:now@15"
+    g = "god,guest_leave@15,guest_rejoin@5" if name == "qr0" else "god,guest_press=0@10!,guest_rejoin:now@8"  # :now needs an earlier step (t.ran)
     return dict(
         name=name, seconds=240, count=2, headless=0,
         env=["BB_PARTY_QUICK_REJOIN=%d" % (name == "qr1")],
