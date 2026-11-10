@@ -382,6 +382,25 @@ private:
                       Shader::Backend::Bindings& binding, u32& write_index, bool& barrier,
                       bool on_helper = false);
     bool BindResources(const Pipeline* pipeline);
+    /// Ported from Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine),
+    /// Nightwatch BB_SAMPLER_MEMO, modified. Lantern Engine is GPL-3 with the GPL section 7 additional
+    /// terms of its NOTICE file, which apply to this code.
+    /// bbport (SamplerMemo): TextureCache::GetSampler hashed, locked and looked the sampler up for
+    /// every sampler of every draw. Direct-mapped by the S# (after ForceAnisotropy), the depth flag
+    /// and the extra bias: what GetSampler returned for them while no sampler was freed since
+    /// (SamplerGeneration), touched for the collector once per GC period. Only the thread binding
+    /// textures uses it. BB_SAMPLER_MEMO=0: GetSampler every time.
+    struct SamplerMemoEntry {
+        std::array<u64, 2> sharp{};
+        u64 variant = ~0ull; ///< is_depth << 32 | the extra bias's bits
+        vk::Sampler handle{};
+        size_t lru_id = 0;
+        u64 generation = ~0ull;   ///< TextureCache::SamplerGeneration when looked up
+        u64 touched_tick = ~0ull; ///< TextureCache::GcTick of the last LRU touch
+    };
+    std::array<SamplerMemoEntry, 1024> sampler_memo{};
+    u64 sampler_memo_hits = 0, sampler_memo_misses = 0;
+    vk::Sampler CachedSampler(const AmdGpu::Sampler& sharp, bool is_depth, float lod_bias);
     void ForceAnisotropy(AmdGpu::Sampler& sharp, bool is_depth) const;
     void BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
                       Shader::Backend::Bindings& binding, u32& write_index);

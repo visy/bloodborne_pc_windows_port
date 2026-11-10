@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <bit>
+#include <cstring>
 #include <map>
 #include "common/bb_host_compat.h"
 #include <unordered_set>
@@ -3813,6 +3815,43 @@ void Rasterizer::ForceAnisotropy(AmdGpu::Sampler& sharp, bool is_depth) const {
     sharp.max_aniso.Assign(ratio);
 }
 
+// Ported from Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine),
+// Nightwatch BB_SAMPLER_MEMO, modified. Lantern Engine is GPL-3 with the GPL section 7 additional
+// terms of its NOTICE file, which apply to this code.
+vk::Sampler Rasterizer::CachedSampler(const AmdGpu::Sampler& sharp, bool is_depth,
+                                      float lod_bias) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_SAMPLER_MEMO");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled) {
+        return texture_cache.GetSampler(sharp, Regs().ta_bc_base, is_depth, lod_bias);
+    }
+    static_assert(sizeof(AmdGpu::Sampler) == sizeof(SamplerMemoEntry::sharp));
+    std::array<u64, 2> words;
+    std::memcpy(words.data(), &sharp, sizeof(words));
+    const u64 variant = u64(is_depth) << 32 | std::bit_cast<u32>(lod_bias);
+    u64 hash = (words[0] ^ std::rotl(words[1], 29) ^ variant) * 0x9E3779B97F4A7C15ull;
+    hash ^= hash >> 32;
+    auto& entry = sampler_memo[hash % sampler_memo.size()];
+    const u64 generation = texture_cache.SamplerGeneration();
+    const u64 tick = texture_cache.GcTick();
+    if (entry.generation == generation && entry.sharp == words && entry.variant == variant) {
+        if (entry.touched_tick != tick) {
+            texture_cache.TouchSampler(entry.lru_id);
+            entry.touched_tick = tick;
+        }
+        ++sampler_memo_hits;
+        return entry.handle;
+    }
+    ++sampler_memo_misses;
+    size_t lru_id = 0;
+    const vk::Sampler handle =
+        texture_cache.GetSampler(sharp, Regs().ta_bc_base, is_depth, lod_bias, &lru_id);
+    entry = {words, variant, handle, lru_id, generation, tick};
+    return handle;
+}
+
 void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
                               Shader::Backend::Bindings& binding, u32& write_index) {
     for (u32 sampler_index = 0; sampler_index < stage.samplers.size(); ++sampler_index) {
@@ -3820,8 +3859,8 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
         auto ssharp =
             prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
         ForceAnisotropy(ssharp, sampler.is_depth);
-        const auto vk_sampler = texture_cache.GetSampler(
-            ssharp, Regs().ta_bc_base, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias);
+        const auto vk_sampler = CachedSampler(
+            ssharp, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias);
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
         auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
@@ -3982,6 +4021,10 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
                     (unsigned long long)texture_set_why[2], (unsigned long long)texture_set_why[3]);
         std::printf("  scene proxies sampled directly: %llu bindings\n",
                     static_cast<unsigned long long>(proxy_samples));
+        std::printf("  samplers: %llu memo hits, %llu looked up\n",
+                    static_cast<unsigned long long>(sampler_memo_hits),
+                    static_cast<unsigned long long>(sampler_memo_misses));
+        sampler_memo_hits = sampler_memo_misses = 0;
         proxy_samples = 0;
         texture_set_why = {};
         begin_memo_hits = begin_memo_misses = texture_set_hits = texture_set_misses = 0;

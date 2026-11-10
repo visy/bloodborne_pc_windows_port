@@ -1990,6 +1990,28 @@ void PartyTab() {
              "При смене данных вашей внешности остальные игроки сразу пересобирают вашего охотника. Выкл.: "
              "отправляет только закрытие зеркала."),
            on);
+    Toggle("party_parallel_follow", T("Load with the host", "Загрузка с хостом"), s.party_parallel_follow,
+           T("On the host's party lamp travel your game starts its own load at once, in parallel with the host's, "
+             "behind one loading screen (instead of waiting for the host's load first). Off: today's order.",
+             "При переходе хоста к фонарю ваша игра сразу начинает свою загрузку параллельно с хостом. Выкл.: как "
+             "раньше, после загрузки хоста."),
+           on);
+    Toggle("party_settled_drop", T("Hold screen till smooth", "Экран до плавности"), s.party_settled_drop,
+           T("In a party the loading screen stays up after a load until the frames have run smoothly (under "
+             "50 ms) for 1 s, at most 3 s, so the first heavy frames are not seen as a frozen world.",
+             "В группе экран загрузки держится, пока кадры 1 с подряд не будут быстрее 50 мс (до 3 с)."),
+           on);
+    Toggle("party_load_beside", T("Arrive beside the host", "Сразу рядом с хостом"), s.party_load_beside,
+           T("A party travel's load puts you beside the host itself, so there is no jump to the host's side right "
+             "after the loading screen. Off: the load puts you at the host's spot, then a warp beside it.",
+             "Загрузка при переходе группы ставит вас сразу рядом с хостом, без прыжка после экрана загрузки."),
+           on);
+    Toggle("party_quick_rejoin", T("Rejoin in place", "Возврат на месте"), s.party_quick_rejoin,
+           T("Party > Rejoin pressed while you are in the host's world reloads you beside the host with one loading "
+             "screen, without Leave and the trip to your own world first.",
+             "Группа > Вернуться в мире хоста перезагружает вас рядом с хостом одним экраном загрузки, без ухода "
+             "в свой мир."),
+           on);
     Toggle("party_map_marks", T("Shared map markers", "Общие метки на карте"), s.party_map_marks,
            T("A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and "
              "theirs on yours. Needs the in-game map.",

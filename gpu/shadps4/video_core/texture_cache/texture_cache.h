@@ -208,7 +208,24 @@ public:
     /// extra_lod_bias: bbport, added to the S#'s bias (reduced scene rendering).
     [[nodiscard]] vk::Sampler GetSampler(const AmdGpu::Sampler& sampler,
                                          AmdGpu::BorderColorBuffer border_color_base,
-                                         bool is_depth, float extra_lod_bias = 0.0f);
+                                         bool is_depth, float extra_lod_bias = 0.0f,
+                                         size_t* lru_id = nullptr);
+
+    /// Ported from Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine),
+    /// Nightwatch BB_SAMPLER_MEMO, modified. Lantern Engine is GPL-3 with the GPL section 7 additional
+    /// terms of its NOTICE file, which apply to this code.
+    /// A sampler GetSampler returned stays alive while SamplerGeneration is unchanged (the collector
+    /// frees samplers only in RunGarbageCollector), provided the caller touches it once per GC period.
+    [[nodiscard]] u64 SamplerGeneration() const noexcept {
+        return sampler_generation;
+    }
+    [[nodiscard]] u64 GcTick() const noexcept {
+        return gc_tick;
+    }
+    void TouchSampler(size_t lru_id) {
+        std::scoped_lock lock{samplers_mutex};
+        sampler_lru_cache.Touch(lru_id, gc_tick);
+    }
 
     /// bbport: out of GPU memory for an image of its own (scene proxies): unused textures go at
     /// once, up to `bytes` (ReclaimMemoryFor). Not with the cache's lock held.
@@ -488,6 +505,7 @@ private:
     u64 pressure_gc_samplers = 0;
     u64 critical_gc_samplers = 0;
     u64 gc_tick = 0;
+    u64 sampler_generation = 0; ///< samplers freed so far (SamplerGeneration)
     Common::LeastRecentlyUsedCache<ImageId, u64> lru_cache;
     Common::LeastRecentlyUsedCache<u64, u64> sampler_lru_cache;
     const bool readback_linear_images;

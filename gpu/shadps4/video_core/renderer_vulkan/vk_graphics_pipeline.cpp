@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <boost/container/small_vector.hpp>
+#include <xxhash.h>
 
 #include "common/serdes.h"
 #include "common/assert.h"
@@ -231,6 +237,13 @@ void BuildState(const Instance& instance, const GraphicsPipelineKey& key,
                                        : vk::Format::eUndefined,
     };
 
+    // Port of Mrsuss60 0a71dd17 (shadPS4 c5dd8b8b): min/max blend factors zero/one on UNORM/sRGB
+    // targets are rewritten to an equivalent ADD, for color and alpha. BB_BLEND_MINMAX_NORM=0
+    // restores the older alpha-only rewrite.
+    static const bool minmax_norm = [] {
+        const char* e = std::getenv("BB_BLEND_MINMAX_NORM");
+        return !(e && e[0] == '0');
+    }();
     auto& attachments = st.attachments;
     for (u32 i = 0; i < key.num_color_attachments; i++) {
         const auto& control = key.blend_controls[i];
@@ -255,7 +268,9 @@ void BuildState(const Instance& instance, const GraphicsPipelineKey& key,
         auto eff_src_alpha = src_alpha;
         auto eff_dst_alpha = dst_alpha;
         auto eff_alpha_blend = alpha_blend;
-        if (alpha_blend == vk::BlendOp::eMin || alpha_blend == vk::BlendOp::eMax) {
+        // BB_BLEND_MINMAX_NORM (default on): NormalizeMinMaxBlend below replaces this rewrite.
+        if (!minmax_norm &&
+            (alpha_blend == vk::BlendOp::eMin || alpha_blend == vk::BlendOp::eMax)) {
             const bool takes_max = alpha_blend == vk::BlendOp::eMax;
             if (src_alpha == vk::BlendFactor::eOne && dst_alpha == vk::BlendFactor::eZero) {
                 eff_alpha_blend = vk::BlendOp::eAdd;
@@ -330,6 +345,17 @@ void BuildState(const Instance& instance, const GraphicsPipelineKey& key,
             attachments[i].dstColorBlendFactor = dst_color == vk::BlendFactor::eSrcAlpha
                                                      ? vk::BlendFactor::eOne
                                                      : vk::BlendFactor::eZero; // 1-A
+        }
+
+        if (minmax_norm) {
+            auto& att = attachments[i];
+            const auto fmt = key.color_buffers[i].num_format;
+            if (!key.color_buffers[i].blend_self_scale) {
+                LiverpoolToVK::NormalizeMinMaxBlend(att.colorBlendOp, att.srcColorBlendFactor,
+                                                    att.dstColorBlendFactor, fmt);
+            }
+            LiverpoolToVK::NormalizeMinMaxBlend(att.alphaBlendOp, att.srcAlphaBlendFactor,
+                                                att.dstAlphaBlendFactor, fmt);
         }
     }
 
@@ -544,6 +570,47 @@ void MakeLayouts(const Instance& instance,
     layout = std::move(created);
 }
 
+/// Auxiliary shader modules (rect/quad-list TCS, passthrough TES, discard fragment), shared by
+/// every pipeline that needs the same SPIR-V. Port of the intent of Mrsuss60 bb91ba05 (cache
+/// unique auxiliary VkShaderModules): before, each pipeline/library creation made a new module
+/// that was never destroyed. Entries compare the full SPIR-V, the hash only picks the bucket.
+/// BB_AUX_MODULE_CACHE=0 restores a module per use.
+vk::ShaderModule AuxShaderModule(const std::vector<u32>& spv, vk::Device device) {
+    static const bool enabled = [] {
+        const char* e = std::getenv("BB_AUX_MODULE_CACHE");
+        return !(e && e[0] == '0');
+    }();
+    if (!enabled) {
+        return CompileSPV(spv, device);
+    }
+    struct Entry {
+        std::vector<u32> code;
+        vk::ShaderModule module;
+    };
+    static std::mutex mutex;
+    static std::unordered_map<u64, std::vector<Entry>> cache;
+    static u64 hits = 0, misses = 0;
+    const u64 hash = XXH3_64bits(spv.data(), spv.size() * sizeof(u32));
+    std::scoped_lock lock{mutex};
+    auto& bucket = cache[hash];
+    for (const auto& e : bucket) {
+        if (e.code == spv) {
+            ++hits;
+            return e.module;
+        }
+    }
+    ++misses;
+    const auto module = CompileSPV(spv, device);
+    if (module) {
+        bucket.push_back({spv, module});
+    }
+    if (std::has_single_bit(misses)) {
+        std::printf("GPU: aux shader module cache: %llu created, %llu reused\n",
+                    (unsigned long long)misses, (unsigned long long)hits);
+    }
+    return module;
+}
+
 /// Shader stage create infos of `st` for the stages in `mask` (auxiliary modules compiled here;
 /// like the original code, they are not destroyed).
 boost::container::static_vector<vk::PipelineShaderStageCreateInfo, MaxShaderStages> StageInfos(
@@ -556,7 +623,7 @@ boost::container::static_vector<vk::PipelineShaderStageCreateInfo, MaxShaderStag
         out.push_back(vk::PipelineShaderStageCreateInfo{
             .pNext = instance.IsSubgroupSize64Supported() ? &st.subgroup_size_ci : nullptr,
             .stage = stage.stage,
-            .module = stage.aux_spv ? CompileSPV(*stage.aux_spv, instance.GetDevice())
+            .module = stage.aux_spv ? AuxShaderModule(*stage.aux_spv, instance.GetDevice())
                                     : stage.module,
             .pName = "main",
         });

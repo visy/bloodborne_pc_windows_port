@@ -132,6 +132,8 @@ Actions DefaultActions() {
         // A guest apart from a host in a Chalice Dungeon (still in the session) goes home first; the
         // bell then gets it summoned into the dungeon (quick join; deathrules::ChaliceRejoinLeavesFirst).
         coop::b2::ChaliceRejoinPressed();
+        // 0.8.1 seam D (party_quick_rejoin): a guest in the host's world reloads in place (one loading screen).
+        if (coop::b2::QuickRejoinPressed()) return 3;
         return party::runtime_rejoin();
     };
     a.kick = [](const std::string& name) {
@@ -180,12 +182,15 @@ void HandleCommand(Bridge& b, const status::Command& c, const TickIn& in, TickOu
         Log("status: Rejoin pressed: %s", r == 0   ? "link up, ringing now"
                                           : r == 1 ? "reconnecting now"
                                           : r == 2 ? "starting a fresh link"
+                                          : r == 3 ? "a re-join in place (one loading screen)"
                                                    : "nothing to do");
         if (r == 0) {
             out->ring_now = true;
             status::SetLastEvent(in.host ? "Ringing the Beckoning Bell now" : "Ringing the Small Resonant Bell now");
         } else if (r == 1) {
             status::SetLastEvent("Reconnecting now");
+        } else if (r == 3) {
+            status::SetLastEvent("Rejoining beside the host");
         }
         break;
     }
