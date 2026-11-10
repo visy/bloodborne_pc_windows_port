@@ -205,7 +205,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_parallel_follow", False), ("party_settled_drop", False), ("party_load_beside", False), ("party_quick_rejoin", False), ("party_nw_direct", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_parallel_follow", True), ("party_settled_drop", False), ("party_load_beside", True), ("party_quick_rejoin", True), ("party_nw_direct", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
@@ -655,7 +655,7 @@ MY_PARTY_TAB = [
          "your game starts loading the same lamp at once, in parallel with the host's load, behind one loading "
          "screen, and puts you beside the host when it is in. Off: your load starts after the host's (a longer "
          "screen). Anything unusual (a death, a boss fight, a Chalice Dungeon) keeps the old way. Your own setting. "
-         "In the game: System > My party: Loading. Default: off (bbport.ini party_parallel_follow)."),
+         "In the game: System > My party: Loading. Default: on (bbport.ini party_parallel_follow)."),
         ("check", "party_settled_drop", "Hold the screen until smooth",
          "In a party the loading screen stays up after a load until the world runs smoothly (frames under 50 ms "
          "for 1 s without a break, at most 3 s more), so the first heavy frames after a load are not seen as a frozen world. "
@@ -663,7 +663,7 @@ MY_PARTY_TAB = [
         ("check", "party_load_beside", "Arrive beside the host",
          "When your game follows the host's party travel, its load puts you beside the host itself, so there is no "
          "jump to the host's side right after the loading screen. Off: the load puts you on the host's spot, then a "
-         "warp beside it. Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini "
+         "warp beside it. Your own setting. In the game: System > My party: Loading. Default: on (bbport.ini "
          "party_load_beside)."),
         ("check", "party_nw_direct", "Allow direct connection (lower ping)",
          "Over the Nightwatch VPN, a party member who allows it too is tried directly for 3 s (about 20 probes while "
@@ -674,7 +674,7 @@ MY_PARTY_TAB = [
         ("check", "party_quick_rejoin", "Rejoin in place",
          "Party > Rejoin pressed while you are a guest in the host's world reloads you beside the host with one "
          "loading screen, instead of Leave (a load into your own world) and Rejoin (a second load). For a stuck "
-         "or out-of-step game. Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini "
+         "or out-of-step game. Your own setting. In the game: System > My party: Loading. Default: on (bbport.ini "
          "party_quick_rejoin)."),
     ]),
 ]
@@ -3517,11 +3517,11 @@ class BloodborneLauncher(tk.Tk):
         self.party_name_colours = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_colours", False))
         self.party_look_sync = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_look_sync", False))
         # 0.8.1 seamless join (My party: Loading): a guest's parallel load on party travel, the settled screen drop.
-        self.party_parallel_follow = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_parallel_follow", False))
+        self.party_parallel_follow = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_parallel_follow", True))
         self.party_settled_drop = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_settled_drop", False))
-        self.party_load_beside = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_load_beside", False))
+        self.party_load_beside = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_load_beside", True))
         self.party_nw_direct = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_nw_direct", False))
-        self.party_quick_rejoin = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_quick_rejoin", False))
+        self.party_quick_rejoin = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_quick_rejoin", True))
         self.party_map_marks = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_map_marks", False))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))
