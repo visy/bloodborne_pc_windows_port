@@ -98,4 +98,22 @@ inline std::uint64_t GxRegionHeapMore(unsigned mib, bool heap_stock) {
     return heap_stock ? mib - kGxRegionGame : 0;
 }
 
+// ---------------------------------------------------------------------------------------------
+// BB_FAST_RESPAWN_SECONDS: the hold timer of a death respawn's loading screen (the game's fixed 12.0 s).
+// ---------------------------------------------------------------------------------------------
+constexpr float kRespawnGame = 12.0f, kRespawnDefault = 2.0f, kRespawnMin = 0.5f;
+
+/// Seconds from the env text: null/empty/not a number: the default; clamped to 0.5 .. 12.
+inline float RespawnSeconds(const char* env) {
+    if (!env || !*env) {
+        return kRespawnDefault;
+    }
+    char* end = nullptr;
+    const double v = std::strtod(env, &end);
+    if (end == env || *end || !(v == v)) {
+        return kRespawnDefault;
+    }
+    return v < kRespawnMin ? kRespawnMin : v > kRespawnGame ? kRespawnGame : float(v);
+}
+
 } // namespace BbStability

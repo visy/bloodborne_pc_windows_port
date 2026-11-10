@@ -9,6 +9,7 @@
 #include "runtime.h"
 #include "runtime_logdrain.h"
 #include "crash_regmem.h"
+#include "havok_event_guard.h"
 #include "gpu/bbgpu.h"
 #include "gpu/bbnet.h"
 #if !defined(__x86_64__) || !defined(__GNUC__)
@@ -1557,6 +1558,43 @@ static LONG WINAPI win_veh_handler(EXCEPTION_POINTERS *ep) {
                     veh_write(line);
                 }
                 return EXCEPTION_CONTINUE_EXECUTION;
+            }
+            /* crashfix081 (CL-078659): a Havok behaviour event whose animation object was freed
+             * (0x1a21100 / its annotation walker 0xf5bc30 read garbage) returns as if the animation
+             * had no annotations. src/havok_event_guard.h has the layout; BB_HAVOK_EVENT_GUARD=0 off. */
+            if ((off >= HEG_BODY_FROM && off < HEG_EXIT) ||
+                (off >= HEG_WALK_BODY_FROM && off < HEG_WALK_BODY_TO)) {
+                static volatile LONG guard_state; /* 0 unknown, 1 on, 2 off */
+                if (guard_state == 0) {
+                    const char *e = getenv("BB_HAVOK_EVENT_GUARD");
+                    const int on = !(e && e[0] == '0') && heg_image_matches(image, image_size);
+                    InterlockedCompareExchange(&guard_state, on ? 1 : 2, 0);
+                }
+                CONTEXT *c = ep->ContextRecord;
+                const uint64_t *stack = (const uint64_t *)(uintptr_t)c->Rsp;
+                if (guard_state == 1 && !IsBadReadPtr(stack, 5 * sizeof(uint64_t))) {
+                    heg_regs r = {off, c->Rsp, c->Rbp, c->Rbx, c->R14, c->R15};
+                    const int where = heg_recover(&r, stack, (uint64_t)(uintptr_t)image);
+                    if (where != HEG_NONE) {
+                        c->Rip = (uintptr_t)image + r.rip;
+                        c->Rsp = r.rsp;
+                        c->Rbp = r.rbp;
+                        c->Rbx = r.rbx;
+                        c->R14 = r.r14;
+                        c->R15 = r.r15;
+                        static volatile LONG hits;
+                        const LONG n = InterlockedIncrement(&hits);
+                        if (n <= 5 || (n & (n - 1)) == 0) {
+                            char line[200];
+                            snprintf(line, sizeof line,
+                                     "Runtime: Havok event guard: animation event of a freed animation skipped "
+                                     "(fault at +0x%llx reading %p, %ld so far)\n",
+                                     (unsigned long long)off, fault_addr, (long)n);
+                            veh_write(line);
+                        }
+                        return EXCEPTION_CONTINUE_EXECUTION;
+                    }
+                }
             }
             /* Mrsuss60/bloodborne_pc_windows_port 7c0e5f0d: the Dantelion2 temporary heap of a thread
              * whose thread-local slot (TCB-1840) was never set up is read through a null pointer

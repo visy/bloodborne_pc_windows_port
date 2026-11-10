@@ -7,6 +7,8 @@
 // version, or a patch file that changed it) is left alone with a log line. Switches (default on):
 //   BB_HEAP_TABLE=0        the SprjMemory heap size growth (Scaleform/MENU; GFX above 1080p)
 //   BB_GX_REGION_MB=N      the GX range allocator (default 288; 0 or 160: the game's 160); BB_GX_REGION=0 off
+//   BB_FAST_RESPAWN=0      a death respawn's loading screen keeps the game's fixed 12 s hold floor
+//                          (BB_FAST_RESPAWN_SECONDS=S: the floor, default 2.0, 0.5..12)
 //   BB_GFX_HEAP_MORE_MIB=N the GFX_GraphicsPrivate growth (runtime_memory.c; 0: none)
 //   BB_ARENA_PROBE=0       the log when the frame arena allocator (+0xe45560) returns NULL
 //   BB_ARENA_GUARD=0       the NULL checks at +0x21d5b35 and +0x2199303 (drop the render command)
@@ -26,6 +28,8 @@
 //   BB_SF_TEXT_GUARD=0     a text shown before its layout exists is not guarded (+0x12d5e0 / +0x12df80)
 //   BB_FMOD_RING_GUARD=0   a sound freed while still in FMOD's sound ring is not taken out first (+0xdab3a0)
 //   BB_MOVIE_DRAW_WAIT=0   the attract movie's frame draw / close (+0x28fe7c0 / +0x28fe2e0) do not wait for GXRenderThread
+//   BB_HAVOK_EVENT_GUARD=0 a Havok behaviour event of a freed animation (+0x1a21100 / +0xf5bc30) crashes
+//                          again instead of being skipped (crash handler: src/probe.c, src/havok_event_guard.h)
 //   BB_TASK_STEAL=1        (default off, pending an A/B) render task stealing byte on; 2 = A/B test aid (experiment bit 512)
 //   BB_JOB_BARRIER_STEAL=1 (default off; 2: installed, off at start) GX job barrier: the main thread keeps stealing
 //   BB_WORKPOOL_NODE_CACHE=1 (default off; 2: installed, off at start) work-pool job list nodes cached per pool
@@ -35,6 +39,9 @@
 #include "bbport_ribbons.h"
 #include "bbport_scaleform_logic.h"
 #include "bbport_fmod_logic.h"
+extern "C" {
+#include "../../src/havok_event_guard.h"
+}
 
 #include <algorithm>
 #include <array>
@@ -382,6 +389,49 @@ std::string GxRegion() {
     std::printf("Stability: GX range allocator %u MiB (the game's %u), GFX_GraphicsPrivate %llu MiB%s\n", mib,
                 BbStability::kGxRegionGame, ull(gfx / kMiB), more ? "" : " (already enlarged: not grown again)");
     return "gx-region " + std::to_string(mib) + "MiB";
+}
+
+// The death respawn hold (BB_FAST_RESPAWN, default on; BB_FAST_RESPAWN_SECONDS, default 2.0). MoveMapStep
+// step 0 (+0x1938870) loads its hold timer +0x278 from the rodata float at +0x49280c8 (12.0) when the load
+// request has the "player died" byte; the screen gate (step 12, +0x193a3e0) keeps the loading screen up while
+// it is above zero (research/remp081.md 3.3). The float has one reader (the load at +0x1938b68), so the
+// value in the loaded image is replaced; the reader is checked to be a rip-relative load of it first.
+// kRespawnReader is the load's rip-relative displacement (4 bytes 5c f5 fe 02 -> +0x49280c8).
+constexpr u64 kRespawnFloat = 0x49280c8, kRespawnReader = 0x1938b68;
+
+std::string FastRespawn() {
+    if (!On("BB_FAST_RESPAWN")) {
+        return "fast-respawn off";
+    }
+    const float secs = BbStability::RespawnSeconds(std::getenv("BB_FAST_RESPAWN_SECONDS"));
+    bool reader = false;
+    if (kRespawnReader + 16 <= image_size) {
+        for (u64 i = 0; i <= 8 && !reader; ++i) {
+            std::int32_t disp;
+            std::memcpy(&disp, image + kRespawnReader + i, 4);
+            reader = kRespawnReader + i + 4 + std::int64_t(disp) == kRespawnFloat; // movss/mov reg,[rip+disp]
+        }
+    }
+    if (!reader || !Matches(kRespawnFloat, {0x00, 0x00, 0x40, 0x41})) { // 12.0f
+        std::printf("Stability: death respawn hold left at the game's 12 s: this executable differs at guest "
+                    "+0x%llx (reader) or +0x%llx (12.0f)\n",
+                    ull(kRespawnReader), ull(kRespawnFloat));
+        if (kRespawnReader + 16 <= image_size && kRespawnFloat + 4 <= image_size) {
+            std::printf("Stability:   reader bytes %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x, float bytes %02x %02x %02x %02x\n",
+                        image[kRespawnReader], image[kRespawnReader + 1], image[kRespawnReader + 2],
+                        image[kRespawnReader + 3], image[kRespawnReader + 4], image[kRespawnReader + 5],
+                        image[kRespawnReader + 6], image[kRespawnReader + 7], image[kRespawnReader + 8],
+                        image[kRespawnReader + 9], image[kRespawnFloat], image[kRespawnFloat + 1],
+                        image[kRespawnFloat + 2], image[kRespawnFloat + 3]);
+        } else {
+            std::printf("Stability:   image size 0x%llx does not reach the sites\n", ull(image_size));
+        }
+        return "fast-respawn skipped";
+    }
+    std::memcpy(image + kRespawnFloat, &secs, 4);
+    std::printf("Stability: death respawn loading screen hold %.2f s (the game's 12 s; BB_FAST_RESPAWN=0 restores)\n",
+                double(secs));
+    return "fast-respawn " + std::to_string(secs).substr(0, 4) + "s";
 }
 
 // ======================================================================================
@@ -1549,6 +1599,42 @@ bool InstallFmodGuard() {
 }
 
 // ======================================================================================
+// 19. Test aid for the Havok behaviour event guard (crashfix081, CL-078659; the guard itself is in the
+// crash handler, src/probe.c with src/havok_event_guard.h). BB_HAVOK_EVENT_TEST=N (off by default):
+// every N-th animation event that plays annotations (0x1a27fb0's call of 0x1a21100 at +0x1a2813a)
+// gets a fake animation object whose +0x18 is 1, as in the crash dump, so 0x1a21100 faults at
+// +0x1a21134 and the guard has to skip it. A game that keeps running with
+// "Havok event guard: ... skipped" lines in its log shows the guard works in the real code path.
+u32 havok_test_counter = 0;
+alignas(16) u8 havok_test_object[0x40] = {};
+
+bool InstallHavokEventTest(u32 every) {
+    constexpr u64 kSite = 0x1a2813a;
+    if (!CallsTo(kSite, HEG_PLAY) || !heg_image_matches(image, image_size)) {
+        std::printf("Stability: Havok event test: guest +0x%llx is not the expected code; left alone\n", ull(kSite));
+        return false;
+    }
+    const u64 one = 1;
+    std::memcpy(havok_test_object + 0x18, &one, 8); // the stale +0x18 of the dump
+    Emitter e = NewStub();
+    e.Bytes({0x48, 0xb9}); // movabs rcx, &counter (rax, rcx, rdx: free at a call)
+    e.U64(reinterpret_cast<u64>(&havok_test_counter));
+    e.Bytes({0xb8, 0x01, 0x00, 0x00, 0x00}); // mov eax, 1
+    e.Bytes({0xf0, 0x0f, 0xc1, 0x01});       // lock xadd [rcx], eax
+    e.Bytes({0xff, 0xc0});                   // inc eax
+    e.Bytes({0x31, 0xd2});                   // xor edx, edx
+    e.Bytes({0xb9});                         // mov ecx, every
+    e.U32(every);
+    e.Bytes({0xf7, 0xf1});                   // div ecx
+    e.Bytes({0x85, 0xd2});                   // test edx, edx
+    e.Bytes({0x75, 0x0a});                   // jnz .play
+    e.Bytes({0x48, 0xbe});                   // movabs rsi, &fake object
+    e.U64(reinterpret_cast<u64>(havok_test_object));
+    e.JmpTo(reinterpret_cast<u64>(image + HEG_PLAY)); // .play: jmp 0x1a21100
+    const u64 stub = PlaceStub(e);
+    return stub && WriteBranch(kSite, 0xe8, stub, 0);
+}
+
 // 17. The title's attract movie waits for GXRenderThread (bbhost 41d725b, droogie/bbhost, GPL-3.0;
 // ported by intent). BB_MOVIE_DRAW_WAIT=0: the game's own calls. The movie player's frame draw
 // (+0x28fe7c0, called every frame by CSMovieIns::STEP_Wait_Play on the main thread with GX's
@@ -2005,6 +2091,7 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note("dmem " + std::to_string(runtime_memory_pool_size() / kMiB) + "MiB");
     note(HeapTable());
     note(GxRegion());
+    note(FastRespawn());
     stub_page = MapNear(StubPageSize);
     if (!stub_page) {
         std::printf("Stability: no memory near the image for stubs; code fixes off\n");
@@ -2040,6 +2127,16 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("fmod-ring-guard ") + (fmod_ring ? "on" : "off"));
     movie_wait_on = On("BB_MOVIE_DRAW_WAIT") && stub_page && InstallMovieWait();
     note(std::string("movie-wait ") + (movie_wait_on ? "on" : "off"));
+    // The Havok behaviour event guard is in the crash handler (src/probe.c, src/havok_event_guard.h):
+    // only reported here, with the same byte check it makes on the first fault.
+    note(std::string("havok-event-guard ") +
+         (On("BB_HAVOK_EVENT_GUARD") && heg_image_matches(image, image_size) ? "on" : "off"));
+    if (const char* e = std::getenv("BB_HAVOK_EVENT_TEST")) {
+        const long every = std::strtol(e, nullptr, 10);
+        if (every > 0 && stub_page && InstallHavokEventTest(u32(every))) {
+            note("havok-event-test 1/" + std::to_string(every));
+        }
+    }
     const int barrier_mode = CpuSaveMode("BB_JOB_BARRIER_STEAL");
     const int cache_mode = CpuSaveMode("BB_WORKPOOL_NODE_CACHE");
     barrier_start_on = barrier_mode == 1;

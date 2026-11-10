@@ -46,6 +46,10 @@ int main() {
     CHECK(GxRegionApplied(GxRegionRequest("224")) == 224 && GxRegionApplied(GxRegionRequest("9999999999")) == 416);
     CHECK(GxRegionApplied(288) == 288 && GxRegionImmediate(288) == (256u << 20) && GxRegionImmediate(416) == (384u << 20));
     CHECK(GxRegionHeapMore(288, true) == 128 && GxRegionHeapMore(288, false) == 0 && GxRegionHeapMore(416, true) == 256);
+    // BB_FAST_RESPAWN_SECONDS
+    CHECK(RespawnSeconds(nullptr) == 2.0f && RespawnSeconds("") == 2.0f && RespawnSeconds("x") == 2.0f && RespawnSeconds("3x") == 2.0f);
+    CHECK(RespawnSeconds("3.5") == 3.5f && RespawnSeconds("0") == 0.5f && RespawnSeconds("-4") == 0.5f);
+    CHECK(RespawnSeconds("99") == 12.0f && RespawnSeconds("12") == 12.0f && RespawnSeconds("nan") == 2.0f);
     g_failures += RunGuardTests();
     std::printf("stability-logic-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

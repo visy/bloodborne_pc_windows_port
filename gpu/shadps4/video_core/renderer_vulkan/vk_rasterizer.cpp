@@ -3477,6 +3477,18 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     // TextureSetMemo: what this call resolves, to remember when the set qualifies.
     std::array<TextureSetEntry, TextureSet::MaxImages> resolved{};
     bool set_ok = set_slot != nullptr;
+    // crashfix081 (CL-ab12f5): the registry generation before this call's lookups. From Nightwatch
+    // 1c99d56 (Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine), GPL-3.0 with
+    // the section 7 terms of its NOTICE; modified: kill switch). A later binding's FindImage may free
+    // or replace an image an earlier binding resolved; a set stamped with the generation after the
+    // lookups served that image's destroyed view until the next (un)registration (GPU device lost
+    // after reloads). Stamped with this one, such a set is resolved again on its next use.
+    // BB_TEXSET_GEN_FIX=0: stamped after the lookups (the old behaviour).
+    static const bool set_generation_fix = [] {
+        const char* e = std::getenv("BB_TEXSET_GEN_FIX");
+        return !(e && e[0] == '0');
+    }();
+    const u64 set_generation = texture_cache.RegistryGeneration();
     // SampleSceneProxies: bindings that may read a reduced scene proxy instead of the native
     // image (normalized sampling only; see Shader::ImageResource::needs_native).
     boost::container::small_vector<bool, 16> binding_proxy_ok;
@@ -3724,7 +3736,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     }
     if (set_ok && image_bindings.size() == stage.images.size()) {
         // Remember the set: the same T#s resolve the same way while no image is (un)registered.
-        set_slot->generation = texture_cache.RegistryGeneration();
+        set_slot->generation =
+            set_generation_fix ? set_generation : texture_cache.RegistryGeneration();
         set_slot->scene_generation = scene_targets->Generation();
         set_slot->count = static_cast<u32>(stage.images.size());
         std::copy_n(resolved.begin(), set_slot->count, set_slot->entries.begin());

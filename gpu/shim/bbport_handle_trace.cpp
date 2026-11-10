@@ -71,6 +71,19 @@ __attribute__((noinline)) std::string Who(const char* kind) {
             break;
         }
     }
+    // The creating thread's name (SetThreadDescription: the guest threads and most host threads set one).
+    using GetThreadDescription_t = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+    static auto get_desc = reinterpret_cast<GetThreadDescription_t>(reinterpret_cast<void*>(
+        GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "GetThreadDescription")));
+    if (get_desc) {
+        PWSTR desc = nullptr;
+        if (SUCCEEDED(get_desc(GetCurrentThread(), &desc)) && desc) {
+            char narrow[64] = {};
+            WideCharToMultiByte(CP_UTF8, 0, desc, -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+            LocalFree(desc);
+            who += std::string(" [thread '") + (narrow[0] ? narrow : "?") + "']";
+        }
+    }
     return std::string(kind) + " " + who;
 }
 

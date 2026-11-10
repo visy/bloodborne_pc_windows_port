@@ -367,6 +367,9 @@ struct Test {
     std::string st_last_texts;
     Clock::time_point st_at{};
     bool god = false;     // god: the own chr kept invincible (test aid)
+    float god_bar = -1;   // god_bar=S (re081): invincible until S s after this game's boss bar came up, then mortal
+    Clock::time_point god_bar_seen{};
+    bool god_bar_up = false, god_bar_done = false;
     bool clear_enemies = false;  // clear_enemies[=R] (flaky078): every loaded regular enemy (not bosses / NPCs) dies quietly, each second, also after a load
     float clear_radius = 0;      // 0: the whole loaded map, else only within R m of the player
     Clock::time_point clear_at{};
@@ -4010,6 +4013,26 @@ void RunTest(State& st, const GameSnapshot& s, Clock::time_point now) {
     }
     // god: this player's chr stays invincible (chr +0x1E1 bit 14, as a11_move), e.g. a scripted
     // event walk through an area full of enemies (B6 live triggers).
+    if (t.god && t.god_bar >= 0 && s.world_up && !s.loading && s.player) {
+        // god_bar=S: mortal S s after the boss bar is up here (a mortal player that lives through a boss intro's
+        // close-up start, then fights as a player would)
+        const bool bar = b2::BossBarLine(nullptr);
+        if (bar && !t.god_bar_up) {
+            t.god_bar_up = true;
+            t.god_bar_seen = Clock::now();
+        }
+        if (t.god_bar_up &&
+            std::chrono::duration<double>(Clock::now() - t.god_bar_seen).count() >= double(t.god_bar)) {
+            t.god = false;
+            t.god_bar_done = true;
+            std::uint32_t f = 0;
+            if (SafeRead(s.player + 0x1e1, &f, 4) && (f & (1u << 14))) {
+                f &= ~(1u << 14);
+                SafeWrite(s.player + 0x1e1, &f, 4);
+            }
+            Log("test: god_bar: mortal now (%.1f s after the boss bar)", double(t.god_bar));
+        }
+    }
     if (t.god && s.world_up && !s.loading && s.player) {
         std::uint32_t f = 0;
         if (SafeRead(s.player + 0x1e1, &f, 4) && !(f & (1u << 14))) {
@@ -5118,6 +5141,9 @@ void PartyDirector::ConfigureFromEnv() {
                 }
             } else if (item == "god") {
                 st.test.god = true;
+            } else if (item.rfind("god_bar=", 0) == 0) {
+                st.test.god = true;
+                st.test.god_bar = static_cast<float>(std::atof(item.c_str() + 8));
             } else if (item == "clear_enemies" || item.rfind("clear_enemies=", 0) == 0) {
                 st.test.clear_enemies = true;
                 st.test.clear_radius = item.size() > 14 ? static_cast<float>(std::atof(item.c_str() + 14)) : 0.0f;
