@@ -11570,12 +11570,13 @@ def check_seam(v, L, name):
                 0, 1e9, (0, 1))
     warps = [float(m.group(1)) for _, ln in L.all(1, r"guest: arrival warp: the load put this guest")
              for m in [re.search(r"put this guest ([\d.]+) m", ln)] if m]
-    beside = len(L.all(1, r"arrived beside the host by the load itself"))
-    v.step("%s info: arrival warps after the load %s m, loads that put the guest beside the host %d" % (name, warps, beside),
-           True, "")
+    hidden = len(L.all(1, r"guest: arrival warp: .*under the held screen"))
+    v.step("%s info: arrival warps after the load %s m, %d of them under the held screen" % (name, warps, hidden), True, "")
     if c:
-        v.step("%s C: every follow's load put the guest beside the host (3, no arrival warp)" % name, beside >= 3 and not warps,
-               "%d beside, warps %s" % (beside, warps))
+        v.step("%s C: every follow's arrival warp ran under the held screen (3)" % name, hidden >= 3 and len(warps) == hidden,
+               "%d of %d" % (hidden, len(warps)))
+        n = len(L.all(1, r"Party seam: hold released \(placed; "))
+        v.step("%s C: the screen went after the placement (3)" % name, n >= 3, "%d" % n)
     none_of(v, L, "%s no B1 fallback" % name, r"guest: FALLBACK", 0, 1e9, (1,))
     none_of(v, L, "%s nobody died" % name, r"local death: HP 0", 0, 1e9, (0, 1))
     check_common(v, L, name)

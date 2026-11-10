@@ -9489,10 +9489,11 @@ bool ArrivalWarpMode() {
 }
 bool g_arrival_warp_pending = false;
 alignas(16) float g_arrival_pos[4] = {}, g_arrival_rot[4] = {};
-/// 0.8.1 seam C (party_load_beside): the follow's load itself goes to the spot beside the host (summoned placement);
-/// the arrival warp only runs when the load put the guest elsewhere.
+/// 0.8.1 seam C (party_load_beside): the follow load's screen is held past its InGameStart (party_seam.h) until the
+/// arrival warp has put the guest beside the host, so the move is never seen. (Writing the beside spot into the
+/// summoned placement does not place it: smoke lb1 of a79b2eba, the lamp load still landed on the host's own spot,
+/// 0.3 m inside the host; the warp is needed, only hidden.)
 bool LoadBesideOn() { return BbSettings::Get().party_load_beside.load(std::memory_order_relaxed); }
-bool g_load_beside = false;  // this follow's summoned placement is the beside spot (main thread)
 
 // ---- seam A (0.8.1, party_parallel_follow): the guest loads in parallel with the host ----
 // research/reseam081.md 3.1. At the host's party lamp travel the guest does not wait in flow state 1 for the
@@ -9990,14 +9991,10 @@ void GuestTick(const GameSnapshot& s, double now) {
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
                 BesideHost(pos, st.dest_rot, g_local_slot.load());
-                g_load_beside = false;
-                if (ArrivalWarpMode() && LoadBesideOn() && !g_dead_follow.load()) {
-                    // seam C: the spot beside the host itself, so the load puts the guest there (no
-                    // warp after the screen unless it lands elsewhere).
-                    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f};
-                    WriteSummonedPlacement(gsm, &st.dest_stage, p16, st.dest_rot);
-                    g_load_beside = true;
-                } else if (ArrivalWarpMode()) {
+                if (ArrivalWarpMode() && LoadBesideOn() && !g_dead_follow.load() && seam::HoldHookIn()) {
+                    seam::Hold("load beside the host: until the arrival warp");  // seam C
+                }
+                if (ArrivalWarpMode()) {
                     // The host-world load takes its stage from +0x14C4: the host's spot itself (the
                     // guest is put beside it with a chr warp after the load, ArrivalWarpTick).
                     SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
@@ -10122,13 +10119,7 @@ void GuestTick(const GameSnapshot& s, double now) {
             const bool have_landed = s.player && ChrPos(s.player, landed);
             const float ldx = landed[0] - g_arrival_pos[0], ldy = landed[1] - g_arrival_pos[1], ldz = landed[2] - g_arrival_pos[2];
             const float landed_m = std::sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
-            if (g_arrival_warp_pending && s.player && g_load_beside && have_landed && landed_m < 0.75f) {
-                // seam C: the load put this guest beside the host: no warp (no jump after the screen).
-                g_arrival_warp_pending = false;
-                Log("guest: arrived beside the host by the load itself (%.2f m from the spot): no arrival warp (seam C)",
-                    double(landed_m));
-            }
-            g_load_beside = false;
+            (void)have_landed;
             if (g_arrival_warp_pending && s.player) {
                 g_arrival_warp_pending = false;
                 alignas(16) float p16[4] = {g_arrival_pos[0], g_arrival_pos[1], g_arrival_pos[2], 1.0f};
@@ -10136,6 +10127,7 @@ void GuestTick(const GameSnapshot& s, double now) {
                 Log("guest: arrival warp: the load put this guest %.2f m from the spot beside the host (%s)",
                     double(landed_m), seam::ScreenHeld() ? "under the held screen" : "the screen is down");
                 LocalChrWarpImpl(s.player, p16, r16, "arrival beside the host");
+                // seam C: the held screen goes in Rewinding, once the host's chr is here again (remp081 proposal 3).
                 const u64 gsm = Slot(kSlotGsm);
                 Log("guest: arrived by the host's own travel; placed beside the host (%.2f, %.2f, %.2f); forced placement "
                     "(own save spot) map %#x (%.1f, %.1f, %.1f)",
@@ -10248,9 +10240,10 @@ void GuestTick(const GameSnapshot& s, double now) {
                 all = false;
             }
         }
-        if (seam::Holding() && (all || now - st.since > 4.0)) {
-            // seam A: the screen goes once the host's chr is here again (at most 4 s after the rewind).
-            seam::ReleaseHold(all ? "parallel follow: the host's chr is here" : "parallel follow: 4 s after the rewind", true);
+        if (seam::Holding() && (all || now - st.since > 2.0)) {
+            // seam A / C: the screen goes once the host's chr is here again (its task back at step 6; at most 2 s
+            // after the rewind), which also hides the 1.0-1.6 s before the other player appears (remp081 3, proposal 3).
+            seam::ReleaseHold(all ? "placed; the host's chr is here" : "placed; 2 s after the rewind", true);
         }
         if (all || now - st.since > 60.0) {
             const u64 remo = Field<u64>(Slot(0x5540058), 8);
