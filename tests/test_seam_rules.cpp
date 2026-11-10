@@ -119,7 +119,19 @@ static void TestSameBlock() {
     assert(!SameBlock(0xffffffffu, 0xffffffffu));
 }
 
+static void TestPlacement() {
+    assert(PlacementRefusal(true, true, 1.5) == nullptr);
+    assert(PlacementRefusal(true, true, kPlaceMaxShiftM) == nullptr);
+    assert(PlacementRefusal(true, true, kPlaceMaxShiftM + 0.1) != nullptr);
+    assert(PlacementRefusal(false, true, 1.0) != nullptr);
+    assert(PlacementRefusal(true, false, 1.0) != nullptr);
+    assert(PlacementRefusal(true, true, -1.0) != nullptr);
+    assert(PlacementLanded(0.0) && PlacementLanded(kPlaceLandedM));
+    assert(!PlacementLanded(kPlaceLandedM + 0.01) && !PlacementLanded(-1.0));
+}
+
 int main() {
+    TestPlacement();
     TestSettleRun();
     TestSettleCap();
     TestSettleEdge();

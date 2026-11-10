@@ -336,3 +336,16 @@ def test_tier_table_counts(monkeypatch):
     rows = {t: (n, secs) for t, n, secs in sp.tier_table({})}
     assert rows["full"][0] == len(sp.PHASES) and rows["full"][1] == 300 * len(sp.PHASES)
     assert rows["release"][0] + rows["nightly"][0] == len(sp.PHASES)
+
+
+class BkBankRegexTests(unittest.TestCase):
+    """re081 bk row: the game may re-add the host's entry before our re-insert (the line gains a suffix)."""
+
+    def test_accepts_bare_and_game_readded_rejects_no_room(self):
+        import re
+        rx = re.compile(smoke.BK_BACK_IN_BANK)
+        head = "dead untarget: chr 10044000 (hp 719) back in the enemies' target bank"
+        self.assertTrue(rx.search(head))
+        self.assertTrue(rx.search(head + " (the game had put it back already)"))
+        self.assertFalse(rx.search(head + " (no room: left to the game)"))
+        self.assertFalse(rx.search("dead untarget: chr 10044000 (this player, hp 0) out of the enemies' target bank"))
