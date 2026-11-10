@@ -55,6 +55,8 @@ std::atomic<u64> g_entry{0};       // the current frame end's entry (while g_in_
 std::atomic<bool> g_in_end{false};
 std::atomic<u64> g_gx_done{0};     // the render thread's last "done"
 std::atomic<unsigned long> g_main_tid{0}, g_gx_tid{0};
+std::atomic<FrameEndFn> g_after_end{nullptr};  // the frame-end quiet point's user (party_seam.cpp)
+bool g_end_hooked = false;
 
 #ifdef _WIN32
 unsigned long CurrentTid() { return GetCurrentThreadId(); }
@@ -63,6 +65,15 @@ unsigned long CurrentTid() { return 0; }
 #endif
 
 BB_COOP_SYSV void FrameEndHook(u64 dev) {
+    if (!g_on) {
+        // Only the quiet point wants it (BB_STALL_PROBE off): the frame end, then its callback.
+        const u64 entry = NowNs();
+        reinterpret_cast<void(BB_COOP_SYSV*)(u64)>(coop::Guest(kFrameEnd))(dev);
+        const u64 exit = NowNs();
+        const u64 prev = g_last_exit.exchange(exit, std::memory_order_relaxed);
+        if (const FrameEndFn f = g_after_end.load(std::memory_order_acquire)) f(prev, entry, exit);
+        return;
+    }
     const u64 entry = NowNs();
     if (!g_main_tid.load(std::memory_order_relaxed)) {
         g_main_tid.store(CurrentTid(), std::memory_order_relaxed);
@@ -82,6 +93,7 @@ BB_COOP_SYSV void FrameEndHook(u64 dev) {
     g_last_exit.store(exit, std::memory_order_relaxed);
     g_in_end.store(false, std::memory_order_relaxed);
     g_frames.store(n, std::memory_order_release);
+    if (const FrameEndFn f = g_after_end.load(std::memory_order_acquire)) f(prev, entry, exit);
 }
 
 BB_COOP_SYSV u64 RenderDoneHook(u64 ev, u64 value) {
@@ -279,6 +291,22 @@ void SamplerMain() {
 
 } // namespace
 
+bool InstallFrameEnd() {
+    if (g_end_hooked) return true;
+    if (!coop::Image()) return false;
+    // "probe" in the names: left out of the party's hook-set check (party_link.cpp). The frame-end hook
+    // only times the call and runs the quiet point's callback after it (both games may differ there).
+    g_end_hooked = coop::HookCallSite(kPresentFrameEndCall, kFrameEnd, reinterpret_cast<const void*>(&FrameEndHook),
+                                      "stall probe: frame end");
+    return g_end_hooked;
+}
+
+bool SetFrameEndCallback(FrameEndFn fn) {
+    if (!InstallFrameEnd()) return false;
+    g_after_end.store(fn, std::memory_order_release);
+    return true;
+}
+
 void Install() {
     g_threshold_ms = ThresholdMsFromEnv(std::getenv("BB_STALL_PROBE"));
     if (!g_threshold_ms) return;
@@ -286,9 +314,7 @@ void Install() {
         std::printf("Stall probe: no image; off\n");
         return;
     }
-    // "probe" in the names: diagnostics, left out of the party's hook-set check (party_link.cpp).
-    const bool a = coop::HookCallSite(kPresentFrameEndCall, kFrameEnd, reinterpret_cast<const void*>(&FrameEndHook),
-                                      "stall probe: frame end");
+    const bool a = InstallFrameEnd();
     const bool b = coop::HookCallSite(kRenderDoneCall, kEventSet, reinterpret_cast<const void*>(&RenderDoneHook),
                                       "stall probe: render thread done");
     if (!a) {
