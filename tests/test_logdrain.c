@@ -12,6 +12,16 @@
 #endif
 int main(int argc, char **argv) {
     int n = argc > 1 ? atoi(argv[1]) : 1000;
+    if (argc > 2 && !strcmp(argv[2], "ips")) { /* the address mask: whole lines, a line printed in pieces, a last line without its newline */
+        setvbuf(stdout, NULL, _IONBF, 0);
+        runtime_logdrain_start();
+        printf("send 4 -> 192.168.1.20:9307 vport 1->2\n");
+        printf("peer 8.8.4.4");
+        Sleep(300);
+        printf(":9307 and [2001:db8:1:2::5]:9307 lo 127.0.0.1\n");
+        printf("tail 10.8.0.2");
+        return 0;
+    }
     setvbuf(stdout, NULL, _IONBF, 0);
     runtime_logdrain_start();
     unsigned long long t0 = GetTickCount64();

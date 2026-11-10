@@ -684,6 +684,10 @@ try:
     import bb_guard
 except Exception:
     bb_guard = None
+try:  # the address mask of every log line this launcher writes or shows (scripts/ipmask.py)
+    import ipmask
+except Exception:
+    ipmask = None
 try:  # files written whole or not at all (scripts/safe_write.py); a plain write without it
     import safe_write
 except Exception:
@@ -2473,6 +2477,8 @@ INI_FLAG_SETTINGS = [
     # 0.7.9 (CL-7fc9fe): the log output goes through a background thread, so a slow reader of the game's output
     # (this launcher, an antivirus) cannot freeze the game thread that printed a log line.
     ("feat_log_async", "log_async", True, "BB_LOG_ASYNC"),
+    # 0.8.1 (NW-019b146): network addresses in the game's log are masked (1.2.3.4 -> 1.2.x.x); this keeps them.
+    ("feat_log_raw_ips", "log_raw_ips", False, "BB_LOG_RAW_IPS"),
     # Live FPS clock (Mrsuss60's live FPS patching, a7cbfae6): replaces the frame rate hooks / FPS++ patches.
     ("feat_live_fps", "live_fps", True, "BB_LIVE_FPS"),
     # Keyboard movement ramp (Mrsuss60 94388d59): WASD ease in / out like an analog stick; live in game.
@@ -3464,6 +3470,7 @@ class BloodborneLauncher(tk.Tk):
         self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
         self.feat_save_commit_async = self.ini_flag_vars["save_commit_async"]
         self.feat_log_async = self.ini_flag_vars["log_async"]
+        self.feat_log_raw_ips = self.ini_flag_vars["log_raw_ips"]
         self.feat_live_fps = self.ini_flag_vars["live_fps"]
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
         self.feat_hud = self.ini_flag_vars["show_hud"]
@@ -4115,6 +4122,13 @@ class BloodborneLauncher(tk.Tk):
                     "(or the log file), so a slow reader cannot freeze the game for seconds. A game setting "
                     "(bbport.ini log_async; BB_LOG_ASYNC=0 turns it off). Restart required. Default: on.",
                     command=lambda: self.save_game_settings("log_async"))
+        self._check(sec, "Keep network addresses in the log (diagnostic)", self.feat_log_raw_ips,
+                    "Off (default): every IP address in the game's log and in this launcher's log is hidden "
+                    "(1.2.3.4 becomes 1.2.x.x; IPv6 keeps its first two groups), so a log can be posted. On: "
+                    "the real addresses are logged, for a network problem that cannot be told from the masked "
+                    "ones. The net doctor then also tells two PCs on the same home network apart. A game "
+                    "setting (bbport.ini log_raw_ips; BB_LOG_RAW_IPS=1). Restart required. Default: off.",
+                    command=lambda: self.save_game_settings("log_raw_ips"))
         self._check(sec, "Log output stall report (game freezes)", self.feat_log_stall,
                     "Logs a line when the reader of the game's output (this launcher, a log file) took "
                     "100 ms or more to accept a block of log lines. For reports of freezes of a few seconds. "
@@ -6494,6 +6508,14 @@ class BloodborneLauncher(tk.Tk):
             pass
 
     # ------------------------------------------------------------- logging
+    def mask_lines(self, lines):
+        """The launcher's own copy of the game's address mask (NW-019b146): the game masks its log before it
+        reaches us, but lines from an older build or this launcher's own messages may carry an address.
+        Not with "Keep network addresses in the log"."""
+        if ipmask is None or self.feat_log_raw_ips.get():
+            return lines
+        return [ipmask.mask_ips(ln) for ln in lines]
+
     def insert_lines(self, lines):
         if not lines:
             return
@@ -6506,6 +6528,7 @@ class BloodborneLauncher(tk.Tk):
             self.log_text.see("end")
 
     def write_file(self, lines):
+        lines = self.mask_lines(lines)
         if self.log_fh:
             try:
                 self.log_fh.write("\n".join(lines) + "\n")
@@ -6514,6 +6537,7 @@ class BloodborneLauncher(tk.Tk):
                 self.log_fh = None
 
     def log(self, message: str):
+        message = self.mask_lines([message])[0]
         self.write_file([message])
         self.insert_lines([message])
 
@@ -6532,6 +6556,7 @@ class BloodborneLauncher(tk.Tk):
         if lines:
             for ln in lines:
                 self.check_feature_warnings(ln)
+            lines = self.mask_lines(lines)
             self.write_file(lines)
             if self.hide_vk_var.get():
                 shown = [ln for ln in lines if VK_NOISE not in ln]

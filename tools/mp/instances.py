@@ -685,6 +685,9 @@ def run(a):
                           "BB_PARTY_PREFER_LAN", "BB_PARTY_PUBLIC_ADDR", "BB_NET_SIM"):
                     env.pop(k, None)
                 env["BB_PARTY_UPNP"] = "1" if i == 0 and not getattr(a, "real_net_no_upnp", False) else "0"
+                # the harness reads the real STUN / seen-at addresses from the game's log (0.8.1 masks them by default);
+                # (they stay on this PC; the harness's own output is masked by mask_ipv4)
+                env["BB_LOG_RAW_IPS"] = "1"
         if i >= a.count - getattr(a, "headless", 0):
             # Headless-lite (gpu/shim/bbport_headless.h): minimised, nothing drawn or presented,
             # game logic and the party code as usual. Its window gives no screenshots.
