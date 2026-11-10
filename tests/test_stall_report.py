@@ -71,3 +71,12 @@ def test_probe_lines_and_report():
 def test_no_probe_lines():
     r = sr.scan(pad(2))
     assert "BB_STALL_PROBE off?" in sr.report("y.log", r, True)
+
+
+def test_harness_timestamps_stripped(tmp_path, capsys):
+    lines = ["[+  12.345] " + x for x in pad(2) + block(600) + pad(2)]
+    f = tmp_path / "run.log"
+    f.write_text(chr(10).join(lines), encoding="utf-8")
+    sr.main([str(f)])
+    out = capsys.readouterr().out
+    assert "400-1500      1" in out

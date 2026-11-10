@@ -37,6 +37,7 @@ PRESSURE = re.compile(r"Texture cache: memory pressure")
 PROBE = re.compile(r"Stall probe: ([\d.]+) ms frame: main thread ([\d.]+) ms, frame end ([\d.]+) ms"
                    r"(?:.*?main samples (\d+) \(party tick (\d+), in the frame end (\d+)\))?")
 BUCKETS = (("150-400", 150, 400), ("400-1500", 400, 1500), ("1500+", 1500, float("inf")))
+HARNESS_TS = re.compile(r"^\[\+ *[\d.]+\] ")  # instances.py --timestamps prefix
 WINDOW_S = 5.01  # one "Frame stats:" line per 5 s window
 
 
@@ -125,7 +126,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     for path in a.logs:
         with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
+            lines = [HARNESS_TS.sub("", x, count=1) for x in f.read().splitlines()]
         print(report(path[-70:], scan(lines), a.probe))
     return 0
 
