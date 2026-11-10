@@ -44,6 +44,7 @@
 #include "party_lan.h"
 #include "party_traversal.h"
 #include "party_netroute.h"
+#include "party_nwdirect.h"
 #include "party_connwarn.h"
 
 #include "../net/bbnet_internal.h"
@@ -1351,6 +1352,7 @@ LinkCallbacks make_callbacks(bool host) {
         };
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (netroute::OnEvent(true, slot, name, body)) return;  // F2: a guest's IPv6 endpoint
+            if (nwdirect::OnEvent(true, slot, name, body)) return;  // 0.8.1: the opt-in direct path
             if (name == coop::split::kChoosingEventName) {  // a guest asks "Travel with the party?"
                 on_split_choosing(slot, body);
                 return;
@@ -1488,6 +1490,7 @@ LinkCallbacks make_callbacks(bool host) {
         bbnet::np::set_host_closed_room_hook(&host_lost);
         cb.on_event = [](int slot, std::uint64_t, const std::string& name, const std::string& body) {
             if (netroute::OnEvent(false, slot, name, body)) return;  // F2: IPv6 table, relay punch
+            if (nwdirect::OnEvent(false, slot, name, body)) return;  // 0.8.1: the opt-in direct path
             if (name == coop::split::kChoosingEventName) {  // the host asks "Travel with the party?"
                 on_split_choosing(slot, body);
                 return;
@@ -3107,6 +3110,11 @@ void startup_main() {
                              bridge::OnNetwork(line);
                          },
                          [] { return stopping(); }});
+    nwdirect::Configure({[] { return runtime_link(); }, [](const std::string& m) { plog("%s", m.c_str()); },
+                         [] { return stopping(); }, [] {
+                             std::lock_guard<std::mutex> lk(R().mu);
+                             return R().have_local_state ? static_cast<int>(R().local_state) : 0;
+                         }});
     if (host) start_host(std::move(cfg));
     else start_guest(std::move(cfg));
     bool have;
@@ -3146,6 +3154,7 @@ void do_shutdown() {
     }
     traversal::stop();
     netroute::Stop();
+    nwdirect::Stop();
     if (upnp) upnp->stop(2000);
 }
 
