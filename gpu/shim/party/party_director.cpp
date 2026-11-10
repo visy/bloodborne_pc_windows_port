@@ -23,6 +23,7 @@
 #include "party_death_rules.h"
 #include "party_dsummon.h"
 #include "../net/from_api.h"
+#include "bbport_stall_probe.h"
 #include "party_fourp.h"
 #include "party_sixp.h"
 #include "party_link.h"
@@ -6405,6 +6406,7 @@ bool PartyRequested() {
 
 void CoopTick() {
     using perf::Zone;
+    BbStallProbe::ZoneScope stall_zone(BbStallProbe::kZonePartyTick); // BB_STALL_PROBE: samples here are ours
     perf::FrameBoundary(); // BB_PARTY_PERF=1: closes the last frame's per-zone sums
     perf::Scope total(Zone::Tick);
     perf::Scope z(Zone::LuaEvents);
