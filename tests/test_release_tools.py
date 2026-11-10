@@ -246,6 +246,24 @@ class StageTests(unittest.TestCase):
         self.commit_changes(f'## 9.8.8 (unreleased)\n\n## {VERSION} (2026-11-09)\n')  # another version may be open
         self.assertEqual(self.run_stage(), 0)
 
+    def test_refuses_unassembled_changelog_fragments(self):
+        self.commit_changes(f'## {VERSION} (2026-11-09)\n')
+        touch(self.repo, 'changes.d/README.md')
+        touch(self.repo, 'changes.d/foo.md', b'### Fixed\n\n- x\n')
+        git(self.repo, 'add', 'changes.d')
+        git(self.repo, 'commit', '-q', '-m', 'frag')
+        self.head = git(self.repo, 'rev-parse', 'HEAD')
+        self.set_exe(f'v0.1-7-g{self.head[:10]}')
+        with self.assertRaises(SystemExit) as cm:
+            self.run_stage()
+        self.assertIn('changelog.py assemble', str(cm.exception))
+        self.assertIn('changes.d/foo.md', str(cm.exception))
+        git(self.repo, 'rm', '-q', 'changes.d/foo.md')
+        git(self.repo, 'commit', '-q', '-m', 'assembled')  # the README alone is fine
+        self.head = git(self.repo, 'rev-parse', 'HEAD')
+        self.set_exe(f'v0.1-8-g{self.head[:10]}')
+        self.assertEqual(self.run_stage(), 0)
+
     def test_version_check_gets_mingw_path_and_reports_failure(self):
         seen = {}
 
@@ -410,6 +428,12 @@ class ConfigurePgoTests(unittest.TestCase):
 
 
 class BuildReleaseTests(unittest.TestCase):
+    def test_refuses_fragments_in_commit(self):
+        with self.assertRaises(SystemExit) as cm:
+            stage_mod.check_fragment_names(['changes.d/README.md', 'changes.d/a.md'], '0.8.1')
+        self.assertIn('assemble 0.8.1', str(cm.exception))
+        stage_mod.check_fragment_names(['changes.d/README.md', 'CHANGES.md'], '0.8.1')
+
     def test_notes_from_changes(self):
         text = '# t\n## 0.8.1 (2026-11-10)\n\n### Added\n- a\n\n### Fixed\n- b\n## 0.8.0 (2026-11-09)\n- old\n'
         self.assertEqual(build_release.notes_from_changes(text, '0.8.1'), '### Added\n- a\n\n### Fixed\n- b\n')
