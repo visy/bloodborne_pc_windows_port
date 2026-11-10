@@ -4926,30 +4926,35 @@ LM_UNTIL = [r"1:(?:travel step (\d+)/\1: guest_press 0x0|guest: own death in the
 def _phase_laurence_first(name, die):
     m = "%m34_00"
     win = int(os.environ.get("BB_HDP_WINDOW", "90"))
-    host = ",".join(["log_pos=2", "goods=4014:0"] + ([] if die else ["god"]) + [
+    gdist = os.environ.get("BB_HDP_GUESTDIST", "8")
+    # hdp: both invincible through his close-up start (he killed both within 3 s of the bar at the altar spot); the host
+    # mortal 3 s after the bar, draws him with R1 and dies by his hits (the frail test aid), host_die only as a fallback;
+    # the guest moves away at the bar and turns mortal 40 s after it, passive
+    host = ",".join(["log_pos=2", "goods=4014:0", "god_bar=3" if die else "god"] + [
         *_laurence_enter("host", 10, True),                          # the party to the Hunter's Nightmare lamp, in through his fog
         "host_use=4014@2%%m34_00?near=%s:2" % BR_SIGNAL,             # the guest is inside: the skull, the fight starts
-        "host_chr=3400850:8@20%s" % m,                               # after the scene: 8 m from him, passive
-    ] + (["host_die@6%s?member=bar" % m, "host_press=0x0@%d%s" % (win, m)] if die else ["host_press=0x0@40%s" % m]))
-    guest = ",".join(["log_pos=2"] + ([] if die else ["god"]) + [
+    ] + ((["host_press=0x800@4%s" % m] + ["host_press=0x800@2%s" % m] * 14 + ["host_die@1%s" % m, "host_press=0x0@%d%s" % (win, m)])
+         if die else ["host_chr=3400850:8@20%s" % m, "host_press=0x0@40%s" % m]))
+    guest = ",".join(["log_pos=2", "god_bar=40" if die else "god"] + [
         *_laurence_enter("guest", 40),                               # in through his (open) fog, to the altar spot: no fog press
-        "guest_press=0x0@22%s!" % m,                                 # the scene
-        "guest_chr=3400850:%s@2%s" % (os.environ.get("BB_HDP_GUESTDIST", "8") if die else "8", m),   # in the arena, passive
-        "guest_press=0x0@%d%s" % ((win + 10) if die else 40, m),
+    ] + ([("guest_chr=3400850:%s@1%s?host=bar" % (gdist, m)), "guest_press=0x0@%d%s" % (win + 40, m)]
+         if die else ["guest_press=0x0@22%s!" % m, "guest_chr=3400850:8@2%s" % m, "guest_press=0x0@40%s" % m]) + [
         "guest_press=0x0@2%s" % m,
     ])
     env = ["BB_PARTY_PROGRESS_TEST_CLEAR=" + BR_LAURENCE_CLEAR + "," + BR_LAMP_CLEAR, "BB_PARTY_TARGET_ANIM=1", "BB_BOSS_LOG=1",
-           "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=13404853,13404851,13404855"]
+           "BB_PARTY_EMEVD_TRACE=1", "BB_PARTY_EMEVD_TRACE_ALL=13404853,13404851,13404855", "BB_PARTY_BOSS_MUSIC_LOG=1"]
     if die:
         env.append("BB_PARTY_AI_LOG=1")
     if os.environ.get("BB_LM_ENV"):
         env += os.environ["BB_LM_ENV"].split(";")
     return dict(
-        name=name, seconds=480 if die else 360, count=2, headless=0, pads=(0, 1), until_hold=4,
+        name=name, seconds=540 if die else 360, count=2, headless=0, pads=(0, 1), until_hold=4,
         env=env,
-        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + guest, "1:BB_PARTY_TRAVEL_CHOICE=alone"],
+        ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + guest, "1:BB_PARTY_TRAVEL_CHOICE=alone"] +
+             (["0:BB_PARTY_ROT_TEST_FRAIL=1"] if die else []),
         watch=["--watch", r"boss health bar shown=%sbar@1,6,12" % name] +
-              (["--watch", r"host death in a boss fight=%slimbo@2,10,20,40" % name] if die else []),
+              (["--watch", r"host death in a boss fight=%slimbo@2,10,20,40" % name,
+                "--watch", r"god_bar: mortal now=%smortal@1,10,30" % name] if die else []),
         crash=[], until=LM_UNTIL,
     )
 
@@ -4965,7 +4970,8 @@ def phase_hdp(only):
 def _lm_music(v, L, tag, bar, required=True):
     off = "BB_PARTY_BOSS_MUSIC=0" in os.environ.get("BB_LM_ENV", "")
     for i, who in ((0, "host"), (1, "guest")):
-        t = L.find(i, r"EMEVD event 13404853 \[11\]", bar - 5)
+        hit = L.find(i, r"EMEVD event 13404853 \[11\]", bar - 5)
+        t = hit[0] if hit else None
         if required and not (off and i == 1):
             v.step("%s %s: Laurence's music on (13404853 [11] 2010[04])" % (tag, who), t is not None,
                    "%+.1f s after the bar" % (t - bar) if t is not None else "never")
@@ -5005,12 +5011,15 @@ def check_hdp(v, L):
     gdead_before = L.find(1, r"local death: HP 0", bar, lim)
     v.step("hdp the guest is alive at the host's death", gdead_before is None, "alive" if gdead_before is None else "died first")
     win = float(os.environ.get("BB_HDP_WINDOW", "90"))
-    hits = L.all(1, r"Party balance: hit: HP", lim, lim + win)
-    died = L.find(1, r"local death: HP 0", lim, lim + win)
+    mortal = need(v, L, "hdp the guest is mortal (god_bar) after the host's death or soon after", 1, r"test: god_bar: mortal now", bar)
+    t0 = max(lim, mortal or lim)
+    hits = L.all(1, r"Party balance: hit: HP", t0, t0 + win)
+    dhit = L.find(1, r"local death: HP 0", t0, t0 + win)
+    died = dhit[0] if dhit else None
     first = min([t for t, _ in hits] + ([died] if died is not None else []), default=None)
     v.step("hdp the boss hits the passive guest after the host's death (hit lines, or its death)", first is not None,
            "%d hit(s), guest died: %s, first %s" % (len(hits), died is not None,
-                                                    "%+.1f s after the death" % (first - lim) if first is not None else "never"))
+                                                    "%+.1f s after the host's death" % (first - lim) if first is not None else "never"))
     pre = L.all(1, r"Party balance: hit: HP", bar, lim)
     v.step("hdp (info) hits on the guest while the host lived", True, "%d" % len(pre))
     for i in (0, 1):

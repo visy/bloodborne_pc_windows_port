@@ -601,16 +601,35 @@ bool BossMusicSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
     if (!on || bank != 3 || id != 0) {
         return false;
     }
+    static const bool diag = std::getenv("BB_PARTY_BOSS_MUSIC_LOG") && std::getenv("BB_PARTY_BOSS_MUSIC_LOG")[0] == '1';
     i32 index = -1, prev_bank = -1, prev_id = -1;
-    if (!SafeGet(event + 0xa0, &index) || index <= 0 || !SafeGet(instr - 0x20, &prev_bank) ||
-        !SafeGet(instr - 0x20 + 4, &prev_id) || prev_bank != 1003 || prev_id != 5) {
-        return false;
+    SafeGet(event + 0xa0, &index);
+    const u64 prev_rec = instr - 0x20;
+    if (index > 0) {
+        SafeGet(prev_rec, &prev_bank);
+        SafeGet(prev_rec + 4, &prev_id);
     }
-    u8 prev[2] = {};
+    // The previous record's own argument bytes, read from the script file (not the copied argument buffer at event
+    // +0xB8, which holds the CURRENT instruction's arguments in a parameterised event): file base (event +0xA8 -> +8)
+    // + the args section (+0x78) + the record's offset (+0x10). 1003[5]'s arguments are constants in every event.
+    u8 prev[2] = {0xff, 0xff};
     u32 prev_size = 0;
-    const u64 at = EmevdInstructionArgs(event, instr - 0x20, &prev_size);
-    if (!at || prev_size < 2 || !SafeRead(at, prev, 2) ||
-        !BossMusicEntryWaitSkip(bank, id, index, prev_bank, prev_id, prev, prev_size)) {
+    if (prev_bank == 1003 && prev_id == 5) {
+        u64 runtime = 0, base = 0, section = 0;
+        i64 off = 0;
+        if (SafeGet(prev_rec + 8, &prev_size) && SafeGet(prev_rec + 0x10, &off) && SafeGet(event + 0xa8, &runtime) &&
+            runtime && SafeGet(runtime + 8, &base) && base && SafeGet(base + 0x78, &section) && section != ~0ull) {
+            if (!SafeRead(base + section + u64(off), prev, 2)) prev_size = 0;
+        } else {
+            prev_size = 0;
+        }
+    }
+    const bool hit = BossMusicEntryWaitSkip(bank, id, index, prev_bank, prev_id, prev, prev_size);
+    if (diag && index > 0) {
+        Log("boss music diag: event %d [%d] 3[0], previous record %d[%d] args(%u) %02x %02x: %s", event_id, index, prev_bank,
+            prev_id, prev_size, unsigned(prev[0]), unsigned(prev[1]), hit ? "skipped" : "kept");
+    }
+    if (!hit) {
         return false;
     }
     static std::atomic<u32> logged{0};
