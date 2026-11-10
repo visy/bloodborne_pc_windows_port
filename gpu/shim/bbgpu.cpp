@@ -13,6 +13,7 @@
 #include "bbport_stability.h"
 #include "party/party_director.h"
 #include "bbport_stall_probe.h"
+#include "party/party_seam.h"
 #include "party/lamp_travel.h"
 #include "party/mirror_frame.h"
 #include "party/auto_hud.h"
@@ -426,6 +427,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     bbnet::set_guest_reader(&coop::SafeRead);
     coop::HooksInit(image, size);  // the image for game-state reads (the performance HUD's menu / banner check, solo too)
     BbStallProbe::Install();  // BB_STALL_PROBE: long main-loop frames split into main work / render wait (diagnostic)
+    coop::seam::Install();  // 0.8.1 seamless join: held / settled loading screen drop, frame-end quiet point (toggles off)
     BbHiFps::Install();  // high-FPS fixes from droogie/bbhost: lights' blink, water wakes, boxes' OK (needs HooksInit)
     coop::lamptravel::Install(image, size);  // direct lamp travel (solo and party; BB_LAMP_TRAVEL=0 off)
     coop::autohud::Install();  // the auto-hide HUD (0.7.8; setting off by default)

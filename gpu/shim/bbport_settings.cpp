@@ -315,6 +315,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.party_name_colours = i != 0;
     } else if (key == "party_look_sync") {
         v.party_look_sync = i != 0;
+    } else if (key == "party_parallel_follow") {
+        v.party_parallel_follow = i != 0;
+    } else if (key == "party_settled_drop") {
+        v.party_settled_drop = i != 0;
+    } else if (key == "party_load_beside") {
+        v.party_load_beside = i != 0;
+    } else if (key == "party_quick_rejoin") {
+        v.party_quick_rejoin = i != 0;
     } else if (key == "party_map_marks") {
         v.party_map_marks = i != 0;
     } else if (key == "party_through_walls") {
@@ -507,7 +515,7 @@ void Load() {
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
         {"BB_GPL", "gpl"}, {"BB_NAN_GUARD", "nan_guard"}, {"BB_NAN_GUARD_MARK", "nan_guard_mark"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
-        {"BB_HUD", "show_hud"},                     {"BB_AUTO_HUD", "auto_hide_hud"}, {"BB_PARTY_NAME_COLOURS", "party_name_colours"}, {"BB_PARTY_LOOK_SYNC", "party_look_sync"}, {"BB_PARTY_MAP_MARKS", "party_map_marks"},                     {"BB_HUD_POSITION", "hud_position"},
+        {"BB_HUD", "show_hud"},                     {"BB_AUTO_HUD", "auto_hide_hud"}, {"BB_PARTY_NAME_COLOURS", "party_name_colours"}, {"BB_PARTY_LOOK_SYNC", "party_look_sync"}, {"BB_PARTY_PARALLEL_FOLLOW", "party_parallel_follow"}, {"BB_PARTY_SETTLED_DROP", "party_settled_drop"}, {"BB_PARTY_LOAD_BESIDE", "party_load_beside"}, {"BB_PARTY_QUICK_REJOIN", "party_quick_rejoin"}, {"BB_PARTY_MAP_MARKS", "party_map_marks"},                     {"BB_HUD_POSITION", "hud_position"},
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
         {"BB_MOUSE_DIRECT_CAMERA", "mk_direct_camera"},
         {"BB_HDR", "hdr"},                          {"BB_HDR_PEAK", "hdr_peak_nits"},
@@ -881,6 +889,10 @@ void Save() {
     put("party_chat_receive", flag(v.party_chat_receive));
     put("party_name_colours", flag(v.party_name_colours));
     put("party_look_sync", flag(v.party_look_sync));
+    put("party_parallel_follow", flag(v.party_parallel_follow));
+    put("party_settled_drop", flag(v.party_settled_drop));
+    put("party_load_beside", flag(v.party_load_beside));
+    put("party_quick_rejoin", flag(v.party_quick_rejoin));
     put("party_map_marks", flag(v.party_map_marks));
     put("party_through_walls", flag(v.party_through_walls));
     put("party_stain_marker", flag(v.party_stain_marker));
