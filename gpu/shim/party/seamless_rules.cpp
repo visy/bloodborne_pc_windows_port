@@ -594,6 +594,40 @@ bool FogFirstSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
     return true;
 }
 
+// B6 (re081): a boss music event's guest-entered wait (party_phantom.h BossMusicEntryWaitSkip), matched by the
+// instruction before it (the event's instruction records are the EMEVD file's, 0x20 bytes each, in order).
+bool BossMusicSkip(u64 event, u64 instr, i32 event_id, i32 bank, i32 id) {
+    static const bool on = BossMusicEntrySkipEnabled(std::getenv("BB_PARTY_BOSS_MUSIC"));
+    if (!on || bank != 3 || id != 0) {
+        return false;
+    }
+    i32 index = -1, prev_bank = -1, prev_id = -1;
+    if (!SafeGet(event + 0xa0, &index) || index <= 0 || !SafeGet(instr - 0x20, &prev_bank) ||
+        !SafeGet(instr - 0x20 + 4, &prev_id) || prev_bank != 1003 || prev_id != 5) {
+        return false;
+    }
+    u8 prev[2] = {};
+    u32 prev_size = 0;
+    const u64 at = EmevdInstructionArgs(event, instr - 0x20, &prev_size);
+    if (!at || prev_size < 2 || !SafeRead(at, prev, 2) ||
+        !BossMusicEntryWaitSkip(bank, id, index, prev_bank, prev_id, prev, prev_size)) {
+        return false;
+    }
+    static std::atomic<u32> logged{0};
+    if (logged.exchange(u32(event_id)) != u32(event_id)) {
+        u8 a[8] = {};
+        u32 asz = 0;
+        const u64 fa = EmevdInstructionArgs(event, instr, &asz);
+        u32 flag = 0;
+        if (fa && asz >= 8 && SafeRead(fa, a, 8)) {
+            std::memcpy(&flag, a + 4, 4);
+        }
+        Log("boss music: event %d [%d] does not wait for the guest-entered flag %u (as the host's; "
+            "BB_PARTY_BOSS_MUSIC=0 off)", event_id, index, flag);
+    }
+    return true;
+}
+
 // A11: the boss health bar (EMEVD 2003[11] DisplayBossHealthBar: first argument 1 on, 0 off).
 std::atomic<bool> g_boss_bar{false};
 // The bar slots (2003[11] third argument, 0 the bottom bar) shown since the bar came up: the party
@@ -631,6 +665,9 @@ BB_COOP_SYSV u8 EmevdDispatch(u64 self, u64 event, float dt) {
     }
     if (!skip && instr && g_fog_first) {
         skip = FogFirstSkip(event, instr, event_id, bank, id);
+    }
+    if (!skip && instr && bank == 3 && id == 0) {
+        skip = BossMusicSkip(event, instr, event_id, bank, id);
     }
     if (!skip && instr) {
         if (const EmevdSkipPredicate pred = g_skip_pred.load(std::memory_order_relaxed)) {
