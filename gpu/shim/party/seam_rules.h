@@ -22,6 +22,10 @@ constexpr double kSettledRunMs = 1000.0;   // ... covering this long without a f
 constexpr double kSettleCapMs = 3000.0;    // the screen is dropped at the latest then
 constexpr double kParallelDestWaitS = 30.0;  // after its own load, at most this long for the host's spot
 constexpr double kParallelLoadCapS = 90.0;   // the guest's own load
+constexpr double kPlaceMaxShiftM = 25.0;     // C: the spawn is moved at most this far from the game's own (the map block
+                                             // around it is loaded for the lamp's spot; farther keeps the warp)
+constexpr double kPlaceLandedM = 0.6;        // C: the arrival warp is skipped when the load put the guest this close
+constexpr float kNativeHoldS = 1.0f;         // native hold: MoveMapStep +0x278 is kept at this (counted down per frame)
 
 /// B: fed once per frame end while a dropped screen is held. Start() at the InGameStart clear.
 struct SettleWatch {
@@ -94,6 +98,19 @@ inline const char* ParallelFollowRefusal(const FollowCase& c) {
     if (!c.in_world) return "not in the world (loading, or not in flow state 4)";
     return nullptr;
 }
+
+/// C (in-load placement): why the beside-host spot is not written into the load's spawn position (null: write it).
+/// `stage_ok`: the load's map block is the one the spot was made for. `shift_m`: from the game's own spawn (the
+/// lamp's spot) to the spot; negative = unknown.
+inline const char* PlacementRefusal(bool stage_ok, bool finite, double shift_m) {
+    if (!stage_ok) return "the load is another map block than the spot's";
+    if (!finite) return "the spot is not a finite position";
+    if (shift_m < 0) return "the game's own spawn position is unknown";
+    if (shift_m > kPlaceMaxShiftM) return "the spot is far from the game's own spawn (its map block may not be loaded)";
+    return nullptr;
+}
+/// C: the arrival warp is not needed when the load put the guest within kPlaceLandedM of the spot.
+inline bool PlacementLanded(double landed_m) { return landed_m >= 0 && landed_m <= kPlaceLandedM; }
 
 /// A: after the guest's own load, the host's spot arrives: same block (area + block of the map id)?
 inline bool SameBlock(std::uint32_t a, std::uint32_t b) { return (a >> 16) == (b >> 16) && a != 0 && b != 0 &&

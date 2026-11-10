@@ -9708,6 +9708,38 @@ void ParallelArrive(const GameSnapshot& s, double now, float pos[4], const float
         MapName(s.map_id).c_str(), pos[0], pos[1], pos[2], before[0], before[1], before[2], travel_s, wait_s);
 }
 
+/// seam D (party_quick_rejoin) with the game's own re-sync (remp081 7): packet 0xA, "send me your record", is what a load
+/// sends to every pending member at its step 7 and what answers with 0xB / 8 / 0x3B / 0x3C / 0xC / 0xD / 0x13. When a member's
+/// chr is still not back 0.8 s after a re-join's load, ask it that way (the peer's game answers at once, no JSON op and no
+/// main-thread tick between), up to 4 times 1.5 s apart. BB_PARTY_RESYNC_0XA=0 leaves it out.
+bool NativeResyncOn() {
+    static const bool off = std::getenv("BB_PARTY_RESYNC_0XA") && std::getenv("BB_PARTY_RESYNC_0XA")[0] == '0';
+    return QuickRejoinOn() && !off;
+}
+void NativeResyncTick(double now, double since) {
+    static double base = -1, last = 0;
+    static int n = 0;
+    if (base != since) {
+        base = since;
+        last = 0;
+        n = 0;
+    }
+    if (now - since < 0.8 || now - last < 1.5 || n >= 4) {
+        return;
+    }
+    last = now;
+    ++n;
+    using SendFn = int(BB_COOP_SYSV*)(u64, u64, u32, const void*, u32);
+    for (const TaskInfo& t : Tasks(false)) {
+        if ((t.mode == 1 || t.mode == 2) && !PlayerForPeer(t.task + kTaskPeer)) {
+            const u8 zero = 0;
+            const int r = reinterpret_cast<SendFn>(Guest(kSendPacket))(Slot(kSlotFlow), t.task + kTaskPeer, 0xa, &zero, 1);
+            Log("guest: re-sync (seam D): the game's own record request (0xA) #%d to a member whose chr is not back, %.1f s "
+                "after the load -> %d", n, now - since, r);
+        }
+    }
+}
+
 void GuestTick(const GameSnapshot& s, double now) {
     State& st = S();
     const u64 flow = Slot(kSlotFlow);
@@ -9716,6 +9748,9 @@ void GuestTick(const GameSnapshot& s, double now) {
     {
         std::lock_guard<std::mutex> lk(st.mu);
         phase = st.gphase;
+    }
+    if (phase == GuestPhase::Idle) {
+        seam::DisarmPlacement("the follow ended");
     }
     if (phase == GuestPhase::Idle && seam::Holding()) {
         seam::ReleaseHold("the follow ended", true);  // never a screen held past its follow
@@ -9991,8 +10026,9 @@ void GuestTick(const GameSnapshot& s, double now) {
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
                 BesideHost(pos, st.dest_rot, g_local_slot.load());
-                if (ArrivalWarpMode() && LoadBesideOn() && !g_dead_follow.load() && seam::HoldHookIn()) {
-                    seam::Hold("load beside the host: until the arrival warp");  // seam C
+                if (ArrivalWarpMode() && LoadBesideOn() && !g_dead_follow.load() && seam::HoldHookIn() &&
+                    !seam::PlacementHookIn()) {
+                    seam::Hold("load beside the host: until the arrival warp");  // seam C without the in-load placement hooks
                 }
                 if (ArrivalWarpMode()) {
                     // The host-world load takes its stage from +0x14C4: the host's spot itself (the
@@ -10024,6 +10060,11 @@ void GuestTick(const GameSnapshot& s, double now) {
                     std::memcpy(g_arrival_pos, st.dest_pos, sizeof g_arrival_pos);
                     std::memcpy(g_arrival_rot, st.dest_rot, sizeof g_arrival_rot);
                     BesideHost(g_arrival_pos, g_arrival_rot, g_local_slot.load());
+                    if (LoadBesideOn() && seam::PlacementHookIn()) {
+                        // seam C: the spot goes into the load's own spawn position (no warp after, no held screen); when the
+                        // load cannot take it the screen is held as before (party_seam.cpp).
+                        seam::ArmPlacement(st.dest_stage, g_arrival_pos, g_arrival_rot);
+                    }
                 } else if (SummonOffset() > 0.0f) {
                     t.kind = TravelKind::Transform;
                     t.has_pos = true;
@@ -10120,8 +10161,19 @@ void GuestTick(const GameSnapshot& s, double now) {
             const float ldx = landed[0] - g_arrival_pos[0], ldy = landed[1] - g_arrival_pos[1], ldz = landed[2] - g_arrival_pos[2];
             const float landed_m = std::sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
             (void)have_landed;
+            const seam::PlacementState placed = seam::Placement();
+            seam::DisarmPlacement("the load ended");
+            if (g_arrival_warp_pending && s.player && placed.applied && seam::PlacementLanded(double(landed_m))) {
+                g_arrival_warp_pending = false;
+                Log("guest: arrival warp skipped: the load itself put this guest %.2f m from the spot beside the host "
+                    "(placed inside the load, %.2f m from the game's own spawn)", double(landed_m), double(placed.shift_m));
+            }
             if (g_arrival_warp_pending && s.player) {
                 g_arrival_warp_pending = false;
+                if (placed.applied) {
+                    Log("guest: the in-load placement landed %.2f m from the spot (over %.1f m): the arrival warp runs",
+                        double(landed_m), seam::kPlaceLandedM);
+                }
                 alignas(16) float p16[4] = {g_arrival_pos[0], g_arrival_pos[1], g_arrival_pos[2], 1.0f};
                 alignas(16) float r16[4] = {g_arrival_rot[0], g_arrival_rot[1], g_arrival_rot[2], g_arrival_rot[3]};
                 Log("guest: arrival warp: the load put this guest %.2f m from the spot beside the host (%s)",
@@ -10239,6 +10291,9 @@ void GuestTick(const GameSnapshot& s, double now) {
             if ((t.mode == 1 || t.mode == 2) && !PlayerForPeer(t.task + kTaskPeer)) {
                 all = false;
             }
+        }
+        if (!all && NativeResyncOn()) {
+            NativeResyncTick(now, st.since);
         }
         if (seam::Holding() && (all || now - st.since > 2.0)) {
             // seam A / C: the screen goes once the host's chr is here again (its task back at step 6; at most 2 s

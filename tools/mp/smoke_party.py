@@ -786,7 +786,12 @@ def phase_lg(only):
 SEAM_TRAVELS = ["host_warp=2412953@10^1", "host_warp=2402950@15%m24_01", "host_warp=2102950@15%m24_00"]
 SEAM_UNTIL = r"0:travel step 3/3: host_warp[\s\S]*host: re-join done after"
 # (A parallel follow, B settled drop, C load beside); lb1: C alone (the follow's load puts the guest beside the host).
-SEAM_PHASES = {"pf0": (0, 0, 0), "pf1": (1, 0, 0), "sd1": (0, 1, 0), "lb1": (0, 0, 1), "pfsd": (1, 1, 0)}
+# seam2 (0.8.2): pf1n = pf1 with the native hold (BB_PARTY_NATIVE_HOLD=1; default off), the A/B of the native hold;
+# lb1w = lb1 with the arrival warp under the held screen (BB_PARTY_LOAD_PLACE=0), the A/B of the in-load placement;
+# lbpf = A + C together (the guest loads in parallel, then is placed beside the host).
+SEAM_PHASES = {"pf0": (0, 0, 0), "pf1": (1, 0, 0), "sd1": (0, 1, 0), "lb1": (0, 0, 1), "pfsd": (1, 1, 0),
+               "pf1n": (1, 0, 0), "lb1w": (0, 0, 1), "lbpf": (1, 0, 1)}
+SEAM_EXTRA_ENV = {"pf1n": ["BB_PARTY_NATIVE_HOLD=1"], "lb1w": ["BB_PARTY_LOAD_PLACE=0"]}
 
 
 def phase_seam(only, name):
@@ -794,7 +799,7 @@ def phase_seam(only, name):
     return dict(
         name=name, seconds=330, count=2, headless=0,
         env=["BB_STALL_PROBE=100", "BB_PARTY_PARALLEL_FOLLOW=%d" % a, "BB_PARTY_SETTLED_DROP=%d" % b,
-             "BB_PARTY_LOAD_BESIDE=%d" % c],
+             "BB_PARTY_LOAD_BESIDE=%d" % c] + SEAM_EXTRA_ENV.get(name, []),
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + ",".join(["god"] + SEAM_TRAVELS), "1:BB_PARTY_DIRECTOR_TEST=god"],
         crash=[], until=[SEAM_UNTIL], until_hold=12,
         watch=["--watch", r"Party seam: (InGameStart: )?loading screen dropped=drop@0.3,1.5",
@@ -5806,8 +5811,12 @@ def check_bk(v, L):
     out = need(v, L, "bk the dead host's chr leaves the enemies' target bank", 0,
                r"dead untarget: chr \w+ \(this player, hp 0\) out of the enemies' target bank", lim - 15.0)
     if out is not None:
+        # The line is logged after the bank is READ: bare = our re-insert wrote the entry; "(the game had put it back
+        # already)" = our insert had no room because the game's own registration re-added the entry first (its race with
+        # this check), and the bank read still found it there (`there`, party_b2.cpp). Both prove the chr is in the bank;
+        # only "(no room: left to the game)" (the entry is NOT in the bank) fails.
         need(v, L, "bk the host gets up: its chr back in the enemies' target bank", 0,
-             r"dead untarget: chr \w+ \(hp [1-9]\d*\) back in the enemies' target bank(?! \()", out)
+             r"dead untarget: chr \w+ \(hp [1-9]\d*\) back in the enemies' target bank(?! \(no room)", out)
     check_common(v, L, "bk")
 
 
@@ -10511,7 +10520,7 @@ PHASES = {**{n: (lambda only, n=n: phase_jn(only, n)) for n in JN_PHASES}, "ivc"
 GROUPS = {"invade_race": "ivr", "join_stagger": ",".join(JN_PHASES), "join_stagger_sim": "jn2d,jn3d", "invade_cross": "ivc", "invade_cross3": "ivc3,ivc3n,ivc3m", "invade_fallback": "ivf", "open_level_any": "ojla", "invade_two": "iv2,ivm", "invade_place": "ivp", "invade": "iv", "invade_sim": "ivn", "invade_refuse": "ivx", "invade_level": "ivl", "open_level": "ojl", "auto_hud": "ah", "party_chat": "pc", "version_options": "vm", "yahargul_join": "yj", "yahargul_join_other": "yjc", "lecture_lamp_party": "llp", "join": "s1", "leave": "s1", "death": "s1", "travel": "s1", "boss": "s1", "host_death": "s1",
           "wipe": "s1", "wipe_late": "s1", "kill": "s2", "arena": "s2", "itembox": "s2", "rejoin_kill": "s2", "c6": "s2", "host_crash": "s2",
           "host_leave": "s2", "keyitems": "s2", "rules": "rules", "splitscreen": "ss", "stay_home": "sh", "guest_gather": "gg", "savecopy": "sc", "summonfail": "summonfail",
-          "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "parallel_follow": "pf0,pf1", "settled_drop": "pf0,sd1", "load_beside": "pf0,lb1", "quick_rejoin": "qr0,qr1", "seam": "pf0,pf1,sd1,lb1,pfsd,qr0,qr1", "leave_gap": "lv", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "lifts2": "lfx", "lift_apart": "lfa", "lift_walk": "lfw,lfwc", "lift_walk_far": "lfwf,lfwcf", "lift_walk_slow": "lfws,lfwcs,lfwbs,lfwcbs", "lift_down": "lu", "gx_ebrietas": "gxe", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd,kg", "drop_far": "fdr", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "amygdala": "amy", "prologue_refusal": "pr", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_layers": "cy,cyn", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_enter": "cae,cao", "chalice_altar_guest": "cag", "chalice_altar_guest_full": "cage", "chalice_boss": "cab", "chalice_queen": "caq,caw", "chalice_wipe": "clw", "chalice_alias": "cla,caa,cam,camo,camh,cas", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "live_fps_death": "lfd", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "guest_rest": "gr,gr2,gr3,gr4", "atlas": "mp,mpg,mph", "map_marks": "mm,mmn", "map_marks": "mm,mmn", "guest_rest_off": "gro,gr2o,gr3o,gr4o", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "lecture_lamp": "ll", "host_lamp": "hlq", "boss_lamp": "bq", "host_lamp_repair": "hlr", "boss_lamp": "bq", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
+          "host_revive": "s3", "streamkill": "sk", "load_gap": "lg", "parallel_follow": "pf0,pf1,pf1n,lbpf", "settled_drop": "pf0,sd1", "load_beside": "pf0,lb1,lb1w,lbpf", "quick_rejoin": "qr0,qr1", "seam": "pf0,pf1,sd1,lb1,pfsd,pf1n,lb1w,lbpf,qr0,qr1", "leave_gap": "lv", "gather": "ga", "gather_ground": "gl", "lifts": "lf", "lifts2": "lfx", "lift_apart": "lfa", "lift_walk": "lfw,lfwc", "lift_walk_far": "lfwf,lfwcf", "lift_walk_slow": "lfws,lfwcs,lfwbs,lfwcbs", "lift_down": "lu", "gx_ebrietas": "gxe", "ladder": "lf,ld", "mark": "mk", "kidnap": "kd,kg", "drop_far": "fdr", "story_warp": "kw", "fall": "fl", "fall_deep": "fd,fdj", "host_fall_lamp": "cd", "amygdala": "amy", "prologue_refusal": "pr", "cainhurst_scene": "iw,iwn", "cainhurst_annalise": "an,anl", "chalamp": "cl", "chalice_layers": "cy,cyn", "chalice_guest": "clg", "chalice_progress": "cpr", "chalice_curse": "chc,chn,chw", "chalice_altar": "cpa", "chalice_enter": "cae,cao", "chalice_altar_guest": "cag", "chalice_altar_guest_full": "cage", "chalice_boss": "cab", "chalice_queen": "caq,caw", "chalice_wipe": "clw", "chalice_alias": "cla,caa,cam,camo,camh,cas", "elevator": "el", "lifts_together": "lt", "fight_load": "bf", "cainhurst_lift": "ch", "cainhurst_maid": "md", "cloth_stall": "mds", "save_load": "svl", "live_fps_death": "lfd", "research_lift": "rh", "research_solo": "rs", "forbidden_lift": "fw", "forbidden_lift_guest": "fwg", "forbidden_lift_both": "fwb", "forbidden_lift_edge": "fwe", "hemwick_lift": "fh", "lamps": "lp", "guest_dream": "gd", "guest_dream_host": "gh", "guest_lamp": "gm", "guest_rest": "gr,gr2,gr3,gr4", "atlas": "mp,mpg,mph", "map_marks": "mm,mmn", "map_marks": "mm,mmn", "guest_rest_off": "gro,gr2o,gr3o,gr4o", "join_lamp": "jl", "mensis_lamp": "ml", "mensis_lamp_guest": "mg", "lecture_lamp": "ll", "host_lamp": "hlq", "boss_lamp": "bq", "host_lamp_repair": "hlr", "boss_lamp": "bq", "headstone_split": "hs", "ngplus_rejoin": "ngj", "npc_lamp": "nl", "frontier_fall": "ff", "lunarium_key": "lk,lkc",
 
           "rot": "rt", "boss_rooms": "br", "rom_fog": "rf", "rom_jump": "rj", "emissary": "em", "emissary_first": "emf", "boss_drops": "bd", "boss_drops_off": "bdo", "scene_mirror": "sm", "ending_flow": "ef", "ngplus_ending": "ngp", "moon_music": "mb", "gehrman_music": "gb", "moon_music_stop": "mbs", "gehrman_music_stop": "gbs", "dream_apart": "da", "covenant": "cv",
           "valtr_rune": "cv", "covenant_talk": "cvt,cvh", "covenant_seq": "cvs,cvo", "covenant_runes": "cvr", "covenant_measure": "cvm", "covenant_chalice": "cvc", "covenant_annalise": "cva", "covenant_alfred": "cvf", "covenant_kneel": "cvk", "covenant_staff": "cvl", "items_every": "ie", "items_leak": "il", "reward_guest_kill": "rw", "reward_eye": "rwe", "reward_treasure": "rwt", "guest_gates": "gag", "look_sync": "h5", "give_items": "gv,gvg", "give_rollback": "gvr,gvl", "give_netsim": "gvn", "give_menu": "gvm,gvs,gvt", "give_gear": "gvw", "give_armor": "gva", "give_gear_netsim": "gvwn", "reward_late": "rwl", "shop_sync": "il", "travel_vote": "tv", "npc_fights": "nf,nfa", "npc_alfred": "nfa", "npc_eileen": "nfe", "npc_alfred_ward": "nfw", "npc_hunter_nightmare": "nfn", "npc_hunter_research": "nfr", "npc_valtr": "nfv", "npc_djura": "nfd", "npc_brador": "nfb", "npc_hamlet": "nfh", "npc_hunter_nightmare2": "nfn2", "npc_guest_kill": "nfnk,nfn2k,nfrk,nfhk", "npc_invader": "npi", "npc_attack": "npa", "npc_doll": "npd", "pvp_revive": "pvd", "pvp_full_hp": "pvh", "pvp_npc": "pvn", "npc_fog": "npf", "echo_hold": "eh", "limbo_leave": "bl", "boss_darkness": "mw", "death_poison": "px,pxg", "seam_rejoin": "sj", "outage_short": "ou", "stranger_port": "stg", "guest_restart": "gdr,gdrd,gdrb,gdrf", "guest_mesh": "mesh", "vpn_mtu": "oum,meshm", "fourp_nat": "fp", "fivep": "fp5", "fivep_invader": "fpi5", "six_stage": "fp5x,fpi5x", "six": "fp6,fpi6", "six_join": "fp6j,fp6k", "open_party": "oj", "lan_only": "lo", "phantom_own": "po", "phantom_save": "pos", "shop_repair": "sg", "shop_repair2": "sg2", "shop_badge": "sgb", "shop_badge_sync": "sgb2", "badge_guard": "sgb3", "badge_gate": "sgb4,sgb4n", "sgive_owner": "sgp", "chalice_shop": "csh,csh2", "chalice_shop3": "csh3", "chalice_insight": "cis", "chalice_madman": "cim", "chalice_glyph": "cgt,cgp,cgu", "boss_ai": "ba", "boss_dead": "bh,bk", "boss_late": "hg", "boss_guest": "bg", "boss_laurence_wipe": "lr", "boss_music_action": "lm", "boss_host_dead_passive": "hdp", "boss_laurence_guest_first": "lrg", "micolash": "mi", "micolash_guest": "mig", "boss_visible": "bv,bw", "ludwig_wipe": "lw", "ludwig_refight": "lwf", "amelia_phase": "amp", "lone_ai": "la,lb,lc", "scurry_beasts": "scb", "rot_recovery": "rr"}
@@ -10521,7 +10530,7 @@ GROUP_ROWS = {"map_marks": r"^mmn? ", "invade_race": r"^ivr ", "join_stagger": r
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules", "splitscreen": r"^ss ", "stay_home": r"^sh ", "guest_gather": r"^gg ",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
-              "host_revive": r"^s3 ", "streamkill": r"^sk ", "load_gap": r"^lg(:| )", "parallel_follow": r"^pf[01][: ]", "settled_drop": r"^(pf0|sd1)[: ]", "load_beside": r"^(pf0|lb1)[: ]", "quick_rejoin": r"^qr[01][: ]", "seam": r"^(pf0|pf1|sd1|lb1|pfsd|qr0|qr1)[: ]", "leave_gap": r"^lv(:| )", "gather": r"^ga ", "gather_ground": r"^gl ",
+              "host_revive": r"^s3 ", "streamkill": r"^sk ", "load_gap": r"^lg(:| )", "parallel_follow": r"^(pf[01]n?|lbpf)[: ]", "settled_drop": r"^(pf0|sd1)[: ]", "load_beside": r"^(pf0|lb1w?|lbpf)[: ]", "quick_rejoin": r"^qr[01][: ]", "seam": r"^(pf0|pf1|sd1|lb1|pfsd|pf1n|lb1w|lbpf|qr0|qr1)[: ]", "leave_gap": r"^lv(:| )", "gather": r"^ga ", "gather_ground": r"^gl ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "lifts2": r"^lfx (join|lift|guest's lift|host)", "lift_apart": r"^lfa ", "lift_walk": r"^lfwc? ", "lift_walk_far": r"^lfwc?f ", "lift_walk_slow": r"^lfwc?b?s ", "lift_down": r"^lu ", "gx_ebrietas": r"^gxe ", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^k[dg] ", "drop_far": r"^fdr ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iwn? ", "cainhurst_annalise": r"^an |^anl ", "chalamp": r"^cl ", "chalice_layers": r"^cyn? ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_curse": r"^ch[cw] ", "chalice_altar": r"^cpa ", "chalice_enter": r"^ca[eo] ", "chalice_altar_guest": r"^cag ", "chalice_altar_guest_full": r"^cage ", "chalice_boss": r"^cab ", "chalice_queen": r"^ca[qw] ", "chalice_enter": r"^ca[eo] ", "chalice_altar_guest": r"^cag ", "chalice_altar_guest_full": r"^cage ", "chalice_boss": r"^cab ", "chalice_wipe": r"^clw ", "chalice_alias": r"^(cla|caa|cam|camo|camh|cas) ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "cainhurst_maid": r"^md ", "cloth_stall": r"^mds ", "save_load": r"^svl ", "live_fps_death": r"^lfd ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "join_lamp": r"^jl ", "mensis_lamp": r"^ml ", "lecture_lamp": r"^ll ", "host_lamp": r"^hlq ", "host_lamp_repair": r"^hlr ", "mensis_lamp_guest": r"^mg ", "headstone_split": r"^hs ", "ngplus_rejoin": r"^ngj ", "amygdala": r"^amy ", "prologue_refusal": r"^pr ", "npc_lamp": r"^nl ", "frontier_fall": r"^ff ", "lunarium_key": r"^lkc? ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "rom_fog": r"^rf ", "rom_jump": r"^rj ", "emissary": r"^em ", "emissary_first": r"^emf ", "boss_drops": r"^bd ", "boss_drops_off": r"^bdo ", "scene_mirror": r"^sm ", "ending_flow": r"^ef ", "ngplus_ending": r"^ngp ", "moon_music": r"^mb ", "gehrman_music": r"^gb ", "moon_music_stop": r"^mbs ", "gehrman_music_stop": r"^gbs ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
@@ -11729,7 +11738,9 @@ def check_seam(v, L, name):
     a, b, c = SEAM_PHASES[name]
     need(v, L, "%s join: 2 players" % name, 0, r"cooperators 0 -> 1")
     need(v, L, "%s hooks in (InGameStart clear, frame-end quiet point)" % name, 1,
-         r"Party seam: InGameStart clear hook in, frame-end quiet point in")
+         r"Party seam: InGameStart clear hook in, (native hold \w+, load placement \w+, )?frame-end quiet point in")
+    native = name == "pf1n"
+    placing = name not in ("lb1w",)
     need(v, L, "%s the third party travel ran" % name, 0, r"travel step 3/3: host_warp")
     tr = seam_travels(L)
     gs, hs, longs = [], [], []
@@ -11770,11 +11781,25 @@ def check_seam(v, L, name):
              for m in [re.search(r"put this guest ([\d.]+) m", ln)] if m]
     hidden = len(L.all(1, r"guest: arrival warp: .*under the held screen"))
     v.step("%s info: arrival warps after the load %s m, %d of them under the held screen" % (name, warps, hidden), True, "")
-    if c:
+    if c and placing:
+        # seam2: the beside-host spot goes into the load (no warp, no held screen); a load that cannot take it falls back to
+        # the held screen + warp. Every follow is one or the other.
+        skipped = len(L.all(1, r"guest: arrival warp skipped: the load itself put this guest"))
+        written = len(L.all(1, r"Party seam: load placement \(step \d\): the load's spawn position"))
+        v.step("%s C: every follow was placed inside the load (written %d, warp skipped %d) or fell back to the held warp "
+               "(%d)" % (name, written, skipped, hidden), skipped + hidden >= 3, "")
+        v.step("%s C info: placements written %d, refused %d, warps skipped %d" % (
+            name, written, len(L.all(1, r"Party seam: load placement \(step \d\): not written")), skipped), True, "")
+    elif c:
         v.step("%s C: every follow's arrival warp ran under the held screen (3)" % name, hidden >= 3 and len(warps) == hidden,
                "%d of %d" % (hidden, len(warps)))
         n = len(L.all(1, r"Party seam: hold released \(placed; "))
         v.step("%s C: the screen went after the placement (3)" % name, n >= 3, "%d" % n)
+    if a and native:
+        nh = len(L.all(1, r"Party seam: native hold: MoveMapStep's screen gate is held"))
+        v.step("%s native hold: the screen gate was held (info: %d)" % (name, nh), True, "")
+    elif a or c:
+        none_of(v, L, "%s native hold is opt-in: not used" % name, r"Party seam: native hold: ", 0, 1e9, (1,))
     none_of(v, L, "%s no B1 fallback" % name, r"guest: FALLBACK", 0, 1e9, (1,))
     none_of(v, L, "%s nobody died" % name, r"local death: HP 0", 0, 1e9, (0, 1))
     check_common(v, L, name)
