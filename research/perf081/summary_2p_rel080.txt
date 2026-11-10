@@ -1,0 +1,32 @@
+variant 2p
+variant=2p minutes=60 seconds=3600
+build=E:/games/bbport/rel080
+fps=uncap live_fps=False extra_env=[]
+inst0: 742 Frame stats lines
+  fps 5 min  mean 67.9  p1 56.2  p50 66.4  worst-frame p99 135.1 ms  (60 windows)
+  fps 30 min mean 70.4  p1 61.2  p50 68.8  worst-frame p99 100.9 ms  (60 windows)
+  fps 60 min mean 67.4  p1 58.5  p50 67.4  worst-frame p99 119.7 ms  (60 windows)
+  FPS drift 5 -> 60 min: -0.8 %
+  crash/assert lines: 0
+inst1: 741 Frame stats lines
+  fps 5 min  mean 69.8  p1 58.1  p50 67.1  worst-frame p99 124.7 ms  (60 windows)
+  fps 30 min mean 70.8  p1 60.3  p50 68.7  worst-frame p99 107.8 ms  (59 windows)
+  fps 60 min mean 69.9  p1 61.2  p50 69.6  worst-frame p99 78.6 ms  (60 windows)
+  FPS drift 5 -> 60 min: +0.2 %
+  crash/assert lines: 0
+memory inst0 (112 samples):
+  5 min  (t=304s) private 3434.5 MB  ws 4575.7 MB  handles 3387  threads 123  gpu ded 1907.9 MB  shared 456.1 MB
+  30 min (t=1802s) private 4040.8 MB  ws 4775.7 MB  handles 3719  threads 121  gpu ded 2441.7 MB  shared 463.6 MB
+  60 min (t=3596s) private 4325.3 MB  ws 4915.3 MB  handles 4087  threads 121  gpu ded 2691.2 MB  shared 479.6 MB
+  handle growth sample 5 -> last: +831
+memory inst1 (111 samples):
+  5 min  (t=304s) private 3521.2 MB  ws 4663.8 MB  handles 3357  threads 120  gpu ded 1904.8 MB  shared 570.6 MB
+  30 min (t=1802s) private 4091.8 MB  ws 4876.5 MB  handles 3688  threads 119  gpu ded 2384.5 MB  shared 574.6 MB
+  60 min (t=3596s) private 4484.7 MB  ws 4986.5 MB  handles 4045  threads 119  gpu ded 2735.3 MB  shared 590.6 MB
+  handle growth sample 5 -> last: +795
+idle-dwell FPS inst0 (start min: mean / p1): 5: 65.4 / 60.9; 13: 65.7 / 61.4; 21: 68.4 / 63.2; 29: 67.8 / 61.2; 37: 68.4 / 64.7; 46: 67.1 / 59.9; 54: 67.3 / 63.2
+  idle-dwell drift first -> last: +2.8 %
+idle-dwell FPS inst1 (start min: mean / p1): 5: 66.7 / 63.4; 13: 67.3 / 61.7; 21: 69.8 / 66.9; 29: 68.9 / 62.4; 38: 69.6 / 66.5; 46: 68.9 / 60.1; 54: 69.6 / 66.2
+  idle-dwell drift first -> last: +4.4 %
+loads inst0: 42, mean 4.4 s, median 4.7 s, max 7.0 s (loads.csv; first one is the title -> world)
+loads inst1: 42, mean 4.3 s, median 4.5 s, max 6.6 s (loads.csv; first one is the title -> world)
