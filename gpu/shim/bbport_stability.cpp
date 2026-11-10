@@ -7,6 +7,8 @@
 // version, or a patch file that changed it) is left alone with a log line. Switches (default on):
 //   BB_HEAP_TABLE=0        the SprjMemory heap size growth (Scaleform/MENU; GFX above 1080p)
 //   BB_GX_REGION_MB=N      the GX range allocator (default 288; 0 or 160: the game's 160); BB_GX_REGION=0 off
+//   BB_FAST_RESPAWN=0      a death respawn's loading screen keeps the game's fixed 12 s hold floor
+//                          (BB_FAST_RESPAWN_SECONDS=S: the floor, default 2.0, 0.5..12)
 //   BB_GFX_HEAP_MORE_MIB=N the GFX_GraphicsPrivate growth (runtime_memory.c; 0: none)
 //   BB_ARENA_PROBE=0       the log when the frame arena allocator (+0xe45560) returns NULL
 //   BB_ARENA_GUARD=0       the NULL checks at +0x21d5b35 and +0x2199303 (drop the render command)
@@ -382,6 +384,49 @@ std::string GxRegion() {
     std::printf("Stability: GX range allocator %u MiB (the game's %u), GFX_GraphicsPrivate %llu MiB%s\n", mib,
                 BbStability::kGxRegionGame, ull(gfx / kMiB), more ? "" : " (already enlarged: not grown again)");
     return "gx-region " + std::to_string(mib) + "MiB";
+}
+
+// The death respawn hold (BB_FAST_RESPAWN, default on; BB_FAST_RESPAWN_SECONDS, default 2.0). MoveMapStep
+// step 0 (+0x1938870) loads its hold timer +0x278 from the rodata float at +0x49280c8 (12.0) when the load
+// request has the "player died" byte; the screen gate (step 12, +0x193a3e0) keeps the loading screen up while
+// it is above zero (research/remp081.md 3.3). The float has one reader (the load at +0x1938b68), so the
+// value in the loaded image is replaced; the reader is checked to be a rip-relative load of it first.
+// kRespawnReader is the load's rip-relative displacement (4 bytes 5c f5 fe 02 -> +0x49280c8).
+constexpr u64 kRespawnFloat = 0x49280c8, kRespawnReader = 0x1938b68;
+
+std::string FastRespawn() {
+    if (!On("BB_FAST_RESPAWN")) {
+        return "fast-respawn off";
+    }
+    const float secs = BbStability::RespawnSeconds(std::getenv("BB_FAST_RESPAWN_SECONDS"));
+    bool reader = false;
+    if (kRespawnReader + 16 <= image_size) {
+        for (u64 i = 0; i <= 8 && !reader; ++i) {
+            std::int32_t disp;
+            std::memcpy(&disp, image + kRespawnReader + i, 4);
+            reader = kRespawnReader + i + 4 + std::int64_t(disp) == kRespawnFloat; // movss/mov reg,[rip+disp]
+        }
+    }
+    if (!reader || !Matches(kRespawnFloat, {0x00, 0x00, 0x40, 0x41})) { // 12.0f
+        std::printf("Stability: death respawn hold left at the game's 12 s: this executable differs at guest "
+                    "+0x%llx (reader) or +0x%llx (12.0f)\n",
+                    ull(kRespawnReader), ull(kRespawnFloat));
+        if (kRespawnReader + 16 <= image_size && kRespawnFloat + 4 <= image_size) {
+            std::printf("Stability:   reader bytes %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x, float bytes %02x %02x %02x %02x\n",
+                        image[kRespawnReader], image[kRespawnReader + 1], image[kRespawnReader + 2],
+                        image[kRespawnReader + 3], image[kRespawnReader + 4], image[kRespawnReader + 5],
+                        image[kRespawnReader + 6], image[kRespawnReader + 7], image[kRespawnReader + 8],
+                        image[kRespawnReader + 9], image[kRespawnFloat], image[kRespawnFloat + 1],
+                        image[kRespawnFloat + 2], image[kRespawnFloat + 3]);
+        } else {
+            std::printf("Stability:   image size 0x%llx does not reach the sites\n", ull(image_size));
+        }
+        return "fast-respawn skipped";
+    }
+    std::memcpy(image + kRespawnFloat, &secs, 4);
+    std::printf("Stability: death respawn loading screen hold %.2f s (the game's 12 s; BB_FAST_RESPAWN=0 restores)\n",
+                double(secs));
+    return "fast-respawn " + std::to_string(secs).substr(0, 4) + "s";
 }
 
 // ======================================================================================
@@ -2005,6 +2050,7 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note("dmem " + std::to_string(runtime_memory_pool_size() / kMiB) + "MiB");
     note(HeapTable());
     note(GxRegion());
+    note(FastRespawn());
     stub_page = MapNear(StubPageSize);
     if (!stub_page) {
         std::printf("Stability: no memory near the image for stubs; code fixes off\n");
