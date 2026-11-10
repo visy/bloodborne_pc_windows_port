@@ -232,6 +232,9 @@ before anyone is in the game):
   until then their room is open to everyone, and a guest at that fog is told what starts it. Rom
   starts with anyone's hit. The Celestial Emissary's small emissaries appear on every screen, whoever
   goes through the fog first (0.7.9).
+- **Boss music for everyone.** Every player hears a boss's music once the fight is on and they stand in
+  the boss area, also in fights they were already inside when they started (Ebrietas, Rom, Laurence,
+  Lady Maria, Gehrman, the Moon Presence) (0.8.1).
 - **Guests can hit NPCs.** A guest's blows land on the host world's NPCs as the host's do (the friendly
   hunters and the others the host could hurt): they take damage and a killing blow counts for
   everyone. An NPC that turns hostile after a few hits (Alfred) does so on a guest's blows too.
