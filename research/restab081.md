@@ -71,6 +71,30 @@ Test: `crash-regmem-test` (tests/test_crash_regmem.c, fake memory) via tests/tes
 No guard added: a guard in 0x1a21100 would need a valid-object test on a freed pointer (the reused
 memory can hold anything); the cause has to be pinned to a teardown path first.
 
+### crashfix081: root cause as far as it goes, and the guard
+
+- **What the object is.** The animation table entry's object has no vtable; its +0x08 points to an array of
+  0x20-byte annotation tracks, +0x24 is the track count, and +0x18 points to a header whose first dword must be 0.
+  The walker 0xf5bc30 reads these fields; 0x1a21100 and 0x12e76a0 check the header. So this is the chr's
+  per-animation event data (TimeAct-style), and it lives in the chr's loaded animation resource. When that resource
+  is released, the module's table still points into the freed block. Only the large resource block was reused (it
+  read 1); the chr, its modules and the table were freed too, or still alive, but not yet overwritten. That explains
+  why everything except the object looked fine.
+- **Lifetime.** The behaviour-graph jobs (0xacd9b0 on HavokWorkerThread) run the chr's events in parallel with the
+  main thread. The release happens on the main thread when the boss parts are torn down (ForceDead / defeat sync,
+  three parts within about 2 s in the test). Not pinned: the exact release call, and whether the port's worker timing
+  (our Havok workers can lag a frame behind where the PS4 had finished them) is what lets a job outlive the release.
+  The `crash_regmem` site decode in the next dump names the owner.
+- **Guard (crash handler only, zero cost while playing).** `src/havok_event_guard.h` + `src/probe.c`. A fault inside
+  0x1a21100's body (+0x1a21127..+0x1a2139c) resumes at its own early-out +0x1a2139c with rsp = rbp-0x100. A fault in
+  the walker's body (+0xf5bc36..+0xf5bdcc) is handled only when its return address is one of 0x1a21100's six call
+  sites: it pops the walker's 4 pushes first (the walker uses rbp as scratch), then resumes at the same exit. The
+  caller then logs the event in the module ring as usual. Both sites are byte-checked: 6 ranges plus the 6 call
+  targets. `BB_HAVOK_EVENT_GUARD=0` turns it off, and the `Stability fixes:` line reports `havok-event-guard on|off`.
+- **Proof.** `havok-event-guard-test` (tests/test_havok_event_guard.c, fake stack, the dump's registers). Test aid
+  `BB_HAVOK_EVENT_TEST=N`: a stub at the call +0x1a2813a gives every N-th event a fake object whose +0x18 is 1,
+  so the real code faults at +0x1a21134 in a running game and the guard has to recover.
+
 ## 2. GPU device lost on a guest's first load (CL-ab12f5)
 
 ### Evidence found
@@ -125,6 +149,21 @@ uploads, CP DMA / WRITE_DATA buffer writes, label and timestamp writes), not dra
   an Ebrietas / first-load run.
 - Suggested (not done): add BB_BREADCRUMBS_TRANSFERS=1 to the first-load phases (lift_walk `lfw*`,
   guest joins) of the release smoke, where the player reports point.
+
+### crashfix081: candidate found and fixed (port), not proven to be this report
+
+- Nightwatch 1c99d56 (Lantern Engine, 2026-11-09) fixed a device lost after m34 reloads. In
+  `Rasterizer::BindTextures`, a cached texture set was stamped with the image registry generation *after* its
+  lookups. A later binding's FindImage can free or replace an image that an earlier binding of the same call had
+  resolved. The set then matched on its next use and served that image's destroyed view until the next
+  (un)registration. A write through a dead descriptor faults at an invalid address, and on NVIDIA that can be VA 0.
+  Loads free and create the most images, which fits "first load". Ported (vk_rasterizer.cpp, credited, modified with
+  the kill switch `BB_TEXSET_GEN_FIX=0`): the set is now stamped with the generation from before its lookups.
+- Checked and ruled out as a source of address 0: shader paged and DMA paths (a 0 page-table entry goes to trash or
+  zero), the fault-buffer pass (no device-address store), and the HLE multi-copy (descriptors only). The two
+  device-address writers (GpuTimestamps, occlusion resolve) assert a nonzero address when they are recorded.
+- Still open: whether the faulting work is a draw (texture set) or a transfer. The breadcrumbs only say "between
+  presenter post process and the next HLE copy shader". BB_BREADCRUMBS_TRANSFERS=1 in first-load phases would settle it.
 
 ## 3. Live FPS ~64 after a respawn (GitHub #35)
 
