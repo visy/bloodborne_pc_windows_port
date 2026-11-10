@@ -3820,8 +3820,26 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
         auto ssharp =
             prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
         ForceAnisotropy(ssharp, sampler.is_depth);
+        // PROFILE-TEMP (port081): GetSampler cost, BB_SAMPLER_PROF=1
+        static const bool prof = std::getenv("BB_SAMPLER_PROF") != nullptr;
+        static u64 prof_ns = 0, prof_calls = 0, prof_first = 0, prof_last_print = 0;
+        const auto t0 = prof ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const auto vk_sampler = texture_cache.GetSampler(
             ssharp, Regs().ta_bc_base, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias);
+        if (prof) {
+            const auto t1 = std::chrono::steady_clock::now();
+            prof_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            ++prof_calls;
+            const u64 now = std::chrono::duration_cast<std::chrono::milliseconds>(t1.time_since_epoch()).count();
+            if (!prof_first) prof_first = prof_last_print = now;
+            if (now - prof_last_print >= 20000) {
+                std::printf("SAMPLERPROF calls=%llu total_ms=%.1f wall_ms=%llu pct_of_wall=%.3f ns_per_call=%.0f\n",
+                            (unsigned long long)prof_calls, prof_ns / 1e6, (unsigned long long)(now - prof_first),
+                            100.0 * (prof_ns / 1e6) / double(now - prof_first), double(prof_ns) / prof_calls);
+                std::fflush(stdout);
+                prof_last_print = now;
+            }
+        }
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
         auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
