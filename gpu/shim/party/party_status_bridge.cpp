@@ -432,12 +432,22 @@ void OnRuntimeStart(bool host, const std::string& name) {
         "Party game data missing: travel, shared items and NPC help are off. The game could not read its data from "
         "your game files (see the log line \"[party-data]\").";
     if (coop::gamedata::Preparing()) {
-        // The engine derives the tables from the game files at start (a few seconds on the first start and after a
-        // game / mod change): the party features wait for it; say so, and report a failed build afterwards.
-        status::SetAlert("Preparing co-op data from your game files: " + std::to_string(coop::gamedata::PreparingPercent()) +
-                         "%. The party starts working as soon as it is ready.");
+        // The engine derives the tables from the game files at start. A cache hit (the normal start) is silent; only a
+        // real rebuild (first start, game / mod change) that takes over a second raises the notice. Report a failed
+        // build afterwards.
         std::thread([missing] {
-            if (!coop::gamedata::Loaded()) status::SetAlert(missing);  // waits for the build
+            bool shown = false;
+            while (coop::gamedata::Preparing()) {
+                if (!shown && coop::gamedata::ShouldShowRebuildNotice(coop::gamedata::Rebuilding(), coop::gamedata::RebuildSeconds())) {
+                    status::SetAlert("Preparing co-op data from your game files: " + std::to_string(coop::gamedata::PreparingPercent()) +
+                                     "%. The party starts working as soon as it is ready.");
+                    std::printf("[party-data] rebuild notice shown\n");
+                    std::fflush(stdout);
+                    shown = true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (!coop::gamedata::Loaded()) status::SetAlert(missing);
         }).detach();
     } else if (!coop::gamedata::Loaded()) {
         status::SetAlert(missing);

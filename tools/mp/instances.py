@@ -1214,6 +1214,10 @@ def main():
     ap.add_argument("--grep")
     a = ap.parse_args()
     if a.cmd == "run":
+        b = Path(a.build)
+        if not (b / "out" / "bbport.exe").exists() and (b / "bbport.exe").exists():
+            # popup081 2026-11-10: --build pointed at the out dir; nothing was copied and every phase failed in 1 s.
+            sys.exit(f"--build must be the root that holds out\\bbport.exe, not the out dir: use --build {b.parent}")
         # At most max_clients game clients on this machine across all agents (tools/mp/game_queue.py).
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from game_queue import game_slots

@@ -550,6 +550,7 @@ bool CachedText(const std::string& root, const std::string& cache_path, bool for
         return true;
     }
     *rebuilt = true;
+    MarkRebuild();  // only now is there something to wait for (the in-game notice keys on this, not on the key check)
     Timings tm;
     tm.Note("key", key_ms);
     const auto t0 = std::chrono::steady_clock::now();

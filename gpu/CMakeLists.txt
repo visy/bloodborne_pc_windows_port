@@ -802,6 +802,11 @@ add_executable(party-enemy-census-test EXCLUDE_FROM_ALL ../tests/test_party_enem
 target_compile_options(party-enemy-census-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-enemy-census-test PRIVATE shim)
 set_target_properties(party-enemy-census-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Stall probe (shim/bbport_stall_probe_rules.h). ninja -C out/gpu stall-probe-test
+add_executable(stall-probe-test EXCLUDE_FROM_ALL ../tests/test_stall_probe.cpp)
+target_compile_options(stall-probe-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(stall-probe-test PRIVATE shim)
+set_target_properties(stall-probe-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Fast loading (shim/bbport_fast_loading.h): the pure rules. ninja -C out/gpu fast-loading-test
 add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp)
 target_compile_options(fast-loading-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
