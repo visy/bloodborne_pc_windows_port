@@ -10234,7 +10234,7 @@ def phase_iv(only, name="iv", sim=None):
     hsteps = "log@5,invader@4,face=22@2,hit=3@1,log@3"
     gsteps = "log@5,invader@8,face=22@2,hit=3@1,log@3"
     isteps = "log@5,invader@4,face=19@2,hit=4@1,log@3"
-    ienv = ["0:BB_PARTY_INVADERS=1", "2:BB_PARTY_INVADE=1",
+    ienv = ["0:BB_PARTY_INVADERS=1", "2:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE_RETRY=0",
             "0:BB_PARTY_INVADE_TEST=die@40?in#2",
             "2:BB_PARTY_INVADE_TEST=rejoin@25?home,die@45?in,rejoin@22?home",
             "0:BB_PARTY_PVP_TEST=" + hsteps, "1:BB_PARTY_PVP_TEST=" + gsteps, "2:BB_PARTY_PVP_TEST=" + isteps]
@@ -10406,7 +10406,7 @@ IVM_UNTIL = [r"0:invasion of slot \d+ ends: invader_died"]  # the first invader 
 
 
 def phase_iv2(only, name="iv2", maxi=2):
-    ienv = ["0:BB_PARTY_INVADERS=1", "1:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE=1"]
+    ienv = ["0:BB_PARTY_INVADERS=1", "1:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE=1", "1:BB_PARTY_INVADE_RETRY=0", "2:BB_PARTY_INVADE_RETRY=0"]
     if maxi == 2:
         # invader 1 falls 20 s after invader 2 is in too (?other), not on a fixed timer: a slow second arrival
         # (fullsmoke080: B in at +75.8 s, A fell at +78.8 s) left A no time to see B's copy
@@ -10424,7 +10424,7 @@ def phase_iv2(only, name="iv2", maxi=2):
 # moment A (dying 25 s after it is in) falls. Pass = the host lives, no fault, both invasions end.
 def phase_ivr(only, name="ivr"):
     rj = os.environ.get("BB_IVR_REJOIN", "111")
-    ienv = ["0:BB_PARTY_INVADERS=1", "1:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE=1", "0:BB_PARTY_MAX_INVADERS=2",
+    ienv = ["0:BB_PARTY_INVADERS=1", "1:BB_PARTY_INVADE=1", "2:BB_PARTY_INVADE=1", "0:BB_PARTY_MAX_INVADERS=2", "1:BB_PARTY_INVADE_RETRY=0", "2:BB_PARTY_INVADE_RETRY=0",
             "1:BB_PARTY_INVADE_TEST=rejoin@90?home,die@25?in", "2:BB_PARTY_INVADE_TEST=rejoin@" + rj + "?home,die@60?in"]
     sim = os.environ.get("BB_IVR_SIM")  # e.g. dsl: the same race under a simulated link
     if sim:
@@ -10495,7 +10495,7 @@ IVP_UNTIL = [r"1:invade: apart: \d+ m from the host"]
 
 
 def phase_ivp(only):
-    ienv = ["1:BB_PARTY_INVADE=1", "0:BB_PARTY_INVADERS=1", "0:BB_PARTY_INVADE_APART_ANY=1",
+    ienv = ["1:BB_PARTY_INVADE=1", "1:BB_PARTY_INVADE_RETRY=0", "0:BB_PARTY_INVADERS=1", "0:BB_PARTY_INVADE_APART_ANY=1",
             "0:BB_PARTY_DIRECTOR_TEST=god,place=0x18010000:-193.5:-28.6:68.6:0", "1:BB_PARTY_INVADE_TEST=rejoin@45?home,rejoin@25?home",
             "1:BB_PARTY_DIRECTOR_TEST=god,place=0x18010000:-193.5:-28.6:68.6:0"]
     return dict(name="ivp", seconds=720, count=2, headless=0, env=[], ienv=ienv, crash=[], until=IVP_UNTIL, until_hold=30)

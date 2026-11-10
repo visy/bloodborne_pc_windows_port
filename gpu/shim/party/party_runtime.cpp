@@ -870,6 +870,8 @@ static std::atomic<int> g_invader_retries{0};
 static std::atomic<bool> g_invader_retry_pending{false};
 
 static void schedule_invader_retry(const std::string& reason) {
+    static const bool off = [] { const char* v = std::getenv("BB_PARTY_INVADE_RETRY"); return v && v[0] == '0'; }();
+    if (off) return;  // test aid: the scripted smoke phases (iv ...) time their own dials
     if (g_invader_retry_pending.exchange(true)) return;
     const int attempt = ++g_invader_retries;
     const int delay = coop::invade::RetryDelayS(
