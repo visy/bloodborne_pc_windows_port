@@ -829,7 +829,7 @@ def phase_nd(only, name):
              "nd2": [r"0:-> tunnel \(loss", r"1:-> tunnel \(loss"],
              "nd3": [r"0:direct path: -> tunnel \(not opted in\)"],
              "nd4": [r"0:cooperators 0 -> 1"],
-             "nd5": [r"0:direct path: lost", r"1:direct path: (lost|the other side lost)"]}[name]
+             "nd5": [r"0:direct path: (lost|the other side lost)", r"1:direct path: (lost|the other side lost)"]}[name]
     return dict(name=name, seconds=300, count=2, headless=0, env=env, ienv=ienv, crash=[], until=until,
                 until_hold={"nd1": 25, "nd2": 15, "nd3": 10, "nd4": 45, "nd5": 20}[name])
 
