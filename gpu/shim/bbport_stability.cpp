@@ -28,6 +28,8 @@
 //   BB_SF_TEXT_GUARD=0     a text shown before its layout exists is not guarded (+0x12d5e0 / +0x12df80)
 //   BB_FMOD_RING_GUARD=0   a sound freed while still in FMOD's sound ring is not taken out first (+0xdab3a0)
 //   BB_MOVIE_DRAW_WAIT=0   the attract movie's frame draw / close (+0x28fe7c0 / +0x28fe2e0) do not wait for GXRenderThread
+//   BB_HAVOK_EVENT_GUARD=0 a Havok behaviour event of a freed animation (+0x1a21100 / +0xf5bc30) crashes
+//                          again instead of being skipped (crash handler: src/probe.c, src/havok_event_guard.h)
 //   BB_TASK_STEAL=1        (default off, pending an A/B) render task stealing byte on; 2 = A/B test aid (experiment bit 512)
 //   BB_JOB_BARRIER_STEAL=1 (default off; 2: installed, off at start) GX job barrier: the main thread keeps stealing
 //   BB_WORKPOOL_NODE_CACHE=1 (default off; 2: installed, off at start) work-pool job list nodes cached per pool
@@ -37,6 +39,9 @@
 #include "bbport_ribbons.h"
 #include "bbport_scaleform_logic.h"
 #include "bbport_fmod_logic.h"
+extern "C" {
+#include "../../src/havok_event_guard.h"
+}
 
 #include <algorithm>
 #include <array>
@@ -1594,6 +1599,42 @@ bool InstallFmodGuard() {
 }
 
 // ======================================================================================
+// 19. Test aid for the Havok behaviour event guard (crashfix081, CL-078659; the guard itself is in the
+// crash handler, src/probe.c with src/havok_event_guard.h). BB_HAVOK_EVENT_TEST=N (off by default):
+// every N-th animation event that plays annotations (0x1a27fb0's call of 0x1a21100 at +0x1a2813a)
+// gets a fake animation object whose +0x18 is 1, as in the crash dump, so 0x1a21100 faults at
+// +0x1a21134 and the guard has to skip it. A game that keeps running with
+// "Havok event guard: ... skipped" lines in its log shows the guard works in the real code path.
+u32 havok_test_counter = 0;
+alignas(16) u8 havok_test_object[0x40] = {};
+
+bool InstallHavokEventTest(u32 every) {
+    constexpr u64 kSite = 0x1a2813a;
+    if (!CallsTo(kSite, HEG_PLAY) || !heg_image_matches(image, image_size)) {
+        std::printf("Stability: Havok event test: guest +0x%llx is not the expected code; left alone\n", ull(kSite));
+        return false;
+    }
+    const u64 one = 1;
+    std::memcpy(havok_test_object + 0x18, &one, 8); // the stale +0x18 of the dump
+    Emitter e = NewStub();
+    e.Bytes({0x48, 0xb9}); // movabs rcx, &counter (rax, rcx, rdx: free at a call)
+    e.U64(reinterpret_cast<u64>(&havok_test_counter));
+    e.Bytes({0xb8, 0x01, 0x00, 0x00, 0x00}); // mov eax, 1
+    e.Bytes({0xf0, 0x0f, 0xc1, 0x01});       // lock xadd [rcx], eax
+    e.Bytes({0xff, 0xc0});                   // inc eax
+    e.Bytes({0x31, 0xd2});                   // xor edx, edx
+    e.Bytes({0xb9});                         // mov ecx, every
+    e.U32(every);
+    e.Bytes({0xf7, 0xf1});                   // div ecx
+    e.Bytes({0x85, 0xd2});                   // test edx, edx
+    e.Bytes({0x75, 0x0a});                   // jnz .play
+    e.Bytes({0x48, 0xbe});                   // movabs rsi, &fake object
+    e.U64(reinterpret_cast<u64>(havok_test_object));
+    e.JmpTo(reinterpret_cast<u64>(image + HEG_PLAY)); // .play: jmp 0x1a21100
+    const u64 stub = PlaceStub(e);
+    return stub && WriteBranch(kSite, 0xe8, stub, 0);
+}
+
 // 17. The title's attract movie waits for GXRenderThread (bbhost 41d725b, droogie/bbhost, GPL-3.0;
 // ported by intent). BB_MOVIE_DRAW_WAIT=0: the game's own calls. The movie player's frame draw
 // (+0x28fe7c0, called every frame by CSMovieIns::STEP_Wait_Play on the main thread with GX's
@@ -2086,6 +2127,16 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(std::string("fmod-ring-guard ") + (fmod_ring ? "on" : "off"));
     movie_wait_on = On("BB_MOVIE_DRAW_WAIT") && stub_page && InstallMovieWait();
     note(std::string("movie-wait ") + (movie_wait_on ? "on" : "off"));
+    // The Havok behaviour event guard is in the crash handler (src/probe.c, src/havok_event_guard.h):
+    // only reported here, with the same byte check it makes on the first fault.
+    note(std::string("havok-event-guard ") +
+         (On("BB_HAVOK_EVENT_GUARD") && heg_image_matches(image, image_size) ? "on" : "off"));
+    if (const char* e = std::getenv("BB_HAVOK_EVENT_TEST")) {
+        const long every = std::strtol(e, nullptr, 10);
+        if (every > 0 && stub_page && InstallHavokEventTest(u32(every))) {
+            note("havok-event-test 1/" + std::to_string(every));
+        }
+    }
     const int barrier_mode = CpuSaveMode("BB_JOB_BARRIER_STEAL");
     const int cache_mode = CpuSaveMode("BB_WORKPOOL_NODE_CACHE");
     barrier_start_on = barrier_mode == 1;

@@ -564,6 +564,13 @@ target_include_directories(crash-regmem-test PRIVATE .. ../src)
 target_compile_options(crash-regmem-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 set_target_properties(crash-regmem-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# src/havok_event_guard.h (a Havok behaviour event of a freed animation skipped, CL-078659):
+# cmake --build out/gpu --target havok-event-guard-test
+add_executable(havok-event-guard-test EXCLUDE_FROM_ALL ../tests/test_havok_event_guard.c)
+target_include_directories(havok-event-guard-test PRIVATE .. ../src)
+target_compile_options(havok-event-guard-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+set_target_properties(havok-event-guard-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+
 # src/runtime_pad.c with the button prompts' sets and labels (src/pad_prompts.h); build.bat also
 # builds it as out/pad-test.exe. cmake --build out/gpu --target pad-test
 add_executable(pad-test EXCLUDE_FROM_ALL ../tests/test_pad.c)
