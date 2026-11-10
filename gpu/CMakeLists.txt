@@ -327,6 +327,10 @@ add_executable(vram-reclaim-test EXCLUDE_FROM_ALL ../tests/test_vram_reclaim.cpp
 target_compile_options(vram-reclaim-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(vram-reclaim-test PRIVATE ..)
 # The texture collector's marks, levels and per-frame quota (texture_cache/gc_policy.h).
+# The WAIT_REG_MEM can-never-pass rule (video_core/amdgpu/wait_reg_mem_logic.h).
+add_executable(wait-reg-mem-test EXCLUDE_FROM_ALL ../tests/test_wait_reg_mem.cpp)
+target_compile_options(wait-reg-mem-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(wait-reg-mem-test PRIVATE ..)
 add_executable(gc-policy-test EXCLUDE_FROM_ALL ../tests/test_gc_policy.cpp)
 target_compile_options(gc-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(gc-policy-test PRIVATE ..)
