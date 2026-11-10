@@ -2001,6 +2001,17 @@ void PartyTab() {
              "50 ms), at most 2 s, so the first heavy frames are not seen as a frozen world.",
              "В группе экран загрузки держится, пока два кадра подряд не будут быстрее 50 мс (до 2 с)."),
            on);
+    Toggle("party_load_beside", T("Arrive beside the host", "Сразу рядом с хостом"), s.party_load_beside,
+           T("A party travel's load puts you beside the host itself, so there is no jump to the host's side right "
+             "after the loading screen. Off: the load puts you at the host's spot, then a warp beside it.",
+             "Загрузка при переходе группы ставит вас сразу рядом с хостом, без прыжка после экрана загрузки."),
+           on);
+    Toggle("party_quick_rejoin", T("Rejoin in place", "Возврат на месте"), s.party_quick_rejoin,
+           T("Party > Rejoin pressed while you are in the host's world reloads you beside the host with one loading "
+             "screen, without Leave and the trip to your own world first.",
+             "Группа > Вернуться в мире хоста перезагружает вас рядом с хостом одним экраном загрузки, без ухода "
+             "в свой мир."),
+           on);
     Toggle("party_map_marks", T("Shared map markers", "Общие метки на карте"), s.party_map_marks,
            T("A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and "
              "theirs on yours. Needs the in-game map.",

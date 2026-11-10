@@ -278,6 +278,14 @@ struct Values {
     /// came in under 50 ms (at most 2 s), and the drop runs at the frame end's quiet point (party_seam.cpp; ini
     /// party_settled_drop; env BB_PARTY_SETTLED_DROP=0/1 over it; off by default). Live, local.
     std::atomic<bool> party_settled_drop{false};
+    /// 0.8.1 seamless join C: a guest's follow load writes the spot beside the host into the summoned placement, so
+    /// the load itself puts it there (no warp after the screen drops unless it landed elsewhere) (ini
+    /// party_load_beside; env BB_PARTY_LOAD_BESIDE=0/1 over it; off by default). Live, local.
+    std::atomic<bool> party_load_beside{false};
+    /// 0.8.1 seamless join D: Party > Rejoin pressed while in the host's world reloads beside the host with one loading
+    /// screen (no Leave, no trip home) (ini party_quick_rejoin; env BB_PARTY_QUICK_REJOIN=0/1 over it; off by
+    /// default). Live, local.
+    std::atomic<bool> party_quick_rejoin{false};
     /// I7/E3 map markers: a spot a player puts on the in-game map (right click / R3 / P) is seen on every party
     /// member's map (party_ping.h; ini party_map_marks; env BB_PARTY_MAP_MARKS=0/1 over it; off by default, 0.8.0). Live.
     std::atomic<bool> party_map_marks{false};

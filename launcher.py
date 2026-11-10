@@ -205,7 +205,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_parallel_follow", False), ("party_settled_drop", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_parallel_follow", False), ("party_settled_drop", False), ("party_load_beside", False), ("party_quick_rejoin", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
@@ -660,6 +660,16 @@ MY_PARTY_TAB = [
          "In a party the loading screen stays up after a load until the world runs smoothly (two frames in a row "
          "under 50 ms, at most 2 s more), so the first heavy frames after a load are not seen as a frozen world. "
          "Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini party_settled_drop)."),
+        ("check", "party_load_beside", "Arrive beside the host",
+         "When your game follows the host's party travel, its load puts you beside the host itself, so there is no "
+         "jump to the host's side right after the loading screen. Off: the load puts you on the host's spot, then a "
+         "warp beside it. Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini "
+         "party_load_beside)."),
+        ("check", "party_quick_rejoin", "Rejoin in place",
+         "Party > Rejoin pressed while you are a guest in the host's world reloads you beside the host with one "
+         "loading screen, instead of Leave (a load into your own world) and Rejoin (a second load). For a stuck "
+         "or out-of-step game. Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini "
+         "party_quick_rejoin)."),
     ]),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
@@ -3503,6 +3513,8 @@ class BloodborneLauncher(tk.Tk):
         # 0.8.1 seamless join (My party: Loading): a guest's parallel load on party travel, the settled screen drop.
         self.party_parallel_follow = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_parallel_follow", False))
         self.party_settled_drop = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_settled_drop", False))
+        self.party_load_beside = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_load_beside", False))
+        self.party_quick_rejoin = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_quick_rejoin", False))
         self.party_map_marks = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_map_marks", False))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))

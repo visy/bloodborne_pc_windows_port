@@ -1967,6 +1967,12 @@ void DefineAll() {
     own(&Values::party_settled_drop, "Hold screen till smooth", "Экран до плавности",
         "Off by default. In a party the loading screen stays up until the world runs smoothly (at most 2 s)",
         "Выкл. по умолчанию. В группе экран загрузки держится, пока мир не пойдёт плавно (до 2 с)");
+    own(&Values::party_load_beside, "Arrive beside the host", "Сразу рядом с хостом",
+        "Off by default. A party travel's load puts you beside the host, no jump after the screen",
+        "Выкл. по умолчанию. Загрузка при переходе ставит вас рядом с хостом, без прыжка после экрана");
+    own(&Values::party_quick_rejoin, "Rejoin in place", "Возврат на месте",
+        "Off by default. Party > Rejoin in the host's world: one loading screen beside the host, no trip home",
+        "Выкл. по умолчанию. Группа > Вернуться в мире хоста: один экран загрузки рядом с хостом");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.

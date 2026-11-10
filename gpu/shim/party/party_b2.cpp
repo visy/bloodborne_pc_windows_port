@@ -9323,6 +9323,47 @@ bool BesideHostIntent(u32 host_map, TravelIntent* t) {
     return true;
 }
 
+/// 0.8.1 seam D (party_quick_rejoin): Party > Rejoin in the host's world -> a re-join in place.
+std::atomic<bool> g_quick_rejoin{false};
+bool QuickRejoinOn() { return BbSettings::Get().party_quick_rejoin.load(std::memory_order_relaxed); }
+/// seam D (main thread): the quick rejoin pressed by QuickRejoinPressed. The lamp of the host's map nearest the
+/// host (else a transform beside it), as the cross-map join's arrival does, as a B2 re-join (not solo: the summoned
+/// placement is the host's spot, the guest is put beside it); the host re-sends its snapshot and spot ("rejoin").
+void QuickRejoinTick(const GameSnapshot& s) {
+    if (!g_quick_rejoin.exchange(false)) {
+        return;
+    }
+    const u32 host = HostMap();
+    const char* refused = !s.world_up || s.loading || !s.player ? "not in the world"
+                          : Role() != RoleClient                ? "not a guest in the host's world"
+                          : g_rejoin.load()                     ? "a re-join runs already"
+                          : host == 0 || host == 0xffffffffu    ? "the host's map is not known"
+                          : AreaOf(host) != AreaOf(s.map_id)    ? "apart from the host (the bell brings this guest)"
+                          : ChrHp(s.player) <= 0                ? "dead"
+                          : BossFightActive()                   ? "a boss fight runs"
+                                                                : nullptr;
+    TravelIntent t;
+    const u32 lamp = refused ? 0 : LampNearHost(host);
+    if (!refused && (lamp == 0 ? !BesideHostIntent(host, &t) : !LampIntent(lamp, &t))) {
+        refused = "no lamp of the host's map and no host position known";
+    }
+    if (!refused && !BeginRejoin(t, true, false)) {
+        refused = "a re-join could not start";
+    }
+    if (refused) {
+        Log("guest: quick rejoin (seam D) refused: %s", refused);
+        party::status::SetLastEvent(std::string("Rejoin in place: ") + refused);
+        return;
+    }
+    float p[3] = {0, 0, 0};
+    ChrPos(s.player, p);
+    char b[128];
+    std::snprintf(b, sizeof b, "{\"op\":\"rejoin\",\"pos\":[%.3f,%.3f,%.3f]}", p[0], p[1], p[2]);
+    Send(0, b);
+    Log("guest: quick rejoin (seam D): a re-join beside the host in %s without the trip home (one loading screen; %s)",
+        MapName(host).c_str(), lamp ? ("by lamp " + std::to_string(lamp)).c_str() : "a transform beside the host");
+}
+
 void CarryArrivalTick(const GameSnapshot& s, double now) {
     double at = g_carry_join_at.load();
     static double load_last = 0;
@@ -9448,6 +9489,10 @@ bool ArrivalWarpMode() {
 }
 bool g_arrival_warp_pending = false;
 alignas(16) float g_arrival_pos[4] = {}, g_arrival_rot[4] = {};
+/// 0.8.1 seam C (party_load_beside): the follow's load itself goes to the spot beside the host (summoned placement);
+/// the arrival warp only runs when the load put the guest elsewhere.
+bool LoadBesideOn() { return BbSettings::Get().party_load_beside.load(std::memory_order_relaxed); }
+bool g_load_beside = false;  // this follow's summoned placement is the beside spot (main thread)
 
 // ---- seam A (0.8.1, party_parallel_follow): the guest loads in parallel with the host ----
 // research/reseam081.md 3.1. At the host's party lamp travel the guest does not wait in flow state 1 for the
@@ -9945,7 +9990,14 @@ void GuestTick(const GameSnapshot& s, double now) {
                 float pos[4];
                 std::memcpy(pos, st.dest_pos, sizeof pos);
                 BesideHost(pos, st.dest_rot, g_local_slot.load());
-                if (ArrivalWarpMode()) {
+                g_load_beside = false;
+                if (ArrivalWarpMode() && LoadBesideOn() && !g_dead_follow.load()) {
+                    // seam C: the spot beside the host itself, so the load puts the guest there (no
+                    // warp after the screen unless it lands elsewhere).
+                    alignas(16) float p16[4] = {pos[0], pos[1], pos[2], 1.0f};
+                    WriteSummonedPlacement(gsm, &st.dest_stage, p16, st.dest_rot);
+                    g_load_beside = true;
+                } else if (ArrivalWarpMode()) {
                     // The host-world load takes its stage from +0x14C4: the host's spot itself (the
                     // guest is put beside it with a chr warp after the load, ArrivalWarpTick).
                     SafeWrite(gsm + 0x14c4, &st.dest_stage, 4);
@@ -10066,10 +10118,23 @@ void GuestTick(const GameSnapshot& s, double now) {
             }
             const int n = RewindRemoteTasks("guest");
             Log("guest: arrived in the host world (flow 4); %d remote task(s) rewound", n);
+            float landed[3] = {};
+            const bool have_landed = s.player && ChrPos(s.player, landed);
+            const float ldx = landed[0] - g_arrival_pos[0], ldy = landed[1] - g_arrival_pos[1], ldz = landed[2] - g_arrival_pos[2];
+            const float landed_m = std::sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
+            if (g_arrival_warp_pending && s.player && g_load_beside && have_landed && landed_m < 0.75f) {
+                // seam C: the load put this guest beside the host: no warp (no jump after the screen).
+                g_arrival_warp_pending = false;
+                Log("guest: arrived beside the host by the load itself (%.2f m from the spot): no arrival warp (seam C)",
+                    double(landed_m));
+            }
+            g_load_beside = false;
             if (g_arrival_warp_pending && s.player) {
                 g_arrival_warp_pending = false;
                 alignas(16) float p16[4] = {g_arrival_pos[0], g_arrival_pos[1], g_arrival_pos[2], 1.0f};
                 alignas(16) float r16[4] = {g_arrival_rot[0], g_arrival_rot[1], g_arrival_rot[2], g_arrival_rot[3]};
+                Log("guest: arrival warp: the load put this guest %.2f m from the spot beside the host (%s)",
+                    double(landed_m), seam::ScreenHeld() ? "under the held screen" : "the screen is down");
                 LocalChrWarpImpl(s.player, p16, r16, "arrival beside the host");
                 const u64 gsm = Slot(kSlotGsm);
                 Log("guest: arrived by the host's own travel; placed beside the host (%.2f, %.2f, %.2f); forced placement "
@@ -11621,6 +11686,21 @@ void NoteChosenApart(const char* why) {
     g_chalice_chosen = true;
     Log("chalice: the guest's own choice (%s): while the host is in a Chalice Dungeon it stays out until Party > "
         "Rejoin", why);
+}
+
+bool QuickRejoinPressed() {
+    if (!g_on.load() || !QuickRejoinOn() || Role() != RoleClient || g_rejoin.load()) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        if (S().gphase != GuestPhase::Idle) {
+            return false;
+        }
+    }
+    g_quick_rejoin = true;
+    Log("guest: Party > Rejoin in the host's world: a re-join in place (seam D, party_quick_rejoin)");
+    return true;
 }
 
 bool ChaliceRejoinPressed() {
@@ -13196,6 +13276,7 @@ void Tick(const GameSnapshot& s) {
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
     CarryArrivalTick(s, Now());
+    QuickRejoinTick(s);
     CarryGameDataTick(s, Now());
     PlayerNumberTick(s, now);
     SpectatorRemoveTick(s);
