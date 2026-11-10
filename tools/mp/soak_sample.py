@@ -16,8 +16,12 @@ from pathlib import Path
 
 import psutil
 
+NO_GPU = False   # --no-gpu: skip the slow GPU counter query (fast sampling, tools/mp/perf_route.py --route heavy)
+
 
 def gpu_mem():
+    if NO_GPU:
+        return {}
     """pid -> (dedicated, shared) bytes from the GPU Process Memory counters (all adapters summed)."""
     ps = ("$d=(Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage','\\GPU Process Memory(*)\\Shared Usage' "
           "-ErrorAction SilentlyContinue).CounterSamples; foreach($s in $d){ $s.Path + '|' + $s.CookedValue }")
@@ -60,7 +64,7 @@ def sample(a):
         w = csv.writer(f)
         if new:
             w.writerow(["time", "elapsed_s", "inst", "pid", "private_mb", "working_set_mb", "handles", "threads",
-                        "gpu_dedicated_mb", "gpu_shared_mb", "cpu_s"])
+                        "gpu_dedicated_mb", "gpu_shared_mb", "cpu_s", "epoch", "commit_mb", "page_faults"])
         while time.time() - t0 < a.seconds:
             g = gpu_mem()
             for inst, p in sorted(games(root), key=lambda x: x[0]):
@@ -71,7 +75,8 @@ def sample(a):
                     w.writerow([time.strftime("%H:%M:%S"), round(time.time() - t0), inst, p.pid,
                                 round(getattr(mi, "private", mi.vms) / 2**20, 1), round(mi.rss / 2**20, 1),
                                 p.num_handles(), p.num_threads(), round(ded / 2**20, 1), round(sh / 2**20, 1),
-                                round(ct.user + ct.system, 1)])
+                                round(ct.user + ct.system, 1), round(time.time(), 1),
+                                round(getattr(mi, "pagefile", 0) / 2**20, 1), getattr(mi, "num_page_faults", 0)])
                 except (psutil.Error, OSError):
                     continue
             f.flush()
@@ -133,7 +138,10 @@ def main():
     ap.add_argument("--summary")
     ap.add_argument("--warmup", type=float, default=600)
     ap.add_argument("--log", action="append")
+    ap.add_argument("--no-gpu", action="store_true")
+    global NO_GPU
     a = ap.parse_args()
+    NO_GPU = a.no_gpu
     if a.summary:
         summary(a)
     elif a.root and a.out:
