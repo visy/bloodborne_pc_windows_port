@@ -1650,12 +1650,16 @@ void TextureCache::GarbageCollectImages() {
             // area cycle (private / GPU memory +0.9 GB an hour). BB_GC_BUDGET_CAP_MB tunes the cap
             // (default 1536), BB_GC_BUDGET_CAP=0 restores the device-derived budget. Not applied to
             // BB_GC_BUDGET_MB (explicit) or integrated GPUs.
+            // 0.8.1: OFF by default until the collector stops evicting GPU-written images it cannot
+            // restore (with the cap the Hunter's Dream rendered red/cyan: a stale color-grading
+            // texture). BB_GC_BUDGET_CAP=1 or BB_GC_BUDGET_CAP_MB=N turns it on.
             static const u64 budget_cap = [] {
-                const char* off = std::getenv("BB_GC_BUDGET_CAP");
-                if (off && off[0] == '0') {
+                const char* on = std::getenv("BB_GC_BUDGET_CAP");
+                const char* env = std::getenv("BB_GC_BUDGET_CAP_MB");
+                const bool wanted = (on && on[0] != '0') || (env && *env);
+                if (!wanted) {
                     return u64(0);
                 }
-                const char* env = std::getenv("BB_GC_BUDGET_CAP_MB");
                 const u64 mib = env && *env ? std::strtoull(env, nullptr, 10) : 1536;
                 std::printf("Texture cache: collector budget capped at %llu MiB (BB_GC_BUDGET_CAP_MB, "
                             "BB_GC_BUDGET_CAP=0 off)\n", (unsigned long long)mib);
