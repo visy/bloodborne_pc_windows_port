@@ -3,7 +3,10 @@
 
 #include <xxhash.h>
 
+#include <algorithm>
 #include <array>
+#include <unordered_map>
+#include <vector>
 #include <bit>
 #include <cstdio>
 #include "bbport_button_prompts.h"
@@ -1244,7 +1247,67 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
     return it->second.Handle();
 }
 
+// bbport idle trim (0.8.1 leak081): textures nobody used for BB_GC_IDLE_TRIM_SECONDS (default 300) go even
+// while the collector's pressure marks are far off (a 12 GB card: marks at 5.7 GB). A 45 minute route showed
+// ~5000 new image descriptions per area cycle against ~400 re-used ones: the game reloads an area's textures
+// to other addresses, the old images (their memory freed or reused by the guest, not unmapped) stayed idle
+// in VRAM, ~70 MiB (+ allocator slack) per cycle. Only images the GPU did not write (re-made from guest
+// memory when used again) are trimmed; BB_GC_IDLE_TRIM=1 turns it on. OFF by default: in two
+// 40 minute A/B routes it held the cache at ~1 GB (against 1.5 GB and rising) and cut the private /
+// GPU growth by 55-70 %, but loads were 0.7-1.0 s slower and the frames stuttered in one run (noise not
+// excluded); BB_GC_BUDGET_MB=1000 gave the same plateau through the regular collector without that.
+namespace IdleTrim {
+bool Enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_GC_IDLE_TRIM");
+        return e && e[0] == '1'; // off by default: see below
+    }();
+    return on;
+}
+u64 Seconds() {
+    static const u64 v = [] {
+        const char* e = std::getenv("BB_GC_IDLE_TRIM_SECONDS");
+        const u64 n = e && e[0] ? std::strtoull(e, nullptr, 10) : 300;
+        return std::clamp<u64>(n, 30, 1200);
+    }();
+    return v;
+}
+constexpr size_t kRing = 256;     // gc ticks at every 10th second: 2560 s
+std::array<u64, kRing> tick_at_10s{};
+u64 last_decasecond = 0, last_trim_second = 0, first_second = 0;
+u64 trimmed_total = 0, trimmed_mib_total = 0, reported_total = 0, last_report_second = 0;
+} // namespace IdleTrim
+
+// bbport BB_IMAGE_LIFE_LOG=1 (diagnostics, off by default): are images re-created on reloads or reused? Counts
+// registrations by description (address, size, extent, format): "again" = the same description was registered
+// before (an image dropped and made anew), "new" = never seen; every 30 s the live images by idle age.
+namespace ImageLife {
+bool Enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("BB_IMAGE_LIFE_LOG");
+        return e && e[0] && e[0] != '0';
+    }();
+    return on;
+}
+std::unordered_map<u64, u32> seen;
+u64 reg_new = 0, reg_again = 0, reg_bytes_new = 0, reg_bytes_again = 0, freed = 0, freed_age_s = 0;
+std::vector<std::pair<u64, u64>> tick_second; // (gc_tick, second) once a second
+u64 last_report = 0;
+u64 Key(const ImageInfo& i) {
+    u64 h = i.guest_address ^ u64(i.guest_size) << 17 ^ u64(i.pixel_format) << 40 ^ u64(i.size.width) << 24 ^
+            i.size.height;
+    h = (h ^ h >> 33) * 0xFF51AFD7ED558CCDull;
+    return h ^ h >> 33;
+}
+} // namespace ImageLife
+
 void TextureCache::RegisterImage(ImageId image_id) {
+    if (ImageLife::Enabled()) {
+        const ImageInfo& i = slot_images[image_id].info;
+        const u32 n = ImageLife::seen[ImageLife::Key(i)]++;
+        (n ? ImageLife::reg_again : ImageLife::reg_new) += 1;
+        (n ? ImageLife::reg_bytes_again : ImageLife::reg_bytes_new) += i.guest_size;
+    }
     BbStats::images_registered.fetch_add(1, std::memory_order_relaxed);
     Image& image = slot_images[image_id];
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered),
@@ -1273,6 +1336,9 @@ void TextureCache::UnregisterImage(ImageId image_id) {
                "Trying to unregister an already unregistered image");
     image.flags &= ~ImageFlagBits::Registered;
     ++registry_generation;
+    if (ImageLife::Enabled()) {
+        ++ImageLife::freed;
+    }
     lru_cache.Free(image.lru_id);
     total_used_memory -= Common::AlignUp(image.info.guest_size, 1024);
     BbStats::live_image_bytes.fetch_sub(Common::AlignUp(image.info.guest_size, 1024),
@@ -1431,6 +1497,51 @@ void TextureCache::MarkDirtyIfEdgesModified(Image& image) {
     }
 }
 
+// bbport: one second's share of the idle trim (see IdleTrim): up to 64 images idle for the trim time, none that
+// the GPU wrote (their contents exist only here), bound, a target or a presented surface.
+void TextureCache::TrimIdleImages(u64 second) {
+    const u64 idle = IdleTrim::Seconds();
+    if (second < IdleTrim::first_second + idle + 10) {
+        return;
+    }
+    const u64 deca = (second - idle) / 10;
+    if (deca > IdleTrim::last_decasecond || IdleTrim::last_decasecond - deca >= IdleTrim::kRing) {
+        return;
+    }
+    const u64 below_tick = IdleTrim::tick_at_10s[deca % IdleTrim::kRing];
+    if (below_tick == 0) {
+        return;
+    }
+    std::scoped_lock lock{mutex};
+    u32 visited = 0;
+    u64 freed_bytes = 0, freed = 0;
+    lru_cache.ForEachItemBelow(below_tick, [&](ImageId image_id) {
+        if (++visited > 64) {
+            return true;
+        }
+        auto& image = slot_images[image_id];
+        if (image.binding.is_bound || image.binding.is_target || image.usage.vo_surface ||
+            image.SafeToDownload()) {
+            lru_cache.Touch(image.lru_id, gc_tick); // not trimmable: look again in a trim time
+            return false;
+        }
+        freed_bytes += image.backing ? image.GetHostImageSize() : 0;
+        ++freed;
+        FreeImage(image_id);
+        return false;
+    });
+    IdleTrim::trimmed_total += freed;
+    IdleTrim::trimmed_mib_total += freed_bytes >> 20;
+    if (second - IdleTrim::last_report_second >= 60 && IdleTrim::trimmed_total != IdleTrim::reported_total) {
+        IdleTrim::last_report_second = second;
+        IdleTrim::reported_total = IdleTrim::trimmed_total;
+        std::printf("Texture cache: idle trim (%llu s unused, BB_GC_IDLE_TRIM=1 on): %llu images (%llu MiB) freed since start\n",
+                    (unsigned long long)idle, (unsigned long long)IdleTrim::trimmed_total,
+                    (unsigned long long)IdleTrim::trimmed_mib_total);
+        std::fflush(stdout);
+    }
+}
+
 void TextureCache::GarbageCollectImages() {
     const auto t0 = std::chrono::steady_clock::now();
     SCOPE_EXIT {
@@ -1457,6 +1568,45 @@ void TextureCache::GarbageCollectImages() {
         }
         BbStats::coarse_second.store(u32(second), std::memory_order_relaxed);
         gc_tick_at_second[second % gc_tick_at_second.size()] = gc_tick;
+        if (IdleTrim::first_second == 0) {
+            IdleTrim::first_second = second;
+        }
+        if (second / 10 != IdleTrim::last_decasecond) {
+            IdleTrim::last_decasecond = second / 10;
+            IdleTrim::tick_at_10s[IdleTrim::last_decasecond % IdleTrim::kRing] = gc_tick;
+        }
+        if (ImageLife::Enabled()) {
+            ImageLife::tick_second.emplace_back(gc_tick, second);
+            if (second - ImageLife::last_report >= 30) {
+                ImageLife::last_report = second;
+                u64 cnt[4]{}, mib[4]{};
+                std::scoped_lock lk{mutex};
+                lru_cache.ForEachItemBelow(gc_tick + 1, [&](ImageId id) {
+                    const Image& im = slot_images[id];
+                    const auto it = std::lower_bound(
+                        ImageLife::tick_second.begin(), ImageLife::tick_second.end(), im.lru_touched_tick,
+                        [](const auto& e, u64 t) { return e.first < t; });
+                    const u64 touched = it == ImageLife::tick_second.end() ? second : it->second;
+                    const u64 age = second - touched;
+                    const int b = age < 20 ? 0 : age < 60 ? 1 : age < 300 ? 2 : 3;
+                    ++cnt[b];
+                    mib[b] += im.info.guest_size;
+                    return false;
+                });
+                std::printf("Image life: live %llu+%llu+%llu+%llu images (idle <20s, <1min, <5min, older), "
+                            "%llu+%llu+%llu+%llu MiB; registered since start: %llu new descriptions "
+                            "(%llu MiB), %llu again (%llu MiB), %llu unregistered\n",
+                            (unsigned long long)cnt[0], (unsigned long long)cnt[1], (unsigned long long)cnt[2],
+                            (unsigned long long)cnt[3], (unsigned long long)(mib[0] >> 20),
+                            (unsigned long long)(mib[1] >> 20), (unsigned long long)(mib[2] >> 20),
+                            (unsigned long long)(mib[3] >> 20), (unsigned long long)ImageLife::reg_new,
+                            (unsigned long long)(ImageLife::reg_bytes_new >> 20),
+                            (unsigned long long)ImageLife::reg_again,
+                            (unsigned long long)(ImageLife::reg_bytes_again >> 20),
+                            (unsigned long long)ImageLife::freed);
+                std::fflush(stdout);
+            }
+        }
     }
     // bbport: the usage once a frame (and every 64 submissions while no frame is shown): two
     // driver queries at each of the tens of submissions a frame cost more than they told. In
@@ -1539,6 +1689,10 @@ void TextureCache::GarbageCollectImages() {
     }
     BbStats::gc_level.store(u32(level), std::memory_order_relaxed);
     if (level == GcPolicy::Level::None) {
+        if (IdleTrim::Enabled() && second != IdleTrim::last_trim_second) {
+            IdleTrim::last_trim_second = second;
+            TrimIdleImages(second);
+        }
         return;
     }
     static const u32 idle_seconds = [] {
