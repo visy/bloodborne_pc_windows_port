@@ -446,6 +446,7 @@ private:
     }
 
     void GarbageCollectImages();
+    void TrimIdleImages(u64 second);
     void GarbageCollectSamplers();
 
 private:

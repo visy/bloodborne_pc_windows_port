@@ -102,12 +102,12 @@ def resolve_unknown(pid, arr, names):
     k32.CloseHandle(hp)
 
 
-def games(root):
+def games(root, name="bbport.exe"):
     want = str(Path(root).resolve()).lower()
     for p in psutil.process_iter(["pid", "name", "exe"]):
         try:
             exe = (p.info["exe"] or "").lower()
-            if p.info["name"] and p.info["name"].lower() == "bbport.exe" and exe.startswith(want):
+            if p.info["name"] and p.info["name"].lower() == name and exe.startswith(want):
                 m = re.search(r"inst(\d+)", exe)
                 yield (int(m.group(1)) if m else 0), p
         except (psutil.Error, OSError):
@@ -119,6 +119,7 @@ def main():
     ap.add_argument("--root", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--every", type=float, default=20)
+    ap.add_argument("--name", default="bbport.exe")
     ap.add_argument("--seconds", type=float, default=600)
     a = ap.parse_args()
     names = learn_types()
@@ -129,7 +130,7 @@ def main():
     with open(out, "a", newline="") as f:
         w = csv.writer(f)
         while time.time() - t0 < a.seconds:
-            procs = {p.pid: (i, p) for i, p in games(a.root)}
+            procs = {p.pid: (i, p) for i, p in games(a.root, a.name.lower())}
             if procs:
                 _, arr = snapshot()
                 cnt = {}
