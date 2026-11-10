@@ -135,7 +135,7 @@ typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
 static size_t mount_count, opens, reads, writes, missing;
-static uint64_t bytes_read;
+static uint64_t bytes_read, read_ns; /* read_ns: wall time inside the host read calls (BB_LOAD_TRACE) */
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 
 static int save_path(const char *p) { return p && !strncmp(p,"/savedata",9); }
@@ -646,6 +646,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     touch_for_write(buffer,size);
 #ifdef _WIN32
     uint64_t total_read = 0;
+    uint64_t t0=host_monotonic_ns();
     while (total_read < size) {
         size_t chunk = (size - total_read > 0x40000000ULL) ? 0x40000000ULL : (size_t)(size - total_read);
         int n = (int)read_retrying(h, (char *)buffer + total_read, chunk, 0, 0);
@@ -660,6 +661,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
         if (n == 0) break;
         total_read += (uint64_t)n;
     }
+    __atomic_add_fetch(&read_ns,host_monotonic_ns()-t0,__ATOMIC_RELAXED);
     if (total_read>0) runtime_memory_note_write((uintptr_t)buffer,total_read); /* and once the data is there */
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,total_read,__ATOMIC_RELAXED);
     return (int64_t)total_read;
@@ -676,7 +678,9 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     if (h<0) return -EBADF;
     runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
+    uint64_t t0=host_monotonic_ns();
     ssize_t n=read_retrying(h,buffer,size,offset,1);
+    __atomic_add_fetch(&read_ns,host_monotonic_ns()-t0,__ATOMIC_RELAXED);
     if (n<0) {
         int e = errno;
 #ifdef _WIN32
@@ -940,6 +944,13 @@ int64_t runtime_file_stat(const char *p,void *s) { return do_stat(p,s); }
 int64_t runtime_file_fstat(int fd,void *s) { return do_fstat(fd,s); }
 int64_t runtime_file_getdents(int fd,char *b,uint64_t n,int64_t *base) { return do_getdents(fd,b,n,base); }
 int runtime_file_translate(const char *guest,char *out,size_t size) { return translate(guest,out,size); }
+/* Counters for the load trace (BB_LOAD_TRACE): opens, reads, bytes read, wall time inside the host reads. */
+void runtime_file_io_stats(uint64_t *opens_,uint64_t *reads_,uint64_t *bytes_,uint64_t *read_ns_) {
+    if (opens_) *opens_=__atomic_load_n(&opens,__ATOMIC_RELAXED);
+    if (reads_) *reads_=__atomic_load_n(&reads,__ATOMIC_RELAXED);
+    if (bytes_) *bytes_=__atomic_load_n(&bytes_read,__ATOMIC_RELAXED);
+    if (read_ns_) *read_ns_=__atomic_load_n(&read_ns,__ATOMIC_RELAXED);
+}
 void runtime_file_report(void) {
     printf("Runtime: files opened=%zu, reads=%zu (%llu bytes), writes=%zu, not found=%zu\n",
            opens,reads,(unsigned long long)bytes_read,writes,missing);
