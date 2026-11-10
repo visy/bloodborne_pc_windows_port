@@ -2206,7 +2206,7 @@ def check_rs(v, L):
 # GXE_ENV="BB_GX_REGION=0" (";"-separated) runs the same walk with the allocator patch off (expected: the game's 160 MiB runs out).
 # Saves: a fresh copy of the default fixture (E:\games\bbport\test_saves\savedata); nothing from the user's own saves.
 GXE_LAMP, GXE_BOSS = "2422951", "2420800"
-GXE_AT = ("137.5", "459.9")   # where the census finds her at the start (x, z)
+GXE_NEAR = "131.0:4.1:449.8:0.99"   # ~12 m short of where she stands at the start (137.5, 4.0, 459.9): the hall has no door
 GXE_DEVICE_RX = (r"(?i)device.?lost|VK_ERROR_DEVICE_LOST|VK_ERROR_OUT_OF_(?:HOST|DEVICE)_MEMORY|out of (?:gpu |video |device )?memory|"
                  r"gx.{0,40}(?:exhaust|out of|no space|full)")
 
@@ -2215,11 +2215,12 @@ def phase_gxe(only):
     m = "%m24_02"
     attack = ["host_press=0x800@1.3%s" % m] * 3 + ["host_face=%s:2.5@0.5%s" % (GXE_BOSS, m), "host_press=0x4:lock@0.5%s" % m]
     host = ["log_pos=2", "hp_floor=100", "goal=%s:40:65" % GXE_BOSS,
-            "host_stick=%s:%s:6:200@4%s" % (GXE_AT[0], GXE_AT[1], m),          # the stick walk from the lamp to her (~40 m)
+            "host_move=%s:pin=3:ground@4%s" % (GXE_NEAR, m),                   # across the open hall to ~12 m from her (the stick
+                                                                                # walk from the lamp (40 m) never got going: 0 m/s)
             "host_face=%s:2.5@1%s" % (GXE_BOSS, m), "host_press=0x4@1%s" % m, "host_press=0x4:lock@1%s" % m]   # up to her, lock on
-    host += attack * 3
-    for pct in (70, 55, 45, 30):                                    # once her bar is up: sweep under every plausible phase threshold
-        host += ["host_kill=%s:hp%d@3%s?member=bar" % (GXE_BOSS, pct, m)] + attack * 2
+    host += attack * 6                                              # her fight starts on a hit (her bar came ~40 s after the move in the trial runs)
+    for pct in (70, 55, 45, 30, 35):                                # then: sweep under every plausible phase threshold (a set HP sticks once her fight is on)
+        host += ["host_kill=%s:hp%d@3%s" % (GXE_BOSS, pct, m)] + attack * 2
     host += attack * 60
     env = ["BB_PARTY_TEST_START_LAMP=" + GXE_LAMP, "BB_PARTY_DIRECTOR_TEST_SOLO=1", "BB_PARTY_TARGET_ANIM=1", "BB_BOSS_LOG=1",
            "BB_PARTY_TEST_COND_TIMEOUT=60", "BB_FRAME_STATS=1"]
