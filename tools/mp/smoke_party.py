@@ -10534,6 +10534,7 @@ def check_ivc(v, L, n="ivc", inv=1):
     need(v, L, n + " invader: told it invades", inv, r"invade: notice: You invade ", adm or 0)
     put = need(v, L, n + " invader: put at a lamp apart from the host", inv, r"invader: arrived [\d.]+ m from the host; put at lamp \d+, ([3-9]\d|\d{3})\.\d m from the host", adm or 0)
     need(v, L, n + " invader: stays apart (>= 25 m)", inv, r"invade: apart: ([2-9]\d|\d{3}) m from the host", put or 0)
+    none_of(v, L, n + " invader: no modal refusal notice (a host not in a world yet is a quiet wait, 0.8.1)", r"refusal notice \(modal\)", 0, 1e9, (inv,))
     none_of(v, L, n + " invader: no hang in the arrival (not sent home after 120 s)", r"could not get into the host's world|did not finish within 90 s|FallbackToB1|no host snapshot within 45 s", 0, 1e9, (inv,))
     none_of(v, L, n + " invader: no fall recovery, no fall", r"recovery: falling for 6 s", 0, 1e9, (inv,))
     check_common(v, L, n)
