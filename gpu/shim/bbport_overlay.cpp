@@ -2012,6 +2012,14 @@ void PartyTab() {
              "Группа > Вернуться в мире хоста перезагружает вас рядом с хостом одним экраном загрузки, без ухода "
              "в свой мир."),
            on);
+    Toggle("party_nw_direct", T("Allow direct connection (lower ping, party members see your IP)",
+                                "Разрешить прямое соединение (меньше пинг, участники видят ваш IP)"),
+           s.party_nw_direct,
+           T("Over the Nightwatch VPN: a member who allows it too is tried directly for 3 s and used only if "
+             "clearly faster than the tunnel. Members then see your public IP. Takes effect at the next party link.",
+             "Через Nightwatch VPN: участник с той же настройкой проверяется напрямую 3 с и используется, только "
+             "если заметно быстрее туннеля. Участники видят ваш публичный IP."),
+           on);
     Toggle("party_map_marks", T("Shared map markers", "Общие метки на карте"), s.party_map_marks,
            T("A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and "
              "theirs on yours. Needs the in-game map.",

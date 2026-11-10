@@ -1973,6 +1973,15 @@ void DefineAll() {
     own(&Values::party_quick_rejoin, "Rejoin in place", "Возврат на месте",
         "Off by default. Party > Rejoin in the host's world: one loading screen beside the host, no trip home",
         "Выкл. по умолчанию. Группа > Вернуться в мире хоста: один экран загрузки рядом с хостом");
+
+    // 0.8.1 (CL-4a20f7): the opt-in direct path between Nightwatch VPN members (party/party_nwdirect.h); on this page
+    // with the other connection-timing choices.
+    own(&Values::party_nw_direct, "Allow direct connection (lower ping, party members see your IP)",
+        "Разрешить прямое соединение (меньше пинг, участники видят ваш IP)",
+        "Off by default. Over the Nightwatch VPN: a member who allows it too is tried directly for 3 s and used "
+        "only if clearly faster than the tunnel; members then see your public IP. Takes effect at the next party link",
+        "Выкл. по умолчанию. Через Nightwatch VPN: участник с той же настройкой проверяется напрямую 3 с и "
+        "используется, только если заметно быстрее туннеля; участники видят ваш публичный IP");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.
