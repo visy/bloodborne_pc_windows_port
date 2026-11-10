@@ -11,6 +11,8 @@ EXE = test_exe('logdrain-test')
 
 def run(lines, stall_s, async_on, kill=False, width=None, mode=None):
     env = dict(os.environ, BB_LOG_ASYNC='1' if async_on else '0')
+    if not async_on:
+        env['BB_LOG_RAW_IPS'] = '1'  # the address mask keeps a drain thread; direct writes need it off too
     p = subprocess.Popen([str(EXE.resolve()), str(lines)] + (([mode or 'kill'] if kill else ['go']) + [str(width)] if (kill or width) else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     err = []
     import threading
@@ -61,6 +63,16 @@ class LogDrainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertGreaterEqual(ms, 2500)  # blocked until the reader read
         self.assertEqual(data.count(b'\n'), self.N)
+
+
+    def test_addresses_are_masked_unless_raw(self):
+        masked = (b'send 4 -> 192.168.x.x:9307 vport 1->2\n' b'peer 8.8.x.x:9307 and [2001:db8:x:x:x:x:x:x]:9307 lo 127.0.0.1\n'
+                  b'tail 10.8.x.x')
+        raw = (b'send 4 -> 192.168.1.20:9307 vport 1->2\n' b'peer 8.8.4.4:9307 and [2001:db8:1:2::5]:9307 lo 127.0.0.1\n'
+               b'tail 10.8.0.2')
+        for env, want in (({}, masked), ({'BB_LOG_RAW_IPS': '1'}, raw), ({'BB_LOG_ASYNC': '0'}, masked)):
+            r = subprocess.run([str(EXE.resolve()), '0', 'ips'], capture_output=True, env=dict(os.environ, **env), timeout=30)
+            self.assertEqual(r.stdout.replace(b'\r\n', b'\n'), want.replace(b'\n', b'\n'), env)
 
 
 if __name__ == '__main__':

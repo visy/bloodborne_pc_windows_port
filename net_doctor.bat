@@ -2,7 +2,8 @@
 setlocal
 REM Co-op network doctor: drop the session's logs (host + guests) onto this file, or run
 REM   net_doctor.bat [--redactnames] [--redactips] LOG [LOG ...]
-REM The reply is copied to the clipboard and shown here (scripts\net_doctor.py).
+REM The reply is copied to the clipboard and shown here (scripts\net_doctor.py). IP addresses in it are hidden
+REM (public ones completely, VPN / LAN ones to their first number): it is made to be pasted into a report.
 cd /d "%~dp0"
 set "PY="
 if exist "%~dp0python\python.exe" set "PY=%~dp0python\python.exe"
@@ -19,7 +20,7 @@ if "%~1"=="" (
 )
 set "PYTHONDONTWRITEBYTECODE=1"
 set "PYTHONIOENCODING=utf-8"
-"%PY%" -I "%~dp0scripts\net_doctor.py" %* > "%TEMP%\net_doctor_reply.txt"
+"%PY%" -I "%~dp0scripts\net_doctor.py" --redactips %* > "%TEMP%\net_doctor_reply.txt"
 type "%TEMP%\net_doctor_reply.txt"
 clip < "%TEMP%\net_doctor_reply.txt"
 echo.

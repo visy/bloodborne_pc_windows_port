@@ -51,7 +51,7 @@ Phase invade2 (~10 min, 3 players): needs the host's Max invaders 2 (BB_PARTY_MA
   fall in turn and go home. All three rendered unless --guest2-headless.
 
 Console output, the report files and verdict.txt show every IPv4 as a.b.x.x (the games' own run.log
-files keep what the games wrote).
+files keep the real addresses: the checks read them, so a real-net run sets BB_LOG_RAW_IPS=1; they stay on this PC).
 
 Every phase: the address lines of each game as they appear (public IPv4 by STUN, the host's view of
 each guest, the link's path) and ROOT\\realnet_report.txt; the run stops early when guest 1's public
