@@ -274,8 +274,8 @@ struct Values {
     /// with the host, behind one loading screen (party_seam.cpp; ini party_parallel_follow; env
     /// BB_PARTY_PARALLEL_FOLLOW=0/1 over it; off by default). Live, local (a guest's own load).
     std::atomic<bool> party_parallel_follow{false};
-    /// 0.8.1 seamless join B: in a party, the loading screen stays up after a load until two frames in a row
-    /// came in under 50 ms (at most 2 s), and the drop runs at the frame end's quiet point (party_seam.cpp; ini
+    /// 0.8.1 seamless join B: in a party, the loading screen stays up after a load until the frames ran under 50 ms
+    /// for 1 s without a break (at most 3 s), and the drop runs at the frame end's quiet point (party_seam.cpp; ini
     /// party_settled_drop; env BB_PARTY_SETTLED_DROP=0/1 over it; off by default). Live, local.
     std::atomic<bool> party_settled_drop{false};
     /// 0.8.1 seamless join C: a guest's follow load writes the spot beside the host into the summoned placement, so

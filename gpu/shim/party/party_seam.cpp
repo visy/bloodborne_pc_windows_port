@@ -116,8 +116,8 @@ BB_COOP_SYSV u64 InGameStartClearHook() {
         g_pending_at = now;
         g_watch_for_hold = false;
         g_watch.Start(now);
-        Log("InGameStart: the loading screen stays up until two frames under %.0f ms (at most %.0f ms)",
-            kSettledFrameMs, kSettleCapMs);
+        Log("InGameStart: the loading screen stays up until frames run under %.0f ms for %.0f ms (at most %.0f ms)",
+            kSettledFrameMs, kSettledRunMs, kSettleCapMs);
         return 0;
     }
     using Fn = u64(BB_COOP_SYSV*)();

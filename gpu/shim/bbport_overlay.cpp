@@ -1997,9 +1997,9 @@ void PartyTab() {
              "раньше, после загрузки хоста."),
            on);
     Toggle("party_settled_drop", T("Hold screen till smooth", "Экран до плавности"), s.party_settled_drop,
-           T("In a party the loading screen stays up after a load until two frames in a row are smooth (under "
-             "50 ms), at most 2 s, so the first heavy frames are not seen as a frozen world.",
-             "В группе экран загрузки держится, пока два кадра подряд не будут быстрее 50 мс (до 2 с)."),
+           T("In a party the loading screen stays up after a load until the frames have run smoothly (under "
+             "50 ms) for 1 s, at most 3 s, so the first heavy frames are not seen as a frozen world.",
+             "В группе экран загрузки держится, пока кадры 1 с подряд не будут быстрее 50 мс (до 3 с)."),
            on);
     Toggle("party_load_beside", T("Arrive beside the host", "Сразу рядом с хостом"), s.party_load_beside,
            T("A party travel's load puts you beside the host itself, so there is no jump to the host's side right "

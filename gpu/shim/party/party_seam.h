@@ -10,8 +10,8 @@
 // Toggles (My party: Loading, launcher My Party tab, bbport.ini; off by default):
 //  A party_parallel_follow (BB_PARTY_PARALLEL_FOLLOW): the guest loads the host's party lamp at once (party_b2.cpp
 //    GuestPhase::ParallelLoading), the screen held until it is placed beside the host.
-//  B party_settled_drop (BB_PARTY_SETTLED_DROP): in a party, every InGameStart drop waits for two frames under 50 ms
-//    in a row (at most 2 s) and runs at the quiet point; BB_PARTY_QUIET_POINT=0 runs the queued work in the tick.
+//  B party_settled_drop (BB_PARTY_SETTLED_DROP): in a party, every InGameStart drop waits until frames run under 50 ms
+//    for 1 s without a break (at most 3 s) and runs at the quiet point; BB_PARTY_QUIET_POINT=0 runs the queued work in the tick.
 #pragma once
 
 #include <functional>

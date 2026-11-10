@@ -657,8 +657,8 @@ MY_PARTY_TAB = [
          "screen). Anything unusual (a death, a boss fight, a Chalice Dungeon) keeps the old way. Your own setting. "
          "In the game: System > My party: Loading. Default: off (bbport.ini party_parallel_follow)."),
         ("check", "party_settled_drop", "Hold the screen until smooth",
-         "In a party the loading screen stays up after a load until the world runs smoothly (two frames in a row "
-         "under 50 ms, at most 2 s more), so the first heavy frames after a load are not seen as a frozen world. "
+         "In a party the loading screen stays up after a load until the world runs smoothly (frames under 50 ms "
+         "for 1 s without a break, at most 3 s more), so the first heavy frames after a load are not seen as a frozen world. "
          "Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini party_settled_drop)."),
         ("check", "party_load_beside", "Arrive beside the host",
          "When your game follows the host's party travel, its load puts you beside the host itself, so there is no "

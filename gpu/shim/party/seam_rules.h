@@ -6,8 +6,9 @@
 //    load of the same lamp at once instead of waiting in flow state 1 for the host's load and snapshot;
 //    ParallelFollowRefusal says when it may not (today's serial path runs then).
 //  B "settled drop" (party_settled_drop): the loading screen stays up after the game's InGameStart
-//    until two frames in a row came in under 50 ms (the first frames after a load: 150-790 ms in
-//    run 1), at most 2 s; SettleWatch decides from the frame-end timestamps.
+//    until the frames have run under 50 ms for 1 s without a break (the first frames after a load:
+//    150-790 ms in run 1, and they come 0.25-0.9 s AFTER InGameStart: smoke pf0, so "two fast frames"
+//    alone settled at once), at most 3 s; SettleWatch decides from the frame-end timestamps.
 #pragma once
 
 #include <cmath>
@@ -16,8 +17,9 @@
 namespace coop::seam {
 
 constexpr double kSettledFrameMs = 50.0;   // a frame at or above this is not "settled"
-constexpr int kSettledFrames = 2;          // in a row
-constexpr double kSettleCapMs = 2000.0;    // the screen is dropped at the latest then
+constexpr int kSettledFrames = 2;          // in a row, at least
+constexpr double kSettledRunMs = 1000.0;   // ... covering this long without a frame at/over kSettledFrameMs
+constexpr double kSettleCapMs = 3000.0;    // the screen is dropped at the latest then
 constexpr double kParallelDestWaitS = 30.0;  // after its own load, at most this long for the host's spot
 constexpr double kParallelLoadCapS = 90.0;   // the guest's own load
 
@@ -26,6 +28,7 @@ struct SettleWatch {
     bool active = false;
     double start_ms = 0;
     int good = 0;        // frames under kSettledFrameMs in a row
+    double good_ms = 0;  // their summed time
     int frames = 0;      // frames seen since Start
     double worst_ms = 0; // the longest of them
     bool capped = false; // ended by the cap, not by settled frames
@@ -34,6 +37,7 @@ struct SettleWatch {
         active = true;
         start_ms = now_ms;
         good = 0;
+        good_ms = 0;
         frames = 0;
         worst_ms = 0;
         capped = false;
@@ -43,8 +47,10 @@ struct SettleWatch {
         if (!active) return false;
         ++frames;
         if (frame_ms > worst_ms) worst_ms = frame_ms;
-        good = (frame_ms >= 0 && frame_ms < kSettledFrameMs) ? good + 1 : 0;
-        if (good >= kSettledFrames) {
+        const bool ok = frame_ms >= 0 && frame_ms < kSettledFrameMs;
+        good = ok ? good + 1 : 0;
+        good_ms = ok ? good_ms + frame_ms : 0;
+        if (good >= kSettledFrames && good_ms >= kSettledRunMs) {
             active = false;
             return true;
         }

@@ -8,19 +8,25 @@
 
 using namespace coop::seam;
 
-static void TestSettleTwoGoodFrames() {
+static void TestSettleRun() {
     SettleWatch w;
     assert(!w.Frame(10, 0));  // not started: nothing
     w.Start(1000);
-    assert(!w.Frame(400, 1400));   // the first heavy frame after the load
-    assert(!w.Frame(30, 1430));    // one good
-    assert(!w.Frame(180, 1610));   // a spike resets the run
-    assert(!w.Frame(20, 1630));
-    assert(w.Frame(25, 1655));     // two in a row: drop
-    assert(!w.active && !w.capped);
-    assert(w.frames == 5);
+    assert(!w.Frame(30, 1030));    // two fast frames right after InGameStart are not enough (smoke pf0/sd1)
+    assert(!w.Frame(30, 1060));
+    assert(!w.Frame(400, 1460));   // the heavy frame 0.25-0.9 s later resets the run
+    double t = 1460;
+    int n = 0;
+    bool dropped = false;
+    while (!dropped && n < 100) {
+        t += 33;
+        ++n;
+        dropped = w.Frame(33, t);
+    }
+    assert(dropped && !w.capped);
+    assert(n * 33 >= kSettledRunMs && (n - 1) * 33 < kSettledRunMs);  // exactly 1 s of good frames
     assert(w.worst_ms == 400);
-    assert(!w.Frame(10, 1700));    // ended
+    assert(!w.Frame(10, t + 10));  // ended
 }
 
 static void TestSettleCap() {
@@ -28,7 +34,7 @@ static void TestSettleCap() {
     w.Start(0);
     double t = 0;
     bool dropped = false;
-    for (int i = 0; i < 100 && !dropped; ++i) {
+    for (int i = 0; i < 200 && !dropped; ++i) {
         t += 60;  // a slow PC: every frame over 50 ms
         dropped = w.Frame(60, t);
     }
@@ -39,13 +45,17 @@ static void TestSettleCap() {
 static void TestSettleEdge() {
     SettleWatch w;
     w.Start(0);
-    assert(!w.Frame(kSettledFrameMs, 50));  // exactly 50 ms is not under 50
-    assert(!w.Frame(49.9, 100));
-    assert(w.Frame(49.9, 150));
+    double t = 0;
+    for (int i = 0; i < 40; ++i) {
+        t += 49.9;
+        if (i % 10 == 9) {
+            assert(!w.Frame(kSettledFrameMs, t));  // exactly 50 ms is not under 50: the run starts again
+        } else {
+            assert(!w.Frame(49.9, t));
+        }
+    }
     w.Start(0);
     assert(!w.Frame(-1, 10));  // an unknown frame time (no previous frame end) is not good
-    assert(!w.Frame(10, 20));
-    assert(w.Frame(10, 30));
 }
 
 static FollowCase Good() {
@@ -110,7 +120,7 @@ static void TestSameBlock() {
 }
 
 int main() {
-    TestSettleTwoGoodFrames();
+    TestSettleRun();
     TestSettleCap();
     TestSettleEdge();
     TestRefusal();

@@ -779,7 +779,7 @@ def phase_lg(only):
 # `settled_drop`, `seam`; research/reseam081.md 3): three party lamp travels in one
 # session (the Dream -> Tomb of Oedon -> Cathedral Ward -> the Dream) with the seam toggles off (pf0, today's
 # serial path), A on (pf1: party_parallel_follow, the guest loads at once), B on (sd1: party_settled_drop, the
-# screen held until two frames under 50 ms) and both (pfsd). BB_STALL_PROBE=100: the frames over 100 ms in the 2 s
+# screen held until frames run under 50 ms for 1 s) and both (pfsd). BB_STALL_PROBE=100: the frames over 100 ms in the 2 s
 # after each screen drop are counted. Info rows give per travel the host's and the guest's screen time and the
 # guest's arrival; the shots/ (drop@0.3/1.5 s, joined@1/4 s) show both games right after each drop.
 # BB_SMOKE_IENV="0:BB_NET_SIM=dsl;1:BB_NET_SIM=dsl" runs them under simulated DSL.
