@@ -14348,7 +14348,10 @@ def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
     tries = (5 if name in ("cag",) else 4 if name in ("cao",) else FLAKY_TRIES) if name in FLAKY_PHASES and not os.environ.get("BB_SMOKE_NO_RETRY") else 1
     prev_rows = None
     failed_before = []
+    tries_used = 0
+    nfail = 1
     for k in range(tries):
+        tries_used = k + 1
         if k:
             import shutil
             shutil.rmtree(out_dir.with_name(out_dir.name + "_try%d" % k), ignore_errors=True)
@@ -14372,6 +14375,13 @@ def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
             print("[smoke] %s: the same %d rows failed twice: deterministic, no more tries" % (name, nfail), flush=True)
             break
         prev_rows, failed_before = failed, failed
+    if name in FLAKY_PHASES:  # the history that lets a flaky phase expire (smoke_tiers.FLAKY_EXPIRE_CLEAN clean runs)
+        try:
+            smoke_tiers.record_run(AGENT_ROOT / "smoke" / "flaky_history.json", name,
+                                   "clean" if nfail == 0 and tries_used == 1 else "flaky" if nfail == 0 else "fail",
+                                   time.strftime("%Y-%m-%d"))
+        except OSError:
+            pass
     return
 
 
@@ -14379,7 +14389,9 @@ def run_phase_retrying(a, name, ph, out_dir: Path, check, only=None):
 # Tiers, the phase list for a run, progress / ETA (CL-564e30)
 #
 #   quick    the old default list (41 phases): the core party flow, about 1.5 h on one lane
-#   release  every phase except RELEASE_SKIP (variants whose feature a sibling phase already runs)
+#   release  <= 6 h at one lane with the same feature areas as full (tools/mp/smoke_tiers.py: 4+ game phases, flaky phases
+#            and RELEASE_SKIP variants wait in nightly; a flaky phase leaves nightly after 3 clean runs)
+#   nightly  full minus release
 #   full     every phase in PHASES (also what --release asks for: no hidden subset)
 # A tier only chooses WHICH phases run; every phase keeps all of its checks and runs to the same verdict.
 QUICK_PHASES = ("s1,s2,rules,sc,summonfail,s3,sk,ga,gl,lf,ld,mk,kd,kw,fl,fdj,cl,clg,clw,el,lt,lfw,lfwc,ch,rh,rs,bf,bl,lp,rt,eh,br,sm,da,cv,tv,nf,nfa,ie,sj")
@@ -14403,6 +14415,24 @@ RELEASE_SKIP = {
     "gro": "gr (lamps rule off)", "gr2o": "gr2 (rule off)", "gr3o": "gr3 (rule off)", "gr4o": "gr4 (rule off)",
     "bdo": "bd (boss drops off)", "sg2": "sg", "csh2": "csh", "mds": "md", "nfe": "nf (same NPC fight rows)",
 }
+
+import smoke_tiers  # the release / nightly cut (tools/mp/smoke_tiers.py)
+
+
+def tier_lists(history=None):
+    """(release, nightly) phase lists. Seed times only (not this machine's), so every machine cuts the same way; the
+    flaky set is FLAKY_PHASES minus the phases with FLAKY_EXPIRE_CLEAN clean runs in the history file."""
+    if history is None:
+        history = smoke_tiers.load_history(AGENT_ROOT / "smoke" / "flaky_history.json")
+    try:
+        seed = json.loads(SEED_TIMES.read_text())
+    except (OSError, ValueError):
+        seed = {}
+    names = list(PHASES)
+    counts = {n: PHASES[n](set()).get("count", 3) for n in names}
+    flaky = smoke_tiers.active_flaky(FLAKY_PHASES, history)
+    return smoke_tiers.build(names, GROUPS, counts, seed, flaky, RELEASE_SKIP, FAST_PHASES.split(","))
+
 
 # --changed-since: changed file -> the phases that exercise it. A game-code file with no entry here runs the quick tier
 # (the safe side); files that cannot change game behaviour (docs, tests, launcher, packaging) run nothing.
@@ -14468,7 +14498,9 @@ def phase_list_for(a):
         elif tier == "quick":
             names = [p for p in QUICK_PHASES.split(",")]
         elif tier == "release":
-            names = [p for p in PHASES if p not in RELEASE_SKIP]
+            names = tier_lists()[0]
+        elif tier == "nightly":
+            names = tier_lists()[1]
         else:
             names = list(PHASES)
         label = "tier %s" % tier
@@ -14490,7 +14522,7 @@ def tier_table(known):
     """[(tier, phase count, estimated seconds at one lane)] from the phase times in `known` (300 s when unknown)."""
     rows = []
     for tier, names in (("fast", FAST_PHASES.split(",")), ("quick", QUICK_PHASES.split(",")),
-                        ("release", [p for p in PHASES if p not in RELEASE_SKIP]), ("full", list(PHASES))):
+                        ("release", tier_lists({})[0]), ("nightly", tier_lists({})[1]), ("full", list(PHASES))):
         rows.append((tier, len(names), sum(known.get(n, 300) for n in names)))
     return rows
 
@@ -14588,7 +14620,7 @@ def main():
     ap.add_argument("--game", default=os.environ.get("BB_GAME_DIR", str(AGENT_ROOT / "game")))
     ap.add_argument("--out", default=str(AGENT_ROOT / "smoke" / time.strftime("%Y%m%d_%H%M")))
     ap.add_argument("--phase", default=None, help="comma list of phases (wins over --tier / --release / --changed-since)")
-    ap.add_argument("--tier", choices=("fast", "quick", "release", "full"), default=None,
+    ap.add_argument("--tier", choices=("fast", "quick", "release", "nightly", "full"), default=None,
                     help="which phases: fast = one phase per feature area, about 40 min (docs/SMOKE_TIERS.md); quick = the old 41-phase default (default); release = every phase except the variants in "
                          "RELEASE_SKIP; full = every phase")
     ap.add_argument("--release", action="store_true",
