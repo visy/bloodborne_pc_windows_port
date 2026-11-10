@@ -59,19 +59,18 @@ def cycle(variant, lead=20, first=False):
 
 def heavy_chain(cycles, variant, dwell=25):
     """Heavy-release route (memdisc2): back-to-back big loads, no idle: lamp warps across the big maps and a death
-    load per cycle (7 loads per cycle), a short dwell in each. For memory A/B (--env BB_MEM_DISCARD=0 vs default)."""
+    load per cycle (6 loads per cycle; a host_die step without its %map never fires), a short dwell in each. For memory A/B (--env BB_MEM_DISCARD=0 vs default)."""
     steps = []
     for i in range(cycles):
         first = i == 0
         for k, lamp in enumerate((LAMP_BRIDGE, LAMP_CATH, LAMP_A, LAMP_B, LAMP_YAH, LAMP_TOMB)):
             steps.append("host_lamp=%d@%d%s" % (lamp, 20 if (first and k == 0) else dwell, "^1" if first and k == 0 and variant == "2p" else ""))
-        steps.append("host_die@%d" % dwell)   # dies in the Tomb of Oedon: the death load
     return ",".join(steps)
 
 
 def chain(minutes, variant, idle=255, route="baseline"):
     if route == "heavy":
-        return heavy_chain(max(1, int(minutes)), variant)   # --minutes N = N cycles x 7 loads in heavy mode
+        return heavy_chain(max(1, int(minutes)), variant)   # --minutes N = N cycles x 6 loads in heavy mode
     steps = []
     n = max(1, int(round(minutes * 60 / CYCLE_S)))
     for i in range(n):
@@ -92,7 +91,7 @@ def run(a):
     root.mkdir(parents=True, exist_ok=True)
     out = Path(a.out)
     (out / "shots").mkdir(parents=True, exist_ok=True)
-    secs = int(a.minutes * 60) if a.route != "heavy" else int(a.minutes * 7 * 60 + 120)   # heavy: --minutes = cycles
+    secs = int(a.minutes * 60) if a.route != "heavy" else int(a.minutes * 6 * 40 + 120)   # heavy: --minutes = cycles
     count = 1 if a.variant == "solo" else 2
     (root / "noreap").write_text(str(secs + 600))
     (out / "settings.txt").write_text(settings_text(a, secs))
@@ -107,6 +106,8 @@ def run(a):
            "--env", "BB_PAD_FILE=%s" % (root / "pad{i}.txt"),
            "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + chain(a.minutes, a.variant, route=a.route)]
     cmd += ["--party"]   # as the smoke's one-player phases: instance 0 Continues and runs the director (a lone host)
+    if a.route == "heavy":   # end 40 s after the last lamp step has started (its load is done by then)
+        cmd += ["--until", r"test: travel step %d/%d: host_lamp" % ((6 * int(a.minutes),) * 2), "--until-hold", "40"]
     if a.variant == "solo":
         cmd += ["--env", "BB_PARTY_DIRECTOR_TEST_SOLO=1"]
     else:
@@ -194,6 +195,10 @@ def heavy_memory(out, lt, rows, settle=12):
             max(p[0] for p in pts), max(p[1] for p in pts), max(p[2] for p in pts)))
         lines.append("  mean ws %.0f private %.0f commit %.0f MB (loads 2..last)" % tuple(
             statistics.mean(p[k] for p in pts[1:]) for k in range(3)))
+    if rs:
+        lines.append("  whole run: peak ws %.0f private %.0f commit %.0f MB; page faults total %dk" % (
+            max(float(r["working_set_mb"]) for r in rs), max(float(r["private_mb"]) for r in rs),
+            max(float(r["commit_mb"]) for r in rs), max(int(r["page_faults"]) for r in rs) // 1000))
     return lines
 
 
@@ -271,6 +276,8 @@ def report(a):
         if d:
             lines.append("loads inst%d: %d, mean %.1f s, median %.1f s, max %.1f s (loads.csv; first one is the title -> world)" % (
                 i, len(d), statistics.mean(d), statistics.median(d), max(d)))
+    if getattr(a, "route", "baseline") == "heavy" and soak.exists():
+        lines += heavy_memory(out, lt, list(csv.DictReader(open(soak))))
     text = "\n".join(lines)
     (out / "summary.txt").write_text(text + "\n")
     print(text)
