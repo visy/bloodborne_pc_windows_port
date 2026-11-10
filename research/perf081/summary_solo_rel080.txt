@@ -1,0 +1,18 @@
+variant solo
+variant=solo minutes=60 seconds=3600
+build=E:/games/bbport/rel080
+fps=uncap live_fps=False extra_env=[]
+inst0: 711 Frame stats lines
+  fps 5 min  mean 104.9  p1 64.0  p50 111.6  worst-frame p99 81.3 ms  (60 windows)
+  fps 30 min mean 109.8  p1 101.1  p50 110.5  worst-frame p99 20.7 ms  (60 windows)
+  fps 60 min mean 106.6  p1 79.3  p50 108.7  worst-frame p99 85.8 ms  (54 windows)
+  FPS drift 5 -> 60 min: +1.6 %
+  crash/assert lines: 0
+memory inst0 (111 samples):
+  5 min  (t=293s) private 3590.8 MB  ws 4550.5 MB  handles 3383  threads 121  gpu ded 2112.6 MB  shared 393.8 MB
+  30 min (t=1810s) private 4096.6 MB  ws 4773.4 MB  handles 3810  threads 120  gpu ded 2516.8 MB  shared 445.8 MB
+  60 min (t=3553s) private 4520.9 MB  ws 4921.9 MB  handles 4389  threads 120  gpu ded 2882.7 MB  shared 463.8 MB
+  handle growth sample 5 -> last: +1074
+idle-dwell FPS inst0 (start min: mean / p1): 4: 111.8 / 108.2; 12: 110.3 / 103.2; 20: 110.0 / 105.3; 28: 110.0 / 101.1; 36: 109.6 / 103.3; 44: 109.6 / 104.3; 51: 109.7 / 106.8
+  idle-dwell drift first -> last: -1.9 %
+loads inst0: 57, mean 4.9 s, median 3.7 s, max 12.1 s (loads.csv; first one is the title -> world)
