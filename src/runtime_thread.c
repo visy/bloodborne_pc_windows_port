@@ -317,6 +317,13 @@ static int ps4_prio_to_win32(int prio, const char *name) {
 }
 #endif
 
+/* BB_THREAD_RELEASE=0 restores the old behaviour (exited guest threads keep their handle and TLS block). */
+static int thread_release_enabled(void) {
+    static int v=-1;
+    if (v<0) { const char *e=getenv("BB_THREAD_RELEASE"); v=!(e && e[0]=='0'); }
+    return v;
+}
+
 static void *host_start(void *p) {
     GuestThread *t=p;
     attach(t);
@@ -330,7 +337,18 @@ static void *host_start(void *p) {
 #endif
     if (!EXIT_SET(t->exit_jump)) t->result=t->entry(t->argument);
     runtime_thread_keys_cleanup();
-    host_lock(&lock); t->finished=1; ++exited; host_unlock(&lock);
+    HANDLE dup=NULL; unsigned char *tls=NULL;
+    host_lock(&lock);
+    t->finished=1; ++exited;
+    if (thread_release_enabled() && !t->host_owned) {
+        /* The thread is over: its duplicated Windows handle (attach) and its TLS block were never released, 18 guest
+         * threads per loading screen, so a long session grew ~18 handles per load (perf081). The GuestThread record
+         * stays (pthread_join / find_thread read it); win32_handle is read under the lock only. */
+        dup=t->win32_handle; t->win32_handle=NULL; tls=t->tls_block; t->tls_block=NULL; t->tcb=NULL;
+    }
+    host_unlock(&lock);
+    if (dup) CloseHandle(dup);
+    if (tls) runtime_low_free_aligned(tls);
     return t->result;
 }
 
@@ -418,9 +436,11 @@ static ABI int32_t thread_set_prio(GuestThread *t,int prio) {
     if (!find_thread(t)) return ERR(3);
     t->attr.prio=prio;
 #ifdef _WIN32
+    host_lock(&lock);
     if (t->win32_handle) {
         SetThreadPriority(t->win32_handle, ps4_prio_to_win32(prio, t->name));
     }
+    host_unlock(&lock);
 #endif
     return 0;
 }
@@ -440,9 +460,11 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
     snprintf(t->name,sizeof(t->name),"%s",name);
     if (t==current) set_host_name(t->name);
 #ifdef _WIN32
+    host_lock(&lock);
     if (t->win32_handle && t->attr.prio > 0) {
         SetThreadPriority(t->win32_handle, ps4_prio_to_win32(t->attr.prio, t->name));
     }
+    host_unlock(&lock);
 #endif
     return 0;
 }

@@ -540,6 +540,10 @@ add_executable(sema-test EXCLUDE_FROM_ALL ../tests/test_sema.c ${RUNTIME_SOURCES
 target_include_directories(sema-test PRIVATE .. ../src)
 target_compile_options(sema-test PRIVATE -UNDEBUG)
 target_link_libraries(sema-test PRIVATE bbgpu "${CMAKE_CURRENT_SOURCE_DIR}/../out/libatrac9.a")
+add_executable(thread-release-test EXCLUDE_FROM_ALL ../tests/test_thread_release.c ${RUNTIME_SOURCES})
+target_include_directories(thread-release-test PRIVATE .. ../src)
+target_compile_options(thread-release-test PRIVATE -UNDEBUG)
+target_link_libraries(thread-release-test PRIVATE bbgpu "${CMAKE_CURRENT_SOURCE_DIR}/../out/libatrac9.a")
 add_executable(content-test EXCLUDE_FROM_ALL ../tests/test_content.c ../src/runtime_content.c)
 target_include_directories(content-test PRIVATE .. ../src)
 target_compile_options(content-test PRIVATE -UNDEBUG -Wall -Wextra)
@@ -548,10 +552,11 @@ set_source_files_properties(../tests/test_content.c PROPERTIES COMPILE_OPTIONS -
 target_compile_definitions(content-test PRIVATE _GNU_SOURCE)
 if (WIN32)
     target_link_libraries(sema-test PRIVATE ws2_32 iphlpapi synchronization dbghelp ntdll winmm)
+    target_link_libraries(thread-release-test PRIVATE ws2_32 iphlpapi synchronization dbghelp ntdll winmm)
     target_sources(content-test PRIVATE ../src/win32_compat.c)
     target_link_libraries(content-test PRIVATE ws2_32)
 endif()
-set_target_properties(sema-test content-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+set_target_properties(sema-test thread-release-test content-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
 # src/crash_regmem.h (crash dump register memory, site decodes): cmake --build out/gpu --target crash-regmem-test
 add_executable(crash-regmem-test EXCLUDE_FROM_ALL ../tests/test_crash_regmem.c)
