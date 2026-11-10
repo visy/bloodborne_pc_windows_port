@@ -7,12 +7,24 @@
 | fast | `--tier fast` | 20, one per feature area (`FAST_PHASES`) | see "Measured" | every merge into master, every agent before handing back, a changed test harness |
 | quick | `--tier quick` (default) | 40, the core party flow | see `--list-tiers` | a game-code change with no `CHANGED_MAP` entry |
 | changed | `--changed-since TAG` | the phases the changed files map to | varies | a release candidate, to find what to rerun |
-| release | `--tier release` | every phase but the variants in `RELEASE_SKIP` | see `--list-tiers` | the release gate (docs/RELEASE_CHECKLIST.md) |
+| release | `--tier release` | about 130 phases, at most 6 h at one lane, every feature area of `full` (`tools/mp/smoke_tiers.py`) | see `--list-tiers` | the release gate (docs/RELEASE_CHECKLIST.md) |
+| nightly | `--tier nightly` | what release leaves out: 4+ game phases, flaky phases, the `RELEASE_SKIP` variants, group duplicates | see `--list-tiers` | a nightly / weekly run; release + nightly = full |
 | full | `--tier full` / `--release` | all phases | see `--list-tiers` | the release gate when nothing may be hidden |
 
 The phase counts and time estimates change with every new phase, so they are not written here: `python tools/mp/smoke_party.py --list-tiers` prints them (seed times from `phase_times_seed.json`, overridden by this machine's own `smoke/phase_times.json`, which every run now updates after each phase). The last full run (0.8.0, 272 phases) took about 12.5 h.
 
 A tier only chooses which phases run. Every phase keeps all of its checks.
+
+## How release and nightly are cut (0.8.1)
+
+`smoke_tiers.build()` is deterministic from the seed times (`phase_times_seed.json`, refreshed from the measured
+`smoke/phase_times.json` files), the group table and `FLAKY_PHASES`; this machine's own times do not change the cut.
+Nightly takes the phases that start 4 or more games, the phases still flaky and the `RELEASE_SKIP` variants. Release is the
+fast tier, then the cheapest stable phase of every feature area (the part of a group name before its first underscore:
+`chalice`, `lift`, `npc`, `six`, ...; an area whose only phases are nightly ones gets its cheapest back), then the phases
+that cover the most still-uncovered groups per second until 5.8 h are spent. A flaky phase leaves the flaky set after 3 clean
+runs in a row (`smoke/flaky_history.json`, written next to `phase_times.json` after every run of a `FLAKY_PHASES` phase;
+a retry-green or failed run resets the count), and so becomes eligible for release.
 
 ## What the fast tier covers
 

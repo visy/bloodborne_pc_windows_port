@@ -1230,7 +1230,8 @@ void TextureCache::RefreshImage(Image& image) {
 
 vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
                                      AmdGpu::BorderColorBuffer border_color_base,
-                                     const bool is_depth, float extra_lod_bias) {
+                                     const bool is_depth, float extra_lod_bias,
+                                     size_t* lru_id) {
     // Compare and plain uses of one S# need separate samplers; so do extra LOD biases.
     const u64 hash = HashCombine(HashCombine(XXH3_64bits(&sampler, sizeof(sampler)), is_depth),
                                  u64(std::bit_cast<u32>(extra_lod_bias)));
@@ -1242,6 +1243,9 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
         samplers.at(hash).lru_id = sampler_lru_cache.Insert(hash, gc_tick);
     } else {
         sampler_lru_cache.Touch(it->second.lru_id, gc_tick);
+    }
+    if (lru_id) {
+        *lru_id = it->second.lru_id;
     }
 
     return it->second.Handle();
@@ -1902,6 +1906,7 @@ void TextureCache::GarbageCollectSamplers() {
         const size_t lru_id = samplers.at(hash).lru_id;
         samplers.erase(hash);
         sampler_lru_cache.Free(lru_id);
+        ++sampler_generation; // remembered handles may be gone (SamplerGeneration)
         return false;
     };
 
