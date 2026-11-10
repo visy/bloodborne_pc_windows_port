@@ -1,2 +1,0 @@
-### Fixed
-- **Video memory and RAM growth over long sessions** the texture cache's clean-up marks were derived from the whole VRAM of the card, so on 8 GB and larger cards they never fired and the cache (and with it video memory and RAM) grew by about 0.5 GB per half hour of area changes. The clean-up budget is now capped at 1.5 GiB (about +114 MB RAM and no video memory growth in a 30 minute route against +593 MB and +474 MB before; load times and frame rate unchanged). `BB_GC_BUDGET_CAP_MB` tunes the cap, `BB_GC_BUDGET_CAP=0` restores the old budget.
