@@ -205,7 +205,7 @@ PARTY_INI_SWITCHES = [
 # other game settings; written one key at a time): (key, the game's default).
 PARTY_INI_FLAGS = [
     ("party_hud", True), ("party_name_tags", True), ("party_glow_off", True), ("party_npc_talk", True),
-    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
+    ("party_pings", True), ("party_chat", False), ("party_chat_receive", True), ("party_name_colours", False), ("party_look_sync", False), ("party_parallel_follow", False), ("party_settled_drop", False), ("party_map_marks", False), ("party_hud_ping", True), ("party_through_walls", False), ("party_stain_marker", False),
     ("party_friendly_fire", False), ("party_share_lamps", True), ("party_guests_bring_lamps", False),
     # 0.7.3 (launchtabs): rows the game's menus had and the launcher had not
     ("party_toasts", True), ("party_conn_warnings", True), ("party_guest_lamps", True),
@@ -648,6 +648,18 @@ MY_PARTY_TAB = [
          "consent. The giver loses the gear only once the receiver has it (a lost link puts it back, gems included). Never "
          "worn gear, nor the gear the party shares anyway (story and unique weapons, Gascoigne's set ...). In the game: "
          "System > My party: Giving. Default: off (bbport.ini party_give_gear)."),
+    ]),
+    (1, 1, "Loading", [
+        ("check", "party_parallel_follow", "Load with the host",
+         "When the host travels with the party to a lamp (or the Hunter's Dream, a headstone, a Hunter's Mark), "
+         "your game starts loading the same lamp at once, in parallel with the host's load, behind one loading "
+         "screen, and puts you beside the host when it is in. Off: your load starts after the host's (a longer "
+         "screen). Anything unusual (a death, a boss fight, a Chalice Dungeon) keeps the old way. Your own setting. "
+         "In the game: System > My party: Loading. Default: off (bbport.ini party_parallel_follow)."),
+        ("check", "party_settled_drop", "Hold the screen until smooth",
+         "In a party the loading screen stays up after a load until the world runs smoothly (two frames in a row "
+         "under 50 ms, at most 2 s more), so the first heavy frames after a load are not seen as a frozen world. "
+         "Your own setting. In the game: System > My party: Loading. Default: off (bbport.ini party_settled_drop)."),
     ]),
 ]
 # Stale bbport.exe guard: a safety net, never a reason for the launcher not to start.
@@ -3488,6 +3500,9 @@ class BloodborneLauncher(tk.Tk):
         self.party_chat_receive = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_chat_receive", True))
         self.party_name_colours = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_name_colours", False))
         self.party_look_sync = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_look_sync", False))
+        # 0.8.1 seamless join (My party: Loading): a guest's parallel load on party travel, the settled screen drop.
+        self.party_parallel_follow = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_parallel_follow", False))
+        self.party_settled_drop = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_settled_drop", False))
         self.party_map_marks = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_map_marks", False))
         # The marker on the own lost-echoes bloodstain (bbport.ini party_stain_marker, off by default).
         self.party_stain_marker = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_stain_marker", False))

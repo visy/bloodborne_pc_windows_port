@@ -1990,6 +1990,17 @@ void PartyTab() {
              "При смене данных вашей внешности остальные игроки сразу пересобирают вашего охотника. Выкл.: "
              "отправляет только закрытие зеркала."),
            on);
+    Toggle("party_parallel_follow", T("Load with the host", "Загрузка с хостом"), s.party_parallel_follow,
+           T("On the host's party lamp travel your game starts its own load at once, in parallel with the host's, "
+             "behind one loading screen (instead of waiting for the host's load first). Off: today's order.",
+             "При переходе хоста к фонарю ваша игра сразу начинает свою загрузку параллельно с хостом. Выкл.: как "
+             "раньше, после загрузки хоста."),
+           on);
+    Toggle("party_settled_drop", T("Hold screen till smooth", "Экран до плавности"), s.party_settled_drop,
+           T("In a party the loading screen stays up after a load until two frames in a row are smooth (under "
+             "50 ms), at most 2 s, so the first heavy frames are not seen as a frozen world.",
+             "В группе экран загрузки держится, пока два кадра подряд не будут быстрее 50 мс (до 2 с)."),
+           on);
     Toggle("party_map_marks", T("Shared map markers", "Общие метки на карте"), s.party_map_marks,
            T("A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and "
              "theirs on yours. Needs the in-game map.",

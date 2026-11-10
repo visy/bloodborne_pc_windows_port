@@ -20,6 +20,7 @@
 #include "game_state.h"
 #include "lua_events.h"
 #include "party_b2.h"
+#include "party_seam.h"
 #include "party_death_rules.h"
 #include "party_dsummon.h"
 #include "../net/from_api.h"
@@ -957,7 +958,7 @@ void LogTransitions(State& st, const GameSnapshot& now) {
     }
     // A guest's travel re-join shows the game's loading card well before its loading flag rises
     // (smoke s1: card at +100 s, flag at +110 s): the overlay hides from the host's travel on.
-    BbFrameState::NoteGameLoading(now.loading || b2::GuestTravelPending());
+    BbFrameState::NoteGameLoading(now.loading || b2::GuestTravelPending() || seam::ScreenHeld());
     if (now.loading != was.loading) {
         Log("loading screen %s", now.loading ? "up" : "gone");
         static int load_marks = 0;

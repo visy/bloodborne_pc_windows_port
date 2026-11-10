@@ -960,6 +960,12 @@ add_executable(auto-hud-test EXCLUDE_FROM_ALL ../tests/test_auto_hud.cpp)
 target_compile_options(auto-hud-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(auto-hud-test PRIVATE shim)
 set_target_properties(auto-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# 0.8.1 seamless join rules (shim/party/seam_rules.h, header only): the settled drop, the parallel follow's refusals.
+# ninja -C out/gpu seam-rules-test
+add_executable(seam-rules-test EXCLUDE_FROM_ALL ../tests/test_seam_rules.cpp)
+target_compile_options(seam-rules-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(seam-rules-test PRIVATE shim)
+set_target_properties(seam-rules-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # H5 look sync rules (shim/party/look_sync_rules.h, header only): the appearance block and its change detector.
 # cmake --build out/gpu --target look-sync-test
 add_executable(look-sync-test EXCLUDE_FROM_ALL ../tests/test_look_sync.cpp)

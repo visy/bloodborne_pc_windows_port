@@ -394,6 +394,8 @@ Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch t
 | *Share look changes* | System > My party > Names, launcher Party tab, `party_look_sync` | A look changed in any editor reaches the others without a reload |
 | *Shared map markers* | System > My party > Chat & markers, launcher Party tab, `party_map_marks` | A right click / P / R3 on the open map sets your marker for every member (needs the in-game map) |
 | *Rot: stamina recovery* (*Death may slow stamina recovery*), *host* | System > Party rules: Rot, launcher Party Rules tab, `party_rot_extra` | The death debuff may also take -15% of the stamina you get back per stack |
+| *Load with the host* | System > My party: Loading, launcher My Party tab, `party_parallel_follow` | On the host's party travel to a lamp (the Dream, a headstone, a Hunter's Mark) your game loads the same lamp at once, in parallel with the host, behind one loading screen, and puts you beside the host once it is in (before: your load started only after the host's). A death, a boss fight or a Chalice Dungeon keeps the old way |
+| *Hold the screen until smooth* | System > My party: Loading, launcher My Party tab, `party_settled_drop` | In a party the loading screen stays up after a load until two frames in a row come in under 50 ms (at most 2 s more), so the first heavy frames after a load are not seen as a frozen world |
 | *Large parties* (experimental) | Launcher Party tab, `party_large` | *Max players* may be set to 5 or 6; six games on one PC need about 24 GB of memory; 6-player travel and boss fights are not yet tested |
 | *Allow invaders* (*host*), *Party chat*, *Coloured name tags*, *Auto-hide HUD* | described in this guide | Earlier optional features, also off by default |
 

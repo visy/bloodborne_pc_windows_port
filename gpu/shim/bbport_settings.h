@@ -270,6 +270,14 @@ struct Values {
     /// re-sends the player record and the peers rebuild this hunter's chr (ini party_look_sync; env
     /// BB_PARTY_LOOK_SYNC=0/1 over it; off by default, 0.8.0). Live, local.
     std::atomic<bool> party_look_sync{false};
+    /// 0.8.1 seamless join A: at the host's party lamp travel this guest loads the same lamp at once, in parallel
+    /// with the host, behind one loading screen (party_seam.cpp; ini party_parallel_follow; env
+    /// BB_PARTY_PARALLEL_FOLLOW=0/1 over it; off by default). Live, local (a guest's own load).
+    std::atomic<bool> party_parallel_follow{false};
+    /// 0.8.1 seamless join B: in a party, the loading screen stays up after a load until two frames in a row
+    /// came in under 50 ms (at most 2 s), and the drop runs at the frame end's quiet point (party_seam.cpp; ini
+    /// party_settled_drop; env BB_PARTY_SETTLED_DROP=0/1 over it; off by default). Live, local.
+    std::atomic<bool> party_settled_drop{false};
     /// I7/E3 map markers: a spot a player puts on the in-game map (right click / R3 / P) is seen on every party
     /// member's map (party_ping.h; ini party_map_marks; env BB_PARTY_MAP_MARKS=0/1 over it; off by default, 0.8.0). Live.
     std::atomic<bool> party_map_marks{false};

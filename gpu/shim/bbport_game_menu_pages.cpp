@@ -1955,6 +1955,18 @@ void DefineAll() {
     own(&Values::party_look_sync, "Share look changes", "Обновлять внешность",
         "Off by default. A changed appearance (mirror, any editor) shows to the others without a reload",
         "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
+
+    // ---- My party: Loading (0.8.1 seam081): a smoother join and party travel (party_seam.cpp,
+    // research/reseam081.md 3). Each player's own, off by default; any glitch falls back to today's screens. ----
+    AddPage("My party: Loading", "Моя группа: загрузка",
+            "Yours: shorter, smoother loading screens on party travel and joins (bbport)",
+            "Ваше: короче и плавнее экраны загрузки при переходах и входе в группу (bbport)");
+    own(&Values::party_parallel_follow, "Load with the host", "Загрузка с хостом",
+        "Off by default. On the host's party lamp travel your game loads at once, not after the host's load",
+        "Выкл. по умолчанию. При переходе хоста к фонарю ваша игра грузится сразу, а не после хоста");
+    own(&Values::party_settled_drop, "Hold screen till smooth", "Экран до плавности",
+        "Off by default. In a party the loading screen stays up until the world runs smoothly (at most 2 s)",
+        "Выкл. по умолчанию. В группе экран загрузки держится, пока мир не пойдёт плавно (до 2 с)");
 }
 
 /// The party rules' help lines: the current value, and on a guest that the host's rules count.
