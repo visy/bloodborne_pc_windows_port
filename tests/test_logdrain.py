@@ -11,6 +11,8 @@ EXE = test_exe('logdrain-test')
 
 def run(lines, stall_s, async_on, kill=False, width=None, mode=None):
     env = dict(os.environ, BB_LOG_ASYNC='1' if async_on else '0')
+    if not async_on:
+        env['BB_LOG_RAW_IPS'] = '1'  # the address mask keeps a drain thread; direct writes need it off too
     p = subprocess.Popen([str(EXE.resolve()), str(lines)] + (([mode or 'kill'] if kill else ['go']) + [str(width)] if (kill or width) else []), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     err = []
     import threading
