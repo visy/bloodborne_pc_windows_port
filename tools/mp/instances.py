@@ -597,6 +597,11 @@ def run(a):
     t_slot = time.time()
     # A rebuild since the last setup: copy it first, or the run would test the old exe.
     built = Path(a.build) / "out" / "bbport.exe"
+    if not built.exists() and (Path(a.build) / "bbport.exe").exists():
+        # popup081 2026-11-10: --build pointed at the out dir; nothing was copied and every phase failed in 1 s.
+        print(f"--build must be the repo/build root that holds out\\bbport.exe, not the out dir itself: "
+              f"use --build {Path(a.build).parent}", flush=True)
+        sys.exit(2)
     # Every instance of this run (parx 2026-10-15: a 3-player run after 2-player runs had a stale
     # inst2 exe from an older build; the host refused it as another bbport build).
     exes = [Path(a.root) / f"inst{i}" / "out" / "bbport.exe" for i in range(a.count)]
