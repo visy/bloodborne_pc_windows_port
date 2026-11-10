@@ -446,9 +446,13 @@ void TestDerive() {
     std::string log;
     CHECK(!coop::gamedata::BuildToFile((d / "nothing").string(), (d / "out.txt").string(), false, 1, &err, &log));
     // BuildToFile: build, then a current cache is left alone
+    coop::gamedata::ResetRebuildFlag();
     CHECK(coop::gamedata::BuildToFile(d.string(), (d / "cache.txt").string(), false, 2, &err, &log) && fs::exists(d / "cache.txt"));
+    CHECK(coop::gamedata::Rebuilding());  // a real build raises the flag the in-game notice keys on
+    coop::gamedata::ResetRebuildFlag();
     const auto t1 = fs::last_write_time(d / "cache.txt");
     CHECK(coop::gamedata::BuildToFile(d.string(), (d / "cache.txt").string(), false, 2, &err, &log) && log.find("cache current") != std::string::npos);
+    CHECK(!coop::gamedata::Rebuilding());  // a cache hit stays silent: no popup
     CHECK(fs::last_write_time(d / "cache.txt") == t1);
     fs::remove_all(d, ec);
 }
