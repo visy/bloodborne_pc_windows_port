@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdalign.h>
 #include <string.h>
 
 void runtime_restart(void) { abort(); }
@@ -12,6 +13,24 @@ void runtime_relaunch(int exit_code) { (void)exit_code; abort(); }
 void runtime_note_guest_assert(uint32_t code, uint64_t argument, uint64_t guest_offset) { (void)code; (void)argument; (void)guest_offset; }
 #ifdef _WIN32
 #include <windows.h>
+#include <winternl.h>
+/* Thread-type handles only: other kinds (registry keys opened per new thread by system DLLs) come and go lazily
+ * and made a plain GetProcessHandleCount comparison flaky. */
+static unsigned typed_handles(const wchar_t *type) {
+    typedef LONG (NTAPI *Query)(HANDLE, int, PVOID, ULONG, PULONG);
+    static Query query;
+    if (!query) query=(Query)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryObject");
+    unsigned n=0;
+    for (uintptr_t h=4; h<0x40000; h+=4) {
+        DWORD flags; if (!GetHandleInformation((HANDLE)h,&flags)) continue;
+        alignas(8) char buf[512]; ULONG ret=0;
+        if (query((HANDLE)h,2,buf,sizeof(buf),&ret)<0) continue;
+        const UNICODE_STRING *name=(const UNICODE_STRING *)buf;
+        if (name->Length==wcslen(type)*2 && !wcsncmp(name->Buffer,type,wcslen(type))) ++n;
+    }
+    return n;
+}
+static unsigned thread_handles(void) { return typed_handles(L"Thread"); }
 ABI void restore_guest_fs(void) {}
 volatile int runtime_restarting;
 #endif
@@ -30,18 +49,20 @@ int main(int argc, char **argv) {
     Join join = GET(Join, "onNY9Byn-W8#p#J");
     assert(create && join);
 #ifdef _WIN32
-    const int n = 40;
-    DWORD before = 0, after = 0;
+    const int n = getenv("TR_N") ? atoi(getenv("TR_N")) : 40;
+    unsigned before = 0, after = 0;
     /* one warm-up thread: first-use allocations (key tables, name buffers) are not the leak */
     void *t = NULL, *r = NULL;
     assert(create(&t, NULL, entry, (void *)1, "warm") == 0 && join(t, &r) == 0 && r == (void *)1);
-    GetProcessHandleCount(GetCurrentProcess(), &before);
+    before = thread_handles(); const unsigned ev0 = typed_handles(L"Event");
     for (int i = 0; i < n; ++i) {
         assert(create(&t, NULL, entry, (void *)(intptr_t)(i + 2), "worker") == 0);
         assert(join(t, &r) == 0 && r == (void *)(intptr_t)(i + 2));
     }
-    GetProcessHandleCount(GetCurrentProcess(), &after);
-    printf("handles %lu -> %lu over %d threads (%s)\n", (unsigned long)before, (unsigned long)after, n, expect_leak ? "old" : "fixed");
+    if (getenv("TR_SLEEP")) Sleep((DWORD)atoi(getenv("TR_SLEEP")));
+    after = thread_handles(); const unsigned ev1 = typed_handles(L"Event");
+    printf("event handles %u -> %u\n", ev0, ev1);
+    printf("thread handles %u -> %u over %d threads (%s)\n", before, after, n, expect_leak ? "old" : "fixed");
     if (expect_leak) assert(after >= before + n / 2);
     else assert(after < before + 8);
 #endif
