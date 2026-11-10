@@ -865,6 +865,39 @@ void host_lost(const std::string& why) {
     else plog("host lost (%s): not in the host's world", why.c_str());
 }
 
+// ---- 0.8.1: the invader's quiet retry (party_invade_rules.h IsTransient / RetryDelayS) ----
+static std::atomic<int> g_invader_retries{0};
+static std::atomic<bool> g_invader_retry_pending{false};
+
+static void schedule_invader_retry(const std::string& reason) {
+    static const bool off = [] { const char* v = std::getenv("BB_PARTY_INVADE_RETRY"); return v && v[0] == '0'; }();
+    if (off) return;  // test aid: the scripted smoke phases (iv ...) time their own dials
+    if (g_invader_retry_pending.exchange(true)) return;
+    const int attempt = ++g_invader_retries;
+    const int delay = coop::invade::RetryDelayS(
+        attempt, coop::invade::DenyOfText(reason) == coop::invade::Deny::RateLimited);
+    plog("invasion refused for now (%s): asking again in %d s (attempt %d)", reason.c_str(), delay, attempt);
+    std::thread([delay] {
+        for (int i = 0; i < delay * 4; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            Runtime& r = R();
+            std::lock_guard<std::mutex> lk(r.mu);
+            if (r.stopping || r.shut || r.left) {
+                g_invader_retry_pending = false;
+                return;
+            }
+        }
+        g_invader_retry_pending = false;
+        bool rejected;
+        {
+            Runtime& r = R();
+            std::lock_guard<std::mutex> lk(r.mu);
+            rejected = r.link && r.link->state() == LinkState::Rejected;
+        }
+        if (rejected) plog("invader retry -> %d", runtime_rejoin());
+    }).detach();
+}
+
 void on_state(LinkState s, const std::string& detail) {
     Runtime& r = R();
     PartyLink* link;
@@ -909,6 +942,13 @@ void on_state(LinkState s, const std::string& detail) {
         }
     }
     bridge::OnLinkState(s, detail, link->reject_code(), reason);
+    // 0.8.1: an invader refused for the host's moment (not in a world yet, loading, a boss fight ...) waits and asks again.
+    if (!host && s == LinkState::Rejected && !coop::invade::TransientRefusal(reason) && bridge::RefusalPlaysSolo(link->reject_code()))
+        plog("refusal notice (modal): %s", reason.c_str());
+    if (!host && s == LinkState::Connected) g_invader_retries = 0;
+    if (!host && s == LinkState::Rejected && link->reject_code() == RejectCode::Invasion &&
+        coop::invade::TransientRefusal(reason))
+        schedule_invader_retry(reason);
     if (!host && s == LinkState::Rejected && link->reject_code() == RejectCode::Auth) {
         // A1 live test aid: BB_PARTY_TEST_REJOIN_PASSWORD=<password>: 20 s after a wrong-password
         // refusal, the player "types" this password in System > Party and chooses Rejoin the host.

@@ -2,6 +2,7 @@
 // Party status bridge (party_status_bridge.h): party runtime / director -> status board, and the
 // Party tab's commands back.
 #include "party_status_bridge.h"
+#include "party_invade_rules.h"
 #include "party_async_io.h"
 
 #ifndef BB_PARTY_BRIDGE_NO_GAME
@@ -277,7 +278,7 @@ bool RefusalPlaysSolo(RejectCode code) {
     return code != RejectCode::None && code != RejectCode::Shutdown;
 }
 
-std::string RefusalNotice(RejectCode code, const std::string& reason) {
+std::string RefusalNotice(RejectCode code, const std::string& reason, bool was_in) {
     if (!RefusalPlaysSolo(code)) return {};
     std::string title, todo;
     switch (code) {
@@ -300,7 +301,11 @@ std::string RefusalNotice(RejectCode code, const std::string& reason) {
         todo = "System > Party > Rejoin the host asks to join again.";
         break;
     case RejectCode::Invasion:
-        title = reason.empty() ? "The invasion is over" : reason.rfind("Can't ", 0) == 0 ? reason : "The invasion is over: " + reason;
+        // 0.8.1: "over" only for an invader that stood in the host's world; a refusal at the door reads "Can't invade".
+        if (was_in)
+            title = reason.empty() ? "The invasion is over" : reason.rfind("Can't ", 0) == 0 ? reason : "The invasion is over: " + reason;
+        else
+            title = reason.empty() ? "Can't invade" : reason.rfind("Can't ", 0) == 0 ? reason : "Can't invade: " + reason;
         todo = "Pick another game in the launcher's list, or try again later.";
         break;
     case RejectCode::Level:
@@ -522,8 +527,16 @@ void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, 
     } else if (state == LinkState::Reconnecting && (was == LinkState::Connected)) {
         status::SetLastEvent("Connection to the host lost");
     } else if (state == LinkState::Rejected) {
-        status::SetLastEvent(RejectText(reject, reason));
-        if (!host) status::SetAlert(RefusalNotice(reject, reason));
+        if (!host && reject == RejectCode::Invasion && coop::invade::TransientRefusal(reason)) {
+            // 0.8.1: the host's moment, not a verdict: no modal notice; the runtime asks again by itself.
+            std::string r = reason;
+            const std::string pre = "invasion refused: ";
+            if (r.rfind(pre, 0) == 0) r = r.substr(pre.size());
+            status::SetLastEvent("Waiting for the host's world: " + r);
+        } else {
+            status::SetLastEvent(RejectText(reject, reason));
+            if (!host) status::SetAlert(RefusalNotice(reject, reason, was == LinkState::Connected || was == LinkState::Reconnecting));
+        }
     } else if (state == LinkState::Hosting && host) {
         status::SetLastEvent("Party open");
     }
