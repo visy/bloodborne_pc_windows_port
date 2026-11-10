@@ -1650,13 +1650,13 @@ void TextureCache::GarbageCollectImages() {
             // area cycle (private / GPU memory +0.9 GB an hour). BB_GC_BUDGET_CAP_MB tunes the cap
             // (default 1536), BB_GC_BUDGET_CAP=0 restores the device-derived budget. Not applied to
             // BB_GC_BUDGET_MB (explicit) or integrated GPUs.
-            // 0.8.1: OFF by default until the collector stops evicting GPU-written images it cannot
-            // restore (with the cap the Hunter's Dream rendered red/cyan: a stale color-grading
-            // texture). BB_GC_BUDGET_CAP=1 or BB_GC_BUDGET_CAP_MB=N turns it on.
+            // 0.8.1: ON by default again (gccap081): the Dream tint was the collector writing GPU-written
+            // tiled images back linearly and freeing them (guard restored in GarbageCollectImages).
+            // BB_GC_BUDGET_CAP=0 turns the cap off.
             static const u64 budget_cap = [] {
                 const char* on = std::getenv("BB_GC_BUDGET_CAP");
                 const char* env = std::getenv("BB_GC_BUDGET_CAP_MB");
-                const bool wanted = (on && on[0] != '0') || (env && *env);
+                const bool wanted = !(on && on[0] == '0');
                 if (!wanted) {
                     return u64(0);
                 }
@@ -1769,6 +1769,7 @@ void TextureCache::GarbageCollectImages() {
             MarkDirtyIfEdgesModified(image);
         }
         const bool download = image.SafeToDownload();
+        const char* gc_path = download ? "depth-dropped" : "clean";
         // Depth/stencil targets and shadow maps are GPU-only and never read back by the CPU: they
         // go without a write-back (from Mrsuss60/bloodborne_pc_windows_port PR #89 by ALuaNegra).
         if (download && !image.info.props.is_depth) {
@@ -1784,6 +1785,16 @@ void TextureCache::GarbageCollectImages() {
             // d81d63be (shadPS4 GC part 2): a write-back only of what reads back as the guest's
             // data (single sample, no stencil, compatible format) and that the buffer cache did
             // not write over since; else the image stays.
+            // 0.8.1 gccap081: the guard 080567ec lost. Neither dropped nor written back (a tiled image, or no
+            // write-back left this frame) means it stays: DownloadImageMemory writes linear rows, and an image
+            // freed after it was re-made later from that linear data read as tiled memory (the Hunter's Dream
+            // rendered red with the budget cap: a GPU-written 3D color-grading texture).
+            if (!drop && !write_back) {
+                lru_cache.Touch(image.lru_id, gc_tick);
+                ++gc_kept_gpu;
+                BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
             bool verified_drop = false;
             if (write_back && GcVerify()) {
                 if (!image.CanBeDownloaded()) {
@@ -1815,6 +1826,7 @@ void TextureCache::GarbageCollectImages() {
                 }
             }
             if (drop || verified_drop) {
+                gc_path = drop ? "tiled-dropped-unwritten" : "verified-freed-unwritten";
                 ++gc_dropped;
             } else {
                 // Synchronously, while the image still protects its pages. A deferred write-back
@@ -1826,6 +1838,7 @@ void TextureCache::GarbageCollectImages() {
                                                  std::memory_order_relaxed);
                     g_vfy.verified_write_backs.fetch_add(1, std::memory_order_relaxed);
                 }
+                gc_path = "downloaded";
                 DownloadImageMemory(image_id, true);
                 if (GcVerify()) {
                     // The image's data is the newest in the range now: older buffer-cache copies of
@@ -1839,6 +1852,16 @@ void TextureCache::GarbageCollectImages() {
             }
         }
         const u64 bytes = image.backing ? image.GetHostImageSize() : 0;
+        if (static const bool evict_log = [] { const char* e = std::getenv("BB_GC_EVICT_LOG"); return e && e[0] && e[0] != '0'; }();
+            evict_log && (image.flags & ImageFlagBits::GpuModified) != ImageFlagBits{}) {
+            std::printf("GCEVICT addr=%llx size=%llu fmt=%d %ux%ux%u mips=%u tiled=%d depth=%d gpumod=1 dirty=%d maybegpudirty=%d level=%d path=%s\n",
+                        (unsigned long long)image.info.guest_address, (unsigned long long)image.info.guest_size,
+                        int(image.info.pixel_format), image.info.size.width, image.info.size.height,
+                        image.info.size.depth, image.info.resources.levels, int(image.info.IsTiled()),
+                        int(image.info.props.is_depth), int(True(image.flags & ImageFlagBits::Dirty)),
+                        int(True(image.flags & ImageFlagBits::MaybeGpuDirty)), int(level),
+                        gc_path);
+        }
         gc_quota.Take(bytes);
         ++gc_evictions;
         gc_freed_bytes += bytes;
