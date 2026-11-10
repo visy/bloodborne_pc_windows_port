@@ -443,14 +443,20 @@ bool PipelineCache::PrecompileEnabled() {
 // bbport: shader/pipeline compile time on the GPU thread, reported by BB_FRAME_STATS.
 std::atomic<u64> g_bb_compile_ns;
 std::atomic<u32> g_bb_compiles;
+// Never reset (BB_FRAME_STATS zeroes the two above every window): the load trace (BB_LOAD_TRACE) takes deltas.
+std::atomic<u64> g_bb_compile_ns_total;
+std::atomic<u32> g_bb_compiles_total;
 namespace {
 struct CompileTimer {
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     ~CompileTimer() {
-        g_bb_compile_ns += u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                   std::chrono::steady_clock::now() - start)
-                                   .count());
+        const u64 ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               std::chrono::steady_clock::now() - start)
+                               .count());
+        g_bb_compile_ns += ns;
         ++g_bb_compiles;
+        g_bb_compile_ns_total += ns;
+        ++g_bb_compiles_total;
         BbCompileProgress::gpu_thread_compile_us +=
             u64(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start)
                     .count());
