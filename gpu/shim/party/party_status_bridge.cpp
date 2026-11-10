@@ -441,8 +441,7 @@ void OnRuntimeStart(bool host, const std::string& name) {
                 if (!shown && coop::gamedata::ShouldShowRebuildNotice(coop::gamedata::Rebuilding(), coop::gamedata::RebuildSeconds())) {
                     status::SetAlert("Preparing co-op data from your game files: " + std::to_string(coop::gamedata::PreparingPercent()) +
                                      "%. The party starts working as soon as it is ready.");
-                    std::printf("[party-data] rebuild notice shown
-");
+                    std::printf("[party-data] rebuild notice shown\n");
                     std::fflush(stdout);
                     shown = true;
                 }
