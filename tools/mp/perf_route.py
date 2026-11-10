@@ -57,7 +57,20 @@ def cycle(variant, lead=20, first=False):
     return s
 
 
-def chain(minutes, variant, idle=255):
+def heavy_chain(cycles, variant, dwell=25):
+    """Heavy-release route (memdisc2): back-to-back big loads, no idle: lamp warps across the big maps and a death
+    load per cycle (6 loads per cycle; a host_die step without its %map never fires), a short dwell in each. For memory A/B (--env BB_MEM_DISCARD=0 vs default)."""
+    steps = []
+    for i in range(cycles):
+        first = i == 0
+        for k, lamp in enumerate((LAMP_BRIDGE, LAMP_CATH, LAMP_A, LAMP_B, LAMP_YAH, LAMP_TOMB)):
+            steps.append("host_lamp=%d@%d%s" % (lamp, 20 if (first and k == 0) else dwell, "^1" if first and k == 0 and variant == "2p" else ""))
+    return ",".join(steps)
+
+
+def chain(minutes, variant, idle=255, route="baseline"):
+    if route == "heavy":
+        return heavy_chain(max(1, int(minutes)), variant)   # --minutes N = N cycles x 6 loads in heavy mode
     steps = []
     n = max(1, int(round(minutes * 60 / CYCLE_S)))
     for i in range(n):
@@ -70,7 +83,7 @@ def settings_text(a, secs):
         "variant=%s minutes=%s seconds=%d" % (a.variant, a.minutes, secs),
         "build=%s" % a.build, "fps=%s live_fps=%s extra_env=%s" % (a.fps, a.live_fps, a.env or []),
         "env: BB_PARTY_PERF=1 BB_PARTY_PERF_SECONDS=60 BB_FRAME_STATS=1 BB_AUDIO=none BB_WINDOW_BACKGROUND=1 (harness)",
-        "chain=" + chain(a.minutes, a.variant), ""])
+        "chain=" + chain(a.minutes, a.variant, route=a.route), ""])
 
 
 def run(a):
@@ -78,7 +91,7 @@ def run(a):
     root.mkdir(parents=True, exist_ok=True)
     out = Path(a.out)
     (out / "shots").mkdir(parents=True, exist_ok=True)
-    secs = int(a.minutes * 60)
+    secs = int(a.minutes * 60) if a.route != "heavy" else int(a.minutes * 6 * 40 + 120)   # heavy: --minutes = cycles
     count = 1 if a.variant == "solo" else 2
     (root / "noreap").write_text(str(secs + 600))
     (out / "settings.txt").write_text(settings_text(a, secs))
@@ -91,8 +104,10 @@ def run(a):
            "--fps", a.fps, "--reserve", "2", "--label", "perf route %s %d min" % (a.variant, a.minutes),
            "--env", "BB_PARTY_PERF=1", "--env", "BB_PARTY_PERF_SECONDS=60", "--env", "BB_FRAME_STATS=1",
            "--env", "BB_PAD_FILE=%s" % (root / "pad{i}.txt"),
-           "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + chain(a.minutes, a.variant)]
+           "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + chain(a.minutes, a.variant, route=a.route)]
     cmd += ["--party"]   # as the smoke's one-player phases: instance 0 Continues and runs the director (a lone host)
+    if a.route == "heavy":   # end 40 s after the last lamp step has started (its load is done by then)
+        cmd += ["--until", r"test: travel step %d/%d: host_lamp" % ((6 * int(a.minutes),) * 2), "--until-hold", "40"]
     if a.variant == "solo":
         cmd += ["--env", "BB_PARTY_DIRECTOR_TEST_SOLO=1"]
     else:
@@ -106,7 +121,7 @@ def run(a):
     env = dict(os.environ, BB_MP_LEASE=str(secs + 900))
     (out / "harness.log").unlink(missing_ok=True)
     sampler = LaterProc(out / "harness.log", [sys.executable, str(HERE / "soak_sample.py"), "--root", str(root), "--out",
-                        str(out / "soak.csv"), "--every", str(a.sample_every), "--seconds", str(secs + 600)],
+                        str(out / "soak.csv"), "--every", str(a.sample_every), "--seconds", str(secs + 600)] + (["--no-gpu"] if a.route == "heavy" else []),
                         stdout=open(out / "sampler.log", "w"), stderr=subprocess.STDOUT)
     shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out",
                         str(out / "shots"), "--tag", "perf", "--every", "120", "--grey", "--seconds", str(secs + 600)],
@@ -158,6 +173,33 @@ def pct(v, p):
 
 def window(rows, lo, hi):
     return [r for r in rows if lo * 60 <= r[0] < hi * 60]
+
+
+def heavy_memory(out, lt, rows, settle=12):
+    """Per load (inst 0): the sample nearest `settle` s after "loading screen gone": working set, private, commit,
+    page faults; then growth first -> last load and the max. loads.csv times are the game log's (s since the
+    harness start), soak.csv's elapsed_s is the sampler's: they start within a few seconds of each other."""
+    lines = ["heavy-route memory per load (inst0, sample %d s after the load; MB):" % settle,
+             "  n  load_s  ws  private  commit  faults_k"]
+    rs = [r for r in rows if int(r["inst"]) == 0 and "commit_mb" in r]
+    pts = []
+    for n, (i, up, gone, dur) in enumerate([r for r in lt if r[0] == 0]):
+        if not rs:
+            break
+        r = min(rs, key=lambda x: abs(float(x["elapsed_s"]) - (gone + settle)))
+        pts.append((float(r["working_set_mb"]), float(r["private_mb"]), float(r["commit_mb"]), int(r["page_faults"]) / 1000))
+        lines.append("  %2d %6.1f %7.0f %7.0f %7.0f %7.0f" % (n, dur, *pts[-1]))
+    if len(pts) > 2:
+        lines.append("  growth load 2 -> last: ws %+.0f  private %+.0f  commit %+.0f MB; max ws %.0f private %.0f commit %.0f" % (
+            pts[-1][0] - pts[1][0], pts[-1][1] - pts[1][1], pts[-1][2] - pts[1][2],
+            max(p[0] for p in pts), max(p[1] for p in pts), max(p[2] for p in pts)))
+        lines.append("  mean ws %.0f private %.0f commit %.0f MB (loads 2..last)" % tuple(
+            statistics.mean(p[k] for p in pts[1:]) for k in range(3)))
+    if rs:
+        lines.append("  whole run: peak ws %.0f private %.0f commit %.0f MB; page faults total %dk" % (
+            max(float(r["working_set_mb"]) for r in rs), max(float(r["private_mb"]) for r in rs),
+            max(float(r["commit_mb"]) for r in rs), max(int(r["page_faults"]) for r in rs) // 1000))
+    return lines
 
 
 def report(a):
@@ -234,6 +276,8 @@ def report(a):
         if d:
             lines.append("loads inst%d: %d, mean %.1f s, median %.1f s, max %.1f s (loads.csv; first one is the title -> world)" % (
                 i, len(d), statistics.mean(d), statistics.median(d), max(d)))
+    if getattr(a, "route", "baseline") == "heavy" and soak.exists():
+        lines += heavy_memory(out, lt, list(csv.DictReader(open(soak))))
     text = "\n".join(lines)
     (out / "summary.txt").write_text(text + "\n")
     print(text)
@@ -251,6 +295,7 @@ def main():
     ap.add_argument("--root", default=str(AGENT_ROOT / "perfroot"))
     ap.add_argument("--out", default=None)
     ap.add_argument("--env", action="append")
+    ap.add_argument("--route", choices=["baseline", "heavy"], default="baseline")
     ap.add_argument("--sample-every", type=int, default=30)
     a = ap.parse_args()
     if Path(a.game).resolve() == Path(r"E:\games\bloodborne").resolve():

@@ -961,6 +961,13 @@ set_target_properties(party-hud-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
 if (WIN32)
     target_link_libraries(party-hud-test PRIVATE ws2_32 iphlpapi ole32 oleaut32)
 endif()
+# Opt-in Nightwatch direct path rules (shim/net/party_nw_direct_rules.h, header only): margin, loss, sticky fallback.
+# cmake --build out/gpu --target nw-direct-test
+add_executable(nw-direct-test EXCLUDE_FROM_ALL ../tests/test_nw_direct.cpp)
+target_compile_options(nw-direct-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(nw-direct-test PRIVATE shim)
+set_target_properties(nw-direct-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+
 # Auto-hide HUD rules (shim/party/auto_hud_rules.h, header only): triggers, holds, fades.
 # cmake --build out/gpu --target auto-hud-test
 add_executable(auto-hud-test EXCLUDE_FROM_ALL ../tests/test_auto_hud.cpp)

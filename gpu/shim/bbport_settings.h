@@ -286,6 +286,10 @@ struct Values {
     /// screen (no Leave, no trip home) (ini party_quick_rejoin; env BB_PARTY_QUICK_REJOIN=0/1 over it; off by
     /// default). Live, local.
     std::atomic<bool> party_quick_rejoin{false};
+    /// 0.8.1 (CL-4a20f7): over the Nightwatch VPN, allow a direct connection to a party member who allows it too, used
+    /// only when clearly faster than the tunnel (party/party_nwdirect.h; ini party_nw_direct; env BB_PARTY_NW_DIRECT=0/1
+    /// over it; off by default). The peer sees your public IP. Read when the party link comes up.
+    std::atomic<bool> party_nw_direct{false};
     /// I7/E3 map markers: a spot a player puts on the in-game map (right click / R3 / P) is seen on every party
     /// member's map (party_ping.h; ini party_map_marks; env BB_PARTY_MAP_MARKS=0/1 over it; off by default, 0.8.0). Live.
     std::atomic<bool> party_map_marks{false};
