@@ -45,6 +45,7 @@
 #include "bbport_write_log.h"
 #include "bbport_free_check.h"
 #include "video_core/amdgpu/pm4_cmds.h"
+#include "video_core/amdgpu/wait_reg_mem_logic.h"
 #include "video_core/amdgpu/pm4_selftest.h"
 #include "cp_decoder.h"
 #include "video_core/renderdoc.h"
@@ -133,6 +134,32 @@ static void ReportBadPm4(const char* what, u32 value, std::span<const u32> words
 static bool ReportPm4Issue() {
     static std::atomic<u32> reported{0};
     return reported.fetch_add(1, std::memory_order_relaxed) < 16;
+}
+
+/// bbport: a WAIT_REG_MEM whose compare no dword can satisfy (function Equal with a ref outside the
+/// mask, and the like) would stall the queue for ever; it is skipped, with a log line, as the command
+/// processor's walk goes on after a timeout. Idea from droogie/bbhost 9781692 (GPL-3.0),
+/// reimplemented. BB_WAIT_NEVER_PASS=0: the wait as before.
+static bool WaitNeverPasses(const PM4CmdWaitRegMem* wait) {
+    static const bool enabled = [] {
+        const char* e = std::getenv("BB_WAIT_NEVER_PASS");
+        return !(e && e[0] == '0');
+    }();
+    if (!enabled ||
+        WaitRegMemCanPass(static_cast<u32>(wait->function.Value()), wait->ref, wait->mask)) {
+        return false;
+    }
+    static std::atomic<u32> skipped{0};
+    const u32 n = skipped.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 4 || (n & (n - 1)) == 0) {
+        std::printf("GPU: WAIT_REG_MEM that no value can pass skipped (function %u, ref %#x, mask "
+                    "%#x, %s; %u so far; BB_WAIT_NEVER_PASS=0 waits as before)\n",
+                    static_cast<u32>(wait->function.Value()), wait->ref, wait->mask,
+                    wait->mem_space.Value() == PM4CmdWaitRegMem::MemSpace::Memory ? "memory"
+                                                                                  : "register",
+                    n);
+    }
+    return true;
 }
 
 Liverpool::Liverpool() : guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()} {
@@ -2388,6 +2415,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             case PM4ItOpcode::WaitRegMem: {
                 const auto* wait_reg_mem = reinterpret_cast<const PM4CmdWaitRegMem*>(header);
                 // ASSERT(wait_reg_mem->engine.Value() == PM4CmdWaitRegMem::Engine::Me);
+                if (WaitNeverPasses(wait_reg_mem)) {
+                    break;
+                }
                 // Optimization: VO label waits are special because the emulator
                 // will write to the label when presentation is finished. So if
                 // there are no other submits to yield to we can sleep the thread
@@ -2956,6 +2986,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                     LOG_WARNING(Render, "WaitRegMem: unsupported engine {}; packet skipped",
                                 magic_enum::enum_name(wait_reg_mem->engine.Value()));
                 }
+                break;
+            }
+            if (WaitNeverPasses(wait_reg_mem)) {
                 break;
             }
             while (!wait_reg_mem->Test(regs.reg_array)) {
