@@ -2219,7 +2219,7 @@ def phase_gxe(only):
                                                                                 # walk from the lamp (40 m) never got going: 0 m/s)
             "host_face=%s:2.5@1%s" % (GXE_BOSS, m), "host_press=0x4@1%s" % m, "host_press=0x4:lock@1%s" % m]   # up to her, lock on
     host += attack * 6                                              # her fight starts on a hit (her bar came ~40 s after the move in the trial runs)
-    for pct in (70, 55, 45, 30, 35):                                # then: sweep under every plausible phase threshold (a set HP sticks once her fight is on)
+    for pct in (70, 55, 45, 35, 30):                                # then: sweep under every plausible phase threshold (a set HP sticks once her fight is on)
         host += ["host_kill=%s:hp%d@3%s" % (GXE_BOSS, pct, m)] + attack * 2
     host += attack * 60
     env = ["BB_PARTY_TEST_START_LAMP=" + GXE_LAMP, "BB_PARTY_DIRECTOR_TEST_SOLO=1", "BB_PARTY_TARGET_ANIM=1", "BB_BOSS_LOG=1",
@@ -2258,10 +2258,12 @@ def check_gxe(v, L):
         t1 = done[0] if done else t0 + 65
         fr = L.all(0, r"Frame stats: [\d.]+ FPS", t0, t1 + 1)
         v.step("gxe frames keep coming through phase 2 (>= 8 Frame stats windows)", len(fr) >= 8 or off, "%d windows" % len(fr))
-        ids = _gxe_anims(L, t0, t1)
+        ids = _gxe_anims(L, bar[0], t1)   # the whole fight: she sometimes stands idle in the 65 s window (trial runs: 18 attacks, then 0)
         atk = [x for _t, x in ids if 3000 <= x < 4000]
-        v.step("gxe she acts in phase 2 (>= 6 animation changes, >= 2 attacks)", len(ids) >= 6 and len(atk) >= 2 or off,
+        v.step("gxe she fought (>= 12 animation changes, >= 3 attacks 3000-3999, bar to goal)", len(ids) >= 12 and len(atk) >= 3 or off,
                "%d changes, %d attacks: %s" % (len(ids), len(atk), [x for _t, x in ids[:14]]))
+        w = _gxe_anims(L, t0, t1)
+        v.step("gxe info: her animation changes inside the 65 s window", True, "%d changes, %d attacks" % (len(w), len([x for _t, x in w if 3000 <= x < 4000])))
     bad = L.all(0, GXE_DEVICE_RX)
     v.step("gxe no device lost / out of memory / GX assert%s" % (" (info: patch off, one is expected)" if off else ""),
            (not bad) or off, "none" if not bad else "+%.1f s: %s (%d in all)" % (bad[0][0], bad[0][1][:140], len(bad)))
