@@ -5802,6 +5802,9 @@ def check_bh(v, L):
     check_common(v, L, "bh")
 
 
+BK_BACK_IN_BANK = r"dead untarget: chr \w+ \(hp [1-9]\d*\) back in the enemies' target bank(?! \(no room)"
+
+
 def check_bk(v, L):
     """Phase bk: the boss killed while the host lies in limbo: the host up, its chr back in the bank."""
     lim = _limbo_start(v, L, "bk")
@@ -5816,7 +5819,7 @@ def check_bk(v, L):
         # this check), and the bank read still found it there (`there`, party_b2.cpp). Both prove the chr is in the bank;
         # only "(no room: left to the game)" (the entry is NOT in the bank) fails.
         need(v, L, "bk the host gets up: its chr back in the enemies' target bank", 0,
-             r"dead untarget: chr \w+ \(hp [1-9]\d*\) back in the enemies' target bank(?! \(no room)", out)
+             BK_BACK_IN_BANK, out)
     check_common(v, L, "bk")
 
 
@@ -11781,7 +11784,12 @@ def check_seam(v, L, name):
              for m in [re.search(r"put this guest ([\d.]+) m", ln)] if m]
     hidden = len(L.all(1, r"guest: arrival warp: .*under the held screen"))
     v.step("%s info: arrival warps after the load %s m, %d of them under the held screen" % (name, warps, hidden), True, "")
-    if c and placing:
+    if c and a:
+        # A + C: the parallel follow places the guest beside the host after its own load (the host's spot is only known
+        # then, ParallelArrive) under its held screen; C's in-load placement has nothing to write (no follow load of the
+        # host's spot), so C adds nothing and costs nothing here.
+        v.step("%s A + C: the parallel follow's own placement runs (C does not change it)" % name, True, "")
+    elif c and placing:
         # seam2: the beside-host spot goes into the load (no warp, no held screen); a load that cannot take it falls back to
         # the held screen + warp. Every follow is one or the other.
         skipped = len(L.all(1, r"guest: arrival warp skipped: the load itself put this guest"))
