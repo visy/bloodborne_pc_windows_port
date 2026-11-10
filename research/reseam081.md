@@ -125,6 +125,10 @@ the Tomb of Oedon, then both walk a route; 140 s):
   right after its first load, host 595 ms (frame end 577 ms). Our engine's `Stall:` blocks for those
   frames classify as gpu-thread-busy (stall_report): the render thread waits for our GPU thread's
   first-frame uploads / pipelines.
+- **Run 3** (`mp3`, after merging master 2fb32497; join + party warp, dsl both, 90 s): the same picture.
+  Host 8 / guest 7 long frames, all in a load or within 6 s after a screen drop (render waits 117-386 ms,
+  main-thread flush spins 107-247 ms), none in steady play; the guest was back with the host 11.7 s
+  after the host's warp (its screen gone 5.6 s after the host's).
 - Limits: this PC's GPU has real VRAM to spare, so `BB_GC_BUDGET_MB` only moves the collector's
   marks; it cannot make Windows page video memory as a 4 GB card does, and the players' engine
   (Nightwatch / Lantern) has its own buffer promotion code (BB_DYNAMIC_RETRY, nightwatch-src) that
@@ -311,5 +315,8 @@ unless steps A-C land early; listed so the order is clear.
 - `4ec5978a` Probe samples in a system DLL name the first return address into our exe (`via exe+0x...`).
 - Last commit: this document; stall_report reads `instances.py --timestamps` logs.
 - No gameplay change; nothing for CHANGES.md / COOP.md (diagnostic only).
-- Not done: screenshots (the visual check run was stopped from outside before its first shot; the
-  probe draws nothing). Runs: `agentseseam081\mp1` (run 1), `mp2` (run 2).
+- Screenshots (run 3, `mp3\shots\joined_inst*.png`, both games after the party warp): the partner
+  drawn beside each player with its name plate, 58 FPS, no glitch. Runs: `agents\reseam081\mp1` / `mp2` / `mp3`.
+- Harness note: the first try of run 3 hung for hours because its screenshot waiter (`until [ -f
+  inst1/run.log ]`) ran in the foreground of the same shell line that only afterwards started
+  instances.py (a self-deadlock, no queue entry); the retry ran under `timeout 900` without it.
