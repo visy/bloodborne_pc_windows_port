@@ -4972,7 +4972,11 @@ def _lm_music(v, L, tag, bar, required=True):
     for i, who in ((0, "host"), (1, "guest")):
         hit = L.find(i, r"EMEVD event 13404853 \[11\]", bar - 5)
         t = hit[0] if hit else None
-        if required and not (off and i == 1):
+        if required and off and i == 1:
+            # the A/B: with the rule off the guest that never pressed his fog gets no music (the players' report)
+            v.step("%s guest: no music with BB_PARTY_BOSS_MUSIC=0 (the old behaviour, A/B)" % tag, t is None,
+                   "%+.1f s after the bar" % (t - bar) if t is not None else "never")
+        elif required:
             v.step("%s %s: Laurence's music on (13404853 [11] 2010[04])" % (tag, who), t is not None,
                    "%+.1f s after the bar" % (t - bar) if t is not None else "never")
         else:
@@ -4980,7 +4984,7 @@ def _lm_music(v, L, tag, bar, required=True):
                    True, "%+.1f s after the bar" % (t - bar) if t is not None else "never")
     if not off:
         need(v, L, "%s guest: the music event does not wait for the guest-entered flag (the re081 rule)" % tag, 1,
-             r"boss music: event 13404853 \[8\] does not wait for the guest-entered flag 13404859", bar - 30)
+             r"boss music: event 13404853 \[8\] does not wait for the guest-entered flag 13404859")
 
 
 def check_lm(v, L):
@@ -4990,10 +4994,10 @@ def check_lm(v, L):
     if bar is None:
         return check_common(v, L, "lm")
     need(v, L, "lm the guest's game shows the bar", 1, r"boss health bar shown", bar - 5)
-    none_of(v, L, "lm: the guest never pressed his fog (the guest-entry event never set 13404859)",
+    none_of(v, L, "lm the guest never pressed his fog (the guest-entry event never set 13404859)",
             r"EMEVD event 13404851 \[17\]", 0, 1e9, (1,))
     _lm_music(v, L, "lm", bar)
-    none_of(v, L, "lm: the music is not switched off again at once (13404853 [20])", r"EMEVD event 13404853 \[20\]", bar, bar + 30, (0, 1))
+    none_of(v, L, "lm the music is not switched off again at once (13404853 [20])", r"EMEVD event 13404853 \[20\]", bar, bar + 30, (0, 1))
     check_common(v, L, "lm")
 
 
