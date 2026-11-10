@@ -36,8 +36,10 @@ THREAD = re.compile(r"\[(.*?) (\d+) p(-?\d+) (\d+)\]")
 def flipper(log: Path, toggle: Path, bit: int, blocks: int, period: float, marker: str, stop: threading.Event):
     """Waits for the marker line, then writes the toggle file: off, on, off, on ... (blocks of `period` s)."""
     toggle.write_text("0 0\n")
-    deadline = time.time() + 900
-    while not stop.is_set() and time.time() < deadline:
+    deadline = None  # starts when the game's log exists (the slot queue wait can be an hour)
+    while not stop.is_set() and (deadline is None or time.time() < deadline):
+        if deadline is None and log.exists():
+            deadline = time.time() + 900
         try:
             if re.search(marker, log.read_text(errors="replace")):
                 break

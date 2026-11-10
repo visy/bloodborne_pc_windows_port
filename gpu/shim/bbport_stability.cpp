@@ -1643,6 +1643,11 @@ u64 MovieRenderThread(u64* immediate) {
 
 BB_SYSV u64 MovieDraw(u64 player, u64 ctx, u64 out) {
     const u64 n = movie_draws.fetch_add(1, std::memory_order_relaxed);
+    if (n == 0 || (n & 1023) == 0) {
+        std::printf("Stability: movie: frame draw %llu (%llu waited so far, %llu ms)\n", ull(n), ull(movie_busy.load()),
+                    ull(movie_waited_us.load() / 1000));
+        std::fflush(stdout);
+    }
     u64 immediate = 0;
     const u64 rt = MovieRenderThread(&immediate);
     if (rt >= 0x10000 && ctx && ctx == immediate) {

@@ -8,6 +8,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 
 ### Changed
 
+- **optional render task stealing, off by default** (bbleft081, idea from droogie/bbhost render_queue / graphics_patch, GPL-3.0). `BB_TASK_STEAL=1` sets the game's "Enable Task Stealing" byte, which Live FPS leaves at 0 because the Performance Patch is locked out; `=2` is an A/B aid (experiment bit 512, `tools/mp/cpusave_ab.py run --feature tasksteal`). Measured on an RTX 3070 at Central Yharnam, uncapped, one session switching every 30 s: 86.5 off vs 86.0 on (median fps), so no gain on this GPU-thread-limited PC and it stays off; it may help CPU-bound machines.
 - **crash and GPU-crash reports carry more detail** (restab081; no change for players). A crash in the game's Havok animation-event code (0x1a21100) is decoded: the animation object, the last animation ids and the owner's map / entity ids; device-lost and stuck-GPU reports list the game's GPU range allocators (idea from Nightwatch c6305d7) when `BB_FRAME_STATS=1`; `BB_LIVE_FPS_LOG` prints draws, dispatches, submissions, flips and upload KB per game step (for GitHub #35). The raw memory at the registers is opt-in (`BB_CRASH_REGMEM=1`), since it can hold player text.
 
 ### Fixed
