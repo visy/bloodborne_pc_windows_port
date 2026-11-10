@@ -1637,10 +1637,29 @@ void TextureCache::GarbageCollectImages() {
             const bool is_low_vram =
                 (local_mem > 0 && local_mem <= 4096ULL * 1024 * 1024) ||
                 (driver_budget > 0 && driver_budget <= 4096ULL * 1024 * 1024);
-            const u64 base =
+            u64 base =
                 !forced && is_low_vram && local_mem > 0 && !instance.IsIntegrated()
                     ? local_mem
                     : driver_budget;
+            // bbport leak081c: a cap on the collector's budget. On a large card the marks sat at
+            // 70 % of 8+ GB and never fired in a 45 minute route while the cache grew by ~70 MiB per
+            // area cycle (private / GPU memory +0.9 GB an hour). BB_GC_BUDGET_CAP_MB tunes the cap
+            // (default 1536), BB_GC_BUDGET_CAP=0 restores the device-derived budget. Not applied to
+            // BB_GC_BUDGET_MB (explicit) or integrated GPUs.
+            static const u64 budget_cap = [] {
+                const char* off = std::getenv("BB_GC_BUDGET_CAP");
+                if (off && off[0] == '0') {
+                    return u64(0);
+                }
+                const char* env = std::getenv("BB_GC_BUDGET_CAP_MB");
+                const u64 mib = env && *env ? std::strtoull(env, nullptr, 10) : 1536;
+                std::printf("Texture cache: collector budget capped at %llu MiB (BB_GC_BUDGET_CAP_MB, "
+                            "BB_GC_BUDGET_CAP=0 off)\n", (unsigned long long)mib);
+                return mib << 20;
+            }();
+            if (!forced && budget_cap != 0 && !instance.IsIntegrated() && base > budget_cap) {
+                base = budget_cap;
+            }
             gc_marks = GcPolicy::MarksFor(GcPolicy::BudgetFor(
                 base, forced || instance.IsIntegrated() ? 0 : local_mem));
             // BB_GC_TRIGGER / BB_GC_PRESSURE / BB_GC_CRITICAL (percent of the budget): the
