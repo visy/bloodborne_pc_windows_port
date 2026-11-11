@@ -41,9 +41,13 @@ std::vector<u64> g_sites;  // offsets of the imm32 of each `mov r32, 0x14`
 u32 g_value = 0;
 std::atomic<bool> g_raised{false};
 
-/// The budget while the screen is up. Unset: the default. 0 / off / false: nothing. N: that many (20..1000000).
+/// The budget while the screen is up. Unset: the default (4096: more than any block's parts, so a pass is one call;
+/// measured 4.40 s vs 4.70 s at 400 and 7.21 s at the game's 20 for a Cathedral Ward warp at 60 fps). 0 / off /
+/// false: nothing. N: that many (20..1000000). The MapInsUpdateHelper queue the requests go to holds one entry
+/// per part of the block (capacity 4048 for m24_00) and 0x1587ED0 never queues a part twice (+0xC bit 0), so no
+/// budget can overflow it (its assert MapInsUpdateHelper.cpp(0xcc)).
 u32 Parse(const char* v) {
-    constexpr u32 kDefault = 400;
+    constexpr u32 kDefault = 4096;
     if (!v || !*v) return kDefault;
     if (!std::strcmp(v, "0") || !std::strcmp(v, "off") || !std::strcmp(v, "false")) return 0;
     const long n = std::strtol(v, nullptr, 10);
