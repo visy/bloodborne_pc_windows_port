@@ -50,6 +50,15 @@ int main() {
     CHECK(RespawnSeconds(nullptr) == 2.0f && RespawnSeconds("") == 2.0f && RespawnSeconds("x") == 2.0f && RespawnSeconds("3x") == 2.0f);
     CHECK(RespawnSeconds("3.5") == 3.5f && RespawnSeconds("0") == 0.5f && RespawnSeconds("-4") == 0.5f);
     CHECK(RespawnSeconds("99") == 12.0f && RespawnSeconds("12") == 12.0f && RespawnSeconds("nan") == 2.0f);
+    // BB_CLIP_CAPACITY byte check (Nightwatch 8cfe003)
+    {
+        const unsigned char stock[2] = {0x00, 0x20}, done[2] = {0x00, 0x40}, other[2] = {0x00, 0x30}, other2[2] = {0x01, 0x20};
+        CHECK(kClipCapacitySite == 0xACEFF3);
+        CHECK(ClipCapacityBytes(stock) == ClipCapacityState::Unpatched);
+        CHECK(ClipCapacityBytes(done) == ClipCapacityState::Patched);
+        CHECK(ClipCapacityBytes(other) == ClipCapacityState::Mismatch);
+        CHECK(ClipCapacityBytes(other2) == ClipCapacityState::Mismatch);
+    }
     g_failures += RunGuardTests();
     std::printf("stability-logic-test: %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

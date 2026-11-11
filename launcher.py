@@ -3193,9 +3193,35 @@ def acquire_single_instance():
     return True
 
 
+def launcher_window_identity(root):
+    """Own taskbar identity (not grouped under python.exe) and the window icon on Windows.
+    By intent from Mrsuss60/bloodborne_pc_windows_port 1cc0678c (SetCurrentProcessExplicitAppUserModelID
+    and the window icon), done with ctypes and Tk. The icon is icon.ico beside launcher.py (or in
+    launcher/); without such a file the window keeps Tk's icon. Never a reason for the launcher not to start."""
+    if os.name != "nt":
+        return
+    if root is None:  # before the first window exists: the AppUserModelID
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("bbport.Launcher")
+        except Exception:
+            pass
+        return
+    try:
+        here = Path(__file__).resolve().parent
+        for cand in (here / "icon.ico", here / "launcher" / "icon.ico", APP_DIR / "icon.ico"):
+            if cand.is_file():
+                root.iconbitmap(default=str(cand))
+                break
+    except Exception:
+        pass
+
+
 class BloodborneLauncher(tk.Tk):
     def __init__(self):
+        launcher_window_identity(None)  # the AppUserModelID is set before the first window exists
         super().__init__()
+        launcher_window_identity(self)
         self.title(f"Bloodborne PC Launcher {PORT_VERSION}")
         self.geometry("780x760")  # the Party tab is the tallest settings tab
         self.minsize(720, 680)

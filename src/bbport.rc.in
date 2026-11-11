@@ -2,6 +2,10 @@
 // bbport.exe version resource (gpu/CMakeLists.txt fills it from VERSION).
 #include <winver.h>
 
+// Manifest (CREATEPROCESS_MANIFEST_RESOURCE_ID, RT_MANIFEST): UTF-8 as the process code page.
+// By intent from bbhost 5b78718 (droogie and team, GPL-3.0-or-later).
+1 24 "bbport.manifest"
+
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION @BBPORT_VERSION_COMMAS@
 PRODUCTVERSION @BBPORT_VERSION_COMMAS@

@@ -1965,6 +1965,11 @@ int main(int argc, char **argv) {
     printf("bbport %s (Bloodborne Windows port)\n", BBPORT_VERSION);
     bb_boot_mark("process start");
 #ifdef _WIN32
+    /* bbport.manifest makes UTF-8 the process code page (bbhost 5b78718 by intent);
+       Windows 10 before 1903 ignores it. */
+    if (GetACP() != CP_UTF8)
+        printf("paths: Windows runs bbport in code page %u, not UTF-8 (needs Windows 10 1903+): "
+               "a user or folder name outside ASCII can stop it\n", (unsigned)GetACP());
     runtime_memory_reserve_space();
 #endif
     time_t t_now = time(NULL);
