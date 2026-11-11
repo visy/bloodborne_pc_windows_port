@@ -80,6 +80,10 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   the launcher's *Nightwatch VPN games* list then shows the host's character name and **Join** asks for the password. The host also announces a short label of its mods and gameplay patches (hashes) to the lobby, for clients that show it (Nightwatch) (0.7.9).
   While connected to the Nightwatch VPN the game uses its tunnel address for all party traffic by itself (no
   *party_vpn* setting needed).
+  Over the Nightwatch VPN the host's code carries its full tunnel address (0.8.1; the short LAN code only holds the last
+  number, which fails when the guest's VPN address is in another 10.8.x range). Old short codes still work, and the game
+  also tries the other 10.8.x ranges for them. If a code fails, join from the *Nightwatch VPN games* list or type the host's
+  full VPN address. `BB_PARTY_VPN_FULL_CODE=0` brings the short code back.
   Hateful player names (slurs, hate codes, hostile phrases about groups of people) are shown as *Hunter* and a short
   code, in the games lists, the party list, the name tags and the notices (*Hide offensive names*, **on** by default:
   launcher Party tab, or *System > My party: Names*). The Nightwatch VPN lobby does the same for everyone.
