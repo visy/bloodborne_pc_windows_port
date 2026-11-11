@@ -533,6 +533,10 @@ void OnLinkState(LinkState state, const std::string& detail, RejectCode reject, 
             const std::string pre = "invasion refused: ";
             if (r.rfind(pre, 0) == 0) r = r.substr(pre.size());
             status::SetLastEvent("Waiting for the host's world: " + r);
+        } else if (!host && reject == RejectCode::Invasion && coop::invade::EndedByHost(reason)) {
+            // 0.8.1: the host ended the invasion (it travelled, a boss fight began ...): the invade notice told the invader,
+            // no modal box on top of it.
+            status::SetLastEvent(reason);
         } else {
             status::SetLastEvent(RejectText(reject, reason));
             if (!host) status::SetAlert(RefusalNotice(reject, reason, was == LinkState::Connected || was == LinkState::Reconnecting));
