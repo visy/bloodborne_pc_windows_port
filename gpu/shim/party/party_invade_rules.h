@@ -141,7 +141,13 @@ inline Deny DenyOfText(const std::string& reason) {
     }
     return Deny::None;
 }
-inline bool TransientRefusal(const std::string& reason) { return IsTransient(DenyOfText(reason)); }
+/// 0.8.1: the link itself went away (the host travelled / went to the title and dropped the invader, or was not reachable yet):
+/// the host's moment too, a quiet wait and ask again, never a modal (smoke ivc: "the connection to the host was lost").
+inline bool ConnectionGone(const std::string& reason) {
+    return reason.find("the connection to the host was lost") != std::string::npos ||
+           reason.find("the host cannot be reached") != std::string::npos;
+}
+inline bool TransientRefusal(const std::string& reason) { return IsTransient(DenyOfText(reason)) || ConnectionGone(reason); }
 
 /// Seconds the invader waits before asking again after refusal number `attempt` (1 = the first): 5 10 20 30 45 60 60 ...
 /// (the host's knock limit kSpamMax per kRateWindowS stays far away); a rate-limited invader waits at least a minute.
@@ -358,6 +364,13 @@ inline std::string EndTextForInvader(End e, const std::string& host) {
     case End::None: break;
     }
     return "";
+}
+
+/// 0.8.1: the invader reads one of the host's end texts (EndTextForInvader, all but Blocked end in ": back home") as the reject
+/// reason of its link. The invade notice already tells it (a toast), so this is no refusal and no modal box.
+inline bool EndedByHost(const std::string& reason) {
+    static const std::string tail = ": back home";
+    return reason.size() >= tail.size() && reason.compare(reason.size() - tail.size(), tail.size(), tail) == 0;
 }
 
 /// What the host's game sees of an invasion in progress (its own state; checked every frame).

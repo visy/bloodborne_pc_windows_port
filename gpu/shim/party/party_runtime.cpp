@@ -943,7 +943,8 @@ void on_state(LinkState s, const std::string& detail) {
     }
     bridge::OnLinkState(s, detail, link->reject_code(), reason);
     // 0.8.1: an invader refused for the host's moment (not in a world yet, loading, a boss fight ...) waits and asks again.
-    if (!host && s == LinkState::Rejected && !coop::invade::TransientRefusal(reason) && bridge::RefusalPlaysSolo(link->reject_code()))
+    if (!host && s == LinkState::Rejected && !coop::invade::TransientRefusal(reason) &&
+        !(link->reject_code() == RejectCode::Invasion && coop::invade::EndedByHost(reason)) && bridge::RefusalPlaysSolo(link->reject_code()))
         plog("refusal notice (modal): %s", reason.c_str());
     if (!host && s == LinkState::Connected) g_invader_retries = 0;
     if (!host && s == LinkState::Rejected && link->reject_code() == RejectCode::Invasion &&

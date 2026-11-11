@@ -3983,7 +3983,7 @@ def phase_mm(only, name="mm", sim=None):
 
 
 def check_mm(v, L, tag="mm"):
-    j = need(v, L, tag + " join: the guest is in the host's world", 1, r"arrived in the host world")
+    j = need(v, L, tag + " join: the guest is in the host's world", 1, GUEST_JOINED_RX)
     a = need(v, L, tag + " the host's map opens", 0, r"Map: opened \(area m24_01_00_00\)", j or 0)
     k = need(v, L, tag + " the host asks for a marker (the map's request)", 0, r"Map: test marker asked at", a or 0)
     h = need(v, L, tag + " the host's board has it (local)", 0, r"Party: ping: local: Hunter0 \(slot 0\) map marker \d+ at", k or 0)
@@ -6079,7 +6079,11 @@ def phase_scb(only):
     env_net = ["BB_NET_SIM=" + os.environ["SCB_NET"]] if os.environ.get("SCB_NET") else []
     return dict(
         name="scb", seconds=int(os.environ.get("SCB_SECONDS", "150")), count=2, headless=0, fps=60,
-        env=["BB_PARTY_CHR_DUMP=" + os.environ.get("SCB_R", "400"), "BB_PARTY_PROGRESS_TEST_SET=9800,9801"] +
+        # BB_PARTY_PARALLEL_FOLLOW=0: the test writes Insight 60 once the world is up; with the parallel follow (A, on by default
+        # since 0.8.1) the guest's Hemwick load ends BEFORE that write, and the Mad Ones' spawn event (12204000) starts only
+        # when it finds the Insight at the map load (as in the vanilla game). Real players have their Insight in the save.
+        env=["BB_PARTY_CHR_DUMP=" + os.environ.get("SCB_R", "400"), "BB_PARTY_PROGRESS_TEST_SET=9800,9801",
+             "BB_PARTY_PARALLEL_FOLLOW=0"] +
             env_net + [e for e in os.environ.get("SCB_ENV", "").split(";") if e],
         ienv=["0:BB_PARTY_TEST_START_LAMP=" + SCB_LAMP, "0:BB_PARTY_DIRECTOR_TEST=" + ",".join(hs),
               "1:BB_PARTY_DIRECTOR_TEST=" + ",".join(gs)],
@@ -12148,8 +12152,19 @@ def check_ga(v, L):
     if r1 is None:
         check_common(v, L, "ga")
         return
-    far = _ga_first(L, r"guest: YES: route inworld \(.*, ([\d.]+) m\)")
-    d = float(re.search(r"([\d.]+) m\)$", far[2]).group(1)) if far else 0.0
+    # The far case is the first in-world YES over 100 m on either guest (a round-1 YES at 7 m is a guest that arrived beside the
+    # host already: seamless travel A/C/D on by default puts the guests there, 0.8.1; it is no far case, not a failure).
+    far, d, after = None, 0.0, 0.0
+    for _ in range(12):
+        h = _ga_first(L, r"guest: YES: route inworld \(.*, ([\d.]+) m\)", after)
+        if not h:
+            break
+        hd = float(re.search(r"([\d.]+) m\)$", h[2]).group(1))
+        if far is None or hd > 100.0:
+            far, d = h, hd
+        if hd > 100.0:
+            break
+        after = h[1] + 0.01
     v.step("ga same map, > 100 m: YES -> in-world warp", far and d > 100.0,
            "inst%d +%.1f s: %.0f m" % (far[0], far[1], d) if far else "no in-world route on either guest")
     if far:
@@ -13041,7 +13056,8 @@ def check_mk_host(v, L, guests_from):
                        "; ".join("+%.1f s %s" % (x[0], x[1][:60]) for x in loads) or "no load")
             for g in (1, 2):
                 need(v, L, "mk %s: guest %d placed beside the host" % (name, g), g,
-                     r"guest: (arrived by the host's own travel|arrived in the host world)", t, end)
+                     r"guest: (arrived by the host's own travel|arrived in the host world|parallel follow: placed beside the host|"
+                     r"arrival warp skipped: the load itself put this guest)", t, end)  # 0.8.1: A / C on by default
             need(v, L, "mk %s: host: the guests arrived" % name, 0,
                  r"a guest arrived; \d+ member task\(s\) rewound", t, end)
 
@@ -14565,7 +14581,7 @@ def check_ie(v, L):
 
 
 def check_gd(v, L, d: Path):
-    j = need(v, L, "gd join: the guest is in the host's world", 1, r"arrived in the host world")
+    j = need(v, L, "gd join: the guest is in the host's world", 1, GUEST_JOINED_RX)
     m = need(v, L, "gd the guest picks the Hunter's Dream at the world lamp", 1,
              r"warp menu: entry 1 chosen -> lamp 2102950", j or 0)
     f = need(v, L, "gd the Dream flag is set", 1, r"chose the Hunter's Dream: lamp %s's Dream flag \d+ set" % GD_LAMP, m or 0)
@@ -14579,8 +14595,13 @@ def check_gd(v, L, d: Path):
     check_common(v, L, "gd")
 
 
+# A guest's join into the host's world: the B2 load's end ("arrived in the host world (flow 4)"), or, when the host travels as the
+# guest joins and the seamless travel defaults are on (0.8.1 A/C/D), the parallel follow's own placement line.
+GUEST_JOINED_RX = r"arrived in the host world|guest: parallel follow: placed beside the host"
+
+
 def check_gh(v, L):
-    j = need(v, L, "gh join: the guest is in the host's world", 1, r"arrived in the host world")
+    j = need(v, L, "gh join: the guest is in the host's world", 1, GUEST_JOINED_RX)
     g = need(v, L, "gh the guest picks the Hunter's Dream first", 1, r"warp menu: entry 1 chosen -> lamp 2102950", j or 0)
     h = need(v, L, "gh the host then picks the Hunter's Dream", 0, r"warp menu: entry 1 chosen -> lamp 2102950", g or 0)
     need(v, L, "gh the host's Dream flag is set", 0, r"chose the Hunter's Dream: lamp %s's Dream flag \d+ set" % GD_LAMP, h or 0)
@@ -14593,7 +14614,7 @@ def check_gh(v, L):
 def check_mp(v, L, who=None):
     """mp / mpg / mph: the in-game map (BB_MAP=1): opens, shows the guest's dot moving, travels to a lamp from the map."""
     tag = "mp" if who is None else ("mpg" if who == "guest" else "mph")
-    j = need(v, L, tag + " join: the guest is in the host's world", 1, r"arrived in the host world")
+    j = need(v, L, tag + " join: the guest is in the host's world", 1, GUEST_JOINED_RX)
     if who is None:
         o = need(v, L, tag + " the host's map opens", 0, r"Map: opened \(area m24_01_00_00\)", j or 0)
         a = need(v, L, tag + " the guest's dot is drawn near the lamp", 0, r"Map: shown m24_01_00_00 .*\| Hunter\d \(-3\d\.\d ", o or 0)
@@ -14619,7 +14640,7 @@ def check_mp(v, L, who=None):
 def check_gr(v, L, which=1, tag=None):
     tag = tag or "gr%s" % ("" if which == 1 else which)
     off = tag.endswith("o")   # BB_PARTY_GUEST_LAMPS=0 (the rule off)
-    j = need(v, L, tag + " join: the guest is in the host's world", 1, r"arrived in the host world")
+    j = need(v, L, tag + " join: the guest is in the host's world", 1, GUEST_JOINED_RX)
     if which == 3:
         m = need(v, L, tag + " the host asks for the map travel", 0, r"test: map travel to %s " % LP_OLD[0], j or 0)
         need(v, L, tag + " the host's lamp warp from the map", 0, r"map travel: lamp %s " % LP_OLD[0], m or 0)

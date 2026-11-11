@@ -43,7 +43,11 @@ static void RefusalKinds() {
     CHECK(!TransientRefusal(DenyText(Deny::HostStays)) && !TransientRefusal(DenyText(Deny::InvaderStays)));
     CHECK(!TransientRefusal(LevelText("Host", 100, 5, true)));
     CHECK(!TransientRefusal("the invasion handshake failed") && !TransientRefusal(""));
-    CHECK(!TransientRefusal("the connection to the host was lost"));
+    CHECK(TransientRefusal("the connection to the host was lost"));  // quiet wait + retry, no modal
+    CHECK(TransientRefusal("the host cannot be reached (connection refused)"));
+    CHECK(EndedByHost(EndTextForInvader(End::Travel, "Host")) && EndedByHost(EndTextForInvader(End::BossFight, "Host")));
+    CHECK(!EndedByHost(EndTextForInvader(End::Blocked, "Host")) && !EndedByHost(DenyText(Deny::Off)) && !EndedByHost(""));
+    CHECK(ConnectionGone("the connection to the host was lost") && !ConnectionGone(DenyText(Deny::Off)));
     // Every transient DenyText is found again by its own text, final ones never.
     for (int i = 1; i <= static_cast<int>(Deny::LevelRange); ++i) {
         const Deny d = static_cast<Deny>(i);
