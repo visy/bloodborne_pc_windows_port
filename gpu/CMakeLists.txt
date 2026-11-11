@@ -510,6 +510,9 @@ if (WIN32)
     string(REPLACE ";" "," BBPORT_VERSION_COMMAS "${_bb_ver_parts}")
     configure_file(../src/bbport.rc.in "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc" @ONLY)
     target_sources(bbport PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/bbport.rc")
+    # The manifest (UTF-8 code page) is a resource: rebuild the .rc when it changes.
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/bbport.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../src/bbport.manifest")
 endif()
 target_include_directories(bbport PRIVATE .. ../src)
 target_link_libraries(bbport PRIVATE bbgpu "${CMAKE_CURRENT_SOURCE_DIR}/../out/libatrac9.a" Vulkan::Vulkan)

@@ -116,4 +116,20 @@ inline float RespawnSeconds(const char* env) {
     return v < kRespawnMin ? kRespawnMin : v > kRespawnGame ? kRespawnGame : float(v);
 }
 
+// ---------------------------------------------------------------------------------------------
+// BB_CLIP_CAPACITY: the behaviour clip capacity of the player's clip-generator collection
+// (0xACEFD0 sizes it; 0xACF4C0 drops every clip past it, and the binder gives those no animation).
+// Nightwatch 8cfe003 (Lantern Engine by Awaken, https://github.com/Awakenchan/LanternEngine,
+// GPL-3.0-or-later with its section 7 terms): the immediate at 0xACEFF3, 0x2000 -> 0x4000.
+// ---------------------------------------------------------------------------------------------
+constexpr std::uint64_t kClipCapacitySite = 0xACEFF3;
+enum class ClipCapacityState { Unpatched, Patched, Mismatch };
+
+/// What the two bytes at the site are: the game's 00 20 (0x2000), our 00 40 (0x4000), or other.
+inline ClipCapacityState ClipCapacityBytes(const unsigned char* at) {
+    if (at[0] == 0x00 && at[1] == 0x20) return ClipCapacityState::Unpatched;
+    if (at[0] == 0x00 && at[1] == 0x40) return ClipCapacityState::Patched;
+    return ClipCapacityState::Mismatch;
+}
+
 } // namespace BbStability
