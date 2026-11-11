@@ -246,6 +246,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.nan_guard_mark = i != 0;
     } else if (key == "compile_indicator") {
         v.compile_indicator = i != 0;
+    } else if (key == "fast_loading") {
+        v.fast_loading = i != 0;
+    } else if (key == "fast_fades") {
+        v.fast_fades = i != 0;
+    } else if (key == "load_workers") {
+        v.load_workers = i != 0;
     } else if (const auto sw = std::find_if(std::begin(PartySwitches), std::end(PartySwitches),
                                             [&](const PartySwitch& p) { return key == p.key; });
                sw != std::end(PartySwitches)) {
@@ -517,7 +523,7 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
-        {"BB_GPL", "gpl"}, {"BB_NAN_GUARD", "nan_guard"}, {"BB_NAN_GUARD_MARK", "nan_guard_mark"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"},
+        {"BB_GPL", "gpl"}, {"BB_NAN_GUARD", "nan_guard"}, {"BB_NAN_GUARD_MARK", "nan_guard_mark"},                          {"BB_COMPILE_INDICATOR", "compile_indicator"}, {"BB_FAST_FADES", "fast_fades"},
         {"BB_HUD", "show_hud"},                     {"BB_AUTO_HUD", "auto_hide_hud"}, {"BB_PARTY_NAME_COLOURS", "party_name_colours"}, {"BB_PARTY_LOOK_SYNC", "party_look_sync"}, {"BB_PARTY_PARALLEL_FOLLOW", "party_parallel_follow"}, {"BB_PARTY_SETTLED_DROP", "party_settled_drop"}, {"BB_PARTY_LOAD_BESIDE", "party_load_beside"}, {"BB_PARTY_QUICK_REJOIN", "party_quick_rejoin"}, {"BB_PARTY_NW_DIRECT", "party_nw_direct"}, {"BB_PARTY_MAP_MARKS", "party_map_marks"},                     {"BB_HUD_POSITION", "hud_position"},
         {"BB_MOUSE_KEYBOARD", "mk_enabled"},
         {"BB_MOUSE_DIRECT_CAMERA", "mk_direct_camera"},
@@ -868,6 +874,9 @@ void Save() {
     put("nan_guard", flag(v.nan_guard));
     put("nan_guard_mark", flag(v.nan_guard_mark));
     put("compile_indicator", flag(v.compile_indicator));
+    put("fast_loading", flag(v.fast_loading));
+    put("fast_fades", flag(v.fast_fades));
+    put("load_workers", flag(v.load_workers));
     put("party_toasts", flag(v.party_toasts));
     put("party_hud", flag(v.party_hud));
     put("party_hide_bad_names", flag(v.party_hide_bad_names));

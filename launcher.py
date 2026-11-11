@@ -2658,6 +2658,10 @@ INI_FLAG_SETTINGS = [
     # 0.7.9 (CL-7fc9fe): the log output goes through a background thread, so a slow reader of the game's output
     # (this launcher, an antivirus) cannot freeze the game thread that printed a log line.
     ("feat_log_async", "log_async", True, "BB_LOG_ASYNC"),
+    # 0.8.1 (loadux081): shorter loading screens, all on; the game reads them from bbport.ini, the env var =0 turns one off.
+    ("feat_fast_loading", "fast_loading", True, "BB_FAST_LOADING"),
+    ("feat_fast_fades", "fast_fades", True, "BB_FAST_FADES"),
+    ("feat_load_workers", "load_workers", True, "BB_LOAD_WORKERS"),
     # 0.8.1 (NW-019b146): network addresses in the game's log are masked (1.2.3.4 -> 1.2.x.x); this keeps them.
     ("feat_log_raw_ips", "log_raw_ips", False, "BB_LOG_RAW_IPS"),
     # Live FPS clock (Mrsuss60's live FPS patching, a7cbfae6): replaces the frame rate hooks / FPS++ patches.
@@ -3677,6 +3681,9 @@ class BloodborneLauncher(tk.Tk):
         self.feat_compile_indicator = self.ini_flag_vars["compile_indicator"]
         self.feat_save_commit_async = self.ini_flag_vars["save_commit_async"]
         self.feat_log_async = self.ini_flag_vars["log_async"]
+        self.feat_fast_loading = self.ini_flag_vars["fast_loading"]
+        self.feat_fast_fades = self.ini_flag_vars["fast_fades"]
+        self.feat_load_workers = self.ini_flag_vars["load_workers"]
         self.feat_log_raw_ips = self.ini_flag_vars["log_raw_ips"]
         self.feat_live_fps = self.ini_flag_vars["live_fps"]
         self.feat_shader_precompile = tk.BooleanVar(value=self.settings.get("feat_shader_precompile", True))
@@ -4348,6 +4355,22 @@ class BloodborneLauncher(tk.Tk):
                     "screenshot shows where the white flash started. Diagnostic. Shaders are built again "
                     "once. A game setting (bbport.ini nan_guard_mark). Restart required. Default: off.",
                     command=lambda: self.save_game_settings("nan_guard_mark"))
+        self._check(sec, "Faster loading screens: no frame wait", self.feat_fast_loading,
+                    "While a loading screen is up the game does not wait for the frame rate limit between steps "
+                    "(the loading screen still animates at about 60 frames per second). Not at 30 FPS and not "
+                    "during cutscenes. A game setting (bbport.ini fast_loading; BB_FAST_LOADING=0 turns it off). "
+                    "Restart required. Default: on.",
+                    command=lambda: self.save_game_settings("fast_loading"))
+        self._check(sec, "Faster loading screens: quicker fades", self.feat_fast_fades,
+                    "The fade to black and back that goes with a map load runs twice as fast (at any frame rate). "
+                    "A game setting (bbport.ini fast_fades; BB_FAST_FADES=0 turns it off). Restart required. "
+                    "Default: on.",
+                    command=lambda: self.save_game_settings("fast_fades"))
+        self._check(sec, "Faster loading: 4 loading threads", self.feat_load_workers,
+                    "The game unpacks its map files on 3 threads; with this on, a PC with 6 or more logical CPUs "
+                    "uses 4. A game setting (bbport.ini load_workers; BB_LOAD_WORKERS=0 turns it off, "
+                    "BB_LOAD_WORKERS=N sets the number). Restart required. Default: on.",
+                    command=lambda: self.save_game_settings("load_workers"))
         self._check(sec, "Log output through a background thread", self.feat_log_async,
                     "The game's log lines are handed to a background thread that writes them to this launcher "
                     "(or the log file), so a slow reader cannot freeze the game for seconds. A game setting "

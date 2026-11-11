@@ -31,6 +31,8 @@
 
 namespace bbport::fastload {
 
+/// bbgpu_patch_image, after coop::HooksInit: hooks SprjFlipper::Update unless BB_FAST_LOADING=0 / the ini switch is off.
+void Install();
 /// Present thread, once per loop: reads the game's state (a few guarded reads) and returns true
 /// while the current frame should not be paced.
 bool Tick();
