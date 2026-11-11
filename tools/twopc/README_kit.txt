@@ -33,16 +33,17 @@ have 40 GB free; use 7-Zip or Windows' own extractor, both read zip64).
    1a  seamless travel (party warp to a lamp, to the Dream, a Hunter's Mark), Rejoin in place, a rejoin the moment the
        host travels (about 15 min);  1b  load times per screen, read from the same logs;
    1c  C2: the host dies in the Cleric Beast fight and the boss keeps hitting the guest (about 7 min);
-   1d  Chalice dungeon across game regions - PC 2 runs the region patch (about 5 min);
+   1d  Chalice dungeon across game regions - OFF by default (known stall, 0.8.1): START_PC1.bat --only 1d to run it;
    1e  invader: PC 2 dials before the host is in a world, then the host travels with it inside (about 8 min).
  Block 2 - LAN with simulated DSL on the guest (BB_NET_SIM=dsl), about 20 min: 1a travel and 1c again.
- Block 3 - Nightwatch VPN, about 15 min (needs YOU): when the console says "Connect the Nightwatch VPN now",
-   connect the VPN on that PC (the launcher's Nightwatch VPN button, or your OpenVPN profile). Both PCs must be connected.
+ Block 3 - Nightwatch VPN, about 15 min, OFF unless you ask for it: start it with  START_PC1.bat --vpn  (PC 2 follows).
+   It needs OpenVPN installed and YOUR OWN Nightwatch VPN profile (the kit cannot carry one): connect the VPN on BOTH PCs
+   BEFORE you start. Without a profile leave --vpn off and block 3 does not run.
    The runner finds the tunnel address (10.8.x.x), checks if the two share a /24 (only the masked form a.b.x.x is ever
-   printed or saved), PC 1 hosts, PC 2 finds it through the VPN lobby, one party warp. If no VPN is connected within
+   printed or saved), PC 1 hosts, PC 2 finds it through the VPN lobby, one party warp. If no tunnel address shows up within
    15 minutes this block is skipped and the rest still counts. Disconnect the VPN afterwards if you like.
 
- To skip blocks: give flags to START_PC1.bat only, e.g.  START_PC1.bat --skip 1d,3   or   --only 1a,1c .
+ To skip blocks: give flags to START_PC1.bat only, e.g.  START_PC1.bat --skip 1d   or   --only 1a,1c .
  (PC 2 takes PC 1's list.)  List: bbport\python\python.exe -I twopc\runner.py --role pc1 --list
 
 4. What to send back

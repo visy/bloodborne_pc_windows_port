@@ -33,6 +33,16 @@ class Plan(unittest.TestCase):
         self.assertEqual(sel(skip="1d,2,3"), ["1a.travel", "1a.rejoin", "1a.join", "1c", "1e"])
         self.assertEqual(sel("1c,3"), ["1c", "3", "3b"])
 
+    def test_vpn_blocks_are_opt_in(self):
+        src = (TW / "runner.py").read_text(encoding="utf-8")
+        self.assertIn('"--vpn"', src)
+        self.assertIn('a.vpn or not s["vpn"]', src)
+        self.assertEqual([s["id"] for s in blocks.sessions() if s["optin"]], ["1d"])
+        self.assertEqual([s["id"] for s in blocks.sessions() if s["vpn"]], ["3", "3b"])
+        kit = (TW / "README_kit.txt").read_text(encoding="utf-8")
+        self.assertNotIn("launcher's Nightwatch VPN button", kit)
+        self.assertIn("--vpn", kit)
+
     def test_sessions_are_event_synced(self):
         for s in blocks.sessions():
             self.assertTrue(s["host_until"] and s["seconds"] >= 300, s["id"])

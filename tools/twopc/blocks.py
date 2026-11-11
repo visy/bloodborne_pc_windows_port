@@ -29,7 +29,7 @@ def S(**kw):
         save_host="savedata", save_guest="savedata",
         env=[], host_env=[], guest_env=[], host="god", guest="god",
         host_until=[], guest_until=[], start="code", signals={}, pad_host=False,
-        net_sim=None, vpn=False, ini_host=[], ini_guest=[])
+        net_sim=None, vpn=False, optin=False, ini_host=[], ini_guest=[])
     d.update(kw)
     return d
 
@@ -72,7 +72,7 @@ def sessions():
         host_until=[LAST_STEP], guest_until=[LAST_STEP], hold_host=10, hold_guest=6, grace=200))
     # 1d: a Chalice dungeon across game regions (smoke crg): pc2 runs the "Unlock Game Region" patch, pc1 does not.
     out.append(S(
-        id="1d", block="1", title="Chalice across regions (pc2 has the region patch)", minutes=5, seconds=420,
+        id="1d", block="1", title="Chalice across regions (pc2 has the region patch)", minutes=5, seconds=420, optin=True,
         save_guest="chalice_pthumeru_ritual", pad_host=True,
         env=["BB_PARTY_TRAVEL_CHOICE=party", "BB_PARTY_ALTAR_AUTO=1"],
         guest_env=["BB_PATCHES=Skip Intro;Unlock Game Region"],

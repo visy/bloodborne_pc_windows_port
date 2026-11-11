@@ -4,7 +4,7 @@
   twopc\\runner.py --role pc1        the host (pc1)         START_PC1.bat
   twopc\\runner.py --role pc2        the guest / invader    START_PC2.bat
 
-Flags (give them on pc1 only: pc2 takes pc1's plan):  --only 1a,1c   --skip 1d,2   --list   --no-wait
+Flags (give them on pc1 only: pc2 takes pc1's plan):  --only 1a,1c   --skip 1d,2   --vpn (block 3)   --list   --no-wait
 The kit holds the port build (bbport\\), the game files (CUSA03173\\, configured in twopc\\config.json as a relative path),
 the test saves (twopc\\fixtures\\) and this runner. Nothing is asked: press go, wait. Every game session is scripted by the
 party director's test aids (BB_PARTY_DIRECTOR_TEST, as tools/mp/smoke_party.py does); the two PCs find each other by a LAN
@@ -641,6 +641,7 @@ def main():
     ap.add_argument("--only", default="")
     ap.add_argument("--skip", default="")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--vpn", action="store_true", help="pc1: also run block 3 / 3b (OpenVPN + your own Nightwatch profile connected on both PCs first)")
     ap.add_argument("--no-wait", action="store_true", help="pc1: do not wait for pc2's hello")
     ap.add_argument("--kit", default=str(HERE.parent))
     ap.add_argument("--game", default="", help="game folder (default: config.json, relative to the kit)")
@@ -656,6 +657,8 @@ def main():
     only = [x for x in a.only.split(",") if x]
     skip = [x for x in a.skip.split(",") if x]
     plan = blocks.select(allp, only, skip)
+    # block 3 / 3b need OpenVPN and the user's own Nightwatch profile: only with --vpn on pc1; 1d (optin) only with --only
+    plan = [s for s in plan if (a.vpn or not s["vpn"]) and (only or not s["optin"])]
     if a.list:
         for s in allp:
             print("%-8s %2d min  %s%s" % (s["id"], s["minutes"], s["title"], "" if s in plan else "   (skipped)"))
