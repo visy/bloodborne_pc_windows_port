@@ -7027,7 +7027,7 @@ void BossStateTick(const GameSnapshot& s, double now) {
 /// C2 (rec2) limbo perception diagnostic, host, main thread: while the host lies in its limbo and a boss bar is up, every
 /// 5 s per boss: how the boss's perception (bank search 0x12ADC50, mode 0) sees each living member copy: [chr +0x18]
 /// = A (+0x10 must be 4, +0x20 bits 1 / 4 exclude), X = [A +0x30] (+0x18 bit 0 dead mark, +0xD bit 0x10 excludes), the
-/// team, and whether the boss's target list has a kind-0 (perceived) entry for it. The detail lines are behind
+/// team, and whether the boss's target list holds an entry (kind 0 / 1, handle at +0x50) for it. The detail lines are behind
 /// BB_PARTY_LIMBO_DIAG=1 (off); the warning "boss perceives none of N living members" is always on, it only fires in
 /// the failure (a living guest the boss cannot see: the dead mark on a rebuilt copy, or anything else that hides it).
 void BossLimboPerceptionTick(const GameSnapshot& s, double now) {
@@ -7064,7 +7064,7 @@ void BossLimboPerceptionTick(const GameSnapshot& s, double now) {
         std::set<u32> seen;  // handles of the kind-0 (perceived) entries
         u64 n = Field<u64>(holder, 0x18);
         for (int k = 0; n && k < 12; ++k, n = Field<u64>(n, 8))
-            if (Field<u32>(n, 0x28) == 0) seen.insert(Field<u32>(n, 0x50));
+            if (Field<u32>(n, 0x28) <= 1) seen.insert(Field<u32>(n, 0x50));  // live: the entries for players are kind 1 (hit / perceived), handle at +0x50
         int perceived = 0;
         std::string out;
         for (u64 c : members) {
@@ -7075,14 +7075,14 @@ void BossLimboPerceptionTick(const GameSnapshot& s, double now) {
             const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
             const u64 a = ent ? Field<u64>(ent, 0x18) : 0, x = a ? Field<u64>(a, 0x30) : 0;
             char b[200];
-            std::snprintf(b, sizeof b, " [chr %08x hp %d team %d A+10 %d A+20 %02x X+18 %02x X+0d %02x kind0 %d]", ch, ChrHp(c),
+            std::snprintf(b, sizeof b, " [chr %08x hp %d team %d A+10 %d A+20 %02x X+18 %02x X+0d %02x listed %d]", ch, ChrHp(c),
                           Field<int>(c, 0x88), a ? Field<int>(a, 0x10) : -1, a ? unsigned(Field<u8>(a, 0x20)) : 0xffu,
                           x ? unsigned(Field<u8>(x, 0x18)) : 0xffu, x ? unsigned(Field<u8>(x, 0xd)) : 0xffu, in_list ? 1 : 0);
             out += b;
         }
         if (diag && now - last_diag[h] >= 5.0) {
             last_diag[h] = now;
-            Log("limbo perception: boss %08x, %zu living member(s), %d in its list as kind 0:%s", h, members.size(), perceived, out.c_str());
+            Log("limbo perception: boss %08x, %zu living member(s), %d in its target list:%s", h, members.size(), perceived, out.c_str());
         }
         if (perceived > 0) {
             blind_since.erase(h);

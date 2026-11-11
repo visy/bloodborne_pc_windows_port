@@ -5236,7 +5236,7 @@ def check_hdr(v, L):
     v.step("hdr the boss hits the guest within %.0f s of the host's death (hit lines, or its death)" % HDR_WINDOW, first is not None,
            "%d hit(s), guest died: %s, first %s" % (len(hits), dhit is not None,
                                                     "%+.1f s after the mortal point" % (first - t0) if first is not None else "never"))
-    # the host's boss target dump: a kind-0 (perceived) entry whose handle is the guest's. The players line of the same dump
+    # the host's boss target dump: an entry (kind 0 / 1) whose handle is the guest's. The players line of the same dump
     # lists the host's own chr first, then the members' copies: the first chr that is not the host's is the guest's.
     gh = None
     for _t, line in L.all(0, r"boss target dump \S+: players", lim, lim + 120.0):
@@ -5244,8 +5244,8 @@ def check_hdr(v, L):
         if len(chrs) >= 2:
             gh = chrs[1]
     k0 = [t for t, d in L.all(0, r"boss target dump \S+: boss [0-9a-f]+: ", lim, lim + 120.0)
-          if gh and re.search(r"kind 0 [^\]]*h %s\]" % gh, d)]
-    v.step("hdr the host's boss target dump has a kind-0 (perceived) entry for the guest", bool(k0),
+          if gh and re.search(r"kind [01] [^\]]*h %s\]" % gh, d)]
+    v.step("hdr the host's boss target dump lists an entry (kind 0 / 1) for the guest", bool(k0),
            "guest chr %s: %d dump(s) with it" % (gh, len(k0)))
     stuck = L.all(0, r"boss state: [0-9a-f]+ may be stuck", lim, lim + 120.0)
     v.step("hdr no 'may be stuck' line on the host after the death", not stuck, "%d" % len(stuck))
