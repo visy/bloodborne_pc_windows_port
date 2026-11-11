@@ -135,6 +135,8 @@ Windows, MinGW-w64, CMake, Ninja: [docs/BUILDING.md](docs/BUILDING.md) (also DLS
 | FireBurn | FSR-Vulkan, AMD FidelityFX SDK (MIT) |
 | MikeTat1988 | [Hunter's Atlas](https://github.com/MikeTat1988/HuntersAtlas): the in-game map |
 | Noxde, Valentino Amato | [Bloodborne-save-editor](https://github.com/Noxde/Bloodborne-save-editor) |
+| Noxde, with dmal99, Kyoski and BraianLDC | The Community Chalice glyph list ([Add Chalice Dungeons to your save](https://www.nexusmods.com/bloodborne/mods/121), [Dungeons-CLI](https://github.com/Noxde/Dungeons-CLI)): the dungeons offered at the Ritual Altar, downloaded from Noxde's list, never bundled |
+| Awaken ([Lantern Engine](https://github.com/Awakenchan/LanternEngine)) | Lantern Engine by Awaken (modified; GPL-3.0 with its section 7 terms): the occlusion query order fix and the engine fixes that came through Nightwatch's Lantern-based engine |
 | Thealexbarney, ocornut | LibAtrac9, Dear ImGui |
 | Kyo, Lance McDonald, illusion, emoose, auser1337 | 60 FPS, camera and engine patches |
 | vladtepes22 ([Nightwatch Coop](https://github.com/vladtepes22/NightwatchCoop)) | Co-op fixes and features in 17 PRs (#6 to #36): boss defeat while the host is dead, VPN and NAT joins, Chalice Dungeons with a party, open LAN/VPN parties, the lobby mods label, party size from the host, the save editor's health and stamina refill; testing and bug reports |
