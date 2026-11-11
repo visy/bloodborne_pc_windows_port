@@ -26,6 +26,7 @@
 #include "bbport_stability.h"
 #include "bbport_frame_rate.h"
 #include "bbport_frame_rate_logic.h"
+#include "bbport_live_refresh_logic.h"
 #include "bbport_guest_code.h"
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
@@ -1040,6 +1041,38 @@ void LiveDiag(const u8* pacer, float measured, int target, float interval, float
     last_frames = frames;
 }
 
+/// Issue #35 (Live FPS stuck after a respawn, cleared by minimising and restoring the window = a swapchain re-create):
+/// once a real second the rate of the game steps is judged (bbport_live_refresh_logic.h); a sustained drop under the
+/// stay before the last load asks the presenter for one swapchain re-create. BB_LIVE_FPS_REFRESH=0 off;
+/// BB_TEST_SWAPCHAIN_RECREATE_AT=N (test aid): N in-world seconds after every load, whatever the rate (with
+/// BB_LIVE_FPS_REFRESH=0 this is the only trigger).
+std::atomic<bool> swapchain_refresh_request{false};
+void LiveRefreshTick(int target) {
+    static const bool on = [] { const char* v = std::getenv("BB_LIVE_FPS_REFRESH"); return !(v && *v == '0'); }();
+    static const int test_at = [] { const char* v = std::getenv("BB_TEST_SWAPCHAIN_RECREATE_AT"); return v ? std::atoi(v) : 0; }();
+    if (!on && test_at <= 0) return;
+    using clock = std::chrono::steady_clock;
+    static clock::time_point last = clock::now();
+    static std::uint64_t last_steps = 0;
+    static BbLiveRefresh::State st;
+    const auto now = clock::now();
+    const double secs = std::chrono::duration<double>(now - last).count();
+    if (secs < 1.0) return;
+    const std::uint64_t n = steps.load(std::memory_order_relaxed);
+    const double fps = double(n - last_steps) / secs;
+    last = now, last_steps = n;
+    const auto gs = coop::ReadGameState(false);
+    const bool in_world = gs.world_up && !gs.loading && gs.in_game_frame;
+    const double before = st.baseline;
+    if (BbLiveRefresh::Second(st, fps, in_world, target, test_at)) {
+        swapchain_refresh_request.store(true, std::memory_order_relaxed);
+        std::printf("Live clock: %s, %.1f steps/s (stay before the load %.1f/s): the swapchain is re-created once "
+                    "(BB_LIVE_FPS_REFRESH=0 off)\n",
+                    test_at > 0 ? "test aid" : "frame rate stuck below the stay before the load", fps, before);
+        std::fflush(stdout);
+    }
+}
+
 /// The main loop's step (rdi: the pacer; rsi: where the step goes, [rbp - 0x38]).
 void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     SoundFrame();
@@ -1063,6 +1096,7 @@ void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
     LiveDiag(pacer, measured, target, interval, dt);
+    LiveRefreshTick(target);
     if (live_logged_target.exchange(target, std::memory_order_relaxed) != target) {
         std::printf("Live clock: target %d FPS%s, step %.5f s (max 1/%d s)\n", target > 0 ? target : LiveCeiling,
                     target > 0 ? "" : " (uncapped)", double(dt), s.max_dt_hz.load(std::memory_order_relaxed));
@@ -1246,6 +1280,8 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     Install(image, size);
     StartSweep(); // BB_FRAME_SWEEP (diagnostics, bbport_frame_sweep.cpp; with the patches too)
 }
+
+bool TakeSwapchainRefresh() { return swapchain_refresh_request.exchange(false, std::memory_order_relaxed); }
 
 unsigned LivePresenterLimit() {
     if (!live_requested.load(std::memory_order_relaxed)) return 0;
