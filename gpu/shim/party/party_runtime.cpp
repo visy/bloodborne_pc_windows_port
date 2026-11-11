@@ -2917,6 +2917,10 @@ bool lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::
     const bool lb = loopback_mode();
     std::uint32_t nbo = 0;
     std::memcpy(&nbo, ip->data(), 4);
+    // NW-03d11e5: a partial code's guessed address is in the Nightwatch /22: the host may be in another /24 of
+    // it. Three more unicast probes (same last octet) ride along with the broadcast; they cross the tunnel.
+    std::vector<std::array<std::uint8_t, 4>> tun_cands;
+    if (code.lan_partial) tun_cands = tunnel_lan_candidates(*ip);
     std::string why;
     if (forced) {
         why = forced;
@@ -2941,7 +2945,12 @@ bool lan_fallback(const PartyCode& code, const LinkConfig& cfg, std::array<std::
     if (why.empty()) return false;
     const std::array<std::uint8_t, 8> no_secret{};
     const crypto::Key key = crypto::derive_party_key(cfg.password, code.plain ? no_secret.data() : code.secret.data());
-    const std::vector<std::uint32_t> targets = lb ? std::vector<std::uint32_t>{0x0100007fu} : lan::broadcast_targets();
+    std::vector<std::uint32_t> targets = lb ? std::vector<std::uint32_t>{0x0100007fu} : lan::broadcast_targets();
+    for (const auto& c : tun_cands) {
+        std::uint32_t n = 0;
+        std::memcpy(&n, c.data(), 4);
+        targets.push_back(n);
+    }
     plog("LAN fallback: %s; looking for the host on this network (port %u)", why.c_str(), *port);
     lan::Found f;
     std::string note;
