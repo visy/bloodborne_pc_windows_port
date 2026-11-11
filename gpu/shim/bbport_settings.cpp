@@ -50,6 +50,7 @@ const PartySwitch PartySwitches[] = {
     {"party_layer_travel", "BB_PARTY_LAYER_TRAVEL", &Values::party_layer_travel, false},  // 0.7.7, CL-48ee07
     {"party_glyph_list", "BB_PARTY_GLYPH_LIST", &Values::party_glyph_list, false},  // 0.7.8, CL-420d9f
     {"party_guest_altar", "BB_PARTY_GUEST_ALTAR", &Values::party_guest_altar, false},  // 0.7.9, CL-13f7d1
+    {"chalice_glyphdb", "BB_CHALICE_GLYPHDB", &Values::chalice_glyphdb, false},  // 0.8.1, glyphdb081
     {"party_title_room_hold", "BB_PARTY_TITLE_ROOM_HOLD", &Values::party_title_room_hold, true},  // 0.7.9, gdrf079
     {"party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", &Values::party_covenant_per_player, false},
     // 0.7.3: lamp travel voting (party_vote.h reads it live; the host's rule, off by default).

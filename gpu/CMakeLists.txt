@@ -784,6 +784,11 @@ add_executable(party-chalice-glyphs-test EXCLUDE_FROM_ALL ../tests/test_party_ch
 target_compile_options(party-chalice-glyphs-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(party-chalice-glyphs-test PRIVATE shim)
 set_target_properties(party-chalice-glyphs-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Community Chalice glyph list: cache parser, record to FormData (party_chalice_glyphdb.h). ninja -C out/gpu party-chalice-glyphdb-test
+add_executable(party-chalice-glyphdb-test EXCLUDE_FROM_ALL ../tests/test_party_chalice_glyphdb.cpp shim/net/json.cpp)
+target_compile_options(party-chalice-glyphdb-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(party-chalice-glyphdb-test PRIVATE shim)
+set_target_properties(party-chalice-glyphdb-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Split travel notice text + rate limit (party_split_notice.h). ninja -C out/gpu party-split-notice-test
 add_executable(party-split-notice-test EXCLUDE_FROM_ALL ../tests/test_party_split_notice.cpp)
 target_compile_options(party-split-notice-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

@@ -24,6 +24,7 @@
 #include "party/coop_hooks.h"
 #include "party/game_state.h"
 #include "party/party_b2.h"
+#include "party/party_chalice.h"
 #include "net/bbnet_internal.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
@@ -443,6 +444,8 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     coop::b2::InstallOwnWorldTypeGuard();  // own-world chr type repair, every mode (party save played offline)
     if (coop::PartyRequested()) {
         coop::PartyInit(image, size);  // party co-op: main-thread tick, Lua events, director
+    } else {
+        coop::chalice::InstallSolo();  // the community Chalice glyph list (setting chalice_glyphdb, off by default)
     }
     coop::MarkImageHooksDone();  // the party version check hashes the installed hooks after this
 }
