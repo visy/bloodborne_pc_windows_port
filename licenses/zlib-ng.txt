@@ -1,5 +1,5 @@
-zlib-ng 2.3.3 (https://github.com/zlib-ng/zlib-ng), linked statically into bbport.exe (libz-ng.a from the MSYS2
-package mingw-w64-x86_64-zlib-ng; unmodified). Used for the fast inflate behind the engine's zlib
+zlib-ng 2.2.5 (https://github.com/zlib-ng/zlib-ng), linked statically into bbport.exe (built from the pinned
+submodule gpu/third_party/zlib-ng; unmodified). Used for the fast inflate behind the engine's zlib
 (gpu/shim/bbport_fast_inflate.h, BB_FAST_INFLATE). Licence: the zlib licence.
 
 (C) 1995-2024 Jean-loup Gailly and Mark Adler
