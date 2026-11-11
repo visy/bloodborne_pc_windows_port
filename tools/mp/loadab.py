@@ -67,7 +67,8 @@ def run(a):
         (out / "shots").mkdir(exist_ok=True)
         shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out",
                             str(out / "shots"), "--tag", "gone", "--repeat", "--seconds", str(secs + 400), "--watch",
-                            "loading screen gone=gone@1,2,3,4,5,6,7,8,9,10"],
+                            "loading screen gone=gone@1,2,3,4,5,6,7,8,9,10"] +
+                           (["--watch", "loading screen up=up@0.4,0.7,1.0,1.3,1.6,1.9,2.2,2.5"] if a.loadshots else []),
                             stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
     print("[loadab] " + " ".join(cmd)[:250], flush=True)
@@ -137,6 +138,7 @@ def main():
     ap.add_argument("--out", action="append")
     ap.add_argument("--env", action="append")
     ap.add_argument("--chain", help="comma list of lamp ids to warp through (replaces the default route)")
+    ap.add_argument("--loadshots", action="store_true", help="with --shots: also 8 shots in the first 2.5 s of every loading screen")
     ap.add_argument("--shots", action="store_true", help="screenshots after every loading screen (black-frame count)")
     a = ap.parse_args()
     if a.cmd == "run":

@@ -214,6 +214,13 @@ struct Values {
     std::atomic<bool> nan_guard_mark{false};
     /// "Compiling shaders: N%" in the bottom right corner (BB_COMPILE_INDICATOR). Live.
     std::atomic<bool> compile_indicator{true};
+    /// 0.8.1 loading speed-ups, all on by default, each with an environment kill switch (=0): loading screens run
+    /// unpaced but keep animating (fast_loading, BB_FAST_LOADING), world fades twice as fast (fast_fades,
+    /// BB_FAST_FADES), 4 resource worker threads instead of 3 on a PC with the cores for it (load_workers,
+    /// BB_LOAD_WORKERS). Read at start.
+    std::atomic<bool> fast_loading{true};
+    std::atomic<bool> fast_fades{true};
+    std::atomic<bool> load_workers{true};
     /// Party mode: short join / leave / travel notices in a top corner (ini party_toasts). Live.
     std::atomic<bool> party_toasts{true};
     /// Party mode: the party HUD, companions' names / health / whereabouts in the bottom left
