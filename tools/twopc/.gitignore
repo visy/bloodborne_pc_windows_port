@@ -1,0 +1,9 @@
+# the kits carry game files: nothing built here may be committed
+*.zip
+CUSA03173/
+bbport/
+fixtures/
+logs/
+work/
+twopc_logs_*
+__pycache__/
