@@ -1,0 +1,3 @@
+### Changed
+
+- **Shorter loading screens** (loadux081): three speed-ups, all on by default. The loading screen no longer waits for the frame rate limit between its steps (at 60 / 90 / uncapped, not at 30 FPS and not in cutscenes) and still draws a new picture about every 16 ms, so it keeps moving. The black fade out and in around a map load takes half the time, at any frame rate. On a PC with 6 or more logical CPUs the game unpacks map files on 4 threads instead of 3. Each can be turned off in the launcher (Advanced) or in bbport.ini (`fast_loading=0`, `fast_fades=0`, `load_workers=0`); `BB_FAST_LOADING=0`, `BB_FAST_FADES=0` and `BB_LOAD_WORKERS=0` do the same for scripts.
