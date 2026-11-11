@@ -1067,6 +1067,23 @@ void HostGlyphList(const State& s, const std::string& me) {
         b.touched = c.touched;
         items.push_back(std::move(b));
     }
+    // The Ritual Altar answers "A Holy Chalice is required to conduct a ritual" before it offers anything when the
+    // player owns no chalice (found live, glyphdb081). The community list is for players who have none yet, so with
+    // it on and rows to offer, one Pthumeru Chalice (6109: a fixed chalice, never used up by a ritual) is given once.
+    if (DbOn() && g_db_ready.load(std::memory_order_acquire) && s.load_mode == 0) {
+        static double next_give = 0;
+        if (now >= next_give) {
+            next_give = now + 20.0;
+            bool any = false;
+            for (std::uint32_t id : kChaliceGoods) any = any || GoodsCount(id) > 0;
+            if (!any) {
+                const bool ok = GiveGoods(6109, 1);
+                std::printf("[coop] Party: chalice: community glyphs: no chalice owned, the altar would refuse; Pthumeru Chalice %s\n",
+                            ok ? "given" : "NOT given");
+                std::fflush(stdout);
+            }
+        }
+    }
     std::vector<glyphs::Entry> community;
     if (DbOn()) {
         std::lock_guard<std::mutex> lk(g_list_mu);
