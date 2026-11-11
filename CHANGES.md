@@ -35,6 +35,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
   0.3 to 0.4 s) and 3.86 s instead of 4.09 s on a PC limited to 6 threads; Continue and death respawns are unchanged. Off by default;
   delete the folder or turn the option off to go back. A mod that replaces a game file still wins, and the co-op version check ignores
   the option. `BB_ZSTD_DIR` is the folder, `BB_INFLATE_BENCH=1` a diagnostic that times unpacking.
+- **Added: Community Chalice glyphs at the Ritual Altar** (Noxde's list, Nexus mod 121). New switch, off by default: *System > My party: Chalice > Community Chalice glyphs (Noxde's list)* (the launcher's My Party tab, bbport.ini `chalice_glyphdb`). With it on, the altar's *Search by Chalice Glyph* lists about 200 community glyphs (farming, equipment, blood gems, testing) with their descriptions, solo or as the party's host; pick one (PageUp / PageDown or L1 / R1 jump ten rows) or type its glyph and the game makes and enters that dungeon its own way, with no internet, and the party follows. It works without owning a Chalice (the altar's chalice test is answered while the list is on; nothing is added to your inventory). The launcher downloads the current list from Noxde's gist while the switch is on and keeps it in your user folder (the last download is used offline; creators' names are never kept). The list is Noxde's work, credited in docs/CREDITS.md. See docs/party/chalice.md 13.
 
 ### Changed
 

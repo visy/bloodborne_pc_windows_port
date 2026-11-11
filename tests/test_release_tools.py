@@ -39,6 +39,7 @@ def good_stage(root):
         touch(root, rel)
     (root / 'user' / 'trophy').mkdir()  # empty skeleton folders are fine
     touch(root, 'out/bbport.exe', b'MZ fake exe')
+    touch(root, 'out/bb-zstdpack.exe', b'MZ fake zstdpack')
     return root
 
 
@@ -181,6 +182,7 @@ class StageTests(unittest.TestCase):
             touch(self.build, dll)
         self.set_exe(f'v0.1-5-g{self.head[:10]}')
         touch(self.build, 'bbport.exe.debug', b'dbg')
+        touch(self.build, 'bb-zstdpack.exe', b'MZ fake zstdpack')
         self.base = self.tmp / 'base'
         touch(self.base, 'out/libx.dll')
         touch(self.base, 'user/readme.txt')
