@@ -96,6 +96,9 @@ Only for a step that has to be run by hand (a failed step, a special build).
 - [ ] zlib-ng (the fast inflate, `BB_FAST_INFLATE`): a pinned submodule, `gpu/third_party/zlib-ng` (2.2.x tag), built
       static by `gpu/CMakeLists.txt` (required: configure fails if it is not initialised; `configure_pgo.py` inits it;
       `git submodule update --init gpu/third_party/zlib-ng` otherwise). Runtime CPU dispatch, no `-march`.
+- [ ] zstd (converted game files, `bb-zstdpack`, `BB_ZSTD_DIR`): vendored as the git submodule `third_party/zstd` (tag v1.5.7),
+      built static from source by `gpu/CMakeLists.txt` (required: configure fails if the submodule is not initialised;
+      `configure_pgo.py` runs `git submodule update --init`). `bb-zstdpack.exe` lands in `out\` and is staged with the other exes.
 - [ ] Build: `set PATH=C:\msys64\mingw64\bin;%PATH%` then `cmake --build <repo>\out\gpu-pgo-gen`
       (machine-wide build limits: only when no other build runs). The exe lands in `<repo>\out\release`.
 - [ ] The tree is clean when the exe is built: the exe embeds `git describe --dirty`; staging refuses a `-dirty`

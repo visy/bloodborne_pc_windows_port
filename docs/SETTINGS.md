@@ -43,6 +43,7 @@ launch_gui.bat
 - **Display**: target frame rate (60 FPS recommended), render resolution, window mode (`BB_WINDOW_MODE`: *Borderless* (default), *Windowed* or exclusive *Fullscreen*, which can crash on laptops with hybrid graphics), monitor (`BB_DISPLAY`), frames ahead (1 = least input lag, 2 = default, 3 = smoothest).
 - **Graphics**: *Enable upscaler* with its choice (FSR 3.1 / FSR 4 / FSR 4.1.1 / TAA / DLSS, the game menu's list; unchecked = `upscaler=off`; the launcher cannot check the GPU, so it lists all of them and the game falls back to FSR 3.1 when FSR 4 / 4.1.1 or DLSS is not available), object motion vectors, anisotropic filtering, frame generation (Off / DLSS FG 2x-4x / FSR FG 2x) and NVIDIA Reflex (Off / On / On + Boost; both game settings in `bbport.ini`, off by default, see [FG_REFLEX.md](FG_REFLEX.md)), HDR output with its peak brightness and paper white ([HDR output](#hdr-output); off by default), VRAM pre-upload (*Full* needs a 12 GB+ GPU).
 - **Performance & Shaders**: *Performance Patch*, draw preparation workers, shader precompile, async shaders, GPL, the NaN guard (`nan_guard`, off by default: pixel shaders write black for a NaN / Inf colour, so one bad pixel cannot turn the whole screen white through bloom; restart needed; `nan_guard_mark` draws them magenta, in Advanced / Debug), the compile indicator, and **Export / Import shader cache**.
+- **Faster loading**: convert the game's compressed files once into a separate folder ([details](#faster-loading-converted-game-files)).
 - **Game**: skip intro, skip the online/offline choice, settings in the game's System menu, mods, and *All XML Patches...*.
 - **Input & Audio**: controller (`BB_GAMEPAD`), overlay on `L3 + R3`, mute in background.
 - **Advanced / Debug**: diagnostics, watchdog, party logging, support bundle, and the [shader cache builder](#shader-cache-builder-world-warper).
@@ -52,6 +53,23 @@ launch_gui.bat
 - Hover any option for details, then click **Launch Bloodborne**. `run.bat` started on its own uses the same saved settings.
 
 **Game settings and launch options.** A setting that is also in the game's menus (System pages, Insert overlay) lives only in `bbport.ini`: the launcher reads it when it opens, writes it when you change it, and reads it again when the game exits (and when its window gets the focus after the file changed), so both always show the same value; it sets no `BB_*` variable for it at launch (the variables still work for scripts and tests and then win over the ini). These are: the upscaler (`upscaler`), object motion vectors (`object_motion`), motion blur resolution (`volumetric_res`), the performance HUD (`show_hud`), mouse & keyboard mode (`mk_enabled`), button prompts (`prompt_style`), async shaders (`async_pipelines`), pipeline libraries (`gpl`), the shader indicator (`compile_indicator`), frame generation, Reflex, HDR, the party's HUD / rules switches (0.7.1 added `party_kill_record`, `party_gather`, `party_npc_mirror` on *Shared world* (0.7.3 `party_travel_vote` there, off by default) and `party_key_view`, `party_key_items_summoned` on *Party rewards*, all on by default), and the patches the game's *Effects* page switches (*Skip Intro* = `skip_intro`, *Disable Motion Blur* = `effect_motion_blur=0`, the other effect patches and the model LOD patches of *All XML Patches...*). Everything else (frame rate and FPS patch, frame hooks, render resolution, window mode, monitor, controller, VRAM pre-upload, frames ahead, anisotropic filtering, draw prep workers, shader precompile, the overlay switches, mute in background, mods, *Performance Patch* and other XML patches, diagnostics, the Party tab's connection) is a launch option kept in `launcher_settings.json`. The first start after the update moves the old launcher values into `bbport.ini` once: a key the ini lacks, or a launcher value that used to override the ini at every launch (e.g. an unchecked upscaler, a checked *Skip Intro*); after that the ini wins.
+
+### Faster loading (converted game files)
+
+**Launcher > Game: Faster loading: use converted game files**, with the button *Convert game files for faster loading
+(one-time, about 14 GB extra)*. The game's map, model, texture and script files are zlib-compressed; unpacking them is most of
+a loading screen. The button recompresses each of them once with zstd (which unpacks about twice as fast) into a separate folder
+next to the game folder (`<game folder>-zstd`, about 15 GB, 5 to 15 minutes, resumable) and checks every file against the original;
+the option then turns on. Your game folder is never changed. A lamp trip is about 0.15-0.25 s shorter (3.80 s to 3.64 s on a
+16-thread PC, 4.09 s to 3.86 s on 6 threads; 0.3 to 0.4 s on the Great Bridge, Yahar'gul and Tomb of Oedon lamps), Continue and
+death respawns do not change.
+
+- The game uses a converted file only while the original has the size and modification time the converter saw, so a mod that
+  replaces a file wins. Delete the folder (or turn the option off) to go back; nothing else needs undoing.
+- Co-op does not care: the version check, the game-data check and the party tables read your game folder, not the converted copy,
+  so players with and without converted files can play together.
+- Environment: `BB_ZSTD_DIR` (the folder; the launcher sets it), command line: `out\bb-zstdpack.exe convert|verify --game <folder>
+  --out <folder>`. Needs the fast unpacker (`BB_FAST_INFLATE`, on by default).
 
 ### Shader cache builder (world warper)
 

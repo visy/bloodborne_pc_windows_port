@@ -137,6 +137,9 @@ before anyone is in the game):
   host PC in the router, or use a VPN such as Tailscale and give the VPN address as `host:port`
   (see [Connecting over the internet](#connecting-over-the-internet)).
 
+Faster loading (the launcher's converted game files, [SETTINGS.md](SETTINGS.md#faster-loading-converted-game-files)) is not part of
+the party's version check: players with and without it can play together.
+
 ## How it plays
 
 **Joining and leaving**

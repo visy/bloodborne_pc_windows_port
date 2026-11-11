@@ -147,6 +147,24 @@ target_link_libraries(zlibng::zlibng INTERFACE zlib)
 target_compile_definitions(zlibng::zlibng INTERFACE BB_HAVE_ZLIB_NG)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib-ng/zlib-ng.h.in" bb_zng_ver_line REGEX "define ZLIBNG_VERSION ")
 message(STATUS "zlib-ng: built from gpu/third_party/zlib-ng (${bb_zng_ver_line})")
+# zstd: vendored (git submodule third_party/zstd, a facebook/zstd release tag; BSD licence, licenses/zstd.txt), built
+# static from source (build/cmake, no programs / tests / shared / legacy decoders; compiled with the port's own flags,
+# no -march). Used by the faster-loading format (zstd081, bbport_zstd_inflate.h) and bb-zstdpack.
+set(ZSTD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/zstd")
+if (NOT EXISTS "${ZSTD_ROOT}/build/cmake/CMakeLists.txt")
+    message(FATAL_ERROR "zstd submodule missing: run `git submodule update --init third_party/zstd`")
+endif()
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+add_subdirectory("${ZSTD_ROOT}/build/cmake" "${CMAKE_BINARY_DIR}/zstd" EXCLUDE_FROM_ALL)
+add_library(zstd::zstd INTERFACE IMPORTED)
+target_link_libraries(zstd::zstd INTERFACE libzstd_static)
+target_include_directories(zstd::zstd INTERFACE "${ZSTD_ROOT}/lib")
+target_compile_definitions(zstd::zstd INTERFACE BB_HAVE_ZSTD)
 if (WIN32)
     if (NOT TARGET miniz::miniz)
         add_library(miniz::miniz INTERFACE IMPORTED)
@@ -325,10 +343,10 @@ target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vu
                                     ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 if (WIN32)
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng zstd::zstd Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
 else()
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng zstd::zstd Zydis::Zydis sirit)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
@@ -610,6 +628,14 @@ target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
 target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
 set_target_properties(bb-gpu-capabilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# bb-zstdpack (tools/zstdpack): the one-time game file converter for faster loading (zstd081). Static zstd + zlib-ng.
+if (ZLIB_NG_INC AND ZLIB_NG_LIB)
+    add_executable(bb-zstdpack ../tools/zstdpack/zstdpack.cpp)
+    target_link_libraries(bb-zstdpack PRIVATE zlibng::zlibng zstd::zstd)
+    target_link_options(bb-zstdpack PRIVATE -static)
+    set_target_properties(bb-zstdpack PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+endif()
+
 # The open party's join rule (party_open_rules.h). ninja -C out/gpu party-open-test
 add_executable(party-open-test EXCLUDE_FROM_ALL ../tests/test_party_open.cpp)
 target_compile_options(party-open-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -848,6 +874,14 @@ if (ZLIB_NG_INC AND ZLIB_NG_LIB)
     target_include_directories(fast-inflate-test PRIVATE shim)
     target_link_libraries(fast-inflate-test PRIVATE zlibng::zlibng z)
     set_target_properties(fast-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
+# Zstd behind the engine's inflate (shim/bbport_zstd_inflate.h): zstd frames through the engine's z_stream contract. ninja -C out/gpu zstd-inflate-test
+if (ZLIB_NG_INC AND ZLIB_NG_LIB)
+    add_executable(zstd-inflate-test EXCLUDE_FROM_ALL ../tests/test_zstd_inflate.cpp)
+    target_compile_options(zstd-inflate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(zstd-inflate-test PRIVATE shim)
+    target_link_libraries(zstd-inflate-test PRIVATE zlibng::zlibng zstd::zstd z)
+    set_target_properties(zstd-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 # Fast loading (shim/bbport_fast_loading.h): the pure rules. ninja -C out/gpu fast-loading-test
 add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp)

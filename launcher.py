@@ -62,6 +62,7 @@ FRAMES_AHEAD_CHOICES = [("2 (smooth, default)", "2"), ("1 (lowest input lag)", "
 DEFAULT_DISPLAY = "Primary (default)"
 DEFAULT_GAMEPAD = "Any (default)"
 GPU_CAPS = APP_DIR / "out" / "bb-gpu-capabilities.exe"
+ZSTDPACK = APP_DIR / "out" / "bb-zstdpack.exe"  # zstd081: the one-time game file converter (tools/zstdpack)
 MAX_LOG_LINES = 5000
 VK_NOISE = "<Warning> vk_instance.cpp"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -2090,6 +2091,33 @@ def migrate_window_mode(s: dict) -> bool:
     return True
 
 
+def zstd_files_dir(s: dict) -> Path:
+    """The folder of converted game files (bb-zstdpack): the launcher setting zstd_dir, else next to the game folder
+    (<game folder>-zstd). Delete it to go back to the original files."""
+    custom = str(s.get("zstd_dir", "") or "").strip()
+    if custom:
+        return Path(custom)
+    game = resolve_game_dir(s.get("eboot", "")) if s.get("eboot") else None
+    return (game.parent / (game.name + "-zstd")) if game is not None else APP_DIR / "zstd-game"
+
+
+def zstd_files_summary(folder: Path) -> tuple:
+    """(converted file count, finished, bytes) from <folder>/bbzstd.manifest; (0, False, 0) without one."""
+    try:
+        count, done, size = 0, False, 0
+        with open(folder / "bbzstd.manifest", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("F" + chr(9)):
+                    parts = line.rstrip().split(chr(9))
+                    count += 1
+                    size += int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+                elif line.startswith("DONE"):
+                    done = True
+        return count, done, size
+    except OSError:
+        return 0, False, 0
+
+
 def settings_env(s: dict) -> dict:
     """BB_* environment for run.bat from launcher settings (None = unset the variable).
 
@@ -2111,6 +2139,9 @@ def settings_env(s: dict) -> dict:
         env["BB_FPS"] = "uncap"
         env["BB_FPS_LIMIT"] = fps_choice
     env["BB_MODS_ENABLED"] = "1" if on("mods") else "0"
+    # zstd081: converted game files (bb-zstdpack) for faster loads; only a finished conversion is used.
+    zdir = zstd_files_dir(s)
+    env["BB_ZSTD_DIR"] = str(zdir) if on("zstd_files", False) and zstd_files_summary(zdir)[0] else None
     env["BB_DREAM_MIRROR"] = None if on("dream_mirror") else "0"
     env["BB_LAMP_TRAVEL"] = None if on("lamp_travel") else "0"
     # Game settings (the upscaler, object motion, the HUD, M&K mode, shader options, motion blur
@@ -3509,6 +3540,9 @@ class BloodborneLauncher(tk.Tk):
         self.feat_auto_hud = self.ini_flag_vars["auto_hide_hud"]
         self.map_status_var = tk.StringVar(value="")
         self._map_busy = False
+        self.feat_zstd_files = tk.BooleanVar(value=bool(self.settings.get("zstd_files", False)))
+        self.zstd_status_var = tk.StringVar(value="")
+        self._zstd_busy = False
 
         # Party co-op (BB_PARTY_*)
         party_mode = str(self.settings.get("party_mode", "") or "")
@@ -4044,6 +4078,27 @@ class BloodborneLauncher(tk.Tk):
                               "writes the map data to user\\map. Needs the map generator (the map_generator "
                               "folder of the release). Redo it after the game files change.")
         self.refresh_map_status()
+        self._check(sec, "Faster loading: use converted game files", self.feat_zstd_files,
+                    "Loading screens get shorter: the map data in your game folder is stored with zlib; the button "
+                    "below makes a copy of those files with zstd, which decodes about twice as fast, in a separate "
+                    "folder. Your game folder is never changed and the original files stay what the party "
+                    "compares. Only the files the converter listed are used, and only while the original is "
+                    "unchanged (a mod that replaces a file wins). To go back, turn this off or delete the folder. "
+                    "Restart required. Default: off.",
+                    command=self.on_zstd_toggle)
+        zstd_row = ttk.Frame(sec, style="Card.TFrame")
+        zstd_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 4), padx=(22, 0))
+        sec.next_row += 1
+        self.zstd_btn = ttk.Button(zstd_row, text="Convert game files for faster loading"+chr(10)+"(one-time, about 14 GB extra)",
+                                   style="Secondary.TButton", command=self.convert_zstd_files)
+        self.zstd_btn.grid(row=0, column=0, sticky="w")
+        ttk.Label(zstd_row, textvariable=self.zstd_status_var, style="Card.TLabel").grid(row=1, column=0, sticky="w")
+        Tooltip(self.zstd_btn, "Reads your game folder once and writes the converted files to a folder next to it "
+                               "(<game folder>-zstd). About 5 to 15 minutes depending on the CPU; needs about "
+                               "14 GB of free space on that drive. Resumable: start it again after an interruption. "
+                               "Every converted file is checked against the original. Turns the option above on "
+                               "when it is done.")
+        self.refresh_zstd_status()
         prompt_combo = self._combo(
             sec, "Button prompts:", self.prompt_style_var, [c[0] for c in PROMPT_STYLE_CHOICES],
             "The icons in the game's button prompts and key guides. Auto (default): keys after "
@@ -4935,6 +4990,88 @@ class BloodborneLauncher(tk.Tk):
                 else:
                     self.log(f"[MAP] The map could not be prepared: {last_error or 'exit code %d' % code}")
                 self.refresh_map_status()
+            self.after(0, finish)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def refresh_zstd_status(self):
+        """The Faster loading line: converted files and size, or not converted."""
+        if self._zstd_busy:
+            return
+        try:
+            count, done, size = zstd_files_summary(zstd_files_dir(self.current_settings()))
+        except Exception:  # noqa: BLE001 - only a status line
+            count, done, size = 0, False, 0
+        if not count:
+            text = "Not converted yet."
+        else:
+            text = "%d files converted (%.1f GB)%s." % (count, size / 1073741824.0, "" if done else ", not finished")
+        self.zstd_status_var.set(text)
+
+    def on_zstd_toggle(self):
+        self.save_settings()
+        if self.feat_zstd_files.get() and not zstd_files_summary(zstd_files_dir(self.current_settings()))[0]:
+            self.feat_zstd_files.set(False)
+            messagebox.showinfo("Faster loading", "Convert the game files first (the button below the option).")
+            self.save_settings()
+
+    def convert_zstd_files(self):
+        """Runs out/bb-zstdpack.exe convert, then verify, in the background; one line of progress in the status
+        label, the outcome in the log. Turns the option on when it finished cleanly."""
+        if self._zstd_busy:
+            return
+        game = resolve_game_dir(self.eboot_var.get()) if self.eboot_var.get().strip() else None
+        if game is None:
+            messagebox.showinfo("Convert game files", "Select the game folder (eboot.bin) first.")
+            return
+        if not ZSTDPACK.is_file():
+            self.log("[ZSTD] out/bb-zstdpack.exe is missing.")
+            return
+        out = zstd_files_dir(self.current_settings())
+        self._zstd_busy = True
+        self.zstd_btn.configure(state="disabled")
+        self.zstd_status_var.set("Starting...")
+        self.log("[ZSTD] Converting the game files to %s" % out)
+
+        def run(cmd):
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    encoding="utf-8", errors="replace", creationflags=flags)
+            tail = ""
+            for line in proc.stdout:  # text mode: a progress line ends with a carriage return, read as a line end
+                line = line.strip()
+                if not line:
+                    continue
+                tail = line
+                if line.startswith(("Progress", "Verified")):
+                    self.after(0, lambda t=line: self.zstd_status_var.set(t))
+                else:
+                    self.after(0, lambda t=line: self.log("[ZSTD] " + t))
+            return proc.wait(), tail
+
+        def work():
+            code, tail = -1, ""
+            try:
+                code, tail = run([str(ZSTDPACK), "convert", "--game", str(game), "--out", str(out)])
+                if code == 0:
+                    code, tail = run([str(ZSTDPACK), "verify", "--game", str(game), "--out", str(out)])
+            except OSError as ex:
+                tail = str(ex)
+
+            def finish():
+                self._zstd_busy = False
+                self.zstd_btn.configure(state="normal")
+                if code == 0:
+                    self.feat_zstd_files.set(True)
+                    self.save_settings()
+                    self.log("[ZSTD] The game files are converted and verified; faster loading is on (restart the game).")
+                elif code == 3:
+                    self.log("[ZSTD] Not enough free space for the converted files: " + tail)
+                    messagebox.showinfo("Convert game files", "Not enough free space in %s." % (out.anchor or out))
+                else:
+                    self.log("[ZSTD] The conversion did not finish: %s (exit code %d). Start it again to continue."
+                             % (tail, code))
+                self.refresh_zstd_status()
             self.after(0, finish)
 
         threading.Thread(target=work, daemon=True).start()
@@ -6492,6 +6629,8 @@ class BloodborneLauncher(tk.Tk):
             "feat_boot_watchdog": self.feat_boot_watchdog.get(),
             "feat_mute_unfocused": self.feat_mute_unfocused.get(),
             "feat_shader_precompile": self.feat_shader_precompile.get(),
+            "zstd_files": self.feat_zstd_files.get(),
+            "zstd_dir": str(self.settings.get("zstd_dir", "") or ""),
             "display": dict(self.display_choices).get(self.display_var.get(), ""),
             "gamepad": gamepad,
             "gamepad_name": gamepad_label.removesuffix(" (not connected)") if gamepad else "",
