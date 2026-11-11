@@ -2,14 +2,43 @@
 
 This document details the optimizations, fixes, and refactoring applied to ensure stability, smooth frame pacing, low CPU utilization, and clear diagnostics on 4-core / 4-thread systems (such as the Intel Core i5-4590, 14 GB DDR3, GTX 1650 4 GB) while dynamically adapting to other hardware configurations (AMD GPUs, hybrid P/E CPUs, variable RAM/VRAM, and audio configurations). It also documents features and stability improvements ported from Linux upstream 0.3.
 
-## 0.8.1 (unreleased)
+## 0.8.1 (2026-11-11)
 
 ### Added
+
+- **Optional direct connection over the Nightwatch VPN (lower ping)** a new switch, *Allow direct connection (lower ping, party members see your IP)*
+  (*System > My party: Loading*, a launcher checkbox, `bbport.ini` `party_nw_direct`, off by default). Over the Nightwatch VPN your
+  game normally reaches every party member through the tunnel. When you and another member both turn this on, the game tests a
+  direct connection to them for about 3 seconds (20 probes while play stays on the tunnel) and switches to it, once and together at a
+  loading screen, only if every probe was answered and it is at least 20 ms or 30 % faster than the tunnel. A direct connection that
+  then drops for 2 seconds goes back to the tunnel for the rest of the session. The other member sees your public IP. With the switch
+  off (or the other member's off) nothing changes and no public address is looked up.
+- **Load trace** (diagnostic, off by default) `BB_LOAD_TRACE=1|2`: one log line per step of the game's map load with the file reads, shader compiles, image uploads and CPU time of that step, for measuring what a loading screen waits on (research/reload081.md).
+- **Shorter, smoother loading screens in a party (My party: Loading; *Hold the screen until smooth* off, the other three on by default)** four new switches,
+  each a System menu row (*System > My party: Loading*), a launcher checkbox (My Party tab) and a `bbport.ini` key:
+  *Load with the host* (`party_parallel_follow`): on the host's party travel to a lamp, the Hunter's Dream, a
+  headstone or a Hunter's Mark your game starts loading at once, in parallel with the host, behind one loading
+  screen, instead of waiting for the host's load first; *Hold the screen until smooth* (`party_settled_drop`): the
+  loading screen stays up until the world runs smoothly (at most 3 s more), so the first heavy frames after a load
+  are not seen as a frozen world; *Arrive beside the host* (`party_load_beside`): a party travel's load puts you
+  beside the host, with no jump after the screen; *Rejoin in place* (`party_quick_rejoin`): *Party > Rejoin* in the
+  host's world reloads you beside the host with one loading screen, without *Leave* and the trip to your own
+  world. Anything unusual (a death, a boss fight, a Chalice Dungeon, another map) keeps the old way. The frame-end
+  quiet point is ported by intent from droogie/bbhost (GPL-3.0, live_resolution.cpp at bdc5cdf).
+- **Native loading-screen hold (experimental)** `BB_PARTY_NATIVE_HOLD=1` makes the held loading screen of *Load with the host* hold the game's own screen gate, so the world does not start under it. Off by default: it adds about 0.7 s.
+- **Rejoin re-sync** *Rejoin in place* asks a member that has not reappeared for its record with the game's own request. `BB_PARTY_RESYNC_0XA=0` turns it off.
 
 ### Changed
 
 - **optional render task stealing, off by default** (bbleft081, idea from droogie/bbhost render_queue / graphics_patch, GPL-3.0). `BB_TASK_STEAL=1` sets the game's "Enable Task Stealing" byte, which Live FPS leaves at 0 because the Performance Patch is locked out; `=2` is an A/B aid (experiment bit 512, `tools/mp/cpusave_ab.py run --feature tasksteal`). Measured on an RTX 3070 at Central Yharnam, uncapped, one session switching every 30 s: 86.5 off vs 86.0 on (median fps), so no gain on this GPU-thread-limited PC and it stays off; it may help CPU-bound machines.
 - **crash and GPU-crash reports carry more detail** (restab081; no change for players). A crash in the game's Havok animation-event code (0x1a21100) is decoded: the animation object, the last animation ids and the owner's map / entity ids; device-lost and stuck-GPU reports list the game's GPU range allocators (idea from Nightwatch c6305d7) when `BB_FRAME_STATS=1`; `BB_LIVE_FPS_LOG` prints draws, dispatches, submissions, flips and upload KB per game step (for GitHub #35). The raw memory at the registers is opt-in (`BB_CRASH_REGMEM=1`), since it can hold player text.
+- **Faster respawn after death** the loading screen after a death no longer holds for a fixed 12 s: the death respawn takes about 3.4 s instead of about 12.4 s (3 deaths each, solo, Cathedral Ward lamp), most of it the real map load. `BB_FAST_RESPAWN=0` restores the 12 s hold, `BB_FAST_RESPAWN_SECONDS=S` sets it (default 2.0, 0.5 to 12).
+- **Fewer GPU thread stalls when binding samplers** (Lantern Engine by Awaken, https://github.com/Awakenchan/LanternEngine, Nightwatch `BB_SAMPLER_MEMO`, modified) samplers seen again are remembered per draw instead of hashed and looked up under a lock every time. `BB_SAMPLER_MEMO=0` restores the old lookup.
+- **Auxiliary shader modules are shared** (idea from Mrsuss60 bb91ba05) the rect/quad-list tessellation helpers and discard fragment shaders are created once per distinct code instead of once per pipeline, and no longer pile up. `BB_AUX_MODULE_CACHE=0` restores one module per use.
+- **Arrive beside the host** the beside-host position is written into the load itself instead of a move after it, so the loading screen no longer waits for that move. `BB_PARTY_LOAD_PLACE=0` restores the held screen and move.
+- Seamless party travel is on by default: *Load with the host*, *Arrive beside the host* and *Rejoin in place* (System > My party: Loading). *Hold the screen until smooth* stays off. Each can still be turned off in the menu, the launcher or bbport.ini.
+- **Faster start-up** the check that the party tables match the game files takes about 0.1 s instead of 2.7 s on every start (one folder pass instead of three file queries per file). Tables are rebuilt on a game, mod or update change exactly as before.
+- **Launcher taskbar identity** the launcher has its own taskbar identity instead of grouping under Python, and uses `icon.ico` beside it as the window icon when that file exists (Mrsuss60 1cc0678c, by intent).
 
 ### Fixed
 
@@ -19,6 +48,49 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Ebrietas' second phase: the game's GX range allocator is 288 MiB, not 160** (ported from Nightwatch c6305d7, Lantern Engine by Awaken, https://github.com/Awakenchan/LanternEngine; modified: applied to the loaded image after the heap table, with the heap grown only when nothing else already did). The allocator that holds the buffers the CPU updates every frame (shader parameters, deformed vertices) ran out during her trail effect and the GPU stopped (device lost). It now has 128 MiB more, taken from GFX_GraphicsPrivate (about +128 MiB of memory in use per game). The byte check at the patch site logs and skips on a different executable. `BB_GX_REGION_MB=160` (or `0`) restores the game's size, `BB_GX_REGION_MB=<MiB>` sets 160..416, `BB_GX_REGION=0` turns the patch off. Unit test `stability-logic-test`.
 - **texture quality: no GPU stop on a reduced texture** (ported from Nightwatch d9a81bd, Lantern Engine by Awaken). A layout change of a texture made without its largest levels (texture quality Half / Quarter) can no longer name levels or layers past the image's own, which tripped the subresource check. `BB_TEXTURE_RANGE_CLAMP=0` restores the old behaviour.
 - **builds with older miniz and with GCC 15/16** (ported from Mrsuss60's 2cc3764f / ac726e63 by HatsyRei, and the srt.h / types.h part of 9cee8c6d; no change for players). The shader cache archive is opened with `MZ_ZIP_FLAG_WRITE_ALLOW_READING`, which exists in miniz before 3.1 (the cache stays writable: it is reopened for writing after the preload); the shader walker function pointer type uses a new `PS4_SYSV_ABI_PTR` without `nothrow`, which GCC 15/16 rejected.
+- **Logs no longer carry anyone's IP address** (NW-019b146, player report: "logs contain personal information like your ip"). Every IPv4 address in the game's log is written as `1.2.x.x` and every IPv6 address keeps only its first two groups, before the line leaves the game (loopback, `0.0.0.0` and `255.255.255.255` stay); the launcher masks its own log and the log window the same way, `net_doctor.bat` hides addresses in the reply it copies for pasting, and `net_doctor.py --redactips` now hides IPv6 too. The support bundle already did this. The net doctor still tells VPN, home-network and public addresses apart from a masked log, but it cannot tell two PCs on the same home network apart, so a network problem that needs the real addresses turns *Keep network addresses in the log* on (*Advanced / Debug*, `bbport.ini` `log_raw_ips`, `BB_LOG_RAW_IPS=1`). New tests: the mask in C and Python from one vector file, a scan of a smoke run's logs for unmasked addresses.
+- **A guest who owns a hunter badge or an Uncanny / Lost weapon can buy from the Messenger shops** (NW-2ed6d82, player report: "I have every badge but I cant buy"). The rows opened for a held badge or an owned weapon since 0.7.9; the reporter's log is from a build before that (the badges were held, the shop's rows read 0). New kill switch `BB_PARTY_SHOP_HELD_OPEN=0` returns to the own save's value alone.
+- **Boss idle after the host dies** (parity C2, a guest's copy rebuilt on the host) a party member's copy that the host's game rebuilds without a load (a guest who got up in place, changed looks, or re-joined after a wipe) is no longer invisible to the enemies: it is marked alive as soon as it is built, so a boss keeps fighting a living guest after the host has died. Kill switch `BB_PARTY_REBUILT_ALIVE=0`.
+- **a guest in another game region than the host could not join Chalice Dungeons: its game played offline** (NW-cec05db,
+  NW-be0f493, NW-cab726f). The guest's game got its server-status document (ss.info) from the host at the title, and that
+  document was written for the host's region; a guest of another region (for example the host in Europe and the guest in
+  America, or a guest with the "Unlock Game Region" patch) could not read it, quietly never signed in and loaded its world
+  in offline mode. The guest then played with the host as usual, but every Chalice Dungeon summon stopped with "This game is
+  in offline mode" (before 0.7.8: it was sent home and the summon failed with "This game is offline"). The guest's game now
+  writes its own ss.info for its own region. The log says `http: ss.info answered in this process ...`.
+  `BB_PARTY_SSINFO_LOCAL=0` asks the host as before.
+- **a rare crash when a boss dies in co-op (an animation event of an enemy that was already gone)** (CL-078659).
+  A guest's game crashed once on a Havok worker thread. The crash happened 75 ms after Mergo's Wet Nurse died,
+  while the game played the animation events of a character whose animation data had already been released.
+  That event is now skipped, as if the animation had none. The log says
+  `Havok event guard: animation event of a freed animation skipped (n)`. The fix works only when the game
+  hits that fault, so it costs nothing while you play. `BB_HAVOK_EVENT_GUARD=0` turns it off.
+  `BB_HAVOK_EVENT_TEST=N` is a test aid: it makes every N-th such event fault on purpose.
+- **a possible GPU crash ("device lost") while a level loads** (CL-ab12f5; ported from Nightwatch 1c99d56,
+  Lantern Engine by Awaken, https://github.com/Awakenchan/LanternEngine; modified: kill switch). When one texture
+  of a draw was looked up, the lookup could free a texture an earlier binding of the same draw had just found.
+  The remembered texture set then kept pointing at the freed texture's view until the next texture change.
+  A set is now stamped with the cache state from before its lookups, so such a set is looked up again the next
+  time it is used. `BB_TEXSET_GEN_FIX=0` restores the old stamping.
+- A guest who had already seen the Gaol waking scene no longer sees it a second time on a later Snatcher grab (the parallel follow let its own load reach the Gaol while the host's offer of the scene was still waiting).
+- The Hunter's Dream (and other scenes) no longer render tinted red with a cyan sky when the texture cache collector is under memory pressure (since 0.8.0, mostly on cards with little video memory; possibly the "flashing" and "flickering textures" reports): the collector wrote GPU-rendered tiled textures (such as the 3D color-grading texture) back to game memory as linear rows and then freed them, so they were rebuilt from scrambled data. Such textures now stay until they can be written back faithfully. This lets the texture cache budget cap of 1536 MiB (leak081c) stay on, which keeps memory flat over a long session (private memory +46 MB and GPU memory +120 MB over 25 minutes in the perf route, against about +590 and +470 MB without the cap). `BB_GC_BUDGET_CAP=0` turns the cap off, `BB_GC_BUDGET_CAP_MB=N` changes it.
+- An invader whose invasion the host ended (the host travelled, a boss fight began) or whose link dropped while the host was between worlds no longer gets a blocking message box on top of the notice; it waits and asks again where that applies.
+- **a wrong "The invasion is over" box at the title when the host is not ready yet**. An invader that dialled
+  before the host was in a world (still at the title, loading, in a cutscene or a boss fight, travelling, dead, or
+  the host's game full or already holding an invader) got a modal party notice saying the invasion was over, though
+  no invasion had started. Such a refusal is only the host's moment: the invader now shows a quiet status line
+  ("Waiting for the host's world: ...") and asks again by itself, after 5, 10, 20, 30, 45, then every 60 seconds
+  (a minute at least after "too many attempts"). The notice stays for a final refusal (Allow invaders off, blocked,
+  Stay in my world on either side, level range, a failed handshake) and now reads "Can't invade: ...".
+  "The invasion is over" is only said to an invader that was in the host's world and was sent home.
+  The log says `invasion refused for now (...): asking again in N s` and `refusal notice (modal): ...`.
+- **Handle and memory growth over a long session** (perf081 leak hunt) the game's worker threads (about 18 per loading screen: cloth, character and Havok workers) never gave back their Windows thread handle and TLS block when they ended, so a session grew by about 18 handles on every load (1000 handles per hour of warps). Finished threads now release both. `BB_THREAD_RELEASE=0` restores the old behaviour.
+- **"Preparing co-op data" popup on every start** the notice appeared on every game start, even when the co-op data cache was current (the check of the game files alone takes a few seconds). It now shows only when the data is really rebuilt (first start, game or mod change) and the rebuild takes over a second.
+- **Min/max blending with zero/one factors** (Mrsuss60 0a71dd17, shadPS4 c5dd8b8b) on UNORM and sRGB targets is rewritten to an equivalent add for colour and alpha, so the result matches the console. `BB_BLEND_MINMAX_NORM=0` restores the older alpha-only rewrite.
+- **Boss music for guests in every boss fight** (parity B6, re081) a guest heard a boss's music only if it had gone through that boss's fog itself: the game starts the music for a guest only once its own fog entry is recorded. Fights a guest is already inside when they start (Ebrietas, Rom, Laurence and Lady Maria's first fights, which begin with the host's action in their open room) stayed silent for the guests. The music now starts for a guest as for the host: once the fight is on and the guest stands in the boss area, in every boss fight including the Chalice Dungeons'. `BB_PARTY_BOSS_MUSIC=0` restores the old behaviour.
+- Smoke harness: the boss-death row no longer fails when the game re-adds the host to the enemies' target list before the check runs.
+- **Non-ASCII user or folder names** bbport.exe now carries a manifest that makes UTF-8 its process code page (Windows 10 1903 and later), so a Windows user name or install folder with letters outside ASCII no longer breaks narrow paths at the start (by intent from bbhost 5b78718). `run.bat` reads the mods step's game path as UTF-8 too, so a folder like `tëst_äö` starts. A log line says so when Windows keeps the old code page.
+- **Mod animations past 8192 clips** the game's behaviour clip capacity is raised from 0x2000 to 0x4000 (Nightwatch 8cfe003), so mods that add animations (Nocturne has 8271 clips) no longer lose the clips past the limit. Vanilla (7784 clips) is unchanged. `BB_CLIP_CAPACITY=0` leaves the game's limit.
 
 ## 0.8.0 (2026-11-09)
 

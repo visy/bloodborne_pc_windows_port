@@ -1,2 +1,0 @@
-### Fixed
-- **Handle and memory growth over a long session** (perf081 leak hunt) the game's worker threads (about 18 per loading screen: cloth, character and Havok workers) never gave back their Windows thread handle and TLS block when they ended, so a session grew by about 18 handles on every load (1000 handles per hour of warps). Finished threads now release both. `BB_THREAD_RELEASE=0` restores the old behaviour.
