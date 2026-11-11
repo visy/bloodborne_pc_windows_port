@@ -284,6 +284,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--tag", default="shot")
     ap.add_argument("--watch", action="append", default=[])
+    ap.add_argument("--repeat", action="store_true", help="every --watch match fires its own numbered series")
     ap.add_argument("--seconds", type=float, default=600)
     ap.add_argument("--every", type=float, default=0,
                     help="also shoot every N seconds (a timed series: TAG_<elapsed>s)")
@@ -307,7 +308,7 @@ def main():
         rules.append((re.compile(rx), tag, [float(x) for x in d.split(",")] if d else [0.0]))
     logs = sorted(Path(a.root).glob("inst*/run.log"))
     pos = {p: (p.stat().st_size if p.exists() else 0) for p in logs}
-    fired, pending, t0 = set(), [], time.time()
+    fired, pending, t0, counts = set(), [], time.time(), {}
     next_shot, seen_window, last_window = (t0 + a.every if a.every else None), False, t0
     while time.time() - t0 < a.seconds:
         # Logs of instances that start after the watcher (a run folder made later) are read from
@@ -355,7 +356,12 @@ def main():
                     if ride["ended"] >= ride["began"]:
                         ride["end"] = time.time()
             for rx, tag, delays in rules:
-                if tag not in fired and rx.search(text):
+                if a.repeat:   # every match fires its own numbered series (blackload081: a black world after SOME loads)
+                    for _ in rx.finditer(text):
+                        counts[tag] = counts.get(tag, 0) + 1
+                        for d in delays:
+                            pending.append((time.time() + d, f"{tag}{counts[tag]:02d}_{d:g}s"))
+                elif tag not in fired and rx.search(text):
                     fired.add(tag)
                     for d in delays:
                         pending.append((time.time() + d, f"{tag}_{d:g}s"))
@@ -372,7 +378,7 @@ def main():
                 pending.remove(item)
         if grey:
             grey.tick()
-        elif rules and len(fired) == len(rules) and not pending and not a.every and not bursts:
+        elif rules and not a.repeat and len(fired) == len(rules) and not pending and not a.every and not bursts:
             return
         time.sleep(0.1 if ride["start"] is not None else 0.2)
 
