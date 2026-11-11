@@ -1280,6 +1280,32 @@ struct FunnelKeepRoom {
 // old one), so it stayed invisible with its plate up (split24 / hd22 / hd26). Every task we rewind
 // is remembered; once its chr exists it gets InGameStart's two steps.
 std::map<u64, double> g_rewound;  // task -> when rewound (main thread)
+std::map<u64, double> g_rebuilt_alive;  // task -> when rewound: its chr's dead bit is cleared once HP > 0 (main thread)
+int ChrHp(u64 chr);
+
+/// C2 (rec2): a member copy rebuilt without a load (a rewound task: in-place revive, new look, the host's revive,
+/// a wipe's re-join) is born with the dead mark (target-bank entry [[chr+0x3B0]+0x40]+8 -> +0x18 -> +0x30, +0x18
+/// bit 0) although its HP is full: no enemy perceives it, so a boss with the host dead goes idle beside a living
+/// guest. Cleared once, as soon as the copy reads HP > 0. BB_PARTY_REBUILT_ALIVE=0 off (A/B).
+bool RebuiltAliveOn() {
+    static const bool on = !(std::getenv("BB_PARTY_REBUILT_ALIVE") && std::getenv("BB_PARTY_REBUILT_ALIVE")[0] == '0');
+    return on;
+}
+/// Returns true when done (cleared, or nothing to clear), false when the copy is not ready yet.
+bool ClearRebuiltDeadBit(u64 c, const char* why) {
+    if (ChrHp(c) <= 0) return false;
+    const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+    const u64 e3 = ent ? Field<u64>(ent, 0x18) : 0, e30 = e3 ? Field<u64>(e3, 0x30) : 0;
+    if (!e30) return false;
+    const u8 b = Field<u8>(e30, 0x18);
+    if (b & 1) {
+        const u8 nb = u8(b & ~1u);
+        SafeWrite(e30 + 0x18, &nb, 1);
+    }
+    Log("rebuilt member chr %08x (HP %d, %s): target-bank state +0x18 was %02x%s", Field<u32>(c, 8), ChrHp(c), why,
+        unsigned(b), (b & 1) ? ": dead mark cleared once, enemies perceive it" : " (no dead mark)");
+    return true;
+}
 
 void ShowLikeInGameStart(u64 c, const char* why) {
     using Bool = u8(BB_COOP_SYSV*)(u64);
@@ -1323,6 +1349,7 @@ int RewindRemoteTasks(const char* why) {
         SafeWrite(t.task + kTaskNext, &next, 4);
         ++n;
         g_rewound[t.task] = Now();
+        if (RebuiltAliveOn()) g_rebuilt_alive[t.task] = Now();
         Log("%s: task mode %d (step %d) rewound to STEP_Create", why, t.mode, t.step);
     }
     if (n > 0) Log("%s: player numbers at the rewind: %s", why, DescribePlayerNumbers().c_str());
@@ -2783,6 +2810,16 @@ void RemoteVisibleTick(double now) {
         return;
     }
     next = now + 0.25;
+    if (!g_rebuilt_alive.empty()) {
+        for (const TaskInfo& t : Tasks(false)) {
+            const auto it = g_rebuilt_alive.find(t.task);
+            if (it == g_rebuilt_alive.end() || g_rewound.count(t.task)) continue;  // the new chr exists once shown
+            const u64 c = PlayerForPeer(t.task + kTaskPeer);
+            if (c && ClearRebuiltDeadBit(c, "rebuilt")) g_rebuilt_alive.erase(it);
+        }
+        for (auto it = g_rebuilt_alive.begin(); it != g_rebuilt_alive.end();)
+            it = now - it->second > 30.0 ? g_rebuilt_alive.erase(it) : std::next(it);
+    }
     for (const TaskInfo& t : Tasks(false)) {
         if ((t.mode != 1 && t.mode != 2) || t.step != kStepUpdate || (t.flags & 2)) {
             continue;
@@ -6849,6 +6886,7 @@ void BossTargetDump(u64 boss, u32 bh, const char* tag) {
         float t38 = 0, t3c = 0;
         SafeGet(n + 0x38, &t38);
         SafeGet(n + 0x3c, &t3c);
+        if (kind == 0) handle = Field<u32>(n, 0x50);  // a perceived entry (kind 0): the chr handle sits at +0x50 as in kind 1
         std::snprintf(b, sizeof b, " [fl %02x kind %u t20 %u t38 %.2f t3c %.2f b40 %u h %08x]", unsigned(Field<u8>(n, 2)), kind,
                       Field<u32>(n, 0x20), double(t38), double(t3c), unsigned(Field<u8>(n, 0x40)), handle);
         out += b;
@@ -6986,6 +7024,92 @@ void BossStateTick(const GameSnapshot& s, double now) {
     }
 }
 
+/// C2 (rec2) limbo perception diagnostic, host, main thread: while the host lies in its limbo and a boss bar is up, every
+/// 5 s per boss: how the boss's perception (bank search 0x12ADC50, mode 0) sees each living member copy: [chr +0x18]
+/// = A (+0x10 must be 4, +0x20 bits 1 / 4 exclude), X = [A +0x30] (+0x18 bit 0 dead mark, +0xD bit 0x10 excludes), the
+/// team, and whether the boss's target list holds an entry (kind 0 / 1, handle at +0x50) for it. The detail lines are behind
+/// BB_PARTY_LIMBO_DIAG=1 (off); the warning "boss perceives none of N living members" is always on, it only fires in
+/// the failure (a living guest the boss cannot see: the dead mark on a rebuilt copy, or anything else that hides it).
+void BossLimboPerceptionTick(const GameSnapshot& s, double now) {
+    static double next = 0;
+    static const bool diag = std::getenv("BB_PARTY_LIMBO_DIAG") && std::getenv("BB_PARTY_LIMBO_DIAG")[0] == '1';
+    static std::map<u32, double> blind_since;  // boss handle -> since when it perceived none of the living members
+    if (now < next) return;
+    next = now + 1.0;
+    static std::map<u32, double> last_diag;
+    const u64 hud = (Role() == RoleHost && g_host_limbo.load() && s.world_up && !s.loading) ? Slot(0x5562878) : 0;
+    if (!hud) {
+        blind_since.clear();
+        last_diag.clear();
+        return;
+    }
+    std::vector<u64> members;
+    for (const TaskInfo& t : Tasks(false)) {
+        const u64 c = (t.mode == 1 || t.mode == 2) ? PlayerForPeer(t.task + kTaskPeer) : 0;
+        if (c && ChrHp(c) > 0) members.push_back(c);
+    }
+    if (members.empty()) {
+        blind_since.clear();
+        return;
+    }
+    for (int i = 0; i < 3; ++i) {
+        const u32 h = Field<u32>(hud, 0x165c + u64(i) * 0x14, ~0u);
+        const u64 boss = h == ~0u ? 0 : ChrOfHandle(h);
+        if (!boss || ChrHp(boss) <= 0) continue;
+        u64 vt = 0, fn = 0;
+        if (!SafeGet(boss, &vt) || !vt || !SafeGet(vt + 0x160, &fn) || !fn) continue;
+        const u64 ai = reinterpret_cast<u64(BB_COOP_SYSV*)(u64)>(fn)(boss);
+        const u64 holder = ai ? Field<u64>(Field<u64>(ai, 0xb0), 0x560) : 0;
+        if (!holder) continue;
+        std::set<u32> seen;  // handles of the kind-0 (perceived) entries
+        u64 n = Field<u64>(holder, 0x18);
+        for (int k = 0; n && k < 12; ++k, n = Field<u64>(n, 8))
+            if (Field<u32>(n, 0x28) <= 1) seen.insert(Field<u32>(n, 0x50));  // live: the entries for players are kind 1 (hit / perceived), handle at +0x50
+        int perceived = 0;
+        std::string out;
+        for (u64 c : members) {
+            const u32 ch = Field<u32>(c, 8);
+            const bool in_list = seen.count(ch) != 0;
+            perceived += in_list ? 1 : 0;
+            if (!diag) continue;
+            const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+            const u64 a = ent ? Field<u64>(ent, 0x18) : 0, x = a ? Field<u64>(a, 0x30) : 0;
+            char b[200];
+            std::snprintf(b, sizeof b, " [chr %08x hp %d team %d A+10 %d A+20 %02x X+18 %02x X+0d %02x listed %d]", ch, ChrHp(c),
+                          Field<int>(c, 0x88), a ? Field<int>(a, 0x10) : -1, a ? unsigned(Field<u8>(a, 0x20)) : 0xffu,
+                          x ? unsigned(Field<u8>(x, 0x18)) : 0xffu, x ? unsigned(Field<u8>(x, 0xd)) : 0xffu, in_list ? 1 : 0);
+            out += b;
+        }
+        if (diag && now - last_diag[h] >= 5.0) {
+            last_diag[h] = now;
+            Log("limbo perception: boss %08x, %zu living member(s), %d in its target list:%s", h, members.size(), perceived, out.c_str());
+        }
+        if (perceived > 0) {
+            blind_since.erase(h);
+            continue;
+        }
+        const auto it = blind_since.emplace(h, now).first;
+        if (now - it->second >= 5.0 && it->second > 0) {
+            Log("limbo perception: boss %08x perceives none of %zu living members for %.0f s (host dead)", h, members.size(),
+                now - it->second);
+            it->second = now;  // once per 5 s
+            if (!diag) {
+                std::string o;
+                for (u64 c : members) {
+                    const u64 ent = Field<u64>(Field<u64>(Field<u64>(c, 0x3b0), 0x40), 8);
+                    const u64 a = ent ? Field<u64>(ent, 0x18) : 0, x = a ? Field<u64>(a, 0x30) : 0;
+                    char b[160];
+                    std::snprintf(b, sizeof b, " [chr %08x A+10 %d A+20 %02x X+18 %02x X+0d %02x]", Field<u32>(c, 8),
+                                  a ? Field<int>(a, 0x10) : -1, a ? unsigned(Field<u8>(a, 0x20)) : 0xffu,
+                                  x ? unsigned(Field<u8>(x, 0x18)) : 0xffu, x ? unsigned(Field<u8>(x, 0xd)) : 0xffu);
+                    o += b;
+                }
+                Log("limbo perception: members as the bank search sees them:%s", o.c_str());
+            }
+        }
+    }
+}
+
 /// Host (the boss AI's owner), main thread, twice a second: while a boss bar is up and two or more
 /// living players (the host's own chr and the members' copies) are within reach of the boss, the boss
 /// is handed each of them in turn as a forced target (the event ChangeTarget path 0x1299CD0, as the
@@ -7106,7 +7230,8 @@ void LivingTargetMarkTick(const GameSnapshot& s) {
         SafeWrite(e30 + 0x18, &nb, 1);
         const u32 h = Field<u32>(c, 8);
         if (logged.insert(h).second)
-            Log("living target: chr %08x (HP %d) is alive but its target-bank entry still had the dead mark (+0x18 bit 0, "
+            Log("living target (diagnostic: something set the dead mark after the rebuild clear, or the rebuild clear is "
+                "off): chr %08x (HP %d) is alive but its target-bank entry still had the dead mark (+0x18 bit 0, "
                 "%02x): cleared, enemies perceive it again", h, ChrHp(c), unsigned(b));
     }
     if (players.empty()) logged.clear();
@@ -13320,6 +13445,7 @@ void Tick(const GameSnapshot& s) {
     DeadPlayerUntargetTick(s, now);
     LivingTargetMarkTick(s);
     BossStateTick(s, now);
+    BossLimboPerceptionTick(s, now);
     BossAttentionTick(s, now);
     HostRevivedTick(s);
     JoinBesideTick(s, Now());
