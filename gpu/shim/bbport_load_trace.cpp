@@ -464,7 +464,7 @@ void ProbeWorld(u64 now) {
 //   this frame (a per-frame budget), +0x5F88 chrs seen.
 constexpr u64 kMapInsManPtr = 0x553b158, kObjManPtr = 0x553b168, kWorldChrManPtr = 0x553e878;
 struct SubSeen {
-    int ready = -1, parts = -1, pending = -1, cur1 = -1, cur2 = -1;
+    int ready = -1, parts = -1, pending = -1, cur1 = -1, cur2 = -1, qmax = -1;
 };
 std::vector<SubSeen> g_mapins, g_objs;
 int g_chr_last[3] = {-1, -1, -1};
@@ -576,11 +576,25 @@ void ProbeSubGates(u64 now) {
                 }
             }
         }
-        if (ready != seen.ready || parts != seen.parts || pending != seen.pending || cur1 != seen.cur1 || cur2 != seen.cur2) {
+        // The block's MapInsUpdateHelper request queue (MapIns +0 -> helper +0 -> queue: [0] capacity, +0x10 count; the
+        // assert MapInsUpdateHelper.cpp(0xcc) fires on a push at capacity): its high-water mark bounds the per-call
+        // part budget (BB_LOAD_PARTS_BUDGET).
+        u32 qcap = 0, qcount = 0;
+        {
+            u64 list = 0, ins = 0, helper = 0, queue = 0;
+            if (parts > 0 && coop::SafeGet(blk + 0x158, &list) && list && coop::SafeGet(list + 0x40, &ins) && ins &&
+                coop::SafeGet(ins, &helper) && helper && coop::SafeGet(helper, &queue) && queue) {
+                coop::SafeGet(queue, &qcap);
+                coop::SafeGet(queue + 0x10, &qcount);
+            }
+        }
+        if (ready != seen.ready || parts != seen.parts || pending != seen.pending || cur1 != seen.cur1 || cur2 != seen.cur2 ||
+            int(qcount) > seen.qmax) {
             std::printf("Load profile: [%8.3f s] map parts area %d block %d: %s, %d parts, pass cursors %d / %d, loaded-flag %d, "
-                        "requested parts not loaded %d\n",
-                        Ms(g_t0, now) / 1e3, a, b, ready ? "READY" : "not ready", parts, cur1, cur2, loaded, pending);
-            seen = SubSeen{ready, parts, pending, cur1, cur2};
+                        "requested parts not loaded %d; helper queue %u of %u\n",
+                        Ms(g_t0, now) / 1e3, a, b, ready ? "READY" : "not ready", parts, cur1, cur2, loaded, pending, qcount, qcap);
+            const int qmax = std::max(seen.qmax, int(qcount));
+            seen = SubSeen{ready, parts, pending, cur1, cur2, qmax};
         }
     });
     // obj blocks

@@ -172,3 +172,48 @@ press -> screen is before the screen, the fade-in is 0 ms after the gate), the c
   sampler per step with the 8 ms period and 4 KB stack scan, its idle Toolhelp snapshot every 500 ms instead of
   20 ms), `tools/mp/loadprof.py`, the DEBUG_SWITCHES row. Off by default: nothing hooked or polled.
 - No gameplay or engine behaviour changed; candidates 1-3 are proposals with numbers, not implementations.
+
+## 7. Candidate 1 implemented: `BB_LOAD_PARTS_BUDGET` (cwfast081, gpu/shim/bbport_parts_budget.cpp, on by default)
+
+The two budget loads of 0x15934D0 are `mov r14d, 0x14` (41 BE 14 00 00 00) at +0x1593764 and +0x1593773 (a scan of
+the body for `mov r32, 0x14` finds these two and no other; both are byte-checked, all or nothing, one `Parts
+budget:` line). A 4 ms poller (`bb:PartsBudget`) rewrites both imm32 to the budget when NowLoading requested
+(`*0x556286B`) rises and back to 0x14 when it clears, so block crossings in the world keep the game's 20 per frame.
+The write is cross-thread but safe: any torn mix of the old and new bytes is a valid budget for one call. The
+requests go to the block's `MapInsUpdateHelper` queue, whose capacity equals the block's part count (4048 for
+m24_00, 629 for m21_00; probe line `helper queue N of CAP`, high-water 3115 of 4048) and 0x1587ED0 never queues a
+part twice (+0xC bit 0), so no budget can reach its assert. Default 4096 (more than any block's parts: a pass is
+one call); `=0` / `off` the game's 20; `=N` 20..1000000.
+
+A/B (tools/mp/loadab.py, chain Cathedral Ward / Old Yharnam / Tomb / death / Cathedral Ward / Old Yharnam / Bridge
+/ Cathedral Ward / Old Yharnam, `BB_LOAD_PROFILE=1`, the lane shared with another agent's sessions the whole time,
+so fps on the screen were 34-50 instead of 50; on and off ran back to back under the same load; screen seconds,
+mean of 3 warps, Continue and the death respawn once):
+
+| preset | budget | Cathedral Ward | Old Yharnam | Tomb / Bridge | death respawn | Continue |
+|---|---|---|---|---|---|---|
+| 60 | off (20) | 7.21 | 4.83 | 3.40 | 3.15 | 2.72 |
+| 60 | 400 | 4.70 | 3.38 | 3.31 | 2.93 | 2.86 |
+| 60 | **4096 (default)** | **4.40** | **3.35** | 3.37 | 2.98 | 2.45 |
+| uncapped | off (20) | 5.87 | 3.22 | 3.41 | 3.12 | 2.18 |
+| uncapped | 400 | 4.51 | 3.10 | 3.29 | 3.13 | 2.52 |
+
+Cathedral Ward -2.8 s (-39 %) and Old Yharnam -1.5 s (-31 %) at 60 fps, -1.4 s / -0.1 s uncapped; the control
+warps, the death respawn and Continue within noise. The map-parts probe with the budget on: both passes complete
+within one probe interval (cursors `0 / 0`), "requested parts not loaded" rises to ~3000 in 0.3 s and drains over
+2.5-3 s: the Cathedral Ward wait is now files + inflate (the loaders at work the whole time), so `BB_LOAD_WORKERS`
+and zlib-ng now pay there as on the other maps. No panic, no assert in 5 sessions (46 loads). The sweep restart
+after the neighbour's mask change still happens but costs 1-2 frames.
+
+Walk test: section 7.1 (below) after the on-foot run.
+
+### 7.1 Walk test (budget 4096, 60 fps)
+
+Warp to Cathedral Ward (4.68 s on the screen, budget 4096 up / 20 back at `SCREEN GONE`), then the director's
+`host_stick=obj:2401950:40:ANGLE` walked the hunter by the left stick 40 m from the lamp object three times (angles
+0, 180, 90: chapel -> plaza -> graveyard, ~110 s, three nav hops where the walker met walls), with a screenshot
+every 2 s (89 shots, `prof/walk2/shots`, none black, 56-60 fps in the world). Looked at: the chapel at the lamp, the
+carriage on the plaza, the graveyard statues: every map piece present, no popping or missing geometry; the
+in-world block update ran with the game's 20 per frame the whole walk (`Parts budget: loading screen gone: budget
+20` before the first step). Unproven: a 4-6 core PC (the loaders become the bottleneck, so a slow CPU gains less),
+and Old Yharnam's neighbour streaming on foot (only Cathedral Ward was walked).
