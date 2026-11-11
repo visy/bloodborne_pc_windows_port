@@ -1,5 +1,5 @@
-zstd 1.5.7 (https://github.com/facebook/zstd), linked statically into bbport.exe and bb-zstdpack.exe (libzstd.a from the MSYS2
-package mingw-w64-x86_64-zstd; unmodified). Used to decode the game files that bb-zstdpack recompressed (gpu/shim/bbport_zstd_inflate.h)
+zstd 1.5.7 (https://github.com/facebook/zstd, git submodule third_party/zstd at tag v1.5.7), built from source and linked
+statically into bbport.exe and bb-zstdpack.exe (unmodified). Used to decode the game files that bb-zstdpack recompressed (gpu/shim/bbport_zstd_inflate.h)
 and by the converter itself (tools/zstdpack). Licence: BSD (the BSD licence option of the dual BSD / GPL-2.0 licensing).
 
 For Zstandard software

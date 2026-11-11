@@ -95,7 +95,8 @@ def prepare(repo, env):
     ar = shutil.which("ar", path=env["PATH"]) or "ar"
     fsr = repo / "gpu" / "third_party" / "fsr-vulkan"
     at9 = repo / "third_party" / "LibAtrac9" / "C" / "src"
-    if not (fsr / "CMakeLists.txt").is_file() or not at9.is_dir():
+    zstd = repo / "third_party" / "zstd" / "build" / "cmake" / "CMakeLists.txt"
+    if not (fsr / "CMakeLists.txt").is_file() or not at9.is_dir() or not zstd.is_file():
         subprocess.run(["git", "-C", str(repo), "submodule", "update", "--init", "--recursive"],
                        env=env, check=True)
     lib = repo / "out" / "libatrac9.a"

@@ -7,3 +7,6 @@
 [submodule "third_party/LibAtrac9"]
 	path = third_party/LibAtrac9
 	url = https://github.com/Thealexbarney/LibAtrac9.git
+[submodule "third_party/zstd"]
+	path = third_party/zstd
+	url = https://github.com/facebook/zstd
