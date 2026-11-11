@@ -123,25 +123,48 @@ else()
     pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 endif()
-# zlib-ng (MSYS2 mingw-w64-x86_64-zlib-ng, static libz-ng.a; zlib licence, licenses/zlib-ng.txt) behind the engine's
-# inflate (shim/bbport_fast_inflate.h, BB_FAST_INFLATE). Optional: without it the build keeps the game's own inflate.
-# Runtime CPU dispatch, no -march.
+# zlib-ng 2.2.x, built from the pinned submodule gpu/third_party/zlib-ng (zlib licence, licenses/zlib-ng.txt) as a
+# static library behind the engine's inflate (shim/bbport_fast_inflate.h, BB_FAST_INFLATE). Required.
+# Runtime CPU dispatch (WITH_RUNTIME_CPU_DETECTION): its SIMD files carry their own per-file flags, so it stays safe
+# on older CPUs; zlib-ng turns LTO off for itself unless WITH_NATIVE_INSTRUCTIONS is on (kept off).
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib-ng/CMakeLists.txt")
+    message(FATAL_ERROR "zlib-ng submodule missing: run `git submodule update --init gpu/third_party/zlib-ng`")
+endif()
+set(ZLIB_COMPAT OFF CACHE BOOL "" FORCE)
+set(ZLIB_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(WITH_GTEST OFF CACHE BOOL "" FORCE)
+set(WITH_FUZZERS OFF CACHE BOOL "" FORCE)
+set(WITH_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(WITH_BENCHMARK_APPS OFF CACHE BOOL "" FORCE)
+set(WITH_NATIVE_INSTRUCTIONS OFF CACHE BOOL "" FORCE)
+set(WITH_RUNTIME_CPU_DETECTION ON CACHE BOOL "" FORCE)
+set(bb_saved_shared_libs "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(third_party/zlib-ng EXCLUDE_FROM_ALL)
+set(BUILD_SHARED_LIBS "${bb_saved_shared_libs}")
 add_library(zlibng::zlibng INTERFACE IMPORTED)
-if (WIN32)
-    find_path(ZLIB_NG_INC NAMES zlib-ng.h PATHS "$ENV{MINGW_PREFIX}/include" "C:/msys64/mingw64/include")
-    find_library(ZLIB_NG_LIB NAMES libz-ng.a z-ng PATHS "$ENV{MINGW_PREFIX}/lib" "C:/msys64/mingw64/lib" NO_DEFAULT_PATH)
-else()
-    find_path(ZLIB_NG_INC NAMES zlib-ng.h)
-    find_library(ZLIB_NG_LIB NAMES z-ng)
+target_link_libraries(zlibng::zlibng INTERFACE zlib)
+target_compile_definitions(zlibng::zlibng INTERFACE BB_HAVE_ZLIB_NG)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib-ng/zlib-ng.h.in" bb_zng_ver_line REGEX "define ZLIBNG_VERSION ")
+message(STATUS "zlib-ng: built from gpu/third_party/zlib-ng (${bb_zng_ver_line})")
+# zstd: vendored (git submodule third_party/zstd, a facebook/zstd release tag; BSD licence, licenses/zstd.txt), built
+# static from source (build/cmake, no programs / tests / shared / legacy decoders; compiled with the port's own flags,
+# no -march). Used by the faster-loading format (zstd081, bbport_zstd_inflate.h) and bb-zstdpack.
+set(ZSTD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/zstd")
+if (NOT EXISTS "${ZSTD_ROOT}/build/cmake/CMakeLists.txt")
+    message(FATAL_ERROR "zstd submodule missing: run `git submodule update --init third_party/zstd`")
 endif()
-if (ZLIB_NG_INC AND ZLIB_NG_LIB)
-    message(STATUS "zlib-ng: ${ZLIB_NG_LIB}")
-    target_include_directories(zlibng::zlibng INTERFACE "${ZLIB_NG_INC}")
-    target_link_libraries(zlibng::zlibng INTERFACE "${ZLIB_NG_LIB}")
-    target_compile_definitions(zlibng::zlibng INTERFACE BB_HAVE_ZLIB_NG)
-else()
-    message(STATUS "zlib-ng not found: the engine's inflate stays the game's own (pacman -S mingw-w64-x86_64-zlib-ng)")
-endif()
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+add_subdirectory("${ZSTD_ROOT}/build/cmake" "${CMAKE_BINARY_DIR}/zstd" EXCLUDE_FROM_ALL)
+add_library(zstd::zstd INTERFACE IMPORTED)
+target_link_libraries(zstd::zstd INTERFACE libzstd_static)
+target_include_directories(zstd::zstd INTERFACE "${ZSTD_ROOT}/lib")
+target_compile_definitions(zstd::zstd INTERFACE BB_HAVE_ZSTD)
 if (WIN32)
     if (NOT TARGET miniz::miniz)
         add_library(miniz::miniz INTERFACE IMPORTED)
@@ -320,10 +343,10 @@ target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vu
                                     ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 if (WIN32)
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng zstd::zstd Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
 else()
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng zstd::zstd Zydis::Zydis sirit)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
@@ -605,6 +628,14 @@ target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
 target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
 set_target_properties(bb-gpu-capabilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# bb-zstdpack (tools/zstdpack): the one-time game file converter for faster loading (zstd081). Static zstd + zlib-ng.
+if (ZLIB_NG_INC AND ZLIB_NG_LIB)
+    add_executable(bb-zstdpack ../tools/zstdpack/zstdpack.cpp)
+    target_link_libraries(bb-zstdpack PRIVATE zlibng::zlibng zstd::zstd)
+    target_link_options(bb-zstdpack PRIVATE -static)
+    set_target_properties(bb-zstdpack PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+endif()
+
 # The open party's join rule (party_open_rules.h). ninja -C out/gpu party-open-test
 add_executable(party-open-test EXCLUDE_FROM_ALL ../tests/test_party_open.cpp)
 target_compile_options(party-open-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -843,6 +874,14 @@ if (ZLIB_NG_INC AND ZLIB_NG_LIB)
     target_include_directories(fast-inflate-test PRIVATE shim)
     target_link_libraries(fast-inflate-test PRIVATE zlibng::zlibng z)
     set_target_properties(fast-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
+# Zstd behind the engine's inflate (shim/bbport_zstd_inflate.h): zstd frames through the engine's z_stream contract. ninja -C out/gpu zstd-inflate-test
+if (ZLIB_NG_INC AND ZLIB_NG_LIB)
+    add_executable(zstd-inflate-test EXCLUDE_FROM_ALL ../tests/test_zstd_inflate.cpp)
+    target_compile_options(zstd-inflate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(zstd-inflate-test PRIVATE shim)
+    target_link_libraries(zstd-inflate-test PRIVATE zlibng::zlibng zstd::zstd z)
+    set_target_properties(zstd-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 # Fast loading (shim/bbport_fast_loading.h): the pure rules. ninja -C out/gpu fast-loading-test
 add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp)

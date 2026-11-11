@@ -50,7 +50,7 @@ mode, button prompts and `bbport.ini` bindings: [docs/CONTROLS.md](docs/CONTROLS
 ## Settings
 
 Every port setting is a page in the game's **System** menu; the launcher has the same options.
-Mouse, graphics, latency, HDR, map, shader cache, environment variables: [docs/SETTINGS.md](docs/SETTINGS.md).
+Mouse, graphics, latency, HDR, map, shader cache, faster loading (one-time converted game files), environment variables: [docs/SETTINGS.md](docs/SETTINGS.md).
 
 ## Party co-op
 
