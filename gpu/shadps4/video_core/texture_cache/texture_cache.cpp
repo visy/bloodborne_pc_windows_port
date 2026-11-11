@@ -1779,8 +1779,17 @@ void TextureCache::GarbageCollectImages() {
             // unused for a minute, unwritten (render targets of an area left behind; out of VRAM
             // the game would crash instead, from Supermedo/bloodborne_pc 44e7644).
             const bool tiled = image.info.IsTiled();
-            const bool drop =
-                tiled && rule.drop_old_tiled && image.lru_touched_tick < minute_tick;
+            // 0.8.1 blackload081: OFF by default. With the 1.5 GiB budget cap the collector reaches the Over level on
+            // big cards, and its rule dropped GPU-written tiled images unused for a minute without a write-back:
+            // the game never re-renders some of them (the Hunter's Dream's), so the next lamp warp there showed the
+            // HUD and the area title over a black world until the next load. They stay now (the cache holds about
+            // the same: ~550 MiB of images after 16 loads either way). BB_GC_DROP_TILED=1 restores the drop.
+            static const bool drop_tiled_on = [] {
+                const char* e = std::getenv("BB_GC_DROP_TILED");
+                return e && e[0] == '1';
+            }();
+            const bool drop = drop_tiled_on && tiled && rule.drop_old_tiled &&
+                              image.lru_touched_tick < minute_tick;
             const bool write_back = !tiled && rule.write_back && gc_quota.write_backs == 0;
             // d81d63be (shadPS4 GC part 2): a write-back only of what reads back as the guest's
             // data (single sample, no stencil, compatible format) and that the buffer cache did

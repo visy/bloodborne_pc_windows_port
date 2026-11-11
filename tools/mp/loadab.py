@@ -22,7 +22,10 @@ LAMPS = (("lamp Great Bridge", 2412952), ("lamp Cathedral Ward", 2402950), ("lam
          ("lamp 2102950", 2102950), ("lamp Yahar'gul", 2802950), ("lamp Tomb of Oedon", 2412953))
 
 
-def chain(cycles, dwell=12):
+def chain(cycles, dwell=12, custom=None):
+    if custom:   # "lampA,lampB,...": warps in that order, dwell s after each
+        return ",".join("host_die@10%m24_01" if x == "die" else "host_lamp=%s@%d" % (x, 20 if i == 0 else dwell)
+                        for i, x in enumerate(custom.split(",")))
     steps = []
     for c in range(cycles):
         for k, (_, lamp) in enumerate(LAMPS):
@@ -44,16 +47,18 @@ def run(a):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     secs = int(a.cycles * 7 * 45 + 200)
+    if a.chain:
+        secs = len(a.chain.split(",")) * 40 + 200
     (root / "noreap").write_text(str(secs + 600))
     (root / "pad0.txt").write_text("lx=128 ly=128\n")
-    last = a.cycles * 7
+    last = len(a.chain.split(",")) if a.chain else a.cycles * 7
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "1", "--fresh-saves", "--timestamps",
            "--idle", "0", "--seconds", str(secs + 300), "--root", str(root), "--build", str(a.build), "--game", str(a.game),
            "--fps", a.fps, "--reserve", "1", "--label", "loadab %s" % out.name, "--party",
            "--env", "BB_LOAD_TRACE=1", "--env", "BB_AUDIO=none", "--env", "BB_PAD_FILE=%s" % (root / "pad{i}.txt"),
            "--env", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
-           "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + chain(a.cycles),
-           "--until", r"test: travel step %d/%d: host_die" % (last, last), "--until-hold", "40"]
+           "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + chain(a.cycles, custom=a.chain),
+           "--until", r"test: travel step %d/%d: %s" % (last, last, "host_lamp" if a.chain else "host_die"), "--until-hold", "40"]
     for e in a.env or []:
         cmd += ["--env", e]
     env = dict(os.environ, BB_MP_LEASE=str(secs + 900), BB_MP_FPS=a.fps)
@@ -61,7 +66,7 @@ def run(a):
     if a.shots:   # frames 0.5 .. 5 s after every "loading screen gone"; shot.py names the black ones (BLACK, capture.log)
         (out / "shots").mkdir(exist_ok=True)
         shooter = LaterProc(out / "harness.log", [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out",
-                            str(out / "shots"), "--tag", "gone", "--seconds", str(secs + 400), "--watch",
+                            str(out / "shots"), "--tag", "gone", "--repeat", "--seconds", str(secs + 400), "--watch",
                             "loading screen gone=gone@1,2,3,4,5,6,7,8,9,10"],
                             stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
@@ -131,6 +136,7 @@ def main():
     ap.add_argument("--root", default=str(AGENT_ROOT / "loadroot"))
     ap.add_argument("--out", action="append")
     ap.add_argument("--env", action="append")
+    ap.add_argument("--chain", help="comma list of lamp ids to warp through (replaces the default route)")
     ap.add_argument("--shots", action="store_true", help="screenshots after every loading screen (black-frame count)")
     a = ap.parse_args()
     if a.cmd == "run":
