@@ -2204,7 +2204,9 @@ void TestAidTick(Test& t, Clock::time_point now) {
                 t.fog_on = false;
                 Log("test: fog: through the fog at (%.2f, %.2f), %.2f m past it, boss bar up", double(me[0]), double(me[2]),
                     double(past));
-            } else if (Seconds(t.fog_t, now) > 5.0) {
+            } else if (Seconds(t.fog_t, now) > (past > 0.3f ? 20.0 : 5.0)) {
+                // past the fog point already: the boss's intro scene (about 6 s for Micolash) holds the bar back, so a
+                // retry walk after 5 s walked on through a fog already passed and then found no prompt (mig081)
                 if (++t.fog_tries >= 3) {
                     t.fog_on = false;
                     Log("test: fog: NOT through after 3 tries (at (%.2f, %.2f), %.2f m past the fog point, bar %d)",
