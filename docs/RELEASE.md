@@ -95,6 +95,9 @@ Only for a step that has to be run by hand (a failed step, a special build).
       code goes through Legacy CPU). `--dry-run` only prints. `tools/agent/build.py` never configures.
 - [ ] zlib-ng (the fast inflate, `BB_FAST_INFLATE`): `pacman -S mingw-w64-x86_64-zlib-ng` in MSYS2 (static `libz-ng.a`, found by
       `gpu/CMakeLists.txt`; without it the exe builds with the game's own inflate and logs that at start).
+- [ ] zstd (converted game files, `bb-zstdpack`, `BB_ZSTD_DIR`): `pacman -S mingw-w64-x86_64-zstd` in MSYS2 (static `libzstd.a`, found by
+      `gpu/CMakeLists.txt` like zlib-ng; without it the exe and `out\bb-zstdpack.exe` are built without the feature). `bb-zstdpack.exe` lands in `out\` and
+      is staged with the other exes; `licenses/zstd.txt` ships with it.
 - [ ] Build: `set PATH=C:\msys64\mingw64\bin;%PATH%` then `cmake --build <repo>\out\gpu-pgo-gen`
       (machine-wide build limits: only when no other build runs). The exe lands in `<repo>\out\release`.
 - [ ] The tree is clean when the exe is built: the exe embeds `git describe --dirty`; staging refuses a `-dirty`

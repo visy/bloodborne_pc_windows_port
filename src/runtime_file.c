@@ -217,6 +217,10 @@ void runtime_file_configure(const char *app0,const char *user) {
         runtime_file_mount(guest,path);
     }
 }
+/* zstd081: set by the shim when a folder of converted game files is in use (bbport_zstd_files.cpp). Called for a path under
+ * /app0 or /hostapp with the guest path after the mount ("/dvdroot_ps4/chr/x.dcx") and the host path made for it; it
+ * may rewrite the host path to the converted file. */
+int (*runtime_file_redirect)(const char *rest,char *host,size_t size)=NULL;
 /* Resolve a guest path to a host path; returns 0 or a host errno. */
 static int translate(const char *guest,char *out,size_t size) {
     if (!guest || !*guest) return ENOENT;
@@ -232,9 +236,11 @@ static int translate(const char *guest,char *out,size_t size) {
         if (!strncmp(buffer,mounts[i].guest,n) && (buffer[n]=='/' || !buffer[n]) && n>best) { best=n; m=&mounts[i]; }
     }
     int result=0;
+    int on_app0=m && (!strcmp(m->guest,"/app0") || !strcmp(m->guest,"/hostapp"));
     if (!m) result=ENOENT;
     else if ((size_t)snprintf(out,size,"%s%s",m->host,buffer+best)>=size) result=ENAMETOOLONG;
     pthread_mutex_unlock(&lock);
+    if (result==0 && on_app0 && runtime_file_redirect) runtime_file_redirect(buffer+best,out,size);
     if (result==ENOENT) fprintf(stderr,"Runtime: no mount for guest path %s\n",guest);
     /* BB_FILE_TRACE=1: every guest path the game opens, stats or checks (mods, missing files). */
     static int trace=-1;

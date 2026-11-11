@@ -142,6 +142,24 @@ if (ZLIB_NG_INC AND ZLIB_NG_LIB)
 else()
     message(STATUS "zlib-ng not found: the engine's inflate stays the game's own (pacman -S mingw-w64-x86_64-zlib-ng)")
 endif()
+# zstd (MSYS2 mingw-w64-x86_64-zstd, static libzstd.a; BSD licence, licenses/zstd.txt): the faster-loading archive
+# format (zstd081) and the BB_INFLATE_BENCH diagnostic. Optional.
+add_library(zstd::zstd INTERFACE IMPORTED)
+if (WIN32)
+    find_path(ZSTD_INC NAMES zstd.h PATHS "$ENV{MINGW_PREFIX}/include" "C:/msys64/mingw64/include")
+    find_library(ZSTD_LIB NAMES libzstd.a PATHS "$ENV{MINGW_PREFIX}/lib" "C:/msys64/mingw64/lib" NO_DEFAULT_PATH)
+else()
+    find_path(ZSTD_INC NAMES zstd.h)
+    find_library(ZSTD_LIB NAMES zstd)
+endif()
+if (ZSTD_INC AND ZSTD_LIB)
+    message(STATUS "zstd: ${ZSTD_LIB}")
+    target_include_directories(zstd::zstd INTERFACE "${ZSTD_INC}")
+    target_link_libraries(zstd::zstd INTERFACE "${ZSTD_LIB}")
+    target_compile_definitions(zstd::zstd INTERFACE BB_HAVE_ZSTD)
+else()
+    message(STATUS "zstd not found (pacman -S mingw-w64-x86_64-zstd)")
+endif()
 if (WIN32)
     if (NOT TARGET miniz::miniz)
         add_library(miniz::miniz INTERFACE IMPORTED)
@@ -320,10 +338,10 @@ target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vu
                                     ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 if (WIN32)
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng zstd::zstd Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
 else()
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng zstd::zstd Zydis::Zydis sirit)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
@@ -605,6 +623,14 @@ target_include_directories(bb-gpu-capabilities PRIVATE .. ../src)
 target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan PkgConfig::SDL3)
 set_target_properties(bb-gpu-capabilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
 
+# bb-zstdpack (tools/zstdpack): the one-time game file converter for faster loading (zstd081). Static zstd + zlib-ng.
+if (ZLIB_NG_INC AND ZLIB_NG_LIB AND ZSTD_INC AND ZSTD_LIB)
+    add_executable(bb-zstdpack ../tools/zstdpack/zstdpack.cpp)
+    target_link_libraries(bb-zstdpack PRIVATE zlibng::zlibng zstd::zstd)
+    target_link_options(bb-zstdpack PRIVATE -static)
+    set_target_properties(bb-zstdpack PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${BB_OUT_DIR}")
+endif()
+
 # The open party's join rule (party_open_rules.h). ninja -C out/gpu party-open-test
 add_executable(party-open-test EXCLUDE_FROM_ALL ../tests/test_party_open.cpp)
 target_compile_options(party-open-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
@@ -843,6 +869,14 @@ if (ZLIB_NG_INC AND ZLIB_NG_LIB)
     target_include_directories(fast-inflate-test PRIVATE shim)
     target_link_libraries(fast-inflate-test PRIVATE zlibng::zlibng z)
     set_target_properties(fast-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
+# Zstd behind the engine's inflate (shim/bbport_zstd_inflate.h): zstd frames through the engine's z_stream contract. ninja -C out/gpu zstd-inflate-test
+if (ZLIB_NG_INC AND ZLIB_NG_LIB AND ZSTD_INC AND ZSTD_LIB)
+    add_executable(zstd-inflate-test EXCLUDE_FROM_ALL ../tests/test_zstd_inflate.cpp)
+    target_compile_options(zstd-inflate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(zstd-inflate-test PRIVATE shim)
+    target_link_libraries(zstd-inflate-test PRIVATE zlibng::zlibng zstd::zstd z)
+    set_target_properties(zstd-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 # Fast loading (shim/bbport_fast_loading.h): the pure rules. ninja -C out/gpu fast-loading-test
 add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp)
