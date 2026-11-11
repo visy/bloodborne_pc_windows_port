@@ -4,7 +4,8 @@ bbport 0.8.1 - two-PC test session (pc1 = host, pc2 = guest)
 What this is: an automated co-op session between two PCs. Each kit holds the 0.8.1 port build, the game files and the test
 saves, preconfigured. You unzip, run one .bat on each PC, and press a key. Then nothing is asked until the end.
 
-Sizes: pc1.zip {PC1_SIZE}, pc2.zip {PC2_SIZE} (the game files are inside, not compressed).
+Sizes: pc1.zip {PC1_SIZE}, pc2.zip {PC2_SIZE} (the game files are inside, not compressed; unzipped each kit is about 29.6 GB, so
+have 40 GB free; use 7-Zip or Windows' own extractor, both read zip64).
 
 1. Install (both PCs)
 ---------------------
