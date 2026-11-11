@@ -5380,16 +5380,32 @@ def _mi_fog(role, cond, m):
 
 
 def phase_mi(only, name="mi", guest_first=False):
-    dist = os.environ.get("BB_MI_DIST", "8")
+    # mig parks the passive guest 12 m from him, outside the 10 m of the "may be stuck" gate: Micolash's own hide-and-seek AI
+    # leaves a passive player alone for a while (mico081: a passive guest at 8 m got "animation 0 for 15 s, nearest player 8.0 m"
+    # at his hiding spot, but the same guest at 6 / 4.5 / 3.5 / 2.5 m made him react within 0.2 - 8 s and keep moving, hits not
+    # needed, so the guest is perceived; BB_MI_AB=sweep reproduces it, BB_MI_SWEEP="6,4.5" the distances)
+    dist = os.environ.get("BB_MI_DIST", "12" if guest_first else "8")
     win = int(os.environ.get("BB_MI_WINDOW", "40"))
     m = "%m26_00"
     walk = lambda role, at: ["%s_move=%s@%s%s" % (role, MI_NEAR, at, m), "%s_route=%s@3%s" % (role, MI_ROUTE, m)]
+    ab = []
+    if os.environ.get("BB_MI_AB"):
+        # A/B in one session (mico081): after the passive window the guest steps up to him at his hiding spot (2 m, passive),
+        # then hits him a few times, then stands passive 2 m from him again; compare his animations in each stretch
+        ab = ["guest_chr=2600850:2@3" + m, "guest_press=0x0@25" + m, "guest_press=0x800@1" + m, "guest_press=0x0@1" + m,
+              "guest_press=0x800@1" + m, "guest_press=0x0@25" + m]
+    if os.environ.get("BB_MI_AB") == "sweep":
+        # his trigger distance: the passive guest comes closer in steps, 10 s each (he moves at the first step he reacts to)
+        ab = []
+        for d in os.environ.get("BB_MI_SWEEP", "6,4.5,3.5,2.5").split(","):
+            ab += ["guest_chr=2600850:%s@3%s" % (d, m), "guest_press=0x0@10" + m]
     if guest_first:
         # the guest alone walks to him and through his fog; the host stays at the lamp (its chr is sent to his spot
         # for a moment by the party's first-fight start, then put back)
         host = ",".join(["god", "log_pos=2", "host_warp=%s@8^1" % MI_LAMP, "host_press=0x0@%d%s" % (MI_HOLD + win + 60, m)])
         g1 = ",".join(["god", "log_pos=2"] + walk("guest", 12) + _mi_fog("guest", "", m) +
-                      ["guest_chr=2600850:%s@8%s" % (dist, m), "guest_press=0x0@%d%s" % (win, m), "guest_press=0x0@2%s" % m])
+                      ["guest_chr=2600850:%s@8%s" % (dist, m), "guest_press=0x0@%d%s" % (win, m)] + ab +
+                      ["guest_press=0x0@2%s" % m])
     else:
         host = ",".join(["god", "log_pos=2", "host_warp=%s@8^1" % MI_LAMP] + walk("host", 3) +
                         ["host_press=0@1%s!" % m,
