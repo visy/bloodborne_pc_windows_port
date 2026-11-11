@@ -442,6 +442,7 @@ struct Values {
     /// 0.7.9 (CL-13f7d1): a summoned guest can use the Ritual Altar in the host's Dream (conduct a ritual with its own
     /// chalice and materials, enter its dungeons). This player's own, read live; OFF by default.
     std::atomic<bool> party_guest_altar{false};
+    std::atomic<bool> chalice_glyphdb{false};  ///< 0.8.1: Noxde's community Chalice glyph list at the Ritual Altar (solo and party host)
     /// 0.7.9 (gdrf079): a host whose game would close its empty room (~5 s after the last member left) keeps it open
     /// while a title join (a restarted guest) is being served. The host's own, read live; ON by default (a bug fix).
     std::atomic<bool> party_title_room_hold{true};

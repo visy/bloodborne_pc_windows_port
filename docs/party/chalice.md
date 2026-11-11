@@ -707,6 +707,19 @@ Switch `party_glyph_list` (System > My party: Chalice, launcher My Party tab, en
 * **Smoke** `chalice_glyph`: cgt (host_glyph typed), cgp (host_pick, the list UI keys), cgu (unknown glyph, nobody enters). Aids: director `host_glyph=CODE`, `host_pick=N`.
 * **Not done / not proven**: layer travel and dungeon shops inside a glyph dungeon, leave / rejoin, death redirect and boss HP catch-up were not re-tested for glyph-entered dungeons (the entered dungeon is the same host dungeon, so the existing chalamp / clg / cis phases apply).
 
+## 12.1 The creator's name field
+
+The 16 bytes at record +736 (helper +0x140, FormData +0x58) hold the creator's name; the glyph list's data never keeps them (zeroed).
+
+## 13. Community Chalice glyphs (glyphdb081, 0.8.1)
+
+Switch `chalice_glyphdb` (System > My party: Chalice, launcher My Party tab, env BB_CHALICE_GLYPHDB), off by default. Noxde's list (Nexus mod 121, gist a29f699f4175bf315d9bd4baeebefb66) as a pick list at the Ritual Altar, solo or as a party host.
+* **The record is the FormData.** A list entry is the save's altar slot, 124 bytes of big-endian dwords (Dungeons-CLI: slot n at inv + 88328 + 0x7d * (n-1)): w0 a copy of w3, w1 / w2 ChannelId low / high, w3 the map (+96, helper +0xe0, 0x1d...), w4 the chalice goods id (+128, +0xe8), w5..w22 the nine layout pairs (+160, +0xf8), w23..w26 the creator's name field (+736, +0x140), the rest of the name. FormData version 4 (0x7c bytes, reader 0x1a9c490; `OwnDungeons` / `SlotFormData` build the same from the flag store) is `{4, 0x7c, w3, w4, w5..w22, 0...}` as little-endian dwords: a field-for-field copy, only the byte order differs. `RecordToFormData` in `party_chalice_glyphdb.h`; the ChannelId is not carried over (the board derives the id and the glyph from the FormData, and answers the list's own glyph for it, as for a curated entry). The save's per-slot flag block (Dungeons-CLI `setFlag`, inv + 102704) is not needed on this path: the game writes its own slot state when it joins the dungeon.
+* **Entry**: pick or type the glyph; `GlyphClosed` puts the row's FormData on the board (`adopt` with the list's glyph, owner "curated"), the game's own `word_search` finds it on the party board (HLE answers offline, no party needed) and the ritual helper's Join writes the slot, as in section 11.
+* **Solo**: no `PartyInit`, so `InstallSolo` (bbgpu.cpp) installs the menu hooks and `SoloTick` (lamp_travel.cpp's main-thread tick) builds the list; BB_LAMP_TRAVEL=0 (which removes that tick) turns it off too.
+* **Data**: the launcher (`glyphdb_refresh`) fetches https://api.github.com/gists/a29f699f4175bf315d9bd4baeebefb66 (certifi, 15 s timeout, 4 MB cap) when the setting is on and the cache is missing or a week old, validates every entry (glyph `[a-z0-9]{8,9}`, 124 bytes, printable description up to 200 characters, known category; bad ones dropped) and writes `<user dir>/community/chalice_glyphs.json` (version 1: glyph, cat, desc, rec as hex, creator names zeroed). The game reads that file (re-read when it changes), else `patches/chalice_glyphs_community.json` (the snapshot written by `tools/glyphdb_snapshot.py`), else the feature is absent. The game checks again (map area 29, a chalice goods id). Only 8-character glyphs are listed (the altar's box takes 8). Tests: `party-chalice-glyphdb-test`, `tests/test_launcher_glyphdb.py`.
+* **UI**: the glyph box's list shows a 14 row window with the position when it is longer.
+
 ## 12. A guest at the Dream's Ritual Altar (altar079, CL-13f7d1, 0.7.9)
 
 Switch `party_guest_altar` (System > My party: Chalice, launcher My Party tab, env BB_PARTY_GUEST_ALTAR), off by default, the guest's own setting.

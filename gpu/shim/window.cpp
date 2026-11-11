@@ -391,6 +391,12 @@ bool WindowSDL::PollEvents() {
             } else if (event.type == SDL_EVENT_KEY_DOWN && !text_choices.empty() && event.key.key == SDLK_DOWN) {
                 text_sel = text_sel + 1 >= int(text_choices.size()) ? 0 : text_sel + 1;
                 text = text_choices[size_t(text_sel)].first;
+            } else if (event.type == SDL_EVENT_KEY_DOWN && !text_choices.empty() &&
+                       (event.key.key == SDLK_PAGEUP || event.key.key == SDLK_PAGEDOWN)) {
+                const int n = int(text_choices.size());  // a long list (the community glyphs): ten rows at a time
+                text_sel = event.key.key == SDLK_PAGEUP ? std::max(0, (text_sel < 0 ? 0 : text_sel) - 10)
+                                                         : std::min(n - 1, (text_sel < 0 ? 0 : text_sel) + 10);
+                text = text_choices[size_t(text_sel)].first;
             } else if (event.key.key == SDLK_V && (event.key.mod & SDL_KMOD_CTRL)) {
                 // Ctrl+V: the clipboard's first line (a party code, an address).
                 if (char* clip = SDL_GetClipboardText()) {
@@ -415,10 +421,13 @@ bool WindowSDL::PollEvents() {
         }
         // A pick list (Chalice glyphs): the d-pad moves the selection (a controller has no arrow keys here).
         if (text_active && !text_choices.empty() && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
-            (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP || event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN)) {
+            (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP || event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_DOWN ||
+             event.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER || event.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) {
             std::scoped_lock lock{text_mutex};
             const int n = int(text_choices.size());
             if (event.gbutton.button == SDL_GAMEPAD_BUTTON_DPAD_UP) text_sel = text_sel <= 0 ? n - 1 : text_sel - 1;
+            else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) text_sel = std::max(0, (text_sel < 0 ? 0 : text_sel) - 10);
+            else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) text_sel = std::min(n - 1, (text_sel < 0 ? 0 : text_sel) + 10);
             else text_sel = text_sel + 1 >= n ? 0 : text_sel + 1;
             text = text_choices[size_t(text_sel)].first;
             UpdateTextTitle();

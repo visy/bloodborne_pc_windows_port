@@ -199,6 +199,8 @@ PARTY_INI_SWITCHES = [
     ("party_glyph_list", "BB_PARTY_GLYPH_LIST", False),
     # 0.7.9 (CL-13f7d1): a summoned guest can use the Ritual Altar in the host's Dream (this player's own, OFF by default)
     ("party_guest_altar", "BB_PARTY_GUEST_ALTAR", False),
+    # 0.8.1 (glyphdb081): Noxde's community Chalice glyph list at the Ritual Altar (OFF by default; the launcher fetches it)
+    ("chalice_glyphdb", "BB_CHALICE_GLYPHDB", False),
     # 0.7.9 (gdrf079): the host's empty room stays open for a restarted guest's title join (the host's own, ON: a bug fix)
     ("party_title_room_hold", "BB_PARTY_TITLE_ROOM_HOLD", True),
 ]
@@ -458,6 +460,13 @@ MY_PARTY_TAB = [
          "(your own dungeons, the guests' dungeons and the shipped patches/chalice_glyphs.json), then the code "
          "keyboard: typing a code still works. Pick one and the whole party enters that dungeon together. "
          "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > My party: Chalice)."),
+        ("check", "chalice_glyphdb", "Community Chalice glyphs (Noxde's list)",
+         "The Ritual Altar's Search by Chalice Glyph lists about 200 community glyphs (farming, equipment, blood gems, "
+         "testing) to pick from, solo or as the party's host; the dungeon is made the game's own way. The list is Noxde's "
+         "\"Add dungeons to Bloodborne save\" (Nexus mod 121, https://gist.github.com/Noxde/a29f699f4175bf315d9bd4baeebefb66): "
+         "only while this is on, the launcher downloads it from GitHub when it is missing or a week old and keeps it in your "
+         "user folder; it is never part of bbport. Works offline once downloaded. Credit: Noxde. "
+         "Default: off (bbport.ini chalice_glyphdb; in the game: System > My party: Chalice)."),
         ("check", "party_guest_altar", "Ritual Altar as a guest",
          "While you are a guest in the host's Hunter's Dream, the Ritual Altar answers you too: conduct a Chalice ritual "
          "with your own chalice and materials. The dungeon lands in your own save and the party can enter it. "
@@ -1831,6 +1840,143 @@ def party_user_dir() -> Path:
     if user:
         return Path(user)
     return Path(os.environ.get("BB_DATA_DIR", str(APP_DIR))) / "user"
+
+
+# ---- Community Chalice glyphs (bbport.ini chalice_glyphdb, 0.8.1): Noxde's list, fetched on demand ----
+# Noxde's "Add dungeons to Bloodborne save" (Nexus mod 121), https://gist.github.com/Noxde/a29f699f4175bf315d9bd4baeebefb66 .
+# Only when the checkbox is on: the gist is downloaded from GitHub's API, strictly validated (bad entries dropped) and cached
+# in <user dir>/community/chalice_glyphs.json, which the game reads; nothing of it is in the repository or a release. The
+# records carry the creators' names: they are never shown, logged or copied (the game's own FormData has none).
+GLYPHDB_GIST = "https://api.github.com/gists/a29f699f4175bf315d9bd4baeebefb66"
+GLYPHDB_CATEGORIES = ("farming", "equipment", "bloodgems", "testing")
+GLYPHDB_RECORD_BYTES = 124  # one altar slot of the save (0x7c bytes)
+GLYPHDB_NAME_AT = 92  # the creator's name field starts here (docs/party/chalice.md 12.1)
+GLYPHDB_MAX_AGE_S = 7 * 24 * 3600
+GLYPHDB_MAX_BYTES = 4 << 20
+
+
+def glyphdb_cache_path() -> Path:
+    return party_user_dir() / "community" / "chalice_glyphs.json"
+
+
+def _glyphdb_record(value) -> str:
+    """The record as 248 hex digits: a list of 124 byte values ("0x1d" strings or ints), or a hex string. '' if bad."""
+    if isinstance(value, str):
+        text = value.replace("0x", "").replace(" ", "").replace(",", "")
+        return text.lower() if re.fullmatch(r"[0-9a-fA-F]{%d}" % (GLYPHDB_RECORD_BYTES * 2), text) else ""
+    if not isinstance(value, list) or len(value) != GLYPHDB_RECORD_BYTES:
+        return ""
+    out = []
+    for item in value:
+        if isinstance(item, bool):
+            return ""
+        if isinstance(item, int):
+            number = item
+        elif isinstance(item, str) and re.fullmatch(r"0[xX][0-9a-fA-F]{1,2}", item):
+            number = int(item, 16)
+        else:
+            return ""
+        if not 0 <= number <= 255:
+            return ""
+        out.append("%02x" % number)
+    return "".join(out)
+
+
+def glyphdb_validate(dungeons) -> tuple:
+    """(cache dict, dropped count) from the gist's dungeons.json (already parsed): {category: [{glyph, bytes, desc}]}.
+    An entry stays only with a glyph [a-z0-9]{8,9}, exactly 124 bytes and a printable description of at most 200
+    characters; the cache keeps glyph, category, desc and the record as hex. Never raises."""
+    glyphs, dropped, seen = [], 0, set()
+    if isinstance(dungeons, dict):
+        for cat in GLYPHDB_CATEGORIES:
+            rows = dungeons.get(cat)
+            for row in rows if isinstance(rows, list) else []:
+                is_row = isinstance(row, dict)
+                glyph = row.get("glyph") if is_row else None
+                desc = row.get("desc") if is_row else None
+                rec = _glyphdb_record(row.get("bytes")) if is_row else ""
+                glyph = glyph.lower() if isinstance(glyph, str) else ""
+                if (not re.fullmatch(r"[a-z0-9]{8,9}", glyph) or glyph in seen or not rec
+                        or not isinstance(desc, str) or not desc.strip() or len(desc) > 200 or not desc.isprintable()):
+                    dropped += 1
+                    continue
+                seen.add(glyph)
+                # Bytes 92..123 of a record are the creator's name: never kept (the game builds the dungeon without it).
+                rec = rec[:GLYPHDB_NAME_AT * 2] + "00" * (GLYPHDB_RECORD_BYTES - GLYPHDB_NAME_AT)
+                glyphs.append({"glyph": glyph, "cat": cat, "desc": desc.strip(), "rec": rec})
+    return {"version": 1, "glyphs": glyphs}, dropped
+
+
+def glyphdb_from_gist(text: str) -> tuple:
+    """(cache dict, dropped) from the gist API's JSON text; (None, 0) when it is not that document."""
+    try:
+        doc = json.loads(text)
+        content = doc["files"]["dungeons.json"]
+        if content.get("truncated") or not isinstance(content.get("content"), str):
+            return None, 0
+        return glyphdb_validate(json.loads(content["content"]))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None, 0
+
+
+def glyphdb_fetch(timeout: float = 15.0, opener=None) -> str:
+    """The gist API's JSON text (HTTPS, certifi's CA bundle when present, at most 4 MB). Raises OSError / ValueError."""
+    import ssl
+    import urllib.request
+    try:
+        import certifi
+        context = ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # certifi missing: the system's certificates
+        context = ssl.create_default_context()
+    request = urllib.request.Request(GLYPHDB_GIST, headers={"User-Agent": "bbport-launcher",
+                                                            "Accept": "application/vnd.github+json"})
+    open_url = opener or (lambda req: urllib.request.urlopen(req, timeout=timeout, context=context))
+    with open_url(request) as reply:
+        data = reply.read(GLYPHDB_MAX_BYTES + 1)
+    if len(data) > GLYPHDB_MAX_BYTES:
+        raise ValueError("reply too large")
+    return data.decode("utf-8")
+
+
+def glyphdb_write_cache(cache: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(cache, separators=(",", ":")), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def glyphdb_refresh(force: bool = False, fetch=None, path: Path = None, now: float = None) -> str:
+    """Refreshes the cache when it is missing or older than a week (or `force`). Returns a one-line status without any
+    list content: 'cached N', 'fresh N', 'offline, cached N', 'offline, none' or 'unusable'. Never raises."""
+    import time
+    path = path or glyphdb_cache_path()
+    now = time.time() if now is None else now
+
+    def cached_count() -> int:
+        try:
+            return len(json.loads(path.read_text(encoding="utf-8")).get("glyphs", []))
+        except (OSError, ValueError, AttributeError):
+            return 0
+
+    try:
+        if not force and path.is_file() and now - path.stat().st_mtime < GLYPHDB_MAX_AGE_S and cached_count():
+            return f"fresh {cached_count()}"
+    except OSError:
+        pass
+    try:
+        cache, dropped = glyphdb_from_gist((fetch or glyphdb_fetch)())
+    except (OSError, ValueError):
+        cache = None
+    if cache is None:
+        n = cached_count()
+        return f"offline, cached {n}" if n else "offline, none"
+    if not cache["glyphs"]:
+        return "unusable"
+    try:
+        glyphdb_write_cache(cache, path)
+    except OSError:
+        return "unusable"
+    return f"cached {len(cache['glyphs'])}" + (f" ({dropped} dropped)" if dropped else "")
 
 
 def parse_party_codes(text: str) -> tuple:
@@ -4719,6 +4865,8 @@ class BloodborneLauncher(tk.Tk):
 
         def changed(key):
             self.update_party_dependents()
+            if key == "chalice_glyphdb" and self.party_switch_vars[key].get():
+                self.start_glyphdb_fetch()
             if key in self.party_flag_vars:
                 self.save_party_flag(key)
             else:
@@ -4752,6 +4900,26 @@ class BloodborneLauncher(tk.Tk):
         self.party_settings_tabs = getattr(self, "party_settings_tabs", {})
         self.party_settings_tabs[title] = tab
         return tab
+
+    def start_glyphdb_fetch(self):
+        """Noxde's community glyph list (glyphdb_refresh): only with the checkbox on, in the background, never blocking
+        or failing the launcher; the log gets a count, never the list."""
+        if not self.party_switch_vars["chalice_glyphdb"].get() or getattr(self, "_glyphdb_busy", False):
+            return
+        self._glyphdb_busy = True
+
+        def work():
+            try:
+                status = glyphdb_refresh()
+            except Exception as ex:  # a launcher must never fail on this
+                status = f"failed ({type(ex).__name__})"
+            self._glyphdb_busy = False
+            try:
+                self.after(0, lambda: self.log(f"Community Chalice glyphs: {status}"))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
 
     def update_party_dependents(self):
         """Greys a party checkbox whose `needs` checkbox is off (Also NPC quests, the rot cleanses ...)."""
@@ -7161,6 +7329,7 @@ class BloodborneLauncher(tk.Tk):
             messagebox.showerror("Pre-Launch Verification Failed", err_msg)
             return
 
+        self.start_glyphdb_fetch()  # Noxde's glyph list, only with its checkbox on (background)
         self.log("[PRE-LAUNCH] Pre-flight verification passed:")
         for line in details:
             self.log(f"  {line}")

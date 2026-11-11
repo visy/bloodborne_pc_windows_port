@@ -174,6 +174,20 @@ int main() {
     assert(!s.party_guest_altar);
     assert(bb_test_setenv("BB_PARTY_GUEST_ALTAR", "") == 0);
     s.party_guest_altar = false;
+    // 0.8.1 (glyphdb081): Noxde's community glyph list: OFF by default, ini key + variable
+    assert(bb_test_setenv("BB_CHALICE_GLYPHDB", "") == 0);
+    BbSettings::Load();
+    assert(!s.chalice_glyphdb);
+    s.chalice_glyphdb = true;
+    BbSettings::Save();
+    assert(Read(path).find("chalice_glyphdb=1\n") != std::string::npos);
+    BbSettings::Load();
+    assert(s.chalice_glyphdb);
+    assert(bb_test_setenv("BB_CHALICE_GLYPHDB", "0") == 0);
+    BbSettings::Load();
+    assert(!s.chalice_glyphdb);
+    assert(bb_test_setenv("BB_CHALICE_GLYPHDB", "") == 0);
+    s.chalice_glyphdb = false;
     s.party_kill_record = true;
     s.party_gather = true;
     s.party_key_items_summoned = true;
