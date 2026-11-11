@@ -123,6 +123,25 @@ else()
     pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 endif()
+# zlib-ng (MSYS2 mingw-w64-x86_64-zlib-ng, static libz-ng.a; zlib licence, licenses/zlib-ng.txt) behind the engine's
+# inflate (shim/bbport_fast_inflate.h, BB_FAST_INFLATE). Optional: without it the build keeps the game's own inflate.
+# Runtime CPU dispatch, no -march.
+add_library(zlibng::zlibng INTERFACE IMPORTED)
+if (WIN32)
+    find_path(ZLIB_NG_INC NAMES zlib-ng.h PATHS "$ENV{MINGW_PREFIX}/include" "C:/msys64/mingw64/include")
+    find_library(ZLIB_NG_LIB NAMES libz-ng.a z-ng PATHS "$ENV{MINGW_PREFIX}/lib" "C:/msys64/mingw64/lib" NO_DEFAULT_PATH)
+else()
+    find_path(ZLIB_NG_INC NAMES zlib-ng.h)
+    find_library(ZLIB_NG_LIB NAMES z-ng)
+endif()
+if (ZLIB_NG_INC AND ZLIB_NG_LIB)
+    message(STATUS "zlib-ng: ${ZLIB_NG_LIB}")
+    target_include_directories(zlibng::zlibng INTERFACE "${ZLIB_NG_INC}")
+    target_link_libraries(zlibng::zlibng INTERFACE "${ZLIB_NG_LIB}")
+    target_compile_definitions(zlibng::zlibng INTERFACE BB_HAVE_ZLIB_NG)
+else()
+    message(STATUS "zlib-ng not found: the engine's inflate stays the game's own (pacman -S mingw-w64-x86_64-zlib-ng)")
+endif()
 if (WIN32)
     if (NOT TARGET miniz::miniz)
         add_library(miniz::miniz INTERFACE IMPORTED)
@@ -301,10 +320,10 @@ target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vu
                                     ffx-vulkan::fsr3-vk-framegeneration-3.1.6)
 if (WIN32)
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit ws2_32 iphlpapi synchronization)
 else()
     target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+        tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz zlibng::zlibng Zydis::Zydis sirit)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
@@ -817,6 +836,14 @@ add_executable(stall-probe-test EXCLUDE_FROM_ALL ../tests/test_stall_probe.cpp)
 target_compile_options(stall-probe-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(stall-probe-test PRIVATE shim)
 set_target_properties(stall-probe-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Fast inflate (shim/bbport_fast_inflate.h): the engine's z_stream contract on zlib-ng against zlib. ninja -C out/gpu fast-inflate-test
+if (ZLIB_NG_INC AND ZLIB_NG_LIB)
+    add_executable(fast-inflate-test EXCLUDE_FROM_ALL ../tests/test_fast_inflate.cpp)
+    target_compile_options(fast-inflate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+    target_include_directories(fast-inflate-test PRIVATE shim)
+    target_link_libraries(fast-inflate-test PRIVATE zlibng::zlibng z)
+    set_target_properties(fast-inflate-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 # Fast loading (shim/bbport_fast_loading.h): the pure rules. ninja -C out/gpu fast-loading-test
 add_executable(fast-loading-test EXCLUDE_FROM_ALL ../tests/test_fast_loading.cpp)
 target_compile_options(fast-loading-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

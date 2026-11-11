@@ -101,3 +101,10 @@ freely, subject to the following restrictions:
    misrepresented as being the original software.
 
 3. This notice may not be removed or altered from any source distribution.
+
+
+zlib-ng (linked statically from the MSYS2 package, unmodified)
+-------------------------------------------------------------
+Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+SPDX-License-Identifier: Zlib
+The full text is in licenses/zlib-ng.txt.

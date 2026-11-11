@@ -21,11 +21,13 @@ Paths below are the usual ones (`E:\games\bbport`); `<clone>` is `agents\NAME` (
 
 - [ ] Commit the version bump with the release date in the `CHANGES.md` heading (`## X.Y.Z (2026-..)`, not
       `(unreleased)`) on `master` of `E:\gamesbport\src`, tracked files clean.
-- [ ] `python tools/release/build_release.py X.Y.Z --base E:\gamesbportel<previous>`
+- [ ] `python tools/release/build_release.py X.Y.Z --base E:\gamesbport
+el<previous>`
       (`--commit SHA` for another commit than `master`, `--out-root` / `--work` for a scratch run, `--dry-run` to
       see each step's state). It runs, in order, skipping a step whose output already exists and matches the
       commit (so a stopped run resumes):
-      1. clone of `src` at the commit into `agentselcloneXYZ` with `git clone --no-tags`, then tags from the
+      1. clone of `src` at the commit into `agents
+elcloneXYZ` with `git clone --no-tags`, then tags from the
          `fork` remote only (an upstream tag such as Mrsuss60's `v0.8.0` at another commit must not reach the
          clone; `publish.py` refuses a local tag on another commit). Refuses a `src` with modified tracked files;
       2. checks `VERSION` and that `CHANGES.md` at the commit does not say `(unreleased)` for X.Y.Z and `changes.d/` holds no fragments;
@@ -91,6 +93,8 @@ Only for a step that has to be run by hand (a failed step, a special build).
       `<repo>\out\gpu-pgo-gen`: Ninja, RelWithDebInfo, `BB_LTO=ON`, `BB_STRIP=ON`, `BB_PGO=use`, `VMA_INC`,
       `MINIZ_INC` and the compilers from `src\out\gpu-pgo-gen\CMakeCache.txt`; no `-march` (older CPUs, game
       code goes through Legacy CPU). `--dry-run` only prints. `tools/agent/build.py` never configures.
+- [ ] zlib-ng (the fast inflate, `BB_FAST_INFLATE`): `pacman -S mingw-w64-x86_64-zlib-ng` in MSYS2 (static `libz-ng.a`, found by
+      `gpu/CMakeLists.txt`; without it the exe builds with the game's own inflate and logs that at start).
 - [ ] Build: `set PATH=C:\msys64\mingw64\bin;%PATH%` then `cmake --build <repo>\out\gpu-pgo-gen`
       (machine-wide build limits: only when no other build runs). The exe lands in `<repo>\out\release`.
 - [ ] The tree is clean when the exe is built: the exe embeds `git describe --dirty`; staging refuses a `-dirty`

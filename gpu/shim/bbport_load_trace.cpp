@@ -190,6 +190,91 @@ void EmitLoadTotal(const Counters& now) {
                 double(now.cpu_100ns - p.cpu_100ns) / 1e7);
 }
 
+// Hang guard: a MoveMapStep step that has not changed for kStallS seconds is reported once (the step, its map and
+// timers, the file IO and CPU since the step began, and the busiest threads with their names: the game's resource
+// threads "Core.Res.*" are the load's workers, all idle while a job is lost).
+constexpr double kStallS = 30.0;
+u64 g_step_since_ns = 0;
+Counters g_step_since;
+std::unordered_map<u32, u64> g_step_threads;
+bool g_stall_reported = false;
+
+void ReportStall(u64 step, int cur) {
+    const Counters now = Snapshot();
+    char names[512] = "";
+#ifdef _WIN32
+    const auto cpu = ThreadCpu();
+    std::vector<std::pair<u64, u32>> busy;
+    for (const auto& [tid, t] : cpu) {
+        const auto it = g_step_threads.find(tid);
+        busy.emplace_back(t - (it == g_step_threads.end() ? 0 : it->second), tid);
+    }
+    std::sort(busy.begin(), busy.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    int n = 0, res = 0;
+    for (const auto& [d, tid] : busy) {
+        char nm[64] = "";
+        runtime_win_thread_name(tid, nm, sizeof(nm));
+        const bool core = std::strncmp(nm, "Core.Res", 8) == 0;
+        res += core && d > 0;
+        if (n < 5 || (core && n < 12)) {
+            const std::size_t len = std::strlen(names);
+            std::snprintf(names + len, sizeof(names) - len, "%s%s%u %.0f ms", n ? ", " : "", nm[0] ? nm : "thread", unsigned(tid),
+                          double(d) / 1e4);
+            ++n;
+        }
+    }
+    std::snprintf(names + std::strlen(names), sizeof(names) - std::strlen(names), "; resource threads busy: %d", res);
+#endif
+    float hold = 0, others = 0;
+    u32 map = 0;
+    coop::SafeGet(step + kHold, &hold);
+    coop::SafeGet(step + kOthers, &others);
+    coop::SafeGet(step + kStepMap, &map);
+    std::printf("Load trace: STALL: MoveMapStep step %d has not advanced for %.0f s (map 0x%08x, hold %.2f s, others-gate %.2f s): "
+                "io %llu reads, %.1f MB, cpu %.2f s since it began; threads: %s\n",
+                cur, Ms(g_step_since_ns, now.ns) / 1e3, map, double(hold), double(others), ull(now.reads - g_step_since.reads),
+                double(now.bytes - g_step_since.bytes) / 1e6, double(now.cpu_100ns - g_step_since.cpu_100ns) / 1e7, names);
+    std::fflush(stdout);
+}
+
+// World fade-in diagnostic: for 3 s after a load ends (step 13) the two fade objects of the SprjFade singleton
+// (*0x5540068; +0x20 and +0x38, the pair MoveMapStep step 0 clears to black: floats at +0xc .. +0x28, int at +0x38) are
+// printed when a value changes (sampled every 16 ms), with the NowLoading state: whether the world's fade from black runs and ends.
+constexpr u64 kSprjFadePtr = 0x5540068;
+void FadeWatch(u64 load_end_ns) {
+    std::string last;
+    for (int i = 0; i < 190; ++i) {  // 3 s at 16 ms; a line only when a value changed
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        u64 fade = 0;
+        if (!coop::SafeGet(coop::Guest(kSprjFadePtr), &fade) || !fade) continue;
+        char line[512];
+        int n = std::snprintf(line, sizeof(line), "Load trace: fade +%.2f s:", Ms(load_end_ns, NowNs()) / 1e3);
+        for (const u64 slot : {u64(0x20), u64(0x38)}) {
+            u64 obj = 0;
+            if (!coop::SafeGet(fade + slot, &obj) || !obj) {
+                n += std::snprintf(line + n, sizeof(line) - n, " [+0x%llx none]", ull(slot));
+                continue;
+            }
+            float f[9] = {};
+            for (int k = 0; k < 9; ++k) coop::SafeGet(obj + 0xc + 4 * k, &f[k]);
+            int st = 0;
+            coop::SafeGet(obj + 0x38, &st);
+            n += std::snprintf(line + n, sizeof(line) - n, " [+0x%llx %llx: %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f st %d]",
+                               ull(slot), ull(obj), double(f[0]), double(f[1]), double(f[2]), double(f[3]), double(f[4]),
+                               double(f[5]), double(f[6]), double(f[7]), double(f[8]), st);
+        }
+        u64 nlp = 0;
+        int nl_state = -1;
+        if (coop::SafeGet(coop::Guest(kNowLoadingPtr), &nlp) && nlp) coop::SafeGet(nlp + kNlState, &nl_state);
+        const char* sep = std::strstr(line, " s:");
+        const std::string body = std::string(sep ? sep + 3 : line) + std::to_string(nl_state);
+        if (body == last) continue;
+        last = body;
+        std::printf("%s NowLoading %d\n", line, nl_state);
+        std::fflush(stdout);
+    }
+}
+
 /// MoveMapStep update, every frame (rdi = the step).
 BB_COOP_SYSV void MoveMapUpdateHook(u64 step, u64, u64, u64, u64, u64) {
     int cur = -1;
@@ -199,7 +284,19 @@ BB_COOP_SYSV void MoveMapUpdateHook(u64 step, u64, u64, u64, u64, u64) {
         g_move_obj = step;
         g_move_step = -1;
     }
-    if (cur == g_move_step) return;
+    if (cur == g_move_step) {
+        if (g_in_load && !g_stall_reported && g_step_since_ns && Ms(g_step_since_ns, NowNs()) >= kStallS * 1e3) {
+            g_stall_reported = true;
+            ReportStall(step, cur);
+        }
+        return;
+    }
+    g_step_since_ns = NowNs();
+    g_step_since = Snapshot();
+    g_stall_reported = false;
+#ifdef _WIN32
+    g_step_threads = ThreadCpu();
+#endif
     if (cur == 0 || g_move_step < 0) {
         g_load_start = Snapshot();
         g_in_load = true;
@@ -207,6 +304,7 @@ BB_COOP_SYSV void MoveMapUpdateHook(u64 step, u64, u64, u64, u64, u64) {
     Emit("MoveMapStep", g_move_step, cur, step);
     if (cur == 13 && g_in_load) {
         EmitLoadTotal(g_last);
+        std::thread(FadeWatch, NowNs()).detach();
         g_in_load = false;
         g_sample_load = false;
     } else if (cur >= 0 && cur < 13) {
