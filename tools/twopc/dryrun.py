@@ -68,6 +68,8 @@ def main():
                 cmd += ["--only", a.only, "--skip", a.skip]
             if lobby_addr:
                 cmd += ["--vpn-lobby-test", lobby_addr]
+                if role == "pc1":
+                    cmd += ["--vpn"]
             procs.append((role, subprocess.Popen(cmd, cwd=str(d), env=env, stdout=open(root / ("%s_runner.txt" % role), "w"),
                                                  stderr=subprocess.STDOUT)))
         try:
