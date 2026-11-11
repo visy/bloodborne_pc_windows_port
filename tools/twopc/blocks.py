@@ -91,11 +91,14 @@ def sessions():
     a = dict(out[0], id="2a", block="2", title="seamless party travel, guest on simulated DSL", net_sim="dsl")
     c = dict(out[3], id="2c", block="2", title="C2 boss death, guest on simulated DSL", net_sim="dsl", seconds=660)
     out += [a, c]
-    # 3: both PCs on the Nightwatch VPN: hosted by code (the lobby gives pc2 the host's tunnel address), one party warp.
+    # 3: both PCs on the Nightwatch VPN (NW-03d11e5). The guest joins with the code the host's game published (party_code.txt, the
+    # LAN/VPN slot: a full tunnel address on the VPN), handed over by the beacon; one party warp. 3b: the same through the VPN lobby row
+    # (fallback only). Both hosts also announce to the lobby.
     out.append(S(
-        id="3", block="3", title="Nightwatch VPN: one party warp over the tunnel", minutes=7, seconds=600, vpn=True, start="vpn",
+        id="3", block="3", title="Nightwatch VPN: join by the host's published party code, one party warp", minutes=7, seconds=600, vpn=True,
         host="god,host_warp=%s@10^1" % TOMB, ini_host=["party_vpn_lobby=1"],
         host_until=[LAST_STEP], guest_until=[r"map \S* ?-> m24_01"], hold_host=40, hold_guest=30))
+    out.append(dict(out[-1], id="3b", title="Nightwatch VPN fallback: join from the lobby row", start="vpn"))
     return out
 
 

@@ -25,13 +25,13 @@ def log(*lines):
 class Plan(unittest.TestCase):
     def test_ids_and_select(self):
         ids = [s["id"] for s in blocks.sessions()]
-        self.assertEqual(ids, ["1a.travel", "1a.rejoin", "1a.join", "1c", "1d", "1e", "2a", "2c", "3"])
+        self.assertEqual(ids, ["1a.travel", "1a.rejoin", "1a.join", "1c", "1d", "1e", "2a", "2c", "3", "3b"])
 
         def sel(only="", skip=""):
             return [s["id"] for s in blocks.select(blocks.sessions(), only.split(",") if only else [], skip.split(",") if skip else [])]
         self.assertEqual(sel("1a"), ["1a.travel", "1a.rejoin", "1a.join"])
         self.assertEqual(sel(skip="1d,2,3"), ["1a.travel", "1a.rejoin", "1a.join", "1c", "1e"])
-        self.assertEqual(sel("1c,3"), ["1c", "3"])
+        self.assertEqual(sel("1c,3"), ["1c", "3", "3b"])
 
     def test_sessions_are_event_synced(self):
         for s in blocks.sessions():

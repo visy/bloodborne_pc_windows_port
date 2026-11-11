@@ -240,17 +240,27 @@ def s_1e(R):
     R.common("1e")
 
 
-def s_3(R, vpn):
-    R.need("3 join over the tunnel: 2 players", "pc1", r"cooperators 0 -> 1")
-    R.need("3 the party warp ran (host)", "pc1", r"test: travel step \d+/\d+: host_warp")
-    R.need("3 the guest arrived in Central Yharnam (m24_01)", "pc2", MAP % "m24_01")
-    R.none("3 nobody died", ("pc1", "pc2"), r"local death: HP 0")
+def s_3(R, vpn, sid="3"):
+    R.need("%s join over the tunnel: 2 players" % sid, "pc1", r"cooperators 0 -> 1")
+    R.need("%s the party warp ran (host)" % sid, "pc1", r"test: travel step \d+/\d+: host_warp")
+    R.need("%s the guest arrived in Central Yharnam (m24_01)" % sid, "pc2", MAP % "m24_01")
+    R.none("%s nobody died" % sid, ("pc1", "pc2"), r"local death: HP 0")
     p1, p2 = vpn.get("pc1"), vpn.get("pc2")
-    R.add("3 both PCs had a Nightwatch tunnel address", bool(p1 and p2),
+    R.add("%s both PCs had a Nightwatch tunnel address" % sid, bool(p1 and p2),
           "pc1 %s, pc2 %s" % ((p1 or {}).get("own", "none"), (p2 or {}).get("own", "none")))
     if p2:
-        R.info("3 (info) pc2 saw the host at %s; same /24: %s" % (p2.get("host"), "yes" if p2.get("same_24") else "no"), "")
-    R.common("3")
+        R.info("%s (info) tunnel /24s: pc1 %s, pc2 %s: %s" % (sid, (p1 or {}).get("own", "?"), p2.get("own"),
+                                                              "same /24" if p2.get("same_24") else "different /24"), "joined via " + p2.get("via", "?"))
+    if sid == "3":
+        # NW-03d11e5: the guest joined with the host's published code, and that code was a full address (not a LAN-partial one:
+        # a partial code makes the guest log 'LAN code: host ... (first three octets from our address ...)')
+        R.need("3 the guest joined by the host's published party code", "pc2", r"joining \S+ as \S+ \((LAN code|Internet code|address)\)")
+        R.none("3 the host's code is a full address (not a LAN-partial BBP code)", ("pc2",), r"LAN code: host \S+ \(first three octets")
+        R.none("3 no LAN fallback probe was needed to find the host", ("pc2",), r"LAN fallback: ")
+        R.add("3 the code came from the host (not the lobby row)", bool(p2) and p2.get("via") == "party code", (p2 or {}).get("via", "no report"))
+    else:
+        R.add("3b the guest found the host in the VPN lobby (fallback)", bool(p2) and p2.get("via") == "lobby row", (p2 or {}).get("via", "no report"))
+    R.common(sid)
 
 
 SESSIONS = {
@@ -289,7 +299,7 @@ def main():
     plan = data["pc1"][0].get("plan", [])
     rows, ok = [], True
     ipm = _ipmask()
-    for sid in ("1a.travel", "1a.rejoin", "1a.join", "1c", "1d", "1e", "2a", "2c", "3"):
+    for sid in ("1a.travel", "1a.rejoin", "1a.join", "1c", "1d", "1e", "2a", "2c", "3", "3b"):
         if sid not in plan:
             rows.append(("%s: not in this session's plan" % sid, "SKIP", ""))
             continue
@@ -309,13 +319,13 @@ def main():
             R.out += [(n.replace("1a.travel", "2a").replace("1b ", "2a/1b "), s, d) for n, s, d in tmp.out]
         elif sid == "2c":
             s_boss(R, "2c")
-        elif sid == "3":
+        elif sid in ("3", "3b"):
             vpn = {}
-            if "vpn_report.json" in data["pc2"][1]:
-                vpn["pc2"] = json.loads(data["pc2"][1]["vpn_report.json"])
-            if "3/vpn_report_pc1.json" in data["pc1"][1]:
-                vpn["pc1"] = json.loads(data["pc1"][1]["3/vpn_report_pc1.json"])
-            s_3(R, vpn)
+            for r in ("pc1", "pc2"):
+                txt = data[r][1].get("%s/vpn_report_%s.json" % (sid, r))
+                if txt:
+                    vpn[r] = json.loads(txt)
+            s_3(R, vpn, sid)
         else:
             SESSIONS[sid](R)
         rows += R.out

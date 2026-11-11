@@ -402,8 +402,13 @@ def guest_start_wait(ctx, s, idx):
     """pc2: wait for the host to be ready for this session; returns (code text or '', start reason) or None when the
     host went on without us."""
     cap = s["seconds"]
-    if s["vpn"]:
+    if s["vpn"] and s["start"] == "vpn":     # 3b: the lobby row (fallback path)
         return vpn_guest_target(ctx, s, idx)
+    own = ""
+    if s["vpn"]:                              # 3: the host's published party code, from the beacon
+        own = wait_tunnel(ctx, 900)
+        if not own:
+            return None
 
     def ready():
         p = ctx.sync.peer(40)
@@ -421,6 +426,13 @@ def guest_start_wait(ctx, s, idx):
     r = wait_for(ready, cap)
     if r is None or r == "missed":
         return None
+    if s["vpn"]:
+        pp = ctx.sync.peer(1e9) or {}
+        host_ip = pp.get("tunnel", "")
+        rep = {"own": mask(own), "host": mask(host_ip) if host_ip else "unknown", "same_24": same24(own, host_ip), "via": "party code"}
+        (ctx.cur_sd / "vpn_report_pc2.json").write_text(json.dumps(rep), encoding="utf-8")
+        say("VPN: joining with the host's published party code; this PC %s, host %s, same /24: %s"
+            % (mask(own), rep["host"], "yes" if rep["same_24"] else "no"))
     return r[1], r[0]
 
 
@@ -454,7 +466,8 @@ def vpn_guest_target(ctx, s, idx=0):
         say("VPN: the host never showed in the lobby")
         return None
     rep = {"own": mask(own), "host": mask(e["ip"]), "same_24": same24(own, e["ip"])}
-    (ctx.run_dir / "vpn_report.json").write_text(json.dumps(rep), encoding="utf-8")
+    rep["via"] = "lobby row"
+    (ctx.cur_sd / "vpn_report_pc2.json").write_text(json.dumps(rep), encoding="utf-8")
     say("VPN: host at %s, this PC %s, same /24: %s" % (mask(e["ip"]), mask(own), "yes" if rep["same_24"] else "no"))
     return "%s:%d" % (e["ip"], e["port"]), "lobby"
 
@@ -471,6 +484,7 @@ def run_session(ctx, s, idx, total):
     role, host = ctx.role, ctx.role == "pc1"
     sd = ctx.run_dir / s["id"]
     sd.mkdir(parents=True, exist_ok=True)
+    ctx.cur_sd = sd
     say("session %d/%d  %s  %s  (about %d min)" % (idx + 1, total, s["id"], s["title"], s["minutes"]))
     res = {"id": s["id"], "role": role, "started": time.strftime("%H:%M:%S"), "ok": False, "note": ""}
     code_file = ctx.work / "party_code.txt"
@@ -483,6 +497,7 @@ def run_session(ctx, s, idx, total):
             ctx.sync.publish(idx=idx, session=s["id"], state="skipped", events=[], code="")
             return res
         (sd / "vpn_report_pc1.json").write_text(json.dumps({"own": mask(own)}), encoding="utf-8")
+        ctx.sync.publish(tunnel=own)
         say("VPN: this PC %s" % mask(own))
     start_reason = ""
     if not host:
