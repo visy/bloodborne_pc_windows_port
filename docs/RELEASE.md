@@ -93,8 +93,9 @@ Only for a step that has to be run by hand (a failed step, a special build).
       `<repo>\out\gpu-pgo-gen`: Ninja, RelWithDebInfo, `BB_LTO=ON`, `BB_STRIP=ON`, `BB_PGO=use`, `VMA_INC`,
       `MINIZ_INC` and the compilers from `src\out\gpu-pgo-gen\CMakeCache.txt`; no `-march` (older CPUs, game
       code goes through Legacy CPU). `--dry-run` only prints. `tools/agent/build.py` never configures.
-- [ ] zlib-ng (the fast inflate, `BB_FAST_INFLATE`): `pacman -S mingw-w64-x86_64-zlib-ng` in MSYS2 (static `libz-ng.a`, found by
-      `gpu/CMakeLists.txt`; without it the exe builds with the game's own inflate and logs that at start).
+- [ ] zlib-ng (the fast inflate, `BB_FAST_INFLATE`): a pinned submodule, `gpu/third_party/zlib-ng` (2.2.x tag), built
+      static by `gpu/CMakeLists.txt` (required: configure fails if it is not initialised; `configure_pgo.py` inits it;
+      `git submodule update --init gpu/third_party/zlib-ng` otherwise). Runtime CPU dispatch, no `-march`.
 - [ ] Build: `set PATH=C:\msys64\mingw64\bin;%PATH%` then `cmake --build <repo>\out\gpu-pgo-gen`
       (machine-wide build limits: only when no other build runs). The exe lands in `<repo>\out\release`.
 - [ ] The tree is clean when the exe is built: the exe embeds `git describe --dirty`; staging refuses a `-dirty`

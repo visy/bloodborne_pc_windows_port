@@ -89,13 +89,14 @@ def _git_applied(fsr, patch, env):
 
 
 def prepare(repo, env):
-    """build.bat's source prep, from git only: submodules, libatrac9.a, FSR-Vulkan patches."""
+    """build.bat's source prep, from git only: submodules (incl. zlib-ng), libatrac9.a, FSR-Vulkan patches."""
     # Windows resolves a bare program name on the parent's PATH, not env's: name mingw64's tools in full.
     gcc = shutil.which("gcc", path=env["PATH"]) or "gcc"
     ar = shutil.which("ar", path=env["PATH"]) or "ar"
     fsr = repo / "gpu" / "third_party" / "fsr-vulkan"
     at9 = repo / "third_party" / "LibAtrac9" / "C" / "src"
-    if not (fsr / "CMakeLists.txt").is_file() or not at9.is_dir():
+    zng = repo / "gpu" / "third_party" / "zlib-ng" / "CMakeLists.txt"
+    if not (fsr / "CMakeLists.txt").is_file() or not at9.is_dir() or not zng.is_file():
         subprocess.run(["git", "-C", str(repo), "submodule", "update", "--init", "--recursive"],
                        env=env, check=True)
     lib = repo / "out" / "libatrac9.a"

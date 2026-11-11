@@ -103,7 +103,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 
-zlib-ng (linked statically from the MSYS2 package, unmodified)
+zlib-ng (linked statically, built from the pinned submodule gpu/third_party/zlib-ng, unmodified)
 -------------------------------------------------------------
 Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
 SPDX-License-Identifier: Zlib
