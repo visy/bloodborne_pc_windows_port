@@ -27,6 +27,14 @@ This document details the optimizations, fixes, and refactoring applied to ensur
   quiet point is ported by intent from droogie/bbhost (GPL-3.0, live_resolution.cpp at bdc5cdf).
 - **Native loading-screen hold (experimental)** `BB_PARTY_NATIVE_HOLD=1` makes the held loading screen of *Load with the host* hold the game's own screen gate, so the world does not start under it. Off by default: it adds about 0.7 s.
 - **Rejoin re-sync** *Rejoin in place* asks a member that has not reappeared for its record with the game's own request. `BB_PARTY_RESYNC_0XA=0` turns it off.
+- **Faster loading screens with converted game files (optional)**: the launcher gets a *Faster loading* option with a button, *Convert
+  game files for faster loading (one-time, about 14 GB extra)*. It recompresses the game's zlib-packed map, model and texture files
+  once with zstd into a separate folder next to the game folder (15 GB, 5 to 15 minutes depending on the CPU, resumable, every file
+  checked against the original; your game folder is never touched), and the game unpacks them about twice as fast. A lamp trip takes
+  3.64 s instead of 3.80 s on a 16-thread PC (three sessions of 12 trips each way; the Great Bridge, Yahar'gul and Tomb of Oedon lamps gain
+  0.3 to 0.4 s) and 3.86 s instead of 4.09 s on a PC limited to 6 threads; Continue and death respawns are unchanged. Off by default;
+  delete the folder or turn the option off to go back. A mod that replaces a game file still wins, and the co-op version check ignores
+  the option. `BB_ZSTD_DIR` is the folder, `BB_INFLATE_BENCH=1` a diagnostic that times unpacking.
 
 ### Changed
 
@@ -40,6 +48,14 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Faster start-up** the check that the party tables match the game files takes about 0.1 s instead of 2.7 s on every start (one folder pass instead of three file queries per file). Tables are rebuilt on a game, mod or update change exactly as before.
 - **Launcher taskbar identity** the launcher has its own taskbar identity instead of grouping under Python, and uses `icon.ico` beside it as the window icon when that file exists (Mrsuss60 1cc0678c, by intent).
 - **Shorter loading screens on lamp trips** the game's map files are unpacked by a faster unpacker (zlib-ng) instead of the game's old built-in one. A lamp trip through the six big maps takes about 3.55 s instead of 3.9 s on average on a 16-thread PC (two sessions of 12 trips against three of 12; the Great Bridge, Yahar'gul and Tomb of Oedon lamps gain 0.7 to 0.9 s, the Cathedral Ward and Old Yharnam lamps are up to 0.25 s slower), and on a PC limited to 6 threads from 5.2 s to 4.2 s. Continue from the title is about 0.1 s shorter; a death respawn is unchanged (it is held for 2 s anyway). The files come out byte for byte the same. `BB_FAST_INFLATE=0` uses the game's own unpacker again.
+- **Faster loading screens on big maps**: the game admits at most 20 map pieces per frame while a
+  loading screen is up, so a warp into a place with thousands of pieces in view (Cathedral Ward, Old Yharnam)
+  waited hundreds of frames for a walk over the list while the disk and the unpack threads sat idle. While the
+  loading screen is up the game now admits many more pieces per frame; in the world the game's own pacing is
+  kept, so streaming while walking is unchanged. `BB_LOAD_PARTS_BUDGET=0` restores the old loading (`=N` sets the
+  per-frame count). Measured at 60 FPS: Cathedral Ward 7.2 s -> 4.4 s, Old Yharnam 4.8 s -> 3.4 s.
+- **Shorter loading screens**: three speed-ups, all on by default. The loading screen no longer waits for the frame rate limit between its steps (at 60 / 90 / uncapped, not at 30 FPS and not in cutscenes) and still draws a new picture about every 16 ms, so it keeps moving. The black fade out and in around a map load takes half the time, at any frame rate. On a PC with 6 or more logical CPUs the game unpacks map files on 4 threads instead of 3. Each can be turned off in the launcher (Advanced) or in bbport.ini (`fast_loading=0`, `fast_fades=0`, `load_workers=0`); `BB_FAST_LOADING=0`, `BB_FAST_FADES=0` and `BB_LOAD_WORKERS=0` do the same for scripts.
+- zlib-ng (the fast inflate) is now built from a pinned copy in the source tree, so every build has it.
 
 ### Fixed
 
@@ -94,6 +110,7 @@ This document details the optimizations, fixes, and refactoring applied to ensur
 - **Mod animations past 8192 clips** the game's behaviour clip capacity is raised from 0x2000 to 0x4000 (Nightwatch 8cfe003), so mods that add animations (Nocturne has 8271 clips) no longer lose the clips past the limit. Vanilla (7784 clips) is unchanged. `BB_CLIP_CAPACITY=0` leaves the game's limit.
 - **Black world after a lamp warp** after several area changes, a lamp warp to the Hunter's Dream could leave the screen black (the HUD and the area title showing) until the next warp. The texture collector, with the 1.5 GiB cap, dropped GPU-drawn images that the game never draws again; they now stay (the memory use is the same). `BB_GC_DROP_TILED=1` restores the old drop.
 - **Nightwatch VPN host codes** (NW-03d11e5) a party hosted over the Nightwatch VPN now gives a code with the host's full tunnel address, so players whose VPN address is in a different range than the host's can join with it (before, only players with a nearby address could). Old short codes keep working, and the game now also tries the other address ranges for them. If a code still fails, join from the VPN lobby list or type the host's full VPN address. Set `BB_PARTY_VPN_FULL_CODE=0` to get the old short code.
+- **Live FPS stuck low after a respawn** (GitHub #35): with the frame rate uncapped, the game could stay at 64-70 FPS instead of 90-100+ after a respawn until the next loading screen, and minimising and restoring the window cured it. The game now notices a frame rate that stays well below the rate before the load for 6 seconds and refreshes its display connection once by itself, the same thing minimising did. This is a safety net; the cause is not found yet. `BB_LIVE_FPS_REFRESH=0` turns it off.
 
 ## 0.8.0 (2026-11-09)
 
