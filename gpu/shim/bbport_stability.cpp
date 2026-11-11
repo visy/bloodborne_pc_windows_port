@@ -434,6 +434,39 @@ std::string FastRespawn() {
     return "fast-respawn " + std::to_string(secs).substr(0, 4) + "s";
 }
 
+// The behaviour clip capacity (BB_CLIP_CAPACITY, default on; =0 leaves the game's 0x2000). 0xACEFD0 sizes the
+// player's clip-generator collection for 0x2000 clips and 0xACF4C0 drops every clip past it, so a mod with
+// more than 8192 clips (Nocturne 2.0.0: 8271) loses animations; vanilla has 7784. The immediate at 0xACEFF3
+// is raised to 0x4000 after its original bytes are checked. From Nightwatch 8cfe003 (Lantern Engine by Awaken,
+// https://github.com/Awakenchan/LanternEngine; GPL-3.0-or-later with its section 7 additional terms, see its
+// NOTICE; attribution kept, marked as modified): the idea and the site, re-done on this image patcher with the
+// byte check and the switch.
+std::string ClipCapacity() {
+    if (!On("BB_CLIP_CAPACITY")) {
+        return "clip-capacity off";
+    }
+    const u64 site = BbStability::kClipCapacitySite;
+    if (site + 2 > image_size) {
+        std::printf("Stability: behaviour clip capacity not raised: image size 0x%llx does not reach +0x%llx\n",
+                    ull(image_size), ull(site));
+        return "clip-capacity skipped";
+    }
+    switch (BbStability::ClipCapacityBytes(image + site)) {
+    case BbStability::ClipCapacityState::Unpatched:
+        image[site + 1] = 0x40;
+        std::printf("Stability: behaviour clip capacity 0x2000 -> 0x4000 at guest +0x%llx (BB_CLIP_CAPACITY=0 restores)\n",
+                    ull(site));
+        return "clip-capacity 16384";
+    case BbStability::ClipCapacityState::Patched:
+        std::printf("Stability: behaviour clip capacity already 0x4000 at guest +0x%llx\n", ull(site));
+        return "clip-capacity 16384";
+    default:
+        std::printf("Stability: behaviour clip capacity not raised: bytes at guest +0x%llx are %02x %02x, not 00 20\n",
+                    ull(site), image[site], image[site + 1]);
+        return "clip-capacity skipped";
+    }
+}
+
 // ======================================================================================
 // 3. The frame arena allocator's NULL. +0x21d5a80 (a render command's copy) takes 0x4d0 bytes
 // from the frame context's arena (+0xe45560(frameCtx + 0x78, 0x4d0, 16)) and copies the command
@@ -2092,6 +2125,7 @@ void PatchImage(unsigned char* image_, std::uint64_t size) {
     note(HeapTable());
     note(GxRegion());
     note(FastRespawn());
+    note(ClipCapacity());
     stub_page = MapNear(StubPageSize);
     if (!stub_page) {
         std::printf("Stability: no memory near the image for stubs; code fixes off\n");
