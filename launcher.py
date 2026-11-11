@@ -1885,7 +1885,7 @@ def _glyphdb_record(value) -> str:
 
 def glyphdb_validate(dungeons) -> tuple:
     """(cache dict, dropped count) from the gist's dungeons.json (already parsed): {category: [{glyph, bytes, desc}]}.
-    An entry stays only with a glyph [a-z0-9]{8,9}, exactly 124 bytes and a printable description (cut to 200
+    An entry stays only with a glyph [a-z0-9]{8,9}, exactly 124 bytes and a description (whitespace folded, control characters removed, cut to 200
     characters with an ellipsis); the cache keeps glyph, category, desc and the record as hex. Never raises."""
     glyphs, dropped, seen = [], 0, set()
     if isinstance(dungeons, dict):
@@ -1896,9 +1896,11 @@ def glyphdb_validate(dungeons) -> tuple:
                 glyph = row.get("glyph") if is_row else None
                 desc = row.get("desc") if is_row else None
                 rec = _glyphdb_record(row.get("bytes")) if is_row else ""
-                glyph = glyph.lower() if isinstance(glyph, str) else ""
+                glyph = glyph.strip().lower() if isinstance(glyph, str) else ""
+                if isinstance(desc, str):  # line breaks / tabs in a description become spaces; other control chars go
+                    desc = " ".join("".join(ch if ch.isprintable() or ch.isspace() else "" for ch in desc).split())
                 if (not re.fullmatch(r"[a-z0-9]{8,9}", glyph) or glyph in seen or not rec
-                        or not isinstance(desc, str) or not desc.strip() or not desc.isprintable()):
+                        or not isinstance(desc, str) or not desc):
                     dropped += 1
                     continue
                 seen.add(glyph)

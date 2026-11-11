@@ -55,12 +55,13 @@ class GlyphDb(unittest.TestCase):
             "unknown": [{"glyph": "iiii9999", "bytes": good, "desc": "unknown category"}],
         }
         cache, dropped = self.L.glyphdb_validate(dungeons)
-        self.assertEqual([g["glyph"] for g in cache["glyphs"]], ["aaaa1111", "bbbb2222", "dddd4444", "hhhh88889"])
-        self.assertEqual(dropped, 7)
+        self.assertEqual([g["glyph"] for g in cache["glyphs"]], ["aaaa1111", "bbbb2222", "dddd4444", "eeee5555", "hhhh88889"])
+        self.assertEqual(dropped, 6)
         cut = cache["glyphs"][2]["desc"]
         self.assertEqual((len(cut), cut[-3:]), (200, "..."))
         self.assertEqual(cache["version"], 1)
-        row = cache["glyphs"][3]
+        self.assertEqual(cache["glyphs"][3]["desc"], "tab here")
+        row = cache["glyphs"][4]
         self.assertEqual(row["cat"], "equipment")
         self.assertEqual(len(row["rec"]), 248)
         self.assertEqual(row["rec"][184:], "00" * 32)  # the creator's name field is never kept
