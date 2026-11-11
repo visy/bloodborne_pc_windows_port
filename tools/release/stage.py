@@ -39,7 +39,7 @@ TRACKED_DIRS = ("docs/", "scripts/", "patches/", "licenses/")
 TRACKED_SKIP = ("docs/superpowers/",)
 FROM_BASE = ["out", "fsr4_shaders", "python", "map_generator", "mods", "user"]
 MINGW = r"C:\msys64\mingw64\bin"  # the exe's DLLs when the build dir has none (out/release holds the exe only)
-REQUIRED = ["out/bbport.exe", "out/SDL3.dll", "out/libgcc_s_seh-1.dll", "VERSION", "launcher.py"]
+REQUIRED = ["out/bbport.exe", "out/bb-zstdpack.exe", "out/SDL3.dll", "out/libgcc_s_seh-1.dll", "VERSION", "launcher.py"]
 
 
 def die(msg):
