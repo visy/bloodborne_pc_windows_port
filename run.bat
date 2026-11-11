@@ -148,8 +148,15 @@ REM "The filename, directory name, or volume label syntax is incorrect." So writ
 REM output to a temp file and read that instead (last line wins, same as before).
 set "mods_result=%out%\mods_game.txt"
 if exist "%mods_result%" del "%mods_result%"
-"%PYTHON%" scripts\mods.py "%game%" --out "%out%" --mods-dir "%mods_dir%" --config "%mods_config%" --enabled "%mods_enabled%" > "%mods_result%"
+REM A path outside ASCII (user or folder name): mods.py writes the game path as UTF-8 (-X utf8) and cmd reads
+REM that file in code page 65001, then goes back to its own; with the OEM code page the path was mangled and
+REM the boot image could not find eboot.bin (bbhost 5b78718 makes bbport.exe itself UTF-8, src/bbport.manifest).
+"%PYTHON%" -X utf8 scripts\mods.py "%game%" --out "%out%" --mods-dir "%mods_dir%" --config "%mods_config%" --enabled "%mods_enabled%" > "%mods_result%"
+set "oldcp="
+if exist "%mods_result%" for /f "tokens=2 delims=:" %%p in ('chcp') do for /f %%q in ("%%p") do set "oldcp=%%q"
+if exist "%mods_result%" chcp 65001 >nul 2>nul
 if exist "%mods_result%" for /f "usebackq delims=" %%g in ("%mods_result%") do set "game=%%g"
+if defined oldcp chcp %oldcp% >nul 2>nul
 
 REM The boot image (scripts\boot_image.py: prepare.py, link_libc.py, link_modules.py in one process)
 REM is built once and reused while the game files and scripts stay the same (docs\STARTUP.md;
