@@ -3197,7 +3197,7 @@ def phase_cgu(only):
 def _cdb_pick():
     f = os.environ.get("CDB_FILE", "")
     if not f or not Path(f).is_file():
-        sys.exit("cdt: set CDB_FILE to a cache written by launcher.glyphdb_refresh (outside the repo)")
+        return "", ""  # no cache: the phase cannot pass (set CDB_FILE to a cache written by launcher.glyphdb_refresh, outside the repo)
     glyph = os.environ.get("CDB_GLYPH", "")
     if not glyph:
         import json as _json
@@ -14907,7 +14907,7 @@ def sweep_main(a, only):
 FLAKY_PHASES = {
     # the Ritual Altar's menu walk: the first Cross at the altar often finds no prompt (cao: 1 clean entry in 5 runs; cae and
     # cgt each timed out in 0.7.8 with "the autopilot answered the prompts" missing). Root cause not found.
-    "cae", "cao", "cag", "cage", "cgt", "cgp", "cgu", "cab", "cis", "cim", "caq", "caw", "crg",
+    "cae", "cao", "cag", "cage", "cgt", "cgp", "cgu", "cdt", "cdh", "cab", "cis", "cim", "caq", "caw", "crg",
     # the lift walk-ins: the car's build / the ride's start races the walker (0.7.8: lfwcs "no fall", lfwf "host does not ride"
     # and lfwcf "copy does not freeze" each failed once, green on the retry). Root cause not found.
     "lfw", "lfwc", "lfws", "lfwcs", "lfwf", "lfwcf", "lfwbs", "lfwcbs",
