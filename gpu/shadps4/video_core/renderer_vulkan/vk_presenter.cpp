@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "bbport_frame_rate.h"
 #include "bbport_headless.h"
 #include "bbport_present_hold.h"
 #include "common/debug.h"
@@ -1563,8 +1564,10 @@ bool Presenter::PresentOne(Frame* frame, vk::Image source_image, vk::ImageView s
     if (BbHeadless::On() || window.GetWidth() == 0 || window.GetHeight() == 0) {
         return false;
     }
-    // Recreate the swapchain if the window was resized (or was minimised at the last try).
-    if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
+    // Recreate the swapchain if the window was resized (or was minimised at the last try), or when the live clock
+    // asked for it: Live FPS stuck after a respawn, which minimising and restoring the window cleared (issue #35).
+    const bool refresh = BbFrameRate::TakeSwapchainRefresh();
+    if (refresh || window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
         !swapchain.IsPresentable()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         if (!swapchain.IsPresentable()) {

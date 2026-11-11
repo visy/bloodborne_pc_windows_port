@@ -29,6 +29,9 @@ bool SetTargetRate(int rate);
 /// is not; the target, 240 for uncapped; 60 when the eboot did not take the hook: the patch's static
 /// rate). Read every present loop, so the menu's target changes it at once.
 unsigned LivePresenterLimit();
+/// True once after the live clock asked for a swapchain re-create (issue #35, bbport_live_refresh_logic.h): the presenter
+/// does it at its next present.
+bool TakeSwapchainRefresh();
 /// Variable refresh rate (bbport.ini vrr, at start): the highest frame rate that stays inside the display's VRR
 /// window (VrrFrameCap of its refresh rate); 0 = vrr off or the refresh rate unknown.
 unsigned VrrCap();
