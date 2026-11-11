@@ -1850,6 +1850,7 @@ def party_user_dir() -> Path:
 GLYPHDB_GIST = "https://api.github.com/gists/a29f699f4175bf315d9bd4baeebefb66"
 GLYPHDB_CATEGORIES = ("farming", "equipment", "bloodgems", "testing")
 GLYPHDB_RECORD_BYTES = 124  # one altar slot of the save (0x7c bytes)
+GLYPHDB_DESC_MAX = 200
 GLYPHDB_NAME_AT = 92  # the creator's name field starts here (docs/party/chalice.md 12.1)
 GLYPHDB_MAX_AGE_S = 7 * 24 * 3600
 GLYPHDB_MAX_BYTES = 4 << 20
@@ -1884,8 +1885,8 @@ def _glyphdb_record(value) -> str:
 
 def glyphdb_validate(dungeons) -> tuple:
     """(cache dict, dropped count) from the gist's dungeons.json (already parsed): {category: [{glyph, bytes, desc}]}.
-    An entry stays only with a glyph [a-z0-9]{8,9}, exactly 124 bytes and a printable description of at most 200
-    characters; the cache keeps glyph, category, desc and the record as hex. Never raises."""
+    An entry stays only with a glyph [a-z0-9]{8,9}, exactly 124 bytes and a printable description (cut to 200
+    characters with an ellipsis); the cache keeps glyph, category, desc and the record as hex. Never raises."""
     glyphs, dropped, seen = [], 0, set()
     if isinstance(dungeons, dict):
         for cat in GLYPHDB_CATEGORIES:
@@ -1897,13 +1898,16 @@ def glyphdb_validate(dungeons) -> tuple:
                 rec = _glyphdb_record(row.get("bytes")) if is_row else ""
                 glyph = glyph.lower() if isinstance(glyph, str) else ""
                 if (not re.fullmatch(r"[a-z0-9]{8,9}", glyph) or glyph in seen or not rec
-                        or not isinstance(desc, str) or not desc.strip() or len(desc) > 200 or not desc.isprintable()):
+                        or not isinstance(desc, str) or not desc.strip() or not desc.isprintable()):
                     dropped += 1
                     continue
                 seen.add(glyph)
                 # Bytes 92..123 of a record are the creator's name: never kept (the game builds the dungeon without it).
                 rec = rec[:GLYPHDB_NAME_AT * 2] + "00" * (GLYPHDB_RECORD_BYTES - GLYPHDB_NAME_AT)
-                glyphs.append({"glyph": glyph, "cat": cat, "desc": desc.strip(), "rec": rec})
+                desc = desc.strip()
+                if len(desc) > GLYPHDB_DESC_MAX:  # a long description is cut, the entry stays
+                    desc = desc[:GLYPHDB_DESC_MAX - 3].rstrip() + "..."
+                glyphs.append({"glyph": glyph, "cat": cat, "desc": desc, "rec": rec})
     return {"version": 1, "glyphs": glyphs}, dropped
 
 

@@ -43,7 +43,7 @@ class GlyphDb(unittest.TestCase):
                 {"glyph": "BBBB2222", "bytes": good, "desc": "Upper case is folded"},
                 {"glyph": "short", "bytes": good, "desc": "bad glyph"},
                 {"glyph": "cccc3333", "bytes": good[:-1], "desc": "123 bytes"},
-                {"glyph": "dddd4444", "bytes": good, "desc": "x" * 201},
+                {"glyph": "dddd4444", "bytes": good, "desc": "x" * 201},  # kept, cut to 200
                 {"glyph": "eeee5555", "bytes": good, "desc": "tab\there"},
                 {"glyph": "aaaa1111", "bytes": good, "desc": "duplicate"},
                 {"glyph": "ffff6666", "bytes": good[:5] + ["0x1ff"] + good[6:], "desc": "byte out of range"},
@@ -55,10 +55,12 @@ class GlyphDb(unittest.TestCase):
             "unknown": [{"glyph": "iiii9999", "bytes": good, "desc": "unknown category"}],
         }
         cache, dropped = self.L.glyphdb_validate(dungeons)
-        self.assertEqual([g["glyph"] for g in cache["glyphs"]], ["aaaa1111", "bbbb2222", "hhhh88889"])
-        self.assertEqual(dropped, 8)
+        self.assertEqual([g["glyph"] for g in cache["glyphs"]], ["aaaa1111", "bbbb2222", "dddd4444", "hhhh88889"])
+        self.assertEqual(dropped, 7)
+        cut = cache["glyphs"][2]["desc"]
+        self.assertEqual((len(cut), cut[-3:]), (200, "..."))
         self.assertEqual(cache["version"], 1)
-        row = cache["glyphs"][2]
+        row = cache["glyphs"][3]
         self.assertEqual(row["cat"], "equipment")
         self.assertEqual(len(row["rec"]), 248)
         self.assertEqual(row["rec"][184:], "00" * 32)  # the creator's name field is never kept

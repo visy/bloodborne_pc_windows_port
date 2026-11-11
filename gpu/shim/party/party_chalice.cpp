@@ -227,8 +227,7 @@ void LoadDb() {
     const double now = Seconds();
     if (now < next) return;
     next = now + 30.0;
-    // The launcher's cache first; without one the snapshot that ships with the game (patches/chalice_glyphs_community.json,
-    // tools/glyphdb_snapshot.py) when it is there.
+    // The launcher's cache only: nothing of the list ships with the game.
     std::vector<std::filesystem::path> candidates;
     if (const char* e = std::getenv("BB_CHALICE_GLYPHDB_FILE"); e && e[0]) {
         candidates.push_back(e);
@@ -240,10 +239,6 @@ void LoadDb() {
             else dir = std::string(std::getenv("BB_DATA_DIR") ? std::getenv("BB_DATA_DIR") : ".") + "/user";
         }
         candidates.push_back(std::filesystem::path(dir) / "community" / "chalice_glyphs.json");
-        for (const char* q : {"patches/chalice_glyphs_community.json", "../patches/chalice_glyphs_community.json",
-                              "../../patches/chalice_glyphs_community.json"}) {
-            candidates.push_back(q);
-        }
     }
     std::filesystem::path p;
     std::filesystem::file_time_type t{};
@@ -840,6 +835,8 @@ BB_COOP_SYSV std::uint32_t GetValueHook(u64 man, std::uint32_t id, std::uint32_t
 }
 } // namespace
 
+void InstallEsdCount();  // defined below (the Ritual Altar's inventory test, community glyph list)
+
 void InstallProbes() {
     static bool done = false;
     if (done) {
@@ -850,6 +847,7 @@ void InstallProbes() {
     BbGameMenu::SetImePreset(&PartyGlyph);
     BbGameMenu::SetImeChoices(&GlyphChoices);
     BbGameMenu::SetImeClosed(&GlyphClosed);
+    InstallEsdCount();
     HookPrologue(0x14ba340, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &SummonMessageProbe, "chalice: summon message probe");
     HookPrologue(0x1aa5280, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinRequestProbe, "chalice: quick join request probe");
     HookPrologue(0x1aa81d0, {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, &QuickJoinStepProbe, "chalice: quick join step probe");
@@ -1067,23 +1065,6 @@ void HostGlyphList(const State& s, const std::string& me) {
         b.touched = c.touched;
         items.push_back(std::move(b));
     }
-    // The Ritual Altar answers "A Holy Chalice is required to conduct a ritual" before it offers anything when the
-    // player owns no chalice (found live, glyphdb081). The community list is for players who have none yet, so with
-    // it on and rows to offer, one Pthumeru Chalice (6109: a fixed chalice, never used up by a ritual) is given once.
-    if (DbOn() && g_db_ready.load(std::memory_order_acquire) && s.load_mode == 0) {
-        static double next_give = 0;
-        if (now >= next_give) {
-            next_give = now + 20.0;
-            bool any = false;
-            for (std::uint32_t id : kChaliceGoods) any = any || GoodsCount(id) > 0;
-            if (!any) {
-                const bool ok = GiveGoods(6109, 1);
-                std::printf("[coop] Party: chalice: community glyphs: no chalice owned, the altar would refuse; Pthumeru Chalice %s\n",
-                            ok ? "given" : "NOT given");
-                std::fflush(stdout);
-            }
-        }
-    }
     std::vector<glyphs::Entry> community;
     if (DbOn()) {
         std::lock_guard<std::mutex> lk(g_list_mu);
@@ -1144,6 +1125,40 @@ void GuestSlotForms(const State& s, double now) {
 
 } // namespace
 
+// The Ritual Altars' talk scripts (ESD t210060..t210110) open with a test of the player's inventory: ESD function 0x2f
+// (0x6f in the bytecode) called with (3, chalice goods id, 0, 0, 0) for every chalice, OR'ed, and the altar answers "A
+// Holy Chalice is required to conduct a ritual." (text 10011120) when none is owned. The count behind it is the
+// inventory's (FUN_014d9310(inventory + 0x328, type, id), the one call in the ESD function dispatcher, 0x203eaea).
+// Noxde's tool avoids the refusal by writing a ready slot into the save; with the community list on and loaded this
+// answers 1 for the Pthumeru Chalice (6109) to that one call when the inventory holds none, so the altar offers its menu
+// and the glyph search. No item is ever added; every other count is the game's.
+constexpr std::uint64_t kEsdCountCall = 0x203eaea;
+constexpr std::uint64_t kInventoryCount = 0x14d9310;
+constexpr std::uint64_t kItemTypeTable = 0x49250e0;  // ESD item type (1..) -> the inventory's type; [3] = goods
+
+BB_COOP_SYSV std::uint32_t EsdItemCountHook(u64 inventory, std::uint32_t type, std::uint32_t id) {
+    const std::uint32_t real = reinterpret_cast<std::uint32_t(BB_COOP_SYSV*)(u64, std::uint32_t, std::uint32_t)>(Guest(kInventoryCount))(
+        inventory, type, id);
+    if (real != 0 || id != 6109 || !DbOn() || !g_db_ready.load(std::memory_order_acquire)) return real;
+    std::uint32_t goods_type = 0;
+    if (!SafeGet(Guest(kItemTypeTable) + 12, &goods_type) || type != goods_type) return real;
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true)) {
+        std::printf("[coop] Party: chalice: community glyphs: no chalice owned; the Ritual Altar's inventory test counts the "
+                    "Pthumeru Chalice for the glyph search (nothing is added to the inventory)\n");
+        std::fflush(stdout);
+    }
+    return 1;
+}
+
+void InstallEsdCount() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    HookCallSite(kEsdCountCall, kInventoryCount, reinterpret_cast<const void*>(&EsdItemCountHook),
+                 "chalice: the Ritual Altar's inventory test (community glyph list)");
+}
+
 // No party (solo): the community glyph list only. The same menu hooks as the party's, and a tick of its own
 // (lamp_travel.cpp's main-thread tick calls SoloTick). Every callback is a no-op while the switch is off.
 void InstallSolo() {
@@ -1153,6 +1168,7 @@ void InstallSolo() {
     BbGameMenu::SetTextOverride(&AltarText);
     BbGameMenu::SetImeChoices(&GlyphChoices);
     BbGameMenu::SetImeClosed(&GlyphClosed);
+    InstallEsdCount();
     std::printf("[coop] Party: chalice: community glyph list hooks installed (no party; bbport.ini chalice_glyphdb)\n");
     std::fflush(stdout);
 }
