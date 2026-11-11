@@ -206,3 +206,14 @@ and zlib-ng now pay there as on the other maps. No panic, no assert in 5 session
 after the neighbour's mask change still happens but costs 1-2 frames.
 
 Walk test: section 7.1 (below) after the on-foot run.
+
+### 7.1 Walk test (budget 4096, 60 fps)
+
+Warp to Cathedral Ward (4.68 s on the screen, budget 4096 up / 20 back at `SCREEN GONE`), then the director's
+`host_stick=obj:2401950:40:ANGLE` walked the hunter by the left stick 40 m from the lamp object three times (angles
+0, 180, 90: chapel -> plaza -> graveyard, ~110 s, three nav hops where the walker met walls), with a screenshot
+every 2 s (89 shots, `prof/walk2/shots`, none black, 56-60 fps in the world). Looked at: the chapel at the lamp, the
+carriage on the plaza, the graveyard statues: every map piece present, no popping or missing geometry; the
+in-world block update ran with the game's 20 per frame the whole walk (`Parts budget: loading screen gone: budget
+20` before the first step). Unproven: a 4-6 core PC (the loaders become the bottleneck, so a slow CPU gains less),
+and Old Yharnam's neighbour streaming on foot (only Cathedral Ward was walked).
