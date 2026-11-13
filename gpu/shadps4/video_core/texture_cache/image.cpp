@@ -4,6 +4,7 @@
 #include "bbport_toggles.h"
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <ranges>
@@ -361,6 +362,29 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                 // NOTE: these loops may produce a lot of small barriers.
                 // If this becomes a problem, we can optimize it by merging adjacent barriers.
                 const auto subres_idx = mip * info.resources.layers + layer;
+                // bbport: a range past the image's own mips or layers (a view of more than the
+                // cached image has) stopped the engine here. Those subresources do not exist:
+                // nothing to transition, logged a few times. From Nightwatch 76545f3 (engine based
+                // on "Lantern Engine by Awaken (https://github.com/Awakenchan/LanternEngine)",
+                // GPL-3 with section 7 terms; modified here: kill switch BB_IMAGE_BARRIER_SKIP=0
+                // keeps the old ASSERT).
+                if (mip >= info.resources.levels || layer >= info.resources.layers ||
+                    subres_idx >= subresource_states.size()) {
+                    static const bool skip_on = []() {
+                        const char* e = std::getenv("BB_IMAGE_BARRIER_SKIP");
+                        return !(e && e[0] == '0');
+                    }();
+                    if (skip_on) {
+                        static std::atomic<u32> said{0};
+                        if (said.fetch_add(1, std::memory_order_relaxed) < 4) {
+                            std::printf("Texture cache: a transition of mip %u layer %u of an image "
+                                        "with %u mips and %u layers was left out
+",
+                                        mip, layer, info.resources.levels, info.resources.layers);
+                        }
+                        continue;
+                    }
+                }
                 ASSERT(subres_idx < subresource_states.size());
                 auto& state = subresource_states[subres_idx];
 

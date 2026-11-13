@@ -628,14 +628,40 @@ static void touch_for_write(void *buffer,uint64_t size) {
 }
 /* A page protected again between the touch and the kernel's copy (the GPU side re-arms its write
  * traps): EFAULT with nothing read. Touched again, the read is tried again a few times. */
-static ssize_t read_retrying(int h,void *buffer,uint64_t size,int64_t offset,int positional) {
+/* Credit: Jgamrot/yharnam-pc 1e6fb99 (GPL-2.0-or-later), ported by intent. On Windows pread/pwrite
+ * move the descriptor's file offset and put it back (win32_compat.c positional()); a read, write or
+ * lseek of another thread in between used or lost the wrong offset, and the game reads its archives
+ * both ways (map pieces loaded without model or collision). Everything that uses the offset holds
+ * the descriptor's lock. BB_FILE_OFFSET_LOCK=0 restores the old unlocked behaviour. */
+#ifdef _WIN32
+static SRWLOCK offset_locks[MAX_FILES];
+static int offset_lock_on(void) {
+    static int on=-1;
+    if (on<0) { const char *e=getenv("BB_FILE_OFFSET_LOCK"); on=!(e && e[0]=='0'); }
+    return on;
+}
+static int offset_lock(int fd) {
+    if (fd<3 || fd>=MAX_FILES || !offset_lock_on()) return 0;
+    AcquireSRWLockExclusive(&offset_locks[fd]);
+    return 1;
+}
+static void offset_unlock(int fd,int held) { if (held) ReleaseSRWLockExclusive(&offset_locks[fd]); }
+#else
+static int offset_lock(int fd) { (void)fd; return 0; }
+static void offset_unlock(int fd,int held) { (void)fd; (void)held; }
+#endif
+static ssize_t read_retrying(int fd,int h,void *buffer,uint64_t size,int64_t offset,int positional) {
     ssize_t n=-1;
     for (int attempt=0; attempt<8; ++attempt) {
 #ifdef _WIN32
         /* ReadFile into a page the GPU side protected again fails with ERROR_NOACCESS (the
          * vectored handler never sees kernel-mode copies). Callers pass at most 1 GiB to read(). */
         errno=0; SetLastError(0);
+        int held=offset_lock(fd);
         n=positional ? pread(h,buffer,size,offset) : read(h,buffer,(unsigned int)size);
+        int e=errno; DWORD we=GetLastError();
+        offset_unlock(fd,held);
+        errno=e; SetLastError(we);
         if (n>=0 || (errno!=EFAULT && GetLastError()!=ERROR_NOACCESS)) break;
 #else
         n=positional ? pread(h,buffer,size,offset) : read(h,buffer,size);
@@ -655,7 +681,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     uint64_t t0=host_monotonic_ns();
     while (total_read < size) {
         size_t chunk = (size - total_read > 0x40000000ULL) ? 0x40000000ULL : (size_t)(size - total_read);
-        int n = (int)read_retrying(h, (char *)buffer + total_read, chunk, 0, 0);
+        int n = (int)read_retrying(fd, h, (char *)buffer + total_read, chunk, 0, 0);
         if (n < 0) {
             int e = errno;
             DWORD werr = GetLastError();
@@ -672,7 +698,7 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,total_read,__ATOMIC_RELAXED);
     return (int64_t)total_read;
 #else
-    ssize_t n=read_retrying(h,buffer,size,0,0);
+    ssize_t n=read_retrying(fd,h,buffer,size,0,0);
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,errno); return -errno; }
     if (n>0) runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
@@ -685,7 +711,7 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
     uint64_t t0=host_monotonic_ns();
-    ssize_t n=read_retrying(h,buffer,size,offset,1);
+    ssize_t n=read_retrying(fd,h,buffer,size,offset,1);
     __atomic_add_fetch(&read_ns,host_monotonic_ns()-t0,__ATOMIC_RELAXED);
     if (n<0) {
         int e = errno;
@@ -715,8 +741,11 @@ static int64_t do_write(int fd,const void *buffer,uint64_t size) {
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
     touch_for_read(buffer,size);
+    int held=offset_lock(fd);
     ssize_t n=write(h,buffer,size);
-    if (n<0) return -errno;
+    int e=errno;
+    offset_unlock(fd,held);
+    if (n<0) return -e;
     __atomic_add_fetch(&writes,1,__ATOMIC_RELAXED);
     return n;
 }
@@ -727,8 +756,11 @@ static int64_t do_pwrite(int fd,const void *buffer,uint64_t size,int64_t offset)
     int h=host_fd_written(fd);
     if (h<0) return -EBADF;
     touch_for_read(buffer,size);
+    int held=offset_lock(fd);
     ssize_t n=pwrite(h,buffer,size,offset);
-    return n<0 ? -errno : n;
+    int e=errno;
+    offset_unlock(fd,held);
+    return n<0 ? -e : n;
 }
 static int64_t do_lseek(int fd,int64_t offset,int whence) {
     if (save_trace()) { File *t=get(fd); if (t && save_path(t->path)) printf("Save trace: lseek(fd %d, %lld, %d)\n",fd,(long long)offset,whence); }
@@ -741,9 +773,12 @@ static int64_t do_lseek(int fd,int64_t offset,int whence) {
         return -EINVAL;
     }
 #ifdef _WIN32
+    int held = offset_lock(fd);
     int64_t r = _lseeki64(f->host, offset, whence);
+    int lerr = errno;
+    offset_unlock(fd, held);
     if (r < 0) {
-        int e = errno;
+        int e = lerr;
         DWORD werr = GetLastError();
         fprintf(stderr, "Runtime ERROR: _lseeki64(fd %d, offset %lld, whence %d) failed: errno %d, Win32 error %lu\n",
                 fd, (long long)offset, whence, e, (unsigned long)werr);

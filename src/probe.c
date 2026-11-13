@@ -19,6 +19,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <tlhelp32.h>
+#include "stuck_instance.h"
 #include "win32_exception.h"
 /* Crash dumps decode the faulting instruction (Zydis: already linked into bbgpu, PUBLIC). */
 #include <Zydis/Zydis.h>
@@ -1955,6 +1956,57 @@ void runtime_relaunch(int exit_code) {
 #ifndef BBPORT_VERSION
 #define BBPORT_VERSION "dev"
 #endif
+#ifdef _WIN32
+/* An earlier bbport.exe stuck in the graphics driver (see stuck_instance.h) is told in the log and in
+ * a box nothing waits on; the game starts on. By intent from droogie/bbhost 9df4166 (GPL-3).
+ * BB_STUCK_WARNING=0 turns it off; BB_WINDOW_BACKGROUND=1 (test runs) logs without the box. */
+static DWORD WINAPI stuck_box_thread(LPVOID text) {
+    MessageBoxA(NULL, (const char *)text, "bbport", MB_OK | MB_ICONWARNING);
+    return 0;
+}
+static void warn_stuck_instances(void) {
+    const char *off = getenv("BB_STUCK_WARNING");
+    if (off && off[0] == '0') return;
+    typedef BOOL (WINAPI *MemInfo)(HANDLE, void *, DWORD);
+    struct { DWORD cb, PageFaultCount; SIZE_T Peak, Ws, a, b, c, d, e, f; } pmc;
+    MemInfo mem_info = (MemInfo)(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "K32GetProcessMemoryInfo");
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (!mem_info || snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32 pe;
+    pe.dwSize = sizeof(pe);
+    const DWORD self = GetCurrentProcessId();
+    int stuck = 0;
+    double gib_all = 0.0;
+    for (BOOL ok = Process32First(snap, &pe); ok; ok = Process32Next(snap, &pe)) {
+        if (pe.th32ProcessID == self || _stricmp(pe.szExeFile, "bbport.exe") != 0 || pe.cntThreads > 2) continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h) continue;
+        memset(&pmc, 0, sizeof(pmc));
+        pmc.cb = sizeof(pmc);
+        BOOL got = mem_info(h, &pmc, sizeof(pmc));
+        CloseHandle(h);
+        if (!got || !bb_instance_is_stuck((uint32_t)pe.cntThreads, (uint64_t)pmc.Ws)) continue;
+        double gib = (double)pmc.Ws / (double)(UINT64_C(1) << 30);
+        printf("start: an earlier bbport.exe (PID %lu, %lu thread%s, %.1f GiB) is stuck in the graphics driver; "
+               "Windows frees its memory only when it restarts\n",
+               (unsigned long)pe.th32ProcessID, (unsigned long)pe.cntThreads, pe.cntThreads == 1 ? "" : "s", gib);
+        ++stuck;
+        gib_all += gib;
+    }
+    CloseHandle(snap);
+    if (!stuck) return;
+    const char *bg = getenv("BB_WINDOW_BACKGROUND");
+    if (bg && bg[0] == '1') return;
+    static char text[512];
+    snprintf(text, sizeof(text),
+             "%s still in memory, stuck in the graphics driver, and holding %.1f GB. It cannot be ended from Task "
+             "Manager: Windows frees that memory when it restarts.\n\nThis game goes on; restart Windows when it suits you.",
+             stuck == 1 ? "An earlier bbport is" : "Earlier bbports are", gib_all);
+    HANDLE t = CreateThread(NULL, 0, stuck_box_thread, text, 0, NULL);
+    if (t) CloseHandle(t);
+}
+#endif
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     runtime_logdrain_start();
@@ -1971,6 +2023,7 @@ int main(int argc, char **argv) {
         printf("paths: Windows runs bbport in code page %u, not UTF-8 (needs Windows 10 1903+): "
                "a user or folder name outside ASCII can stop it\n", (unsigned)GetACP());
     runtime_memory_reserve_space();
+    warn_stuck_instances();
 #endif
     time_t t_now = time(NULL);
     struct tm tm_buf;
