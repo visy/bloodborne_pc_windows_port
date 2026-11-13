@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstdlib>
+
 #include <bitset>
 
 #include "common/types.h"
@@ -195,8 +197,23 @@ struct StageSpecialization {
         return info != nullptr;
     }
 
+    static bool SpecReuseBindings() {
+        static const bool on = [] {
+            const char* value = std::getenv("BB_SPEC_REUSE_BINDINGS");
+            return !value || value[0] != '0';
+        }();
+        return on;
+    }
+
     bool operator==(const StageSpecialization& other) const {
+        // bbport: stages with other resource counts never match (the loops below index `other`
+        // by this stage's counts). BB_SPEC_REUSE_BINDINGS=0 restores the old shortcut.
         if (!Valid()) {
+            return false;
+        }
+        if (SpecReuseBindings() &&
+            (!other.Valid() || buffers.size() != other.buffers.size() ||
+             images.size() != other.images.size() || samplers.size() != other.samplers.size())) {
             return false;
         }
 
@@ -220,7 +237,13 @@ struct StageSpecialization {
         // bindings still may change as they depend on previously processed FS. The check below
         // handles this case and prevents generation of redundant permutations. This is also safe
         // for other types of shaders with no bindings.
-        if (bitset.none() && other.bitset.none()) {
+        // bbport: the engine's own buffers (flat buffer, page table, fault buffer, clip planes)
+        // have no sharp, so they are not in `bitset`, yet they bind from `start`: the shortcut
+        // needs a stage with no resources at all. Ported from yharnam-pc 17edac0 (xiaodoudou,
+        // GPL-2.0-or-later; found by Awaken, Lantern Engine, from ayozetr 8d36a25b).
+        if (bitset.none() && other.bitset.none() &&
+            (!SpecReuseBindings() ||
+             (buffers.empty() && images.empty() && samplers.empty() && fmasks.empty()))) {
             return true;
         }
 
