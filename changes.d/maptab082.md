@@ -1,0 +1,2 @@
+### Fixed
+- **Party tables survive a damaged map file** (Nightwatch dev report) one unreadable chalice map piece in a player's game copy ("not an MSB") no longer turns off every party table (travel, shared items, NPC help). The piece is skipped with one log line naming it and the rest is built. A damaged main map still stops the build. `BB_PARTY_TABLES_SKIP_BAD_MSB=0` restores the old all-or-nothing behaviour.
