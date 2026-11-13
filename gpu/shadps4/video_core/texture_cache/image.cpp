@@ -378,8 +378,7 @@ void Image::GetBarriers(Barriers& barriers, vk::ImageLayout dst_layout, vk::Acce
                         static std::atomic<u32> said{0};
                         if (said.fetch_add(1, std::memory_order_relaxed) < 4) {
                             std::printf("Texture cache: a transition of mip %u layer %u of an image "
-                                        "with %u mips and %u layers was left out
-",
+                                        "with %u mips and %u layers was left out\n",
                                         mip, layer, info.resources.levels, info.resources.layers);
                         }
                         continue;
