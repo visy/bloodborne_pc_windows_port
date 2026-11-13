@@ -407,7 +407,11 @@ private:
         Vulkan::StagingBufferRef download;
         VAddr guest_address;
         u32 size;
+        VAddr store_address; ///< bbport: the watched part written back (WatchedStoreRange)
+        u64 store_size;
     };
+    /// bbport (Nightwatch 403ba62, Lantern 0.9.41): see store_range.h.
+    std::pair<VAddr, u64> WatchedPart(Image& image, VAddr address, u64 size);
     void DownloadImageMemory(ImageId image_id, bool sync = false,
                              std::vector<BatchedDownload>* batch = nullptr);
     void FinishDownload(const BatchedDownload& item);

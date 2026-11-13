@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <array>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
+#include "video_core/renderer_vulkan/scene_proxy_release.h"
 #include "video_core/renderer_vulkan/scene_resolution.h"
 #include "video_core/texture_cache/image.h"
 
@@ -64,6 +66,22 @@ public:
         return !copying && tracked.contains(image_uid);
     }
     void ResolveAll();
+    /// bbport (Nightwatch a624786, Lantern Engine by Awaken 0.9.39 beta 31; modified): the texture
+    /// cache deleted an image; its proxies (the reduced-size copies) go at the next Get instead of
+    /// staying in VRAM until a mode change. Safe from any thread. BB_SCENE_PROXY_RELEASE=0: off.
+    void Forget(u64 image_uid) {
+        static const bool enabled = [] {
+            const char* env = std::getenv("BB_SCENE_PROXY_RELEASE");
+            return !(env && env[0] == '0');
+        }();
+        if (enabled) {
+            releases.Add(image_uid);
+        }
+    }
+    [[nodiscard]] std::size_t ProxyCount() const noexcept {
+        return entries.size();
+    }
+    void DropForgotten();
     bool debug = false; ///< BB_SCENE_DEBUG frame: print resolves and fills
 
     // ---- Volumetric effects resolution (volumetric_resolution.h) ----
@@ -141,6 +159,8 @@ private:
     SceneResolution::Size size;
     std::unordered_map<u64, std::unique_ptr<Entry>> entries; ///< by Key(uid, level)
     std::unordered_set<u64> tracked; ///< uids with proxies
+    ProxyReleases releases;          ///< uids of deleted images, dropped by DropForgotten
+    u64 released_proxies = 0, released_bytes = 0, release_report_proxies = 0;
     bool copying = false;
     bool force_stencil_bits = false; ///< test the portable resampler on any driver
     u64 generation = 0;
