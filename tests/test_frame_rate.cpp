@@ -330,9 +330,57 @@ int main() {
         assert(fg == 2);
     }
 
+    // Cloth fix (#37): the scales, the bend softening, the damping and the spec parser.
+    {
+        auto near = [](float a, float b) { return std::fabs(a - b) < 1e-5f; };
+        assert(near(ClothScaleFor(ClothScale::Linear30, 1.0f / 30), 1.0f));
+        assert(near(ClothScaleFor(ClothScale::Linear30, 1.0f / 60), 0.5f));
+        assert(near(ClothScaleFor(ClothScale::Linear30, 1.0f / 120), 0.25f));
+        assert(near(ClothScaleFor(ClothScale::Quad60, 1.0f / 60), 1.0f));
+        assert(near(ClothScaleFor(ClothScale::Quad60, 1.0f / 90), 4.0f / 9.0f));
+        assert(near(ClothScaleFor(ClothScale::Quad60, 1.0f / 120), 0.25f));
+        assert(near(ClothScaleFor(ClothScale::Quad60, 1.0f / 30), 1.0f)); // capped: below 60 FPS the 60 tuning
+        assert(near(ClothScaleFor(ClothScale::None, 1.0f / 120), 1.0f));
+        assert(near(ClothScaleFor(ClothScale::Linear30, 0.0f), 1.0f));
+        assert(near(ClothSoften(1.0f / 30), 0.0f));
+        assert(near(ClothSoften(1.0f / 60), 1.0f));
+        assert(near(ClothSoften(1.0f / 240), 3.0f)); // r capped at 4
+        assert(near(ClothSoften(1.0f / 20), 0.0f));
+        assert(near(ClothBend(1.0f, 3.0f), 1.0f));   // a rigid constraint stays rigid
+        assert(near(ClothBend(0.5f, 0.0f), 0.5f));
+        assert(near(ClothBend(0.5f, 1.0f), 0.5f / 1.5f));
+        assert(ClothBend(0.2f, 3.0f) < 0.2f);
+        assert(near(ClothDamping(0.9f, 1.0f / 30), 0.9f)); // 30 and 60 FPS: as the game's
+        assert(near(ClothDamping(0.9f, 1.0f / 60), 0.9f));
+        assert(near(ClothDamping(0.9f, 1.0f / 120), std::pow(0.9f, 0.5f)));
+        assert(near(ClothDamping(1.0f, 1.0f / 120), 1.0f));
+        assert(near(ClothDamping(0.0f, 1.0f / 120), 0.0f));
+        ClothTune t;
+        assert(ParseClothTune("cur", t) && t.scale == ClothScale::Linear30 && !t.all_types && !t.caves);
+        assert(ParseClothTune("jg", t) && t.scale == ClothScale::Quad60 && t.caves && !t.bend);
+        assert(ParseClothTune("nw", t) && t.bend && t.damp && t.scale == ClothScale::None);
+        assert(ParseClothTune("lin,all,bend", t) && t.scale == ClothScale::Linear30 && t.all_types && t.bend && !t.damp);
+        assert(ParseClothTune("stock", t) && ClothTuneName(t) == "stock");
+        assert(ParseClothTune("pow2", t) && t.scale == ClothScale::Linear30 && near(t.power, 2.0f) && !t.caves);
+        assert(near(ClothScaleFor(ClothScale::Linear30, 1.0f / 60, 2.0f), 0.25f));
+        assert(near(ClothScaleFor(ClothScale::Linear30, 1.0f / 120, 2.0f), 0.0625f));
+        assert(near(ClothScaleFor(ClothScale::Linear30, 1.0f / 30, 2.0f), 1.0f));
+        assert(ClothTuneName(t) == "pow2,legacy,hook");
+        assert(ParseClothTune("pow2,smooth", t) && t.smooth && ClothTuneName(t) == "pow2,legacy,hook,smooth");
+        assert(!ParseClothTune("pow9", t) && !ParseClothTune("powx", t));
+        ParseClothTune("stock", t);
+        ClothTune keep = t;
+        assert(!ParseClothTune("lin,bogus", t) && t.scale == keep.scale);
+        ParseClothTune("quad,all,caves,bend,damp", t);
+        ClothTune back;
+        assert(ParseClothTune(ClothTuneName(t).c_str(), back) && back.scale == t.scale && back.all_types && back.caves &&
+               back.bend && back.damp);
+    }
+
     // The layout the game's code reads.
     static_assert(offsetof(Live, decay95) % 16 == 0, "decay95 is read as one vector");
     static_assert(alignof(Live) == 64);
+    static_assert(offsetof(Live, caves) % 16 == 0, "the kernels read the scale as one vector");
     std::puts("frame-rate-test: ok");
     return 0;
 }

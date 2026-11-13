@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace BbFrameRate {
 /// Installs the hooks (at load, before the game runs: bbgpu_patch_image), when HooksWanted.
@@ -46,6 +47,12 @@ struct SoundCountsOut {
     std::uint64_t starts = 0, decoded = 0, frames = 0, passes = 0;
 };
 bool SoundCounts(SoundCountsOut* out);
+/// Cloth fix diagnostics (GitHub #37, the sweep): the switches from a spec (bbport_frame_rate_logic.h ParseClothTune; false for
+/// an unknown word), their name, the cloth data pointers the Verlet step has shown since ClothTrace(true), and the trace.
+bool ClothSetFix(const char* spec);
+std::string ClothFixName();
+int ClothSeen(std::uint64_t* out, int max);
+void ClothTrace(bool on);
 /// The last step's dt (s; 0 when the hooks are off).
 float LastDt();
 /// Whether the frame in progress closes a whole 1/30 s of game time (30 such frames a game second at any rate; every

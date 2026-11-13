@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace BbFrameRate {
 
@@ -90,6 +92,9 @@ struct alignas(64) Live {
     std::uint32_t whole30 = 1;        ///< this frame closes a whole 1/30 s of game time (Step30Gate)
     float banked30x = 0.0f;           ///< the same, closing a step only when it is whole (Step30Exact)
     std::uint32_t whole30x = 1;
+    float soften = 0.0f;              ///< cloth fix: r - 1 of the bend softening (ClothSoften); 0 = off
+    float one = 1.0f;                 ///< a 1.0 the cloth stubs read
+    alignas(16) float caves[4] = {1.0f, 1.0f, 1.0f, 1.0f}; ///< cloth fix: the six kernels' stiffness scale (four equal floats)
 };
 
 /// The plants' wind (sub_2313870) steps 1/60 s for each 1/30 s frame at 30 (its step is a fixed 1/60 with
@@ -146,6 +151,112 @@ inline void Compute(Live& live, float dt, float cloth_override = -1.0f) {
     live.whole30 = Step30Gate(live.banked30, dt) ? 1u : 0u;
     live.whole30x = Step30Gate(live.banked30x, dt, 0.98f) ? 1u : 0u;
     live.cloth_ratio = dt > 0.0f ? live.steady / dt : 1.0f;
+}
+
+// ---- Cloth fix (GitHub #37: the Noble Dress clips through the player above 30 FPS) ----
+// The game's cloth (Havok) is tuned at 30 FPS. The Live clock solves it once a frame (one substep) with the frame's
+// dt, so above 30 FPS the same constraint stiffness is applied more often a second: the garment is pulled back to
+// its modelled shape harder, its droop and damping differ. The pieces below (each a switch, the A/B of the 0.8.2
+// cloth082 round picks the default):
+//   - scale of the constraints' stiffness: Linear30 = 30 x dt (deadinside28, bloodborne_pc 0fc2921c, ClothStiffnessFactor),
+//     Quad60 = (60 x dt)^2 at most 1 (Kyo's six kernel caves, Jgamrot/yharnam-pc 7b716abe32, 6c10f43962: GPL-2.0-or-later);
+//   - `all_types`: also for the constraint sets of type 5, 8 and 10, which the first one leaves at the game's value;
+//   - `caves`: the scale is applied to the stiffness input of six hcl constraint kernels (Kyo's sites) instead of to
+//     the stiffness factor's result;
+//   - `bend`: the bend constraints softened by the frame length, k' = k / (1 + (r - 1)(1 - k)), r = 1/30 s / dt capped
+//     at 4 (Supermedo, Nightwatch engine/scripts/cloth.py 3ab1870: GPL-2.0-or-later);
+//   - `damp`: the Verlet step's damping D per second as at 60 FPS, D^min(1, 60 dt) (the same).
+enum class ClothScale : int { None = 0, Linear30 = 1, Quad60 = 2 };
+
+struct ClothTune {
+    ClothScale scale = ClothScale::None;
+    bool all_types = false;
+    bool caves = false;
+    bool bend = false;
+    bool damp = false;
+    float power = 1.0f;   ///< Linear30's exponent: (30 dt)^power (1 = the plain 30 / fps)
+    bool smooth = false;  ///< the scale follows the frame time smoothed over about 10 frames (Jgamrot 6c10f43962)
+};
+
+/// The stiffness scale for a step of `dt` s: 1 at 30 FPS and below.
+inline float ClothScaleFor(ClothScale s, float dt, float power = 1.0f) {
+    if (!(dt > 0.0f) || !std::isfinite(dt)) return 1.0f;
+    switch (s) {
+    case ClothScale::Linear30: return power == 1.0f ? std::min(1.0f, dt * 30.0f) : std::pow(std::min(1.0f, dt * 30.0f), power);
+    case ClothScale::Quad60: return std::min(1.0f, (60.0f * dt) * (60.0f * dt));
+    default: return 1.0f;
+    }
+}
+
+/// r - 1 for the bend softening: r = (1/30 s) / dt, 0 at 30 FPS and below, at most 3 (r 4, as at 120 FPS).
+inline float ClothSoften(float dt) {
+    if (!(dt > 0.0f) || !std::isfinite(dt)) return 0.0f;
+    return std::clamp(1.0f / (30.0f * dt) - 1.0f, 0.0f, 3.0f);
+}
+
+/// A bend constraint's stiffness k softened by `soften` (= r - 1): k / (1 + (r - 1)(1 - k)); a rigid k >= 1 stays.
+inline float ClothBend(float k, float soften) {
+    return k / (1.0f + soften * std::max(0.0f, 1.0f - k));
+}
+
+/// The Verlet damping D of one step as the same damping per second as at 60 FPS: D^min(1, 60 dt); D outside (0, 1) as is.
+inline float ClothDamping(float d, float dt) {
+    if (!(d > 0.0f) || !(d < 1.0f) || !(dt > 0.0f) || !std::isfinite(dt)) return d;
+    return std::pow(d, std::min(1.0f, 60.0f * dt));
+}
+
+/// A cloth fix spec: comma separated words, `stock` (nothing), `cur` (= lin,legacy: what the hooks mode had), `jg`
+/// (= quad,caves), `nw` (= bend,damp), or the parts: `lin`, `quad` (the scale), `all`, `legacy` (the types), `hook`,
+/// `caves` (where the scale goes), `bend`, `damp`. False for a word it does not know (the tune is then unchanged).
+inline bool ParseClothTune(const char* spec, ClothTune& out) {
+    ClothTune t;
+    std::string rest = spec ? spec : "";
+    std::size_t at = 0;
+    while (at <= rest.size()) {
+        std::size_t end = rest.find_first_of(",+ ", at);
+        if (end == std::string::npos) end = rest.size();
+        const std::string w = rest.substr(at, end - at);
+        at = end + 1;
+        if (w.empty() || w == "stock") continue;
+        if (w == "cur") { t.scale = ClothScale::Linear30; t.all_types = false; t.caves = false; }
+        else if (w == "jg") { t.scale = ClothScale::Quad60; t.caves = true; }
+        else if (w == "nw") { t.bend = true; t.damp = true; }
+        else if (w == "lin") t.scale = ClothScale::Linear30;
+        else if (w == "quad") t.scale = ClothScale::Quad60;
+        else if (w == "all") t.all_types = true;
+        else if (w == "legacy") t.all_types = false;
+        else if (w == "hook") t.caves = false;
+        else if (w == "caves") t.caves = true;
+        else if (w == "bend") t.bend = true;
+        else if (w == "damp") t.damp = true;
+        else if (w == "smooth") t.smooth = true;
+        else if (w.rfind("pow", 0) == 0 && w.size() > 3) {
+            const float p = std::strtof(w.c_str() + 3, nullptr);
+            if (!(p >= 0.5f && p <= 6.0f)) return false;
+            t.scale = ClothScale::Linear30;
+            t.power = p;
+        } else return false;
+    }
+    out = t;
+    return true;
+}
+
+inline std::string ClothTuneName(const ClothTune& t) {
+    std::string s = t.scale == ClothScale::Linear30 ? "lin" : t.scale == ClothScale::Quad60 ? "quad" : "";
+    if (t.scale == ClothScale::Linear30 && t.power != 1.0f) {
+        char buf[16];
+        std::snprintf(buf, sizeof buf, "pow%g", double(t.power));
+        s = buf;
+    }
+    auto add = [&](const char* w) { s += (s.empty() ? "" : ",") + std::string(w); };
+    if (t.scale != ClothScale::None) {
+        add(t.all_types ? "all" : "legacy");
+        add(t.caves ? "caves" : "hook");
+    }
+    if (t.bend) add("bend");
+    if (t.damp) add("damp");
+    if (t.smooth) add("smooth");
+    return s.empty() ? "stock" : s;
 }
 
 // ---- Live clock (Mrsuss60/bloodborne_pc_windows_port a7cbfae6, 83a168ee; GPL-2.0-or-later) ----
