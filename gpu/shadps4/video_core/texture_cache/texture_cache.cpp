@@ -25,6 +25,8 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/texture_cache/reclaim_rounds.h"
+#include "video_core/texture_cache/store_range.h"
+#include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -222,11 +224,37 @@ void TextureCache::FinishDownload(const BatchedDownload& item) {
     item.download.Invalidate();
     BbFreeCheck::Check(item.guest_address, item.size, item.download.mapped,
                        BbFreeCheck::ImageDownload);
-    Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(item.guest_address),
-                                              item.download.mapped, item.size);
+    if (item.store_size != 0) {
+        Core::Memory::Instance()->TryWriteBacking(
+            std::bit_cast<u8*>(item.store_address),
+            item.download.mapped + (item.store_address - item.guest_address), item.store_size);
+    }
     if (!WriteTracking()) {
         buffer_cache.InvalidateMemory(item.guest_address, item.size);
     }
+}
+
+// bbport (Nightwatch 403ba62 / Lantern Engine by Awaken, 0.9.41; modified): the watched part of an
+// image's guest memory, see store_range.h. BB_STORE_WATCHED_ONLY=0: the whole image, as before.
+std::pair<VAddr, u64> TextureCache::WatchedPart(Image& image, VAddr address,
+                                                u64 size) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_STORE_WATCHED_ONLY");
+        return !(env && env[0] == '0');
+    }();
+    const auto part = WatchedStoreRange(address, size, image.IsTracked(), image.track_addr,
+                                        image.track_addr_end, enabled);
+    if (part.second != size) {
+        static std::atomic<u32> said{0};
+        if (said.fetch_add(1, std::memory_order_relaxed) < 6) {
+            std::printf("Texture cache: image at %#llx stored back without %llu bytes on its "
+                        "first or last page (the game wrote beside it; BB_STORE_WATCHED_ONLY=0: "
+                        "all of it)\n",
+                        static_cast<unsigned long long>(address),
+                        static_cast<unsigned long long>(size - part.second));
+        }
+    }
+    return part;
 }
 
 void TextureCache::DownloadImageMemory(ImageId image_id, bool sync,
@@ -289,20 +317,27 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync,
         .imageExtent = {image.info.size.width, image.info.size.height, image.info.size.depth},
     };
     runtime.DownloadImage(&image, download.buffer, std::span{&image_download, 1});
+    // The watched part as it stands now: the image may be gone when a deferred store runs.
+    const auto watched = WatchedPart(image, image.info.guest_address, download_size);
     if (sync && batch) {
-        batch->push_back({download, image.info.guest_address, download_size});
+        batch->push_back({download, image.info.guest_address, download_size, watched.first,
+                          watched.second});
     } else if (sync) {
         runtime.FlushBarriers(); // pending barriers go out before the synchronous finish (#129)
         scheduler.Finish();
-        FinishDownload({download, image.info.guest_address, download_size});
+        FinishDownload({download, image.info.guest_address, download_size, watched.first,
+                        watched.second});
     } else {
         scheduler.DeferPriorityOperation(
-            [this, device_addr = image.info.guest_address, download, download_size] {
+            [this, device_addr = image.info.guest_address, download, download_size, watched] {
                 download.Invalidate();
                 BbFreeCheck::Check(device_addr, download_size, download.mapped,
                                    BbFreeCheck::ImageDownload);
-                Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(device_addr),
-                                                          download.mapped, download_size);
+                if (watched.second != 0) {
+                    Core::Memory::Instance()->TryWriteBacking(
+                        std::bit_cast<u8*>(watched.first),
+                        download.mapped + (watched.first - device_addr), watched.second);
+                }
                 if (!WriteTracking()) {
                     buffer_cache.InvalidateMemory(device_addr, download_size);
                 }
@@ -2101,6 +2136,12 @@ void TextureCache::DeleteImage(ImageId image_id, bool now) {
         if (download_images.contains(image_id)) {
             download_images.erase(image_id);
         }
+    }
+    // bbport (Nightwatch a624786 + 8d92288 / Lantern Engine by Awaken, 0.9.39 beta 31; modified):
+    // its reduced-size proxies are released too (they stayed in VRAM until a resolution change:
+    // a leak on long sessions, worst on <= 8 GB cards). BB_SCENE_PROXY_RELEASE=0: as before.
+    if (image.scene_proxy && runtime.scene_targets) {
+        runtime.scene_targets->Forget(image.image_uid);
     }
 
     // Reclaim image and any image views it references.
