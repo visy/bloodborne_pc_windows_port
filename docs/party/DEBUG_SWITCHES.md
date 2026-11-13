@@ -13,6 +13,7 @@ What they do for a player: [docs/PARTY.md](../PARTY.md).
 
 | Variable | Launcher control | Default |
 |---|---|---|
+| `BB_CLOTH_FIX` | none | `pow2` (0.8.2, #37). `0`: off = the 0.8.1 behaviour (no cloth stiffness hook in the Live FPS path). Else a comma list: `lin` / `quad` / `powN` (stiffness scale: 30/fps, (60/fps)^2 capped, (30/fps)^N), `all` / `legacy` (constraint types 5, 8, 10 too), `hook` / `caves` (scale the stiffness factor's result, or Kyo's six hcl kernels' input), `bend`, `damp` (Supermedo's Nightwatch bend softening and damping), `smooth`, `stock` (nothing); `cur`, `jg`, `nw` are shortcuts. `BB_CLOTH_TRACE=1` notes the cloth instances; `BB_FRAME_SWEEP_CLOTH="v1;v2"` (with `BB_FRAME_SWEEP`, `BB_PAD_FILE`) runs the Noble Dress A/B per rate and variant: `python tools/mp/cloth37.py`, docs/CLOTH_FIX.md |
 | `BB_SOUND_CENSUS` | none | unset (off). `1`: log `Sound census:` every 5 s (sound thread passes vs frames, sound starts); with the frame sweep (`BB_FRAME_SWEEP`) also per-test sound lines. `tools/mp/sound_probe.py` runs it in one session |
 | `BB_SOUND_WAKE_PER_FRAME` | none | unset (off). `1`: the game's sound thread runs one pass per frame instead of every ~33 ms (ported idea: droogie/bbhost eaca133, GPL-3); the game's own sleep is the longest wait. Measured lossless without it, so it stays a test switch |
 | `BB_PARTY` | Party tab: Mode | unset (off); `host` / `join` |

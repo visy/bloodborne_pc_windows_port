@@ -27,6 +27,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -319,6 +321,155 @@ void Pass(const std::string& name) {
     Home(1.0);
 }
 
+constexpr int ClothSeenCap = 96;
+// ---- Cloth (GitHub #37): the Noble Dress at each frame rate and cloth fix variant, in one session ----
+// BB_FRAME_SWEEP_CLOTH="stock;cur;jg;..." (variants as BB_CLOTH_FIX's spec; BB_CLOTH_TRACE is set so the Verlet
+// step shows the cloth data): for each rate and each variant, trials of a scripted move from the start spot (idle,
+// two forward rolls, a stop, a backstep, then a run and a stop), with
+//   - a numeric proxy from the game's memory: each cloth instance's particles (the Verlet step's data: +0x18 the
+//     positions, 16 bytes each, +0x20 their count) as their horizontal distance from the player's axis (r: a skirt
+//     pressed into the body has a small rmin, a flared one a large rmax), and their height relative to the
+//     player's feet (y); mean over the samples (every 4 ms) of a window; the instances within 3 m of the player;
+//   - screenshots at fixed moments (BB_SHOT_TRIGGER: the game's own presented frame), logged in order.
+// Lines: "Frame sweep: cloth <rate> <variant> t<k> <phase> inst <id> n <count> r mean/min/max y min/max".
+struct ClothStat {
+    u64 inst = 0;
+    int n = 0;
+    float rmean = 0, rmin = 0, rmax = 0, ymin = 0, ymax = 0, dx = 0, dz = 0;
+};
+
+bool ReadClothStat(u64 inst, const float player[3], ClothStat* out) {
+    const u64 positions = Field<u64>(inst, 0x18);
+    const std::uint32_t count = Field<std::uint32_t>(inst, 0x20);
+    if (!positions || count < 8 || count > 1024) return false;
+    std::vector<float> p(std::size_t(count) * 4);
+    if (!coop::SafeRead(positions, p.data(), p.size() * sizeof(float))) return false;
+    double sr = 0, cx = 0, cz = 0;
+    float rmin = 1e9f, rmax = 0, ymin = 1e9f, ymax = -1e9f;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const float x = p[i * 4] - player[0], y = p[i * 4 + 1] - player[1], z = p[i * 4 + 2] - player[2];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
+        const float r = std::sqrt(x * x + z * z);
+        sr += r, cx += x, cz += z;
+        rmin = std::min(rmin, r), rmax = std::max(rmax, r);
+        ymin = std::min(ymin, y), ymax = std::max(ymax, y);
+    }
+    out->inst = inst;
+    out->n = int(count);
+    out->rmean = float(sr / count);
+    out->rmin = rmin, out->rmax = rmax, out->ymin = ymin, out->ymax = ymax;
+    out->dx = float(cx / count), out->dz = float(cz / count);
+    return true;
+}
+
+using ClothSamples = std::map<u64, std::vector<ClothStat>>;
+
+/// Every 4 ms for `seconds`: the stats of the cloth instances near the player.
+void ClothSample(double seconds, ClothSamples& into) {
+    const double end = Now() + seconds;
+    while (Now() < end) {
+        const Sample pl = Read();
+        u64 seen[ClothSeenCap];
+        const int n = ClothSeen(seen, ClothSeenCap);
+        if (pl.ok) {
+            for (int i = 0; i < n; ++i) {
+                ClothStat st;
+                if (ReadClothStat(seen[i], pl.pos, &st) && std::hypot(st.dx, st.dz) < 3.0f) into[seen[i]].push_back(st);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+}
+
+void ClothLog(const std::string& rate, const std::string& variant, int trial, const char* phase, const ClothSamples& s) {
+    for (const auto& [inst, v] : s) {
+        if (v.size() < 5) continue;
+        double rm = 0, rmin = 0, rmax = 0, ymin = 0, ymax = 0;
+        float rmin_lo = 1e9f, rmax_hi = 0, ymin_lo = 1e9f;
+        for (const ClothStat& c : v) {
+            rm += c.rmean, rmin += c.rmin, rmax += c.rmax, ymin += c.ymin, ymax += c.ymax;
+            rmin_lo = std::min(rmin_lo, c.rmin), rmax_hi = std::max(rmax_hi, c.rmax), ymin_lo = std::min(ymin_lo, c.ymin);
+        }
+        const double k = double(v.size());
+        Log("cloth %s %s t%d %s inst %05llx n %d samples %zu r %.3f/%.3f/%.3f (lowest min %.3f, highest max %.3f) y %.3f/%.3f (lowest %.3f)",
+            rate.c_str(), variant.c_str(), trial, phase, (unsigned long long)(inst & 0xfffff), v[0].n, v.size(), rm / k,
+            rmin / k, rmax / k, double(rmin_lo), double(rmax_hi), ymin / k, ymax / k, double(ymin_lo));
+    }
+}
+
+int g_shot_index = 0;
+/// One presented frame (BB_SHOT_TRIGGER): the trigger file is made, the renderer takes it at a present; the dump
+/// files are numbered in the order taken, which this logs.
+void ClothShot(const std::string& rate, const std::string& variant, int trial, const char* phase) {
+    static const char* trigger = std::getenv("BB_SHOT_TRIGGER");
+    if (!trigger || !*trigger) return;
+    if (const char* dir = std::getenv("BB_SHOT_DIR"); dir && *dir) {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec); // the game writes the dumps, not the harness
+    }
+    if (FILE* f = std::fopen(trigger, "w")) std::fclose(f);
+    const double until = Now() + 2.0;
+    while (Now() < until && std::filesystem::exists(trigger)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    Log("cloth shot %d %s %s t%d %s", g_shot_index++, rate.c_str(), variant.c_str(), trial, phase);
+}
+
+void ClothTrial(const std::string& rate, const std::string& variant, int trial) {
+    ClothSamples s;
+    auto phase = [&](const char* name, double seconds, bool shot) {
+        s.clear();
+        ClothSample(seconds, s);
+        ClothLog(rate, variant, trial, name, s);
+        if (shot && trial == 1) ClothShot(rate, variant, trial, name); // the first trial's only (a shot is 8 MB)
+    };
+    Home(1.5);
+    phase("idle", 1.0, false);
+    for (int roll = 0; roll < 2; ++roll) {
+        Pad("ly=0 circle");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Pad("ly=0");
+        phase(roll ? "roll2" : "roll1", 0.9, roll == 1);
+    }
+    Pad("");
+    phase("stop_a", 0.4, false);
+    phase("stop_b", 1.2, true);
+    Pad("circle"); // a backstep: what untangled the skirt in the report
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Pad("");
+    phase("backstep", 1.0, true);
+    Home(1.5);
+    Pad("ly=0");
+    phase("run", 1.6, false);
+    Pad("");
+    phase("run_stop_a", 0.4, false);
+    phase("run_stop_b", 1.2, true);
+}
+
+void ClothPass(const std::vector<int>& rates, const std::vector<std::string>& variants, int trials) {
+    ClothTrace(true);
+    for (const int rate : rates) {
+        const std::string rname = rate >= 240 ? "uncap" : rate > 0 ? std::to_string(rate) : "patches";
+        if (rate > 0) {
+            SetTargetRate(rate);
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+        Log("cloth rate %s: %.1f steps/s measured over 2 s", rname.c_str(), [] {
+            const u64 s0 = Steps();
+            const double t0 = Now();
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            return double(Steps() - s0) / (Now() - t0);
+        }());
+        for (const std::string& v : variants) {
+            if (v != "default" && !ClothSetFix(v.c_str())) { // "default": as BB_CLOTH_FIX / the shipped default set it
+                Log("cloth: unknown variant %s", v.c_str());
+                continue;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            for (int t = 1; t <= trials; ++t) ClothTrial(rname, v, t);
+        }
+    }
+}
+
 void Sweep(std::vector<int> rates) {
     const char* wait_env = std::getenv("BB_FRAME_SWEEP_WAIT");
     const double wait = wait_env ? std::atof(wait_env) : 240.0;
@@ -345,6 +496,20 @@ void Sweep(std::vector<int> rates) {
     Log("world up; start at (%.2f, %.2f, %.2f), map %08x", at.pos[0], at.pos[1], at.pos[2],
         coop::ReadGameState(false).map_id);
     if (!Unlocked()) rates = {0};
+    if (const char* cv = std::getenv("BB_FRAME_SWEEP_CLOTH"); cv && *cv && !g_pad.empty()) {
+        std::vector<std::string> variants;
+        for (const char* p = cv; *p;) {
+            const char* e = std::strchr(p, ';');
+            if (!e) e = p + std::strlen(p);
+            if (e > p) variants.emplace_back(p, e);
+            p = *e ? e + 1 : e;
+        }
+        const char* tr = std::getenv("BB_FRAME_SWEEP_CLOTH_TRIALS");
+        ClothPass(rates, variants, tr && std::atoi(tr) > 0 ? std::atoi(tr) : 2);
+        Pad("");
+        Log("done");
+        return;
+    }
     for (const int rate : rates) {
         std::string name = "patches";
         if (rate > 0) {

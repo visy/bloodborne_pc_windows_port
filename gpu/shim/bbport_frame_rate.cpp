@@ -119,28 +119,103 @@ std::atomic<bool> cloth_hook_on{false};
 float cloth_exponent = -1.725f; ///< Havok's stiffness adaptation exponent (0x48d7bbc), read at start
 std::atomic<u64> cloth_calls{0};
 
+// The cloth fix's switches (#37, bbport_frame_rate_logic.h ClothTune), read by the hooks and the per-frame update.
+// The spec is BB_CLOTH_FIX (0 = off); the sweep (bbport_frame_sweep.cpp) changes it between passes.
+std::atomic<int> cloth_scale{0};
+std::atomic<bool> cloth_all_types{false}, cloth_caves{false}, cloth_bend{false}, cloth_damp{false};
+std::atomic<bool> cloth_fix_on{false};   ///< the cloth fix's stubs are installed
+std::atomic<int> cloth_stubs{0};         ///< stubs installed: bit 0 damping, 1 bend, 2 batched bend, 3.. the kernel sites
+// The cloth instances (the Verlet step's data) the damping stub saw, for the sweep's measurements.
+constexpr int ClothSeenMax = 96;
+std::atomic<u64> cloth_seen[ClothSeenMax]{};
+std::atomic<bool> cloth_trace{false};
+std::atomic<float> cloth_power{1.0f};
+std::atomic<bool> cloth_smooth{false};
+std::atomic<float> cloth_dt{Frame30};   ///< the frame time the cloth scale follows (the frame's, or smoothed)
+
+ClothTune LoadTune() {
+    ClothTune t;
+    t.scale = ClothScale(cloth_scale.load(std::memory_order_relaxed));
+    t.all_types = cloth_all_types.load(std::memory_order_relaxed);
+    t.caves = cloth_caves.load(std::memory_order_relaxed);
+    t.bend = cloth_bend.load(std::memory_order_relaxed);
+    t.damp = cloth_damp.load(std::memory_order_relaxed);
+    t.power = cloth_power.load(std::memory_order_relaxed);
+    t.smooth = cloth_smooth.load(std::memory_order_relaxed);
+    return t;
+}
+
+void StoreTune(const ClothTune& t) {
+    cloth_scale = int(t.scale);
+    cloth_all_types = t.all_types;
+    cloth_caves = t.caves;
+    cloth_bend = t.bend;
+    cloth_damp = t.damp;
+    cloth_power = t.power;
+    cloth_smooth = t.smooth;
+}
+
+/// The cloth's per-frame cells (the main thread, after live->dt / steady are set): the kernels' stiffness scale and
+/// the bend softening. The workers only read them.
+void ClothFrame() {
+    if (!live || !cloth_fix_on.load(std::memory_order_relaxed)) return;
+    const ClothTune t = LoadTune();
+    // the frame time the scale follows: the frame's, or (smooth) a slow average of it, so a frame of another length
+    // moves the stiffness a tenth of the way (Jgamrot/yharnam-pc 6c10f43962's idea)
+    float dt = live->dt;
+    if (t.smooth) {
+        const float prev = cloth_dt.load(std::memory_order_relaxed);
+        dt = prev > 0.0f && std::isfinite(prev) ? prev + 0.1f * (dt - prev) : dt;
+    }
+    cloth_dt.store(dt, std::memory_order_relaxed);
+    const float k = t.caves ? ClothScaleFor(t.scale, dt, t.power) : 1.0f;
+    const float cell[4] = {k, k, k, k};
+    std::memcpy(live->caves, cell, sizeof cell);
+    live->soften = t.bend ? ClothSoften(live->steady) : 0.0f;
+}
+
 /// Havok's stiffness factor of a constraint set for one substep (0x1167a80, replaced). Ported from
 /// deadinside28's ClothStiffnessFactor (bloodborne_pc 0fc2921c, their issue #58; GPL-2.0-or-later).
 /// `mode` 2 adapts the constraints' stiffness to how often they are solved, (substeps x a x b)^-1.725
 /// (a, b the instance's scales at +0x1d0/+0x1d4); for a set of type 8 the iteration's share instead,
 /// for types 5 and 10 only the last substep. The substeps are per frame, so at a high frame rate the
 /// cloth is solved more often by the same factor and is stiffer by as much (cloaks and hair flutter).
-/// The factor here is the game's x frames (the frame's length in 30 FPS frames): the cloth is pulled
-/// as far per second as at 30 FPS. At 30 FPS it is the game's.
+/// The factor here is the game's x the cloth fix's scale (ClothScaleFor; the hooks mode's, Linear30, is the
+/// frame's length in 30 FPS frames: the cloth is pulled as far per second as at 30 FPS). At 30 FPS it is the
+/// game's. Sets of type 5, 8 and 10 keep the game's value unless the fix says all types. With the kernel
+/// sites (caves) the scale goes there instead (ClothFrame), so this returns the game's value.
 float BB_FR_SYSV ClothStiffnessFactor(const u8* set, int mode, int iteration, int substeps, float a,
                                       float b) {
     const std::uint32_t type = *reinterpret_cast<const std::uint32_t*>(set + 0x18);
     const u64 n = cloth_calls.fetch_add(1, std::memory_order_relaxed);
     if (n == 20000) {
         std::printf("Frame rate: cloth stiffness factor: constraint type %u, %.0f FPS: factor x%.3f\n", type,
-                    1.0f / live->dt, live->dt * 30.0f);
+                    1.0f / live->dt, ClothScaleFor(ClothScale(cloth_scale.load()), cloth_dt.load(), cloth_power.load()));
     }
     const bool adapts = mode == 2 && !(substeps == 1 && a == 1.0f && b == 1.0f);
-    if (adapts && type == 8) return float(iteration + 1) / float(substeps);
-    if (adapts && (type == 5 || type == 10)) return substeps - 1 == iteration ? 1.0f : 0.0f;
-    const float game = adapts ? std::pow(float(substeps) * a * b, cloth_exponent) : 1.0f;
-    if (type == 5 || type == 8 || type == 10) return game;
-    return game * (live->dt * 30.0f);
+    float game;
+    if (adapts && type == 8) game = float(iteration + 1) / float(substeps);
+    else if (adapts && (type == 5 || type == 10)) game = substeps - 1 == iteration ? 1.0f : 0.0f;
+    else game = adapts ? std::pow(float(substeps) * a * b, cloth_exponent) : 1.0f;
+    if (cloth_caves.load(std::memory_order_relaxed)) return game;
+    const bool special = type == 5 || type == 8 || type == 10;
+    if (special && !cloth_all_types.load(std::memory_order_relaxed)) return game;
+    return game * ClothScaleFor(ClothScale(cloth_scale.load(std::memory_order_relaxed)),
+                                cloth_dt.load(std::memory_order_relaxed), cloth_power.load(std::memory_order_relaxed));
+}
+
+/// The Verlet step's damping D (0x773E77, r13 = the cloth's data): Supermedo's per-second damping when the fix says
+/// so (Nightwatch cloth.py), and the instance noted for the sweep's measurements.
+float BB_FR_SYSV ClothDamp(u64 instance, float d) {
+    if (cloth_trace.load(std::memory_order_relaxed)) {
+        for (auto& slot : cloth_seen) {
+            u64 seen = slot.load(std::memory_order_relaxed);
+            if (seen == instance) break;
+            if (seen == 0 && slot.compare_exchange_strong(seen, instance)) break;
+            if (seen == instance) break;
+        }
+    }
+    return cloth_damp.load(std::memory_order_relaxed) ? ClothDamping(d, live->steady) : d;
 }
 
 // ---- The sound thread's pass, once a frame (BB_SOUND_WAKE_PER_FRAME) and its census (BB_SOUND_CENSUS) ----
@@ -323,6 +398,7 @@ void BB_FR_SYSV FrameStep(u64 pacer) {
         live->cloth_ratio = 1.0f;
     }
     if (!WindPaceOn()) live->wind = live->steady;
+    ClothFrame();
     if (sweep_step_pending.load(std::memory_order_relaxed)) SweepOnStep();
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
@@ -581,6 +657,121 @@ bool HookClothStiffness() {
     Emitter e;
     e.JmpAbs(reinterpret_cast<u64>(&ClothStiffnessFactor));
     return Detour(site, code, sizeof(code), e);
+}
+
+/// The cloth fix's stubs (#37): the damping (0x773E77), the two bend sites (0x7387F4, 0x738645) and Kyo's six kernel
+/// sites. Each is installed once when a fix is wanted and reads cells the per-frame update sets (ClothFrame), which
+/// are neutral (scale 1, soften 0, damping unchanged) for the parts the spec leaves out. Sites and the damping and
+/// bend arithmetic: Supermedo's Nightwatch engine/scripts/cloth.py (3ab1870, GPL-2.0-or-later); kernel sites:
+/// Kyo's cloth package as Jgamrot/yharnam-pc 7b716abe32 has it (GPL-2.0-or-later). Returns the bits installed.
+int HookClothFix() {
+    int bits = 0;
+    // A rip-relative operand: `opcode`, then the disp32 to `target` from the stub's final address.
+    auto rip = [&](Emitter& e, std::initializer_list<u8> opcode, const void* target) {
+        e.Bytes(opcode);
+        const std::int64_t at = std::int64_t(reinterpret_cast<u64>(stub_page + stub_used)) + std::int64_t(e.size) + 4;
+        const std::int64_t d = std::int64_t(reinterpret_cast<u64>(target)) - at;
+        if (d != std::int32_t(d)) {
+            e.overflow = true;
+            return;
+        }
+        e.U32(std::uint32_t(std::int32_t(d)));
+    };
+    {   // damping: vbroadcastss xmm0, [r13 + 0x10c]
+        constexpr u64 site = 0x773e77;
+        constexpr u8 code[] = {0xc4, 0xc2, 0x79, 0x18, 0x85, 0x0c, 0x01, 0x00, 0x00};
+        Emitter e;
+        e.Bytes({0x9c}); // pushfq
+        e.SaveVolatile();
+        e.SaveXmm();
+        e.Bytes({0x4c, 0x89, 0xef});                                         // mov rdi, r13
+        e.Bytes({0xc4, 0xc1, 0x7a, 0x10, 0x85, 0x0c, 0x01, 0x00, 0x00});    // vmovss xmm0, [r13 + 0x10c]
+        e.CallAbs(reinterpret_cast<const void*>(&ClothDamp));
+        e.Bytes({0xc5, 0xfa, 0x11, 0x04, 0x24});                            // vmovss [rsp], xmm0 (xmm0's saved slot)
+        e.RestoreXmm();
+        e.RestoreVolatile();
+        e.Bytes({0x9d});                                                     // popfq
+        e.Bytes({0xc5, 0xf8, 0xc6, 0xc0, 0x00});                            // vshufps xmm0, xmm0, xmm0, 0 (the broadcast)
+        e.JmpAbs(image_base + site + sizeof(code));
+        if (Detour(site, code, sizeof(code), e)) bits |= 1;
+    }
+    {   // bend: vbroadcastss xmm0, [rcx - 0xe]; vmulps xmm0, xmm8, xmm0 (k = stiffness x strength): k' = k / (1 + soften (1 - k))
+        constexpr u64 site = 0x7387f4;
+        constexpr u8 code[] = {0xc4, 0xe2, 0x79, 0x18, 0x41, 0xf2, 0xc5, 0xb8, 0x59, 0xc0};
+        Emitter e;
+        for (const u8 b : code) e.Bytes({b});
+        rip(e, {0xc4, 0x62, 0x79, 0x18, 0x0d}, &live->one);        // vbroadcastss xmm9, [1]
+        e.Bytes({0xc5, 0x30, 0x5c, 0xc8});                          // vsubps xmm9, xmm9, xmm0
+        e.Bytes({0xc4, 0x41, 0x28, 0x57, 0xd2});                    // vxorps xmm10, xmm10, xmm10
+        e.Bytes({0xc4, 0x41, 0x30, 0x5f, 0xca});                    // vmaxps xmm9, xmm9, xmm10
+        rip(e, {0xc4, 0x62, 0x79, 0x18, 0x15}, &live->soften);     // vbroadcastss xmm10, [soften]
+        e.Bytes({0xc4, 0x41, 0x30, 0x59, 0xca});                    // vmulps xmm9, xmm9, xmm10
+        rip(e, {0xc4, 0x62, 0x79, 0x18, 0x15}, &live->one);        // vbroadcastss xmm10, [1]
+        e.Bytes({0xc4, 0x41, 0x30, 0x58, 0xca});                    // vaddps xmm9, xmm9, xmm10
+        e.Bytes({0xc4, 0xc1, 0x78, 0x5e, 0xc1});                    // vdivps xmm0, xmm0, xmm9
+        e.JmpAbs(image_base + site + sizeof(code));
+        if (Detour(site, code, sizeof(code), e)) bits |= 2;
+    }
+    {   // the batched solver's bend operators: vmovss xmm6, [rcx - 0xe]; vmulss xmm6, xmm6, [r8]
+        constexpr u64 site = 0x738645;
+        constexpr u8 code[] = {0xc5, 0xfa, 0x10, 0x71, 0xf2, 0xc4, 0xc1, 0x4a, 0x59, 0x30};
+        Emitter e;
+        for (const u8 b : code) e.Bytes({b});
+        rip(e, {0xc5, 0x7a, 0x10, 0x35}, &live->one);              // vmovss xmm14, [1]
+        e.Bytes({0xc5, 0x0a, 0x5c, 0xf6});                          // vsubss xmm14, xmm14, xmm6
+        e.Bytes({0xc4, 0x41, 0x00, 0x57, 0xff});                    // vxorps xmm15, xmm15, xmm15
+        e.Bytes({0xc4, 0x41, 0x0a, 0x5f, 0xf7});                    // vmaxss xmm14, xmm14, xmm15
+        rip(e, {0xc5, 0x0a, 0x59, 0x35}, &live->soften);           // vmulss xmm14, xmm14, [soften]
+        rip(e, {0xc5, 0x0a, 0x58, 0x35}, &live->one);              // vaddss xmm14, xmm14, [1]
+        e.Bytes({0xc4, 0xc1, 0x4a, 0x5e, 0xf6});                    // vdivss xmm6, xmm6, xmm14
+        e.JmpAbs(image_base + site + sizeof(code));
+        if (Detour(site, code, sizeof(code), e)) bits |= 4;
+    }
+    // Kyo's six kernel sites: the 5-byte `vmovaps [rbp - 0x60|0x50|0x80], xmm0` that stores the stiffness input; the
+    // stub scales xmm0 first (vmulps with the four-float cell), then does the instruction.
+    static const u64 kernels[] = {0x720dee, 0x72b2fe, 0x730ade, 0x7420ee, 0x738711, 0x741f4e};
+    for (int i = 0; i < 6; ++i) {
+        const u8* at = reinterpret_cast<const u8*>(image_base + kernels[i]);
+        if (at[0] != 0xc5 || at[1] != 0xf8 || at[2] != 0x29 || at[3] != 0x45) {
+            std::printf("Frame rate: cloth kernel site %#llx is not the expected code\n", (unsigned long long)kernels[i]);
+            continue;
+        }
+        u8 code[5];
+        std::memcpy(code, at, 5);
+        Emitter e;
+        rip(e, {0xc5, 0xf8, 0x59, 0x05}, live->caves);             // vmulps xmm0, xmm0, [caves]
+        for (const u8 b : code) e.Bytes({b});
+        e.JmpAbs(image_base + kernels[i] + 5);
+        if (Detour(kernels[i], code, sizeof(code), e)) bits |= 8 << i;
+    }
+    cloth_stubs = bits;
+    return bits;
+}
+
+/// The cloth fix, wanted (the Live clock path and the hooks path; off with BB_CLOTH_FIX=0): the spec from BB_CLOTH_FIX
+/// (else ClothFixDefault) into the switches, the stiffness hook (Live mode; the hooks mode has it already) and the
+/// stubs. Called with the stub page writable.
+constexpr const char* ClothFixDefault = "pow2"; // the A/B of the cloth082 round (docs/CLOTH_FIX.md)
+bool InstallClothFix(bool live_mode) {
+    const char* env = std::getenv("BB_CLOTH_FIX");
+    if (env && (!std::strcmp(env, "0") || !std::strcmp(env, "off") || !std::strcmp(env, "false"))) {
+        std::printf("Frame rate: cloth fix off (BB_CLOTH_FIX=0)\n");
+        return false;
+    }
+    ClothTune tune;
+    if (!ParseClothTune(env && *env ? env : live_mode ? ClothFixDefault : "cur", tune)) {
+        std::printf("Frame rate: BB_CLOTH_FIX=%s: unknown word, using %s\n", env, ClothFixDefault);
+        ParseClothTune(ClothFixDefault, tune);
+    }
+    if (std::getenv("BB_CLOTH_TRACE")) cloth_trace = true;
+    StoreTune(tune);
+    if (live_mode) cloth_hook_on = HookClothStiffness();
+    const int bits = HookClothFix();
+    cloth_fix_on = true;
+    ClothFrame();
+    std::printf("Frame rate: cloth fix %s (stiffness hook %s, stubs %#x of 0x1ff; BB_CLOTH_FIX=0 turns it off)\n",
+                ClothTuneName(tune).c_str(), cloth_hook_on ? "on" : "NOT installed", bits);
+    return true;
 }
 
 /// The run's wall check (0x1514c24: the distance moved this frame x 30 = a speed at 30 FPS): the
@@ -1095,6 +1286,8 @@ void BB_FR_SYSV LiveClockTick(u8* pacer, float* out) {
     __atomic_store_n(&live->whole30x, Step30Gate(live->banked30x, dt, 0.98f) ? 1u : 0u, __ATOMIC_RELAXED);
     game_seconds.store(game_seconds.load(std::memory_order_relaxed) + dt, std::memory_order_relaxed);
     steps.fetch_add(1, std::memory_order_relaxed);
+    ClothFrame();
+    if (sweep_step_pending.load(std::memory_order_relaxed)) SweepOnStep();
     LiveDiag(pacer, measured, target, interval, dt);
     LiveRefreshTick(target);
     if (live_logged_target.exchange(target, std::memory_order_relaxed) != target) {
@@ -1183,6 +1376,7 @@ void Install(unsigned char* image, std::uint64_t size) {
         StubWritable(true);
         const bool ok = InstallLive();
         if (ok) {
+            InstallClothFix(true); // #37 (BB_CLOTH_FIX)
             // The effects' step: the Deltatime patch redirects SprjSfx::Update's load (0x1f77d4e) to the live
             // global step itself, so the hooks' whole-1/60-s step (HookSfxStep) is not installed in live mode.
             std::printf("Live clock: effects step from the patch's global step (no 1/60 s quantising)\n");
@@ -1248,6 +1442,7 @@ void Install(unsigned char* image, std::uint64_t size) {
     const int run = HookRunSpeed();
     const bool cloth_time = HookClothTime();
     cloth_hook_on = HookClothStiffness();
+    InstallClothFix(false); // #37 (BB_CLOTH_FIX)
     int redirected = 0;
     for (const Redirect& r : Redirects) {
         if (RedirectOperand(r)) {
@@ -1348,6 +1543,27 @@ bool SetTargetRate(int rate) {
                                                                  std::memory_order_relaxed);
     return true;
 }
+
+bool ClothSetFix(const char* spec) {
+    ClothTune t;
+    if (!ParseClothTune(spec, t)) return false;
+    StoreTune(t);
+    ClothFrame();
+    return true;
+}
+
+std::string ClothFixName() { return ClothTuneName(LoadTune()); }
+
+int ClothSeen(std::uint64_t* out, int max) {
+    int n = 0;
+    for (const auto& slot : cloth_seen) {
+        const u64 v = slot.load(std::memory_order_relaxed);
+        if (v && n < max) out[n++] = v;
+    }
+    return n;
+}
+
+void ClothTrace(bool on) { cloth_trace = on; }
 
 float LastDt() {
     return live && Unlocked() ? live->dt : 0.0f;
