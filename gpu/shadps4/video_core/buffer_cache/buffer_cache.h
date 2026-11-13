@@ -248,6 +248,8 @@ public:
     /// when the layer's memory module finds it whole in one chunk.
     /// clamp_huge: a binding of 64 MiB or more that runs on past its chunk is cut at the end of
     /// the part in place (the descriptor range is clamped to the buffer).
+    /// bbport: a read across guest memory chunks, copied piece by piece into the stream buffer.
+    std::optional<std::pair<const Buffer*, u64>> LayerStitch(VAddr address, u64 size);
     std::optional<std::pair<const Buffer*, u64>> LayerInPlace(VAddr address, u64 size,
                                                               bool clamp_huge = false);
     /// Whether any part of the range is.
@@ -518,6 +520,13 @@ private:
     /// Blocks the CPU wrote since they were handed out (traps, announced writes): GPU writes there
     /// stay in place (LayerGpuWriteToVram).
     IntervalList<> layer_cpu_blocks;
+    /// The second each layer_cpu_blocks block was marked, and the second a block became dynamic by
+    /// the GPU's mixed writes: such marks expire when the GPU writes a whole range over them
+    /// (LayerExpireCpuMarks, BB_LAYER_CPU_MARK_SECONDS).
+    std::unordered_map<u64, u32> layer_cpu_mark_second;
+    std::unordered_map<u64, u32> layer_dynamic_second;
+    void LayerMarkCpuBlocks(u64 first, u64 end);
+    void LayerExpireCpuMarks(VAddr address, u64 size);
     /// Blocks with bytes the CPU wrote unannounced, in a mirror for reading bindings anyway
     /// (BB_LAYER_WATCH, LayerWatchable): a write trap catches the CPU's next write, the block is
     /// uploaded again before the next binding and the trap set again. The GPU never writes them

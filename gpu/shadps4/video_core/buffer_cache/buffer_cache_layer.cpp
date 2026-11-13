@@ -9,6 +9,7 @@
 // first, so the game's memory always holds the current data and readers in place (the huge
 // bindings over all memory) stay right.
 
+#include "bbport_gpu_logic.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -280,7 +281,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
             LayerPromote(blocks);
             for (const u64 block : watch) {
                 if (Layer().AnyValid(block, block + 1)) {
-                    layer_cpu_blocks.Add({block, block + 1}); // the GPU writes it in place
+                    LayerMarkCpuBlocks(block, block + 1); // the GPU writes it in place
                 } else {
                     layer_watched.Subtract(block, block + 1); // not moved (VRAM short)
                 }
@@ -361,6 +362,10 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
             // each way and traps set and cleared, the recording thread saturated at 42 FPS).
             if (resolution.kind == Kind::Mixed || layer_write_bounces.Overlaps(first, end)) {
                 dynamic_blocks.Add({first, end});
+                const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+                for (u64 block = first; block < end; ++block) {
+                    layer_dynamic_second[block] = now; // dynamic by the GPU (LayerExpireCpuMarks)
+                }
             } else {
                 layer_write_bounces.Add({first, end});
             }
@@ -1103,7 +1108,7 @@ void BufferCache::LayerForgetGpuData() {
     for (const auto& [address, size] : ranges) {
         gpu_modified_ranges.Subtract(address, size);
         memory_tracker->UnmarkRegionAsGpuModified(address, size);
-        layer_cpu_blocks.Add({address >> block_shift, ((address + size - 1) >> block_shift) + 1});
+        LayerMarkCpuBlocks(address >> block_shift, ((address + size - 1) >> block_shift) + 1);
     }
 }
 
@@ -1230,8 +1235,77 @@ bool BufferCache::LayerInImage(VAddr address, u64 size) {
     return inside;
 }
 
+void BufferCache::LayerMarkCpuBlocks(u64 first, u64 end) {
+    layer_cpu_blocks.Add({first, end});
+    const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+    for (u64 block = first; block < end; ++block) {
+        layer_cpu_mark_second[block] = now;
+    }
+}
+
+// Port of deadinside28/bloodborne_pc 0fc2921c (GPL-2.0-or-later) LayerExpireCpuMarks, written for
+// our layer. BB_LAYER_CPU_MARK_SECONDS=n (default 5; 0: marks stay until the memory is handed out
+// again, as before). After a save was switched (quit to the title, load another), the GPU wrote
+// 8-16 MiB ranges of the next area's data over blocks the last one's loaders had written: all of
+// it in place, over the bus (their GTX 1060: 16 FPS; RX 7800 XT imitating NVIDIA: 140 -> 60).
+// Blocks the CPU still uses (hot, dynamic, watched) keep their marks; a write after that is
+// caught by the trap on the block's VRAM copy and sends it back in place, as for any block.
+void BufferCache::LayerExpireCpuMarks(VAddr address, u64 size) {
+    static const u32 seconds = [] {
+        const char* env = std::getenv("BB_LAYER_CPU_MARK_SECONDS");
+        return env && *env ? u32(std::strtoul(env, nullptr, 10)) : 5u;
+    }();
+    if (seconds == 0) {
+        return;
+    }
+    const u64 first = (address + block_size - 1) >> block_shift; // whole blocks only
+    const u64 end = (address + size) >> block_shift;
+    if (first >= end) {
+        return;
+    }
+    const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+    std::vector<u64> stale;
+    layer_cpu_blocks.ForEachInRange(first, end, [&](const auto& run) {
+        for (u64 block = std::max<u64>(run.start, first); block < std::min<u64>(run.end, end);
+             ++block) {
+            const auto it = layer_cpu_mark_second.find(block);
+            const u32 marked = it == layer_cpu_mark_second.end() ? 0 : it->second;
+            // Dynamic by the GPU's mixed writes (not the CPU's) expires too.
+            const auto dyn = layer_dynamic_second.find(block);
+            const bool gpu_dynamic = dyn != layer_dynamic_second.end() && now - dyn->second >= seconds;
+            if (!BbGpuLogic::CpuMarkStale(now, marked, seconds,
+                                          layer_cpu_hot.Contains(block, block + 1),
+                                          dynamic_blocks.Contains(block), gpu_dynamic,
+                                          layer_watched.Contains(block, block + 1))) {
+                continue;
+            }
+            stale.push_back(block);
+        }
+    });
+    for (const u64 block : stale) {
+        layer_cpu_blocks.Subtract(block, block + 1);
+        layer_cpu_mark_second.erase(block);
+        if (layer_dynamic_second.erase(block)) {
+            dynamic_blocks.Subtract(block, block + 1);
+            layer_write_bounces.Subtract(block, block + 1);
+        }
+    }
+    if (!stale.empty()) {
+        static std::atomic<u64> expired{0};
+        const u64 total = expired.fetch_add(stale.size()) + stale.size();
+        if ((total << block_shift >> 26) != ((total - stale.size()) << block_shift >> 26)) {
+            std::printf("Layer memory: %llu MiB of stale CPU marks dropped under whole GPU writes\n",
+                        (unsigned long long)((total << block_shift) >> 20));
+        }
+    }
+}
+
 bool BufferCache::LayerGpuWriteToVram(VAddr address, u64 size) {
     const int mode = LayerGpuWritesMode();
+    if (mode == 1 && layer_cpu_blocks.Overlaps(address >> block_shift,
+                                               ((address + size - 1) >> block_shift) + 1)) {
+        LayerExpireCpuMarks(address, size);
+    }
     const bool vram =
         mode == 2 || (mode == 1 && !layer_cpu_blocks.Overlaps(address >> block_shift,
                                                               ((address + size - 1) >> block_shift) + 1));
@@ -1545,7 +1619,7 @@ void BufferCache::LayerProcessTraps() {
         ++layer_trap_kinds[rip == 0 ? 0 : (watched ? 1 : 2) + (IsGuestCode(rip) ? 0 : 2)];
         // The CPU uses this block: GPU writes there stay in place from now on (until it is handed
         // out again), so a VRAM copy never holds GPU data the CPU's data could meet.
-        layer_cpu_blocks.Add({block, block + 1});
+        LayerMarkCpuBlocks(block, block + 1);
         // A watched block the CPU wrote (the game's code or ours: HLE command buffers): it stays in
         // VRAM, uploaded again; with BB_LAYER_WATCH_HOT=1 however often (as the model of 0.3
         // uploads what the CPU wrote), else until it counts as often written (NoteCpuWrite: then

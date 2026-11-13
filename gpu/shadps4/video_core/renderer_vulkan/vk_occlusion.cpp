@@ -259,7 +259,9 @@ void OcclusionQueries::WriteBeforeLabel() {
     }
     Resolve();
     ResetAhead();
-    BeginSegment(false);
+    if (Counting()) {
+        BeginSegment(false);
+    }
 }
 
 void OcclusionQueries::Suspend(bool inside_render_pass) {
@@ -278,8 +280,25 @@ void OcclusionQueries::Suspend(bool inside_render_pass) {
 
 void OcclusionQueries::Resume(bool inside_render_pass) {
     std::scoped_lock lk{mutex};
-    if (started && !active) {
+    if (started && !active && Counting()) {
         BeginSegment(inside_render_pass);
+    }
+}
+
+// Samples are counted only while one of the game's queries is open (a query's begin counters
+// at 16-byte steps, its end counters 8 bytes after them). Port of deadinside28/bloodborne_pc
+// 0fc2921c (GPL-2.0-or-later) vk_occlusion intervals: the samples outside every query are in no
+// difference the game takes, and each segment costs its share of the results' copy.
+// BB_OCCLUSION_INTERVALS=0: segments all the time, as before.
+bool OcclusionQueries::Counting() const {
+    return intervals.Counting();
+}
+
+void OcclusionQueries::NoteInterval(VAddr address) {
+    if (!intervals.Note(address)) {
+        std::printf("Occlusion queries: event at %#llx is no begin or end of an open query: samples "
+                    "counted all the time\n",
+                    (unsigned long long)address);
     }
 }
 
@@ -340,7 +359,10 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
     if (ReadTrace()) {
         WatchReads(address, events + 1);
     }
-    BeginSegment(scheduler.IsRendering());
+    NoteInterval(address);
+    if (Counting()) {
+        BeginSegment(scheduler.IsRendering());
+    }
     ++events;
     if (!scheduler.IsRendering() && pending.size() >= 64) {
         if (active) {
@@ -348,7 +370,9 @@ void OcclusionQueries::Event(VAddr address, u32 pairs) {
         }
         Resolve();
         ResetAhead();
-        BeginSegment(false);
+        if (Counting()) {
+            BeginSegment(false);
+        }
     }
     // BB_FRAME_STATS: how often the game measures (every 5 s).
     static auto last_report = std::chrono::steady_clock::now();
