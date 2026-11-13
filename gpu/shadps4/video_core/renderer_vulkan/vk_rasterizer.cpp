@@ -2741,6 +2741,58 @@ void Rasterizer::EmitVertexBuffers() {
     });
 }
 
+// bbport: the first draws whose vertex attributes have a V# without records (a zeroed V# was a
+// VK_FORMAT_UNDEFINED attribute before BB_NULL_VERTEX_INPUT; an NVIDIA device loss followed).
+static void NoteNullVertexInputs(const GraphicsPipeline* pipeline,
+                                 std::span<const AmdGpu::Buffer> buffers) {
+    static std::atomic<u32> reports{0};
+    if (reports.load(std::memory_order_relaxed) >= 8 ||
+        std::ranges::none_of(buffers, [](const AmdGpu::Buffer& b) { return !b; })) {
+        return;
+    }
+    if (reports.fetch_add(1, std::memory_order_relaxed) >= 8) {
+        return;
+    }
+    const bool fixed = Shader::Gcn::IsNullVertexInput(AmdGpu::Buffer{});
+    std::string list;
+    for (u32 i = 0; i < buffers.size(); ++i) {
+        const auto& b = buffers[i];
+        if (b) {
+            continue;
+        }
+        const auto input = Shader::Gcn::GetVertexInputFormat(b, false);
+        list += fmt::format(" [{}: address {:#x} stride {} format {}/{} -> {}]", i,
+                            u64(b.base_address), u32(b.stride), u32(b.data_format),
+                            u32(b.num_format),
+                            vk::to_string(LiverpoolToVK::TrySurfaceFormat(input.data_format,
+                                                                          input.num_format)));
+    }
+    std::printf("Vertex input: vs %#llx draws %zu attributes, null V#s (no records):%s; %s\n",
+                static_cast<unsigned long long>(
+                    pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash),
+                buffers.size(), list.c_str(),
+                fixed ? "bound as zero float4 from no buffer"
+                      : "bound with their own format (BB_NULL_VERTEX_INPUT=0)");
+}
+
+// bbport: draws whose prepared vertex inputs were stale, reported every 5 s at most.
+static void NoteStaleVertexInputs() {
+    static std::atomic<u64> stale{0};
+    static std::atomic<s64> last_report{0};
+    const u64 count = stale.fetch_add(1, std::memory_order_relaxed) + 1;
+    const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    s64 last = last_report.load(std::memory_order_relaxed);
+    if ((count != 1 && now - last < 5000) ||
+        !last_report.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
+        return;
+    }
+    std::printf("Vertex inputs: %llu draws in all read their V#s again (the prepared ones were "
+                "stale)\n",
+                static_cast<unsigned long long>(count));
+}
+
 void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                                       const PreparedDraw* prepared) {
     BB_SECTION(ResolveVertexBuffers);
@@ -2765,6 +2817,29 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                 !BbToggle::Disabled(BbToggle::PreparedResources)
             ? &prepared->vertex
             : nullptr;
+    // bbport: a draw-preparation worker that read the V#s before the game rewrote their table
+    // left stale addresses or strides (stretched polygons across the screen). The prepared copy
+    // is compared with the V#s the draw packet carries, or with a fresh read of the table when
+    // the packet has none; a differing one is read again below. BB_STALE_VSHARP_CHECK=0 skips the
+    // check. Ported by intent from yharnam-pc 54b2ca5 (xiaodoudou, GPL-2.0-or-later).
+    if (ready) {
+        static const bool check = [] {
+            const char* value = std::getenv("BB_STALE_VSHARP_CHECK");
+            return !value || value[0] != '0';
+        }();
+        if (check) {
+            const bool same =
+                packet_vsharps.size() == ready->count
+                    ? std::memcmp(ready->buffers, packet_vsharps.data(),
+                                  ready->count * sizeof(AmdGpu::Buffer)) == 0
+                    : fetch->SharpsUnchanged(pipeline->GetStage(Shader::SwStage::Vertex),
+                                             ready->buffers);
+            if (!same) {
+                NoteStaleVertexInputs();
+                ready = nullptr;
+            }
+        }
+    }
     if (ready) {
         attributes.assign(ready->attributes, ready->attributes + ready->count);
         bindings.assign(ready->bindings, ready->bindings + ready->count);
@@ -2912,8 +2987,9 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
             host_offsets.push_back(0);
         }
         host_sizes.push_back(buffer.GetSize());
-        host_strides.push_back(buffer.GetStride());
+        host_strides.push_back(Shader::Gcn::GetVertexInputFormat(buffer).stride);
     }
+    NoteNullVertexInputs(pipeline, {guest_buffers.data(), guest_buffers.size()});
 
     v.num_buffers = static_cast<u32>(guest_buffers.size());
 }
