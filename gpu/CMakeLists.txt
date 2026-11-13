@@ -1042,6 +1042,13 @@ target_compile_options(nw-direct-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(nw-direct-test PRIVATE shim)
 set_target_properties(nw-direct-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 
+# Rules of the deadinside28 0fc2921c ports (shim/bbport_gpu_logic.h, header only).
+# cmake --build out/gpu --target gpu-logic-test
+add_executable(gpu-logic-test EXCLUDE_FROM_ALL ../tests/test_gpu_logic.cpp)
+target_compile_options(gpu-logic-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(gpu-logic-test PRIVATE shim)
+set_target_properties(gpu-logic-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+
 # Auto-hide HUD rules (shim/party/auto_hud_rules.h, header only): triggers, holds, fades.
 # cmake --build out/gpu --target auto-hud-test
 add_executable(auto-hud-test EXCLUDE_FROM_ALL ../tests/test_auto_hud.cpp)

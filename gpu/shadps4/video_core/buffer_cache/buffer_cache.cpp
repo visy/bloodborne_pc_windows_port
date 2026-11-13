@@ -1156,6 +1156,11 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         if (const auto bound = LayerBind(device_addr, size, is_written, is_texel_buffer)) {
             return *bound;
         }
+        if (!is_written && !is_texel_buffer) {
+            if (const auto stitched = LayerStitch(device_addr, size)) {
+                return *stitched;
+            }
+        }
         NoteLayerMiss(device_addr, size, is_written);
     }
     thread_local std::array<InPlaceMemo, 256> in_place_reads{};
@@ -1345,6 +1350,9 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
         if (const auto source = LayerBind(device_addr, size, false, false, false)) {
             TraceBinding(device_addr, size, false, 6);
             return *source;
+        }
+        if (const auto stitched = LayerStitch(device_addr, size)) {
+            return *stitched;
         }
         NoteLayerMiss(device_addr, size, false);
     } else if (GuestInPlace()) {
@@ -2334,6 +2342,66 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerInPlace(VAddr add
                                           fmt::format("bbport guest memory {:#x}", chunk->phys));
     }
     return std::pair<const Buffer*, u64>{buffer.get(), span->offset};
+}
+
+std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerStitch(VAddr address, u64 size) {
+    // A read across two or more guest memory chunks (heap pieces) is not one buffer. The arena
+    // served it from a VRAM copy that went stale where the GPU had written in place since (skinned
+    // vertices across two imports: exploding vertices). The pieces are copied into the stream
+    // buffer in command order instead. Port of deadinside28/bloodborne_pc 0fc2921c
+    // (GPL-2.0-or-later) LayerStitch; BB_LAYER_STITCH=0: the arena as before.
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_LAYER_STITCH");
+        return !env || env[0] != '0';
+    }();
+    if (!enabled || size == 0 || size > 16_MB || stream_buffer.mapped_data.empty() ||
+        LayerMirrored(address, size)) {
+        return std::nullopt;
+    }
+    struct Piece {
+        const Buffer* buffer;
+        u64 offset, size;
+    };
+    boost::container::small_vector<Piece, 4> pieces;
+    for (VAddr at = address; at < address + size;) {
+        const auto span = BbLayer::GpuMemory::Get().ResolvePrefix(at, address + size - at);
+        if (!span || span->size == 0 || pieces.size() == pieces.capacity()) {
+            return std::nullopt;
+        }
+        const auto* chunk = static_cast<const BbGuestMemory::Chunk*>(span->source->owner);
+        auto& buffer = chunk_buffers[chunk->index % chunk_buffers.size()];
+        if (!buffer) {
+            buffer = std::make_unique<Buffer>(instance, chunk->size, chunk->memory,
+                                              fmt::format("bbport guest memory {:#x}", chunk->phys));
+        }
+        pieces.push_back({buffer.get(), span->offset, span->size});
+        at += span->size;
+    }
+    if (pieces.size() < 2) {
+        return std::nullopt; // one piece is LayerBind's case
+    }
+    const auto offset = stream_buffer.Reserve(size, instance.StorageMinAlignment());
+    if (!offset) {
+        return std::nullopt;
+    }
+    u64 to = *offset;
+    for (const auto& piece : pieces) {
+        const vk::BufferCopy copy{piece.offset, to, piece.size};
+        runtime.CopyBuffer(piece.buffer, &stream_buffer, {&copy, 1});
+        to += piece.size;
+    }
+    static std::atomic<u64> stitched{0}, bytes{0};
+    static std::atomic<u32> printed_second{0};
+    stitched.fetch_add(1, std::memory_order_relaxed);
+    bytes.fetch_add(size, std::memory_order_relaxed);
+    const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
+    if (now - printed_second.load(std::memory_order_relaxed) >= 10) {
+        printed_second.store(now, std::memory_order_relaxed);
+        std::printf("Layer memory (10 s): %llu reads across imports stitched by GPU copies, %llu MiB\n",
+                    (unsigned long long)stitched.exchange(0),
+                    (unsigned long long)(bytes.exchange(0) >> 20));
+    }
+    return std::pair<const Buffer*, u64>{&stream_buffer, *offset};
 }
 
 void BufferCache::NoteLayerMiss(VAddr address, u64 size, bool is_written) {

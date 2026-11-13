@@ -18,12 +18,14 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 
 #include "common/types.h"
+#include "bbport_gpu_logic.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -95,6 +97,11 @@ private:
 
     void BeginSegment(bool inside_render_pass);
     void EndSegment();
+    /// Whether samples are counted now: while one of the game's queries is open (or always, when
+    /// its events do not pair up as begin and end).
+    bool Counting() const;
+    /// An event opens (its begin counters) or closes (the end counters 8 bytes on) a query.
+    void NoteInterval(VAddr address);
     /// Outside a render pass: the ended segments added up, the pending events written.
     void Resolve();
     /// Outside a render pass: query slots reset ahead of the segments that will use them.
@@ -118,6 +125,11 @@ private:
     u64 reset_until = 0; ///< slots below it (absolute) are reset and unused
     bool active = false;
     bool started = false; ///< the game has used occlusion queries
+    /// Segments only while a query is open. BB_OCCLUSION_INTERVALS=0: always.
+    BbGpuLogic::OcclusionIntervals intervals{[] {
+        const char* env = std::getenv("BB_OCCLUSION_INTERVALS");
+        return !env || env[0] != '0';
+    }()};
     bool total_cleared = false;
     u64 events = 0;
     u64 starved = 0; ///< segments not begun in a render pass for want of a reset slot
