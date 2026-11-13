@@ -7,6 +7,7 @@
 #include "runtime.h"
 #include "save_policy.h"
 #include "runtime_savecommit.h"
+#include "runtime_exitguard.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -202,8 +203,10 @@ void runtime_file_save_activity(uint64_t *generation,int *open_writes) {
     *generation=__atomic_load_n(&save_generation,__ATOMIC_SEQ_CST);
     *open_writes=n;
 }
+static int exit_saves_busy(void) { uint64_t g; int n; runtime_file_save_activity(&g,&n); return n; }
 const char *runtime_file_user_dir(void) { return user_root; }
 void runtime_file_configure(const char *app0,const char *user) {
+    runtime_exitguard_configure(&(ExitGuardOps){.saves_busy=exit_saves_busy});
     char path[600];
     snprintf(user_root,sizeof(user_root),"%s",user);
     runtime_file_mount("/app0",app0);

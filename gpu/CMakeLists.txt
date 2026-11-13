@@ -1234,6 +1234,11 @@ add_executable(logdrain-test EXCLUDE_FROM_ALL ../tests/test_logdrain.c ../src/ru
 target_compile_options(logdrain-test PRIVATE -UNDEBUG -Wall -Wextra)
 target_include_directories(logdrain-test PRIVATE ../src)
 set_target_properties(logdrain-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+# Exit deadline (src/runtime_exitguard.c; in bbport through RUNTIME_SOURCES): ninja -C out/gpu exitguard-test
+add_executable(exitguard-test EXCLUDE_FROM_ALL ../tests/test_exitguard.c ../src/runtime_exitguard.c ../src/runtime_logdrain.c ../src/runtime_ipmask.c)
+target_compile_options(exitguard-test PRIVATE -UNDEBUG -Wall -Wextra)
+target_include_directories(exitguard-test PRIVATE ../src)
+set_target_properties(exitguard-test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 # Log address mask (src/runtime_ipmask.c; in bbport through RUNTIME_SOURCES): ninja -C out/gpu ipmask-test
 add_executable(ipmask-test EXCLUDE_FROM_ALL ../tests/test_ipmask.c ../src/runtime_ipmask.c)
 target_compile_options(ipmask-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

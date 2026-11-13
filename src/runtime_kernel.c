@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #define _CRT_RAND_S
 #include "runtime.h"
+#include "runtime_exitguard.h"
 #include <stdatomic.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -224,6 +225,7 @@ static ABI int32_t debug_raise_exception_release(uint32_t code, uint64_t argumen
 static ABI __attribute__((noreturn)) void hard_exit(int status) {
     printf("Runtime: guest requested _exit(%d)\n",status);
     runtime_report();
+    runtime_exitguard_begin(status); /* a stuck driver must not hang exit()'s DLL detach */
     exit(status);
 }
 

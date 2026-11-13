@@ -1,6 +1,7 @@
 #include "bbport_write_log.h"
 #include "gamedata/build.h"
 #include "../../src/runtime_logdrain.h"
+#include "../../src/runtime_exitguard.h"
 #include "bbport_boot_watch.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
@@ -318,6 +319,9 @@ extern "C" void bbgpu_save_caches(void) {
 
 /// Ends the process without unloading DLLs (see the window close path); stdio is flushed first.
 [[noreturn]] void BbHardExit(int code) {
+    // Saves first, then a deadline (droogie/bbhost 16e6da5, by intent): see src/runtime_exitguard.h.
+    runtime_exitguard_begin(code);
+    runtime_exitguard_test_hang();
     bbgpu_save_caches();
     bbnet_shutdown();  // party: BYE + UPnP unmap (no-op without BB_PARTY)
     std::fflush(stdout);
@@ -363,6 +367,9 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        // Saves first, then a deadline (droogie/bbhost 16e6da5, by intent): see src/runtime_exitguard.h.
+        runtime_exitguard_begin(0);
+        runtime_exitguard_test_hang();
         bbgpu_save_caches();
         bbnet_shutdown();  // party: BYE + UPnP unmap
         std::fflush(stdout);
