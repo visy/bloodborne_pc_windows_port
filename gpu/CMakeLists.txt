@@ -376,6 +376,11 @@ target_include_directories(wait-reg-mem-test PRIVATE ..)
 add_executable(gc-policy-test EXCLUDE_FROM_ALL ../tests/test_gc_policy.cpp)
 target_compile_options(gc-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(gc-policy-test PRIVATE ..)
+# Scene-proxy release queue (renderer_vulkan/scene_proxy_release.h) and the watched store range
+# (texture_cache/store_range.h), ported from Nightwatch a624786 / 403ba62.
+add_executable(scene-proxy-release-test EXCLUDE_FROM_ALL ../tests/test_scene_proxy_release.cpp)
+target_compile_options(scene-proxy-release-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(scene-proxy-release-test PRIVATE shadps4)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)

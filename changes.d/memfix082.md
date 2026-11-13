@@ -1,0 +1,3 @@
+### Fixed
+- **Game heap crash after a death and a reload** (Nightwatch 403ba62, Lantern Engine by Awaken 0.9.41, modified) a GPU-written image is now stored back to game memory without the first or last page when the game had written beside it there (the game's heap header and free list sit on those pages); the pixels no longer overwrite them. `BB_STORE_WATCHED_ONLY=0` restores the old whole-image store.
+- **Video memory growth over long sessions** (Nightwatch a624786 + 8d92288, Lantern Engine by Awaken 0.9.39 beta 31, modified) the reduced-size scene copies of a deleted image now leave video memory with it (they stayed until a resolution change; worst on 8 GB cards and smaller with an upscaler on). `BB_SCENE_PROXY_RELEASE=0` restores the old behaviour.
