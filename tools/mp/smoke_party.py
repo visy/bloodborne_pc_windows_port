@@ -647,18 +647,19 @@ def phase_sk(only):
 
 
 # Phase nk (0.8.2, NW-c18f60b, ~4 min, 3 players): Old Yharnam. A death on a guest's game that a non-player's hit
-# caused (an NPC's gatling, another enemy; the director's guest_kill=0:npc marks the lethal hit so) must not spread
+# caused (an NPC's gatling, another enemy; the director's guest_kill=ID:npc marks the lethal hit so) must not spread
 # through the kill record (before the fix the host put every such enemy, Djura included, to death); a death by a
-# player's hit (guest_kill=0) still does.
+# player's hit (guest_kill=ID) still does.
 NK_UNTIL = S3_UNTIL
 
 
 def phase_nk(only):
     host = ",".join(["god", "host_warp=2302950@8^2", "host_press=0@70%m23_00!"])
-    g1 = ",".join(["god", "guest_kill=0:npc@12%m23_00", "guest_press=0@4%m23_00!", "guest_kill=0@2%m23_00",
+    g1 = ",".join(["god", "guest_kill=2300400:npc@12%m23_00", "guest_press=0@4%m23_00!", "guest_kill=2300200@2%m23_00",
                    "guest_press=0@20%m23_00!"])
     return dict(
         name="nk", seconds=420,
+        env=[],
         ienv=["0:BB_PARTY_DIRECTOR_TEST=" + host, "1:BB_PARTY_DIRECTOR_TEST=" + g1, "2:BB_PARTY_DIRECTOR_TEST=god"],
         crash=[],
         until=[NK_UNTIL],
@@ -10882,7 +10883,7 @@ GROUP_ROWS = {"map_marks": r"^mmn? ", "invade_race": r"^ivr ", "join_stagger": r
               "rejoin_kill": r"s2 (Leave after|Rejoin|no kick)", "c6": r"guest crash",
               "host_crash": r"host crash", "host_leave": r"host Leave", "keyitems": r"key item", "rules": r"^rules", "splitscreen": r"^ss ", "stay_home": r"^sh ", "guest_gather": r"^gg ",
               "savecopy": r"^sc ", "summonfail": r"^summonfail",
-              "host_revive": r"^s3 ", "streamkill": r"^sk ", "load_gap": r"^lg(:| )", "parallel_follow": r"^(pf[01]n?|lbpf)[: ]", "settled_drop": r"^(pf0|sd1)[: ]", "load_beside": r"^(pf0|lb1w?|lbpf)[: ]", "quick_rejoin": r"^qr[01][: ]", "seam": r"^(pf0|pf1|sd1|lb1|pfsd|pf1n|lb1w|lbpf|qr0|qr1)[: ]", "leave_gap": r"^lv(:| )", "nw_direct": r"^nd[1-5][: ]", "gather": r"^ga ", "gather_ground": r"^gl ",
+              "host_revive": r"^s3 ", "streamkill": r"^sk ", "kill_npc": r"^nk ", "load_gap": r"^lg(:| )", "parallel_follow": r"^(pf[01]n?|lbpf)[: ]", "settled_drop": r"^(pf0|sd1)[: ]", "load_beside": r"^(pf0|lb1w?|lbpf)[: ]", "quick_rejoin": r"^qr[01][: ]", "seam": r"^(pf0|pf1|sd1|lb1|pfsd|pf1n|lb1w|lbpf|qr0|qr1)[: ]", "leave_gap": r"^lv(:| )", "nw_direct": r"^nd[1-5][: ]", "gather": r"^ga ", "gather_ground": r"^gl ",
               "lifts": r"^lf (join|lift|guest's lift|host)", "lifts2": r"^lfx (join|lift|guest's lift|host)", "lift_apart": r"^lfa ", "lift_walk": r"^lfwc? ", "lift_walk_far": r"^lfwc?f ", "lift_walk_slow": r"^lfwc?b?s ", "lift_down": r"^lu ", "gx_ebrietas": r"^gxe ", "ladder": r"^lf (join|ladder)|^ld ", "mark": r"^mk ", "kidnap": r"^k[dg] ", "drop_far": r"^fdr ", "story_warp": r"^kw ", "fall": r"^fl ", "fall_deep": r"^fd ", "host_fall_lamp": r"^cd ", "cainhurst_scene": r"^iwn? ", "cainhurst_annalise": r"^an |^anl ", "chalamp": r"^cl ", "chalice_layers": r"^cyn? ", "chalice_guest": r"^clg ", "chalice_progress": r"^cpr ", "chalice_curse": r"^ch[cw] ", "chalice_altar": r"^cpa ", "chalice_enter": r"^ca[eo] ", "chalice_altar_guest": r"^cag ", "chalice_altar_guest_full": r"^cage ", "chalice_boss": r"^cab ", "chalice_queen": r"^ca[qw] ", "chalice_enter": r"^ca[eo] ", "chalice_altar_guest": r"^cag ", "chalice_altar_guest_full": r"^cage ", "chalice_boss": r"^cab ", "chalice_wipe": r"^clw ", "chalice_alias": r"^(cla|caa|cam|camo|camh|cas|crg) ", "elevator": r"^el ", "lifts_together": r"^lt ", "fight_load": r"^bf ", "cainhurst_lift": r"^ch ", "cainhurst_maid": r"^md ", "cloth_stall": r"^mds ", "save_load": r"^svl ", "live_fps_death": r"^lfd ", "research_lift": r"^rh ", "forbidden_lift": r"^fw ", "forbidden_lift_guest": r"^fwg ", "forbidden_lift_both": r"^fwb ", "forbidden_lift_edge": r"^fwe ", "hemwick_lift": r"^fh ", "research_solo": r"^rs ", "lamps": r"^lp ", "guest_dream": r"^gd ", "guest_dream_host": r"^gh ", "guest_lamp": r"^gm ", "join_lamp": r"^jl ", "mensis_lamp": r"^ml ", "lecture_lamp": r"^ll ", "host_lamp": r"^hlq ", "host_lamp_repair": r"^hlr ", "mensis_lamp_guest": r"^mg ", "headstone_split": r"^hs ", "ngplus_rejoin": r"^ngj ", "amygdala": r"^amy ", "prologue_refusal": r"^pr ", "npc_lamp": r"^nl ", "frontier_fall": r"^ff ", "lunarium_key": r"^lkc? ",
               "rot": r"^rt ", "boss_rooms": r"^br ", "rom_fog": r"^rf ", "rom_jump": r"^rj ", "emissary": r"^em ", "emissary_first": r"^emf ", "boss_drops": r"^bd ", "boss_drops_off": r"^bdo ", "scene_mirror": r"^sm ", "ending_flow": r"^ef ", "ngplus_ending": r"^ngp ", "moon_music": r"^mb ", "gehrman_music": r"^gb ", "moon_music_stop": r"^mbs ", "gehrman_music_stop": r"^gbs ", "dream_apart": r"^da ",
               "covenant": r"^cv(:| join| host's fixture| rule| covenant| shared| host's save| guest's save)",
@@ -10925,6 +10926,7 @@ GROUP_UNTIL = {
     # guest 2 in the host's world, then ~10 s more log (the screenshots of it in the host's world)
     "summonfail": [r"0:cooperators 0 -> 1"],
     "streamkill": [SK_UNTIL],
+    "kill_npc": [NK_UNTIL],
     "load_gap": [LG_UNTIL],
     "leave_gap": [LV_UNTIL],
     "gather": GA_UNTIL,

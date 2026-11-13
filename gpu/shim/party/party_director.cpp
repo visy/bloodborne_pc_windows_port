@@ -5264,7 +5264,9 @@ void PartyDirector::ConfigureFromEnv() {
                 if (step.kind == TravelStep::HostWarp || step.kind == TravelStep::HostKill) {
                     step.id = static_cast<std::uint32_t>(std::strtoul(item.c_str() + 10, nullptr, 10));
                 }
-                if ((step.kind == TravelStep::HostKill || step.kind == TravelStep::GuestKill) && item.find(":hp") != std::string::npos) {
+                if (step.kind == TravelStep::GuestKill && item.find(":npc") != std::string::npos) {
+                    step.args = "npc";  // guest_kill=ID:npc@S: HP 0 marked as a non-player's lethal hit (NW-c18f60b)
+                } else if ((step.kind == TravelStep::HostKill || step.kind == TravelStep::GuestKill) && item.find(":hp") != std::string::npos) {
                     step.args = "hp";  // host_kill=ID:hp@S: HP 0 only (the game's own death path)
                     // host_kill=ID:hpNN@S: HP set to NN % of its max (a fight's damage; the chr lives)
                     const int pct = std::atoi(item.c_str() + item.find(":hp") + 3);
