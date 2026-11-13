@@ -1,0 +1,2 @@
+### Fixed
+- **Closing the game no longer hangs when the graphics driver is stuck** (idea from droogie/bbhost 16e6da5) the exit now waits for saves to be written first, then gives the rest of the shutdown 15 seconds; after that the game ends itself, so a stuck present no longer leaves a "Not Responding" window that needs Task Manager. `BB_EXIT_DEADLINE=0` turns it off, `BB_EXIT_DEADLINE=30` sets another number of seconds.
