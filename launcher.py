@@ -47,7 +47,7 @@ ANISO_CHOICES = [
 ]
 
 # Motion blur resolution (0.6.2's "Volumetric effects"; idea from a playtester): the game's
-# half-resolution motion blur buffers. A game setting: bbport.ini volumetric_res (System > Display),
+# half-resolution motion blur buffers. A game setting: bbport.ini volumetric_res (System > Game Settings > Display),
 # read and written by the launcher. (label, value); "In-game setting" was a launcher-only choice.
 VOLUMETRIC_LEGACY_INGAME = "In-game setting"
 VOLUMETRIC_CHOICES = [
@@ -162,36 +162,36 @@ PARTY_INI_SWITCHES = [
     ("party_kill_record", "BB_PARTY_KILL_RECORD", True),
     ("party_gather", "BB_PARTY_GATHER", True),
     ("party_npc_mirror", "BB_PARTY_NPC_MIRROR", True),
-    # 0.7.3: covenant outcomes per player (the host's rule; System > Party rules: World)
+    # 0.7.3: covenant outcomes per player (the host's rule; System > Party Settings > Party rules: World)
     ("party_covenant_per_player", "BB_PARTY_COVENANT_PER_PLAYER", True),
-    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Party rules: World)
+    # 0.7.3 (D11): NPC hunters fight the whole party (the host's rule; System > Party Settings > Party rules: World)
     ("party_npc_fights", "BB_PARTY_NPC_FIGHTS", True),
     # 0.7.7: bosses share their attention between the players in reach (the host's game acts)
     ("party_boss_share", "BB_PARTY_BOSS_SHARE", True),
     # 0.7.3: a Snatcher grabbing a guest takes the whole party to the Hypogean Gaol (the host's rule;
     # System > Deaths & revives)
     ("party_any_kidnap", "BB_PARTY_ANY_KIDNAP", True),
-    # 0.7.5: Party starts = skip the prologue (the host's rule; System > Party rules: Phantoms)
+    # 0.7.5: Party starts = skip the prologue (the host's rule; System > Party Settings > Party rules: Phantoms)
     ("party_skip_prologue", "BB_PARTY_SKIP_PROLOGUE", False),
-    # 0.7.5: level sync and the phantom health cut (the host's rules; System > Party rules: Phantoms)
+    # 0.7.5: level sync and the phantom health cut (the host's rules; System > Party Settings > Party rules: Phantoms)
     ("party_level_sync", "BB_PARTY_LEVEL_SYNC", True),
     ("party_phantom_hp", "BB_PARTY_PHANTOM_HP", True),
-    # 0.7.6: full health in PvP (the host's rule; System > Party rules: PvP & lamps)
+    # 0.7.6: full health in PvP (the host's rule; System > Party Settings > Party rules: PvP & lamps)
     ("party_pvp_full_hp", "BB_PARTY_PVP_FULL_HP", True),
-    # 0.7.6: a world boss's item drop also goes to the guests (the host's rule; System > Party rules: Rewards)
+    # 0.7.6: a world boss's item drop also goes to the guests (the host's rule; System > Party Settings > Party rules: Rewards)
     ("party_boss_drops", "BB_PARTY_BOSS_DROPS", True),
     ("party_key_view", "BB_PARTY_KEY_VIEW", True),
     ("party_key_items_summoned", "BB_PARTY_KEY_ITEMS_SUMMONED", True),
     # 0.7.2: rot (the death debuff, OFF by default since 0.7.2: an unset key is off, a saved value
-    # stays) and what else cleanses it (the host's rules; System > Party rules: Rot)
+    # stays) and what else cleanses it (the host's rules; System > Party Settings > Party rules: Rot)
     ("party_rot", "BB_PARTY_ROT", False),
     ("party_rot_cleanse_boss", "BB_PARTY_ROT_CLEANSE_BOSS", True),
     ("party_rot_cleanse_killer", "BB_PARTY_ROT_CLEANSE_KILLER", True),
     ("party_rot_cleanse_echoes", "BB_PARTY_ROT_CLEANSE_ECHOES", True),
     ("party_rot_extra", "BB_PARTY_ROT_EXTRA", False),
-    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party rules: World)
+    # 0.7.3: lamp travel voting (the host's rule, OFF by default; System > Party Settings > Party rules: World)
     ("party_travel_vote", "BB_PARTY_TRAVEL_VOTE", False),
-    # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party rules: Travel)
+    # 0.7.7 (CL-a3a9e6): guests may gather the party too (the host's rule, OFF by default; System > Party Settings > Party rules: Travel)
     ("party_guest_gather", "BB_PARTY_GUEST_GATHER", False),
     # 0.7.7 (CL-48ee07): a Chalice Dungeon lamp lists the dungeon's lit lamps for the party (the host's rule, OFF by default)
     ("party_layer_travel", "BB_PARTY_LAYER_TRAVEL", False),
@@ -215,22 +215,22 @@ PARTY_INI_FLAGS = [
     # 0.7.8: hateful member names shown masked on this PC; ON by default (safety)
     ("party_hide_bad_names", True),
     ("party_item_notices", True),
-    # 0.7.8 (CL-63e235): give items to a party member, off by default (System > My party: Giving)
+    # 0.7.8 (CL-63e235): give items to a party member, off by default (System > Party Settings > My party: Giving)
     ("party_give_items", False),
     # 0.7.9 (CL-1b3b98): give weapons and armor (with upgrade level and blood gems), off by default
     ("party_give_gear", False),
-    # 0.7.7 (CL-2eec68): splitscreen mode, off by default (System > My party: Splitscreen)
+    # 0.7.7 (CL-2eec68): splitscreen mode, off by default (System > Party Settings > My party: Splitscreen)
     ("party_splitscreen", False),
-    # 0.7.7 (CL-adeb50): a guest pauses the automatic joining, off by default (System > Party > Stay in my world)
+    # 0.7.7 (CL-adeb50): a guest pauses the automatic joining, off by default (System > Party Settings > Party > Stay in my world)
     ("party_stay", False),
 ]
 
 # ---- The party settings tabs (0.7.3, user request): the Party tab holds hosting / joining /
 # connection; these two hold the party's settings, one table entry per row (build_party_settings_tab).
-#  - PARTY_RULES_TAB ("Party Rules", the game's System > Party rules: ... pages): what the HOST decides
+#  - PARTY_RULES_TAB ("Party Rules", the game's System > Party Settings > Party rules: ... pages): what the HOST decides
 #    for the whole party - the party_balance Rules sent to every guest (party_status HostRule,
 #    friendly fire, shared lamps); a guest sees the host's values read-only in the game.
-#  - MY_PARTY_TAB ("My Party", System > My party: ...): what each player chooses for itself (its
+#  - MY_PARTY_TAB ("My Party", System > Party Settings > My party: ...): what each player chooses for itself (its
 #    screen, notices, what it gets as a guest, story sync, saves).
 # A section: (column, row, title, rows). A row:
 #   ("check", key, label, tooltip)            a checkbox: a PARTY_SWITCHES / PARTY_INI_SWITCHES key
@@ -242,9 +242,9 @@ PARTY_INI_FLAGS = [
 PARTY_RULES_TAB_TITLE = "Party Rules"
 PARTY_RULES_TAB_INTRO = ("The host's rules for the whole party: they apply when you host. When you join a party, "
                          "the host's settings count and yours are kept for when you host (in the game a guest "
-                         "sees the host's read-only, System > Party rules). Lamps, Hunter's Mark, full rewards, "
+                         "sees the host's read-only, System > Party Settings > Party rules). Lamps, Hunter's Mark, full rewards, "
                          "boss Insight and Party starts are read once at start: they must match the host's. "
-                         "Enemy scaling: in the game, System > Party rules: Enemies.")
+                         "Enemy scaling: in the game, System > Party Settings > Party rules: Enemies.")
 PARTY_RULES_TAB = [
     (0, 1, "World", [
         ("check", "party_kill_record", "Enemies stay dead",
@@ -252,15 +252,15 @@ PARTY_RULES_TAB = [
          "reaches the others, and an enemy that comes back alive when its area loads again as you "
          "walk is put down again. Only a rest or a party wipe brings enemies back. The host's "
          "setting; guests follow it. Off: a kill another player did not see can leave the enemy "
-         "standing on their game. Default: on (bbport.ini party_kill_record; in the game: System > Party rules: World)."),
+         "standing on their game. Default: on (bbport.ini party_kill_record; in the game: System > Party Settings > Party rules: World)."),
         ("check", "party_gather", "Host can gather the party",
-         "Lets the host bring every guest to it with System > Party > Gather the party (each guest "
+         "Lets the host bring every guest to it with System > Party Settings > Party > Gather the party (each guest "
          "is asked first and may say no). The host's setting. Off: the row says gathering is off. "
-         "Default: on (bbport.ini party_gather; in the game: System > Party rules: World)."),
+         "Default: on (bbport.ini party_gather; in the game: System > Party Settings > Party rules: World)."),
         ("check", "party_npc_mirror", "NPCs as in the host's world",
          "An NPC that is gone from the host's world (moved on by a story event, such as the one "
          "at the clinic's door) is gone for the guests too. The host's setting; guests follow it. "
-         "Default: on (bbport.ini party_npc_mirror; in the game: System > Party rules: World)."),
+         "Default: on (bbport.ini party_npc_mirror; in the game: System > Party Settings > Party rules: World)."),
         ("check", "party_covenant_per_player", "Covenant outcomes per player",
          "How the covenant quests end stays in each player's own world and save: Alfred killing "
          "Queen Annalise, her revival, Valtr's death and the other covenant leaders' fates. While "
@@ -268,18 +268,18 @@ PARTY_RULES_TAB = [
          "save, and nothing of yours reaches the host's. Lamps, bosses, doors and other quests "
          "stay shared. The host's setting; guests follow it. Off: covenant outcomes are shared like "
          "other NPC quests. Default: on (bbport.ini party_covenant_per_player; in the game: "
-         "System > Party rules: World)."),
+         "System > Party Settings > Party rules: World)."),
         ("check", "party_travel_vote", "Party votes on travel",
          "A party travel by lamp, headstone or Hunter's Mark only happens when every member votes yes: "
          "each one gets the game's YES / NO question. One no, or no answer within 20 s, cancels it "
          "and everyone is told who said no or did not answer. The host's setting; guests see it. "
-         "Default: off (bbport.ini party_travel_vote; in the game: System > Party rules: World)."),
+         "Default: off (bbport.ini party_travel_vote; in the game: System > Party Settings > Party rules: World)."),
         ("check", "party_npc_fights", "NPC hunters fight the whole party",
          "A story NPC hunter who turns on the host (Alfred, the blood-drunk Eileen, Valtr, the "
          "DLC hunters) turns on the guests too (Brador should show for guests too; not tried yet): "
          "everyone sees and fights the same hunter, and its death counts for all. The host's "
          "setting; guests follow it. Default: on (bbport.ini party_npc_fights; in the game: "
-         "System > Party rules: World)."),
+         "System > Party Settings > Party rules: World)."),
     ]),
     (0, 2, "Deaths", [
         ("check", "party_host_limbo_revive", "Get up after a boss kill",
@@ -288,12 +288,12 @@ PARTY_RULES_TAB = [
          "Blood Echoes stay in your bloodstain. Host and guests alike; the host's setting. Off: a host's death "
          "takes the whole party's respawn loading screen at the host's lamp, a guest gets up "
          "at the host's lamp. "
-         "Default: on (bbport.ini party_host_limbo_revive; in the game: System > Party rules: Deaths)."),
+         "Default: on (bbport.ini party_host_limbo_revive; in the game: System > Party Settings > Party rules: Deaths)."),
         ("check", "party_host_revive", "Host gets up without a loading screen",
          "When the host dies, it gets up at its lamp in the loaded area with no loading screen for "
          "anyone (a lamp in another area: the host loads alone). Off: the whole party gets the "
          "respawn loading screen. Host's setting. Default: on (bbport.ini party_host_revive; in "
-         "the game: System > Party rules: Deaths)."),
+         "the game: System > Party Settings > Party rules: Deaths)."),
         ("check", "party_any_kidnap", "Anyone can be abducted",
          "When a Snatcher grabs a guest in the host's world, the whole party is taken to the "
          "Hypogean Gaol in Yahar'gul, just as when the host is grabbed: one loading screen for "
@@ -301,20 +301,20 @@ PARTY_RULES_TAB = [
          "world does this, as in the game. The host's setting; guests follow it. Off: only a "
          "grabbed host takes the party there, a grabbed guest just dies. The waking scene plays "
          "for everyone either way. Default: on (bbport.ini party_any_kidnap; in the game: "
-         "System > Party rules: Deaths)."),
+         "System > Party Settings > Party rules: Deaths)."),
         ("check", "party_guest_revive_inplace", "Get up without a loading screen",
          "A guest who dies gets up at the host's lamp right away, with no loading screen (after a "
          "fall: the respawn load). Off: every death takes the respawn loading screen. Applies to "
          "you while you are a guest. Default: on (bbport.ini party_guest_revive_inplace; in the "
-         "game: System > Party rules: Deaths)."),
+         "game: System > Party Settings > Party rules: Deaths)."),
         ("check", "party_guest_respawn", "Respawn at the host's lamp",
          "A guest who dies comes back at the host's last lamp and is summoned again, instead of "
          "being sent home to their own world. The host's rule: guests follow it. "
-         "Default: on (bbport.ini party_guest_respawn; in the game: System > Party rules: Deaths)."),
+         "Default: on (bbport.ini party_guest_respawn; in the game: System > Party Settings > Party rules: Deaths)."),
         ("check", "party_guest_refill", "Refill vials and bullets",
          "Guests get their Blood Vials and Quicksilver Bullets refilled when the host rests at a "
          "lamp, dies or travels to the Dream, as the host does. Applies to you while you are a "
-         "guest. Default: on (bbport.ini party_guest_refill; in the game: System > Party rules: Deaths)."),
+         "guest. Default: on (bbport.ini party_guest_refill; in the game: System > Party Settings > Party rules: Deaths)."),
     ]),
     (0, 3, "Phantoms", [
         ("check", "party_level_sync", "Level sync",
@@ -322,11 +322,11 @@ PARTY_RULES_TAB = [
          "down while it plays in the host's world - less maximum health and stamina, less defence "
          "and resistance - and gets a blue icon by its name. Anyone can still join at any level. "
          "The host's setting; guests follow it. Off: everyone keeps full stats. Default: on "
-         "(bbport.ini party_level_sync; in the game: System > Party rules: Phantoms)."),
+         "(bbport.ini party_level_sync; in the game: System > Party Settings > Party rules: Phantoms)."),
         ("check", "party_phantom_hp", "Phantom health cut",
          "As in Bloodborne's own co-op: hunters who join a party have 30 % less maximum health. "
          "The host's setting; guests follow it. Off: full maximum health for everyone. Default: on "
-         "(bbport.ini party_phantom_hp; in the game: System > Party rules: Phantoms)."),
+         "(bbport.ini party_phantom_hp; in the game: System > Party Settings > Party rules: Phantoms)."),
         ("check", "party_skip_prologue", "Skip the prologue (new characters)",
          "A NEW character (one that has not finished the prologue) skips the clinic and the first "
          "Hunter's Dream visit: the prologue's story flags are set, the starting weapons are given "
@@ -334,14 +334,14 @@ PARTY_RULES_TAB = [
          "the Central Yharnam lamp, ready for the party. Characters past the prologue are never "
          "touched. The host's setting; guests follow it. Off: the prologue is played as in the "
          "game. Default: off (bbport.ini "
-         "party_skip_prologue; in the game: System > Party rules: Phantoms)."),
+         "party_skip_prologue; in the game: System > Party Settings > Party rules: Phantoms)."),
     ]),
     (1, 1, "PvP & lamps", [
         ("check", "party_friendly_fire", "Friendly fire / PvP",
          "Host only: party members can hurt each other, both ways, like invaders (ERSC's "
          "Judicator's Rulebook). A party kill is a normal party death; the killer gets no "
          "Echoes or Insight. Your setting is the party's rule: guests see it and get a notice "
-         "when you switch it. Also in the game: System > Party rules: PvP & lamps (live). Default: off "
+         "when you switch it. Also in the game: System > Party Settings > Party rules: PvP & lamps (live). Default: off "
          "(bbport.ini party_friendly_fire)."),
         ("check", "party_pvp_full_hp", "    Full health in PvP",
          "Host only: while friendly fire is on, hunters who joined your world keep their full "
@@ -349,166 +349,166 @@ PARTY_RULES_TAB = [
          "Switching friendly fire on or off keeps each hunter's health at the same fraction of the "
          "new maximum (half stays half, full stays full; nobody is healed or hurt by the switch). "
          "Needs Friendly fire / PvP. Off: the Phantom health cut applies in PvP too. Your setting is "
-         "the party's rule. Also in the game: System > Party rules: PvP & lamps. Default: on "
+         "the party's rule. Also in the game: System > Party Settings > Party rules: PvP & lamps. Default: on "
          "(bbport.ini party_pvp_full_hp).", "party_friendly_fire"),
         ("check", "party_share_lamps", "Shared lamps",
          "Host only: a lamp any party member lights in your world is lit for everyone, in "
          "each member's own save too, and your lamps reach the guests' saves. Your setting "
-         "is the party's rule. Also in the game: System > Party rules: PvP & lamps (Shared lamps). "
+         "is the party's rule. Also in the game: System > Party Settings > Party rules: PvP & lamps (Shared lamps). "
          "Default: on (bbport.ini party_share_lamps)."),
         ("check", "party_guests_bring_lamps", "Guests bring their lamps",
          "Host only: a joining guest's lamps from its own world light up in yours too "
          "(needs Shared lamps). Off: your world keeps its own lamps; any lamp a party "
          "member lights in it is saved for everyone. Your setting is the party's rule. "
-         "Also in the game: System > Party rules: PvP & lamps. Default: off (bbport.ini "
+         "Also in the game: System > Party Settings > Party rules: PvP & lamps. Default: off (bbport.ini "
          "party_guests_bring_lamps)."),
         ("check", "party_layer_travel", "Chalice layer travel",
          "Host only: at your Chalice Dungeon lamp the travel list shows the dungeon's other unlocked lamps "
          "(layers) next to the Hunter's Dream, and your choice takes the party along: the guests "
-         "are summoned back in next to you (a guest without a dungeon of its own runs the same lamp warp itself). Default: off (bbport.ini party_layer_travel; in the game: System > Party rules: PvP & lamps)."),
+         "are summoned back in next to you (a guest without a dungeon of its own runs the same lamp warp itself). Default: off (bbport.ini party_layer_travel; in the game: System > Party Settings > Party rules: PvP & lamps)."),
     ]),
     (1, 2, "Rot", [
         ("check", "party_rot", "Rot on death",
          "Each death stacks one penalty, picked at random, up to 5: max HP -10 %, max stamina -10 %, "
          "stamina costs +10 %, rally -15 % or item discovery -10. Resting at a lamp (even just "
          "opening its travel menu) or levelling up cleanses it. The host's setting counts for the "
-         "whole party. Default: off (bbport.ini party_rot; in the game: System > Party rules: Rot)."),
+         "whole party. Default: off (bbport.ini party_rot; in the game: System > Party Settings > Party rules: Rot)."),
         ("check", "party_rot_cleanse_boss", "    A boss kill cleanses it",
          "When a boss dies, every party member in the host's world loses all their rot, "
          "alive or dead in that fight. Needs Rot on death. Default: on (bbport.ini "
-         "party_rot_cleanse_boss; in the game: System > Party rules: Rot).", "party_rot"),
+         "party_rot_cleanse_boss; in the game: System > Party Settings > Party rules: Rot).", "party_rot"),
         ("check", "party_rot_cleanse_killer", "    Killing your killer cleanses it",
          "When the enemy that killed you dies (anyone in the party may kill it), you lose "
          "the rot of that death. A fall or a trap has no killer; a rest brings the killer "
          "back. Needs Rot on death. Default: on (bbport.ini party_rot_cleanse_killer; in "
-         "the game: System > Party rules: Rot).", "party_rot"),
+         "the game: System > Party Settings > Party rules: Rot).", "party_rot"),
         ("check", "party_rot_cleanse_echoes", "    Retrieving your Blood Echoes cleanses it",
          "Picking up your bloodstain removes the rot of the death that dropped it (not a "
          "second time if your killer already died). Needs Rot on death. Default: on "
-         "(bbport.ini party_rot_cleanse_echoes; in the game: System > Party rules: Rot).", "party_rot"),
+         "(bbport.ini party_rot_cleanse_echoes; in the game: System > Party Settings > Party rules: Rot).", "party_rot"),
         ("check", "party_rot_extra", "    Death may slow stamina recovery",
          "A death may also add a stack that takes 15 % of the stamina you get back (the bar "
          "refills slower). Host's rule. Needs Rot on death. Default: off (bbport.ini "
-         "party_rot_extra; in the game: System > Party rules: Rot).", "party_rot"),
+         "party_rot_extra; in the game: System > Party Settings > Party rules: Rot).", "party_rot"),
     ]),
     (1, 3, "Travel", [
         ("check", "party_guest_lamps", "Guests use lamps",
          "Guests may use lamps and the Dream's headstones; the host leads and the whole party "
          "travels. After a restart. Default: on (bbport.ini party_guest_lamps; in the game: "
-         "System > Party rules: Travel)."),
+         "System > Party Settings > Party rules: Travel)."),
         ("check", "party_guest_mark", "Guests can use Hunter's Mark",
          "Lets a guest use the Hunter's Mark (and Bold Hunter's Mark). Like a lamp it asks "
          "\"Travel with the party?\": alone to your own last lamp, or the party to the host's. "
          "Off: guests cannot use it, as in the normal game. Default: on (bbport.ini party_guest_mark; "
-         "in the game: System > Party rules: Travel)."),
+         "in the game: System > Party Settings > Party rules: Travel)."),
         ("check", "party_open_world", "Open world (no co-op area walls)",
          "Removes the walls the game puts on area borders while a helper is in your world, "
          "so the party can walk anywhere the host can. Off: the game's walls stay. Keep it the "
-         "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > Party rules: Travel)."),
+         "same for everyone. Default: on (bbport.ini party_open_world; in the game: System > Party Settings > Party rules: Travel)."),
         ("check", "party_guest_gather", "Guests can gather the party",
-         "Lets a guest bring the host and the other guests to it with System > Party > Gather the party "
+         "Lets a guest bring the host and the other guests to it with System > Party Settings > Party > Gather the party "
          "(each one is asked first and may say no; only players in the same area as the guest are moved, "
          "never through a loading screen). The host's setting; guests only see the row while it is on. "
-         "Default: off (bbport.ini party_guest_gather; in the game: System > Party rules: Travel)."),
+         "Default: off (bbport.ini party_guest_gather; in the game: System > Party Settings > Party rules: Travel)."),
         ("check", "party_chalice_rejoin", "Stay in the host's Chalice Dungeon",
          "A guest who dies in the host's Chalice Dungeon gets up beside the party there. A guest "
          "pulled out of the dungeon by a death or a forced trip (a scripted warp, a host's trip it "
          "could not follow) goes back to their own world and is summoned into the dungeon again "
          "automatically. A guest who chose to leave (\"alone\" at a lamp, their own Hunter's Mark) "
          "stays out until they press Party > Rejoin. The host's rule: guests follow it. Default: on "
-         "(bbport.ini party_chalice_rejoin; in the game: System > Party rules: Travel)."),
+         "(bbport.ini party_chalice_rejoin; in the game: System > Party Settings > Party rules: Travel)."),
         ("check", "party_story_mirror", "    Play them live with the host",
          "A guest in the host's world watches the cutscene at the same time as the "
          "host. Off: the guest sees it later, back in their own world. The host's "
          "rule (a guest also needs Share cutscenes and endings on). Default: on (bbport.ini party_story_mirror; "
-         "in the game: System > Party rules: Travel)."),
+         "in the game: System > Party Settings > Party rules: Travel)."),
     ]),
     (1, 4, "Rewards", [
         ("check", "party_full_rewards", "Full rewards for guests",
          "Guests get the full Blood Echoes for kills and bosses and the full enemy drops, like the "
          "host. Off: the game's co-op rules (half echoes, only vials and bullets drop). Applies "
          "to you while you are a guest. Default: on (bbport.ini party_full_rewards; in the game: "
-         "System > Party rules: Rewards)."),
+         "System > Party Settings > Party rules: Rewards)."),
         ("check", "party_boss_drops", "Boss drops for guests",
          "Host only: the item a world boss drops for you (Kin Coldblood from Rom, ...) is given to "
          "every guest who is there when the boss dies, too, once, in their own save. Key and unique "
          "items already reach every guest and are not given twice. Your setting is the party's rule; "
          "guests see it. Off: guests get only what the game gives them. Default: on "
-         "(bbport.ini party_boss_drops; in the game: System > Party rules: Rewards)."),
+         "(bbport.ini party_boss_drops; in the game: System > Party Settings > Party rules: Rewards)."),
         ("combo", "party_insight_var", "Insight for bosses:", [c[0] for c in PARTY_INSIGHT_CHOICES],
          "Insight a guest gets when the host kills a boss. Same as the host: the guest ends up with "
          "the same Insight the host got for that boss. Full bonus: that much on top of the game's own "
          "+1. Game's own: only the +1 the game gives a helper. "
          "Default: Same as the host (bbport.ini party_guest_insight=parity|full|0; in the game: "
-         "System > Party rules: Rewards).", 24),
+         "System > Party Settings > Party rules: Rewards).", 24),
     ]),
 ]
 MY_PARTY_TAB_TITLE = "My Party"
 MY_PARTY_TAB_INTRO = ("Your own party settings: what you see on your screen, what the party brings into your own save "
-                      "and items, and your saves. Each player chooses them for itself (in the game: System > My party).")
+                      "and items, and your saves. Each player chooses them for itself (in the game: System > Party Settings > My party).")
 MY_PARTY_TAB = [
     (0, 1, "Bosses", [
         ("check", "party_boss_share", "Bosses share their attention",
          "In a party boss fight the boss turns on each player within reach in turn (about every eight "
          "seconds) instead of keeping to the first one or the nearest, so a guest who fights from a "
          "few metres further is attacked too. Takes effect when you host. Default: on (bbport.ini "
-         "party_boss_share; in the game: System > My party: Bosses)."),
+         "party_boss_share; in the game: System > Party Settings > My party: Bosses)."),
     ]),
     (1, 1, "Chalice", [
         ("check", "party_glyph_list", "Chalice glyph list",
          "At the Ritual Altar, Search by Chalice Glyph first shows a list of the party's glyphs to pick from "
          "(your own dungeons, the guests' dungeons and the shipped patches/chalice_glyphs.json), then the code "
          "keyboard: typing a code still works. Pick one and the whole party enters that dungeon together. "
-         "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > My party: Chalice)."),
+         "Your own setting. Default: off (bbport.ini party_glyph_list; in the game: System > Party Settings > My party: Chalice)."),
         ("check", "chalice_glyphdb", "Community Chalice glyphs (Noxde's list)",
          "The Ritual Altar's Search by Chalice Glyph lists about 200 community glyphs (farming, equipment, blood gems, "
          "testing) to pick from, solo or as the party's host; the dungeon is made the game's own way. The list is Noxde's "
          "\"Add dungeons to Bloodborne save\" (Nexus mod 121, https://gist.github.com/Noxde/a29f699f4175bf315d9bd4baeebefb66): "
          "only while this is on, the launcher downloads it from GitHub when it is missing or a week old and keeps it in your "
          "user folder; it is never part of bbport. Works offline once downloaded. Credit: Noxde. "
-         "Default: off (bbport.ini chalice_glyphdb; in the game: System > My party: Chalice)."),
+         "Default: off (bbport.ini chalice_glyphdb; in the game: System > Party Settings > My party: Chalice)."),
         ("check", "party_guest_altar", "Ritual Altar as a guest",
          "While you are a guest in the host's Hunter's Dream, the Ritual Altar answers you too: conduct a Chalice ritual "
          "with your own chalice and materials. The dungeon lands in your own save and the party can enter it. "
-         "Your own setting. Default: off (bbport.ini party_guest_altar; in the game: System > My party: Chalice)."),
+         "Your own setting. Default: off (bbport.ini party_guest_altar; in the game: System > Party Settings > My party: Chalice)."),
     ]),
     (1, 1, "Names", [
         ("check", "party_hide_bad_names", "Hide offensive names",
          "Hateful names (slurs, hate codes, hostile phrases about groups of people) are shown as Hunter and a short "
          "code on your screen: in the party list, the games found and the party notices. Only how you see them; the "
          "Nightwatch VPN lobby does the same for everyone. Your own setting. Default: on, unlike most new party "
-         "features, for safety (bbport.ini party_hide_bad_names; in the game: System > My party: Names)."),
+         "features, for safety (bbport.ini party_hide_bad_names; in the game: System > Party Settings > My party: Names)."),
         ("check", "party_look_sync", "Share look changes",
          "When your appearance data changes (the Dream's mirror or any editor), the other players "
          "rebuild your hunter from the new look at once, without a reload. Also in the game: "
-         "System > My party: Names. Default: off (bbport.ini party_look_sync)."),
+         "System > Party Settings > My party: Names. Default: off (bbport.ini party_look_sync)."),
     ]),
     (0, 1, "Display", [
         ("check", "party_hud", "Party HUD",
          "Your companions' names and health in the bottom left corner of the game, "
          "greyed while they are not in your world; on the same map their distance, a "
          "direction arrow and a name tag above them. Never shown in single-player. Also "
-         "in the game: System > My party: Display > Party HUD. Default: on (bbport.ini "
+         "in the game: System > Party Settings > My party: Display > Party HUD. Default: on (bbport.ini "
          "party_hud)."),
         ("check", "party_name_tags", "Party name tags",
          "On: in a party our name plate (name and a thin health bar) above each "
          "companion replaces the game's own phantom plate, which hides behind any "
          "tree or corner. Off: the game's own plate, as in the original game. Also in "
-         "the game: System > My party: Display > Party name tags. Default: on (bbport.ini "
+         "the game: System > Party Settings > My party: Display > Party name tags. Default: on (bbport.ini "
          "party_name_tags)."),
         ("check", "party_pings", "Pings",
          "Hold the touchpad (keyboard Tab) and press R3 (Q), or press V: a marker on the "
          "spot you look at. Every party member sees it through walls with its distance "
-         "in metres, in your colour, for 10 seconds. Also in the game: System > My party: Display. "
+         "in metres, in your colour, for 10 seconds. Also in the game: System > Party Settings > My party: Display. "
          "Default: on (bbport.ini party_pings)."),
         ("check", "party_through_walls", "Show party through walls",
          "A small diamond with the distance on every companion on your map, drawn over "
-         "walls and trees in the companion's colour. Also in the game: System > My party: Display. "
+         "walls and trees in the companion's colour. Also in the game: System > Party Settings > My party: Display. "
          "Default: off (bbport.ini party_through_walls)."),
         ("check", "party_name_colours", "Coloured name tags",
          "Name tags above your companions use each hunter's party colour (the same as in the "
          "party panel and chat), with a strong outline. Off: the game's plate blue. Also in the "
-         "game: System > My party: Display. Default: off (bbport.ini party_name_colours)."),
+         "game: System > Party Settings > My party: Display. Default: off (bbport.ini party_name_colours)."),
     ]),
     (0, 1, "Chat & markers", [
         ("check", "party_chat", "Party chat",
@@ -516,19 +516,19 @@ MY_PARTY_TAB = [
          "bbport.ini) and type, or on a pad hold the touchpad and press L1 (Back + L1 without a "
          "touchpad) and pick a short line. Lines show for a few seconds in the sender's "
          "colour. With Hide offensive names on, offensive words are masked. Also in the game: "
-         "System > My party: Chat & markers. Default: off (bbport.ini party_chat)."),
+         "System > Party Settings > My party: Chat & markers. Default: off (bbport.ini party_chat)."),
         ("check", "party_chat_receive", "Show others' chat",
          "With Party chat on: show the lines the other hunters write. Off: they are muted. "
-         "Also in the game: System > My party: Chat & markers. Default: on (bbport.ini "
+         "Also in the game: System > Party Settings > My party: Chat & markers. Default: on (bbport.ini "
          "party_chat_receive)."),
         ("check", "party_stain_marker", "Bloodstain marker",
          "A red drop with \"Blood Echoes\" and the distance on the bloodstain of your lost "
          "echoes in the host's world, drawn over walls. The bloodstain is there either "
-         "way. Also in the game: System > My party: Chat & markers. Default: off (bbport.ini "
+         "way. Also in the game: System > Party Settings > My party: Chat & markers. Default: off (bbport.ini "
          "party_stain_marker)."),
         ("check", "party_map_marks", "Shared map markers",
          "A spot you mark on the in-game map (right click, R3 or P) shows on every companion's map, and theirs "
-         "on yours. Needs the in-game map. Also in the game: System > My party: Chat & markers. Default: off "
+         "on yours. Needs the in-game map. Also in the game: System > Party Settings > My party: Chat & markers. Default: off "
          "(bbport.ini party_map_marks)."),
     ]),
     (0, 2, "Look & notices", [
@@ -536,31 +536,31 @@ MY_PARTY_TAB = [
          "On: the other hunters of the party look like normal hunters on your screen, "
          "without the game's blue, glowing phantom look. Off: that look, as in the "
          "original game. Only how you see them: they stay cooperators. Also in the game: "
-         "System > My party: Look & notices. Default: on (bbport.ini party_glow_off)."),
+         "System > Party Settings > My party: Look & notices. Default: on (bbport.ini party_glow_off)."),
         ("check", "party_hud_ping", "Ping in the party list",
          "The connection delay to each companion in ms after the name in the party list "
          "(bottom left), green under 80 ms, yellow under 160, red above. Also in the game: "
-         "System > My party: Look & notices. Default: on (bbport.ini party_hud_ping)."),
+         "System > Party Settings > My party: Look & notices. Default: on (bbport.ini party_hud_ping)."),
         ("check", "party_toasts", "Join/leave notices",
          "A short notice in a top corner when a hunter joins or leaves the party. Also in the game: "
-         "System > My party: Look & notices. Default: on (bbport.ini party_toasts)."),
+         "System > Party Settings > My party: Look & notices. Default: on (bbport.ini party_toasts)."),
         ("check", "party_conn_warnings", "Connection warnings",
          "A notice on the screen, with the fix, when the Windows Firewall, the router or a wrong address "
          "keeps the party from working: nobody reaches your party after a few minutes, a guest's game is "
          "not heard, or you cannot reach the host. Each at most once per session; the log has the same "
-         "line. Your own setting, not a host rule. In the game: System > Party members (the other notices are on "
-         "System > My party: Look & notices). "
+         "line. Your own setting, not a host rule. In the game: System > Party Settings > Party members (the other notices are on "
+         "System > Party Settings > My party: Look & notices). "
          "Default: on (bbport.ini party_conn_warnings)."),
         ("check", "party_item_notices", "Shared item notices",
          "A short notice \"<item>: shared with the party\" on your screen when a key or unique item, a weapon or a "
          "rune is given to the party (yours or a companion's; never for ordinary pickups). Shows while the "
-         "party notices are on. In the game: System > Party members (the other notices are on "
-         "System > My party: Look & notices). "
+         "party notices are on. In the game: System > Party Settings > Party members (the other notices are on "
+         "System > Party Settings > My party: Look & notices). "
          "Default: on (bbport.ini party_item_notices)."),
         ("check", "party_npc_talk", "Share NPC dialogue",
          "When a companion near you talks to an NPC you get the conversation too: "
          "the game's subtitles, the NPC's voice, their choices and gifts (passive, "
-         "no menu opens). Range: in the game, System > My party: Look & notices > NPC dialogue "
+         "no menu opens). Range: in the game, System > Party Settings > My party: Look & notices > NPC dialogue "
          "range (default 25 m). Default: on (bbport.ini party_npc_talk)."),
     ]),
     (1, 2, "Splitscreen", [
@@ -569,12 +569,12 @@ MY_PARTY_TAB = [
          "only the compass (a direction arrow and the distance per companion), there are no name tags above "
          "the companions, and party messages are cut to errors only (connection lost, failed join). Your own "
          "setting, not a host rule. Default: off (bbport.ini party_splitscreen; in the game: "
-         "System > My party: Splitscreen)."),
+         "System > Party Settings > My party: Splitscreen)."),
         ("combo", "party_messages_var", "Party messages:", [c[0] for c in PARTY_MESSAGES_CHOICES],
          "Which party notices and message boxes show: all of them, only errors (the connection to the host "
          "lost or unstable, a refused or failed join, a desync), or none. Splitscreen mode turns All into "
          "Errors only (Off stays off). Your own setting. Default: All (bbport.ini party_messages; in the game: "
-         "System > My party: Splitscreen).", 14),
+         "System > Party Settings > My party: Splitscreen).", 14),
     ]),
     (0, 4, "Start & saves", [
         ("check", "party_stay", "Stay in my world",
@@ -582,7 +582,7 @@ MY_PARTY_TAB = [
          "the party goes on: no bell, no gather to the host, you are not asked to vote on the host's travel and the "
          "host does not wait for you; chat, the party panel and the connection keep working. Switch it off to join "
          "again at the next opportunity (nothing is forced mid-action). Your own setting; takes effect live. "
-         "Default: off (bbport.ini party_stay, env BB_PARTY_STAY; in the game: System > Party > Stay in my world)."),
+         "Default: off (bbport.ini party_stay, env BB_PARTY_STAY; in the game: System > Party Settings > Party > Stay in my world)."),
         ("combo", "party_start_var", "Party starts:", [c[0] for c in PARTY_START_CHOICES],
          "When a player counts as ready to be summoned. After the prologue (recommended): once the "
          "player has seen the opening, reached the Hunter's Dream for the first time and taken a "
@@ -608,56 +608,56 @@ MY_PARTY_TAB = [
          "The host's progress - bosses killed, lamps lit, shortcuts and doors opened, key "
          "events - is copied into each guest's own save, so the guests' worlds keep up with "
          "the host's. Needs to be on for the host and for each guest. "
-         "Default: on (bbport.ini party_progress; in the game: System > My party: Your save)."),
+         "Default: on (bbport.ini party_progress; in the game: System > Party Settings > My party: Your save)."),
         ("check", "party_progress_npc", "    Also NPC quests",
          "NPC quest choices are shared: the first choice anyone makes (Eileen, Alfred, "
          "Djura ...) applies to the host's world and every player's save. Guest's setting. "
-         "Default: on (bbport.ini party_progress_npc; in the game: System > My party: Your save).", "party_progress"),
+         "Default: on (bbport.ini party_progress_npc; in the game: System > Party Settings > My party: Your save).", "party_progress"),
         ("check", "party_story", "Share cutscenes and endings",
          "Every guest also sees the cutscenes the host triggers (shown again in the guest's own "
          "world if needed), the time of day (evening, night, Blood Moon) follows the host, and "
          "the ending the host gets plays for everyone. Needs to be on for the host and for "
-         "each guest. Default: on (bbport.ini party_story; in the game: System > My party: Your save)."),
+         "each guest. Default: on (bbport.ini party_story; in the game: System > Party Settings > My party: Your save)."),
         ("check", "party_title_room_hold", "Keep my room for a rejoining guest",
          "Host: when a guest's game ended and it restarts and rejoins from its title, your game would close its empty "
          "room about 5 s after the guest left, before the guest has joined. With this on the room stays open while "
          "the rejoin is served. Your own setting. Default: on (bbport.ini party_title_room_hold; in the game: "
-         "System > My party: Your save)."),
+         "System > Party Settings > My party: Your save)."),
     ]),
     (1, 1, "Your items", [
         ("check", "party_items", "Share the host's item rewards",
          "Boss drops, key items and gifts the host receives (which guests never get in the "
          "normal game) are given to each guest too, in their own world, once each. "
-         "Default: on (bbport.ini party_items; in the game: System > My party: Your items)."),
+         "Default: on (bbport.ini party_items; in the game: System > Party Settings > My party: Your items)."),
         ("check", "party_grant_bells", "Give the bells",
          "Gives each player the Beckoning Bell and the Small Resonant Bell once the prologue is "
          "done, so nobody has to buy or find them. Automatic summoning does not need them; they "
          "are for ringing by hand. Default: on (bbport.ini party_grant_bells; in the game: "
-         "System > My party: Your items)."),
+         "System > Party Settings > My party: Your items)."),
         ("check", "party_key_view", "Own key items as a guest",
          "While you are a guest in the host's world, your Key Items tab shows your own keys, "
          "badges and tools. Off: the game's view for a visiting hunter (an empty list; your save "
          "keeps them). Applies to you while you are a guest; at the next start. "
-         "Default: on (bbport.ini party_key_view; in the game: System > My party: Your items)."),
+         "Default: on (bbport.ini party_key_view; in the game: System > Party Settings > My party: Your items)."),
         ("check", "party_key_items_summoned", "    Key items at once",
          "A key item the host's world gives you (Oedon Tomb Key, a badge) is yours "
          "right away, while you are still in the host's world. Off: it waits until "
          "you are back in your own world. Needs Own key items. Default: on "
-         "(bbport.ini party_key_items_summoned; in the game: System > My party: Your items).", "party_key_view"),
+         "(bbport.ini party_key_items_summoned; in the game: System > Party Settings > My party: Your items).", "party_key_view"),
     ]),
     (1, 1, "Giving", [
         ("check", "party_give_items", "Give items to the party",
          "Lets you give consumables (vials, bullets, throwables, materials) to a hunter in your party and receive "
          "theirs: open an item in the inventory, its menu has a Give entry (hunter, then amount). Your switch shows it; theirs is their consent. The "
          "giver loses the items only once the receiver has them (a lost link puts them back). Never key items, "
-         "unique items, badges, tools or story items. In the game: System > My party: Giving. "
+         "unique items, badges, tools or story items. In the game: System > Party Settings > My party: Giving. "
          "Default: off (bbport.ini party_give_items)."),
         ("check", "party_give_gear", "Give weapons and armor",
          "Lets you give a weapon (with its upgrade level and its blood gems) or an armor piece to a hunter in your party and "
          "receive theirs: open the item in the inventory, its menu has a Give entry. Your switch shows it; theirs is their "
          "consent. The giver loses the gear only once the receiver has it (a lost link puts it back, gems included). Never "
          "worn gear, nor the gear the party shares anyway (story and unique weapons, Gascoigne's set ...). In the game: "
-         "System > My party: Giving. Default: off (bbport.ini party_give_gear)."),
+         "System > Party Settings > My party: Giving. Default: off (bbport.ini party_give_gear)."),
     ]),
     (1, 1, "Loading", [
         ("check", "party_parallel_follow", "Load with the host",
@@ -665,26 +665,26 @@ MY_PARTY_TAB = [
          "your game starts loading the same lamp at once, in parallel with the host's load, behind one loading "
          "screen, and puts you beside the host when it is in. Off: your load starts after the host's (a longer "
          "screen). Anything unusual (a death, a boss fight, a Chalice Dungeon) keeps the old way. Your own setting. "
-         "In the game: System > My party: Loading. Default: on (bbport.ini party_parallel_follow)."),
+         "In the game: System > Party Settings > My party: Loading. Default: on (bbport.ini party_parallel_follow)."),
         ("check", "party_settled_drop", "Hold the screen until smooth",
          "In a party the loading screen stays up after a load until the world runs smoothly (frames under 50 ms "
          "for 1 s without a break, at most 3 s more), so the first heavy frames after a load are not seen as a frozen world. "
-         "Your own setting. In the game: System > My party: Loading. Default: on (bbport.ini party_settled_drop)."),
+         "Your own setting. In the game: System > Party Settings > My party: Loading. Default: on (bbport.ini party_settled_drop)."),
         ("check", "party_load_beside", "Arrive beside the host",
          "When your game follows the host's party travel, its load puts you beside the host itself, so there is no "
          "jump to the host's side right after the loading screen. Off: the load puts you on the host's spot, then a "
-         "warp beside it. Your own setting. In the game: System > My party: Loading. Default: on (bbport.ini "
+         "warp beside it. Your own setting. In the game: System > Party Settings > My party: Loading. Default: on (bbport.ini "
          "party_load_beside)."),
         ("check", "party_nw_direct", "Allow direct connection (lower ping)",
          "Over the Nightwatch VPN, a party member who allows it too is tried directly for 3 s (about 20 probes while "
          "the game stays on the tunnel) and used only if every probe answered and it beats the tunnel by 20 ms or "
          "30 %. The switch happens once, at a loading screen; a direct path that then drops for 2 s goes back to the "
-         "tunnel for the session. Party members then see your IP. Your own setting. In the game: System > My "
+         "tunnel for the session. Party members then see your IP. Your own setting. In the game: System > Party Settings > My "
          "party: Loading. Default: off (bbport.ini party_nw_direct)."),
         ("check", "party_quick_rejoin", "Rejoin in place",
          "Party > Rejoin pressed while you are a guest in the host's world reloads you beside the host with one "
          "loading screen, instead of Leave (a load into your own world) and Rejoin (a second load). For a stuck "
-         "or out-of-step game. Your own setting. In the game: System > My party: Loading. Default: on (bbport.ini "
+         "or out-of-step game. Your own setting. In the game: System > Party Settings > My party: Loading. Default: on (bbport.ini "
          "party_quick_rejoin)."),
     ]),
 ]
@@ -2084,7 +2084,7 @@ PARTY_RENDEZVOUS_TIP = (
     "your party can compute, so the host finds you and punches through both routers without a guest code. "
     "DHT nodes can see your IP, like with any torrent client. Both the host and the guest must turn it on. "
     "Off: the guest sends the host its guest code (the host uses Add a guest code), or use port forwarding "
-    "or a VPN. Also in the game: System > Party network. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
+    "or a VPN. Also in the game: System > Party Settings > Party network. Default: off (BB_PARTY_RENDEZVOUS=1/0).")
 
 
 PARTY_MEMBER_RELAY_TIP = (
@@ -2093,12 +2093,12 @@ PARTY_MEMBER_RELAY_TIP = (
     "both find each other through the DHT option). Only party members (the party code and password are "
     "checked), at most 4 per member; it uses some of the member's upload (~3 KB/s per relayed player in play, "
     "at most 128 KB/s each). "
-    "Also in the game: System > Party network. Default: on (BB_PARTY_MEMBER_RELAY=1/0).")
+    "Also in the game: System > Party Settings > Party network. Default: on (BB_PARTY_MEMBER_RELAY=1/0).")
 PARTY_IPV6_TIP = (
     "When both PCs have a global IPv6 address, the party link and the game's traffic try IPv6 before any "
     "relay: no NAT in the way, which helps players behind carrier-grade NAT. A host whose IPv4 port is not "
     "open then puts its IPv6 address into the party code (a longer code that shows this PC's IPv6 address: "
-    "a temporary privacy address where Windows has one, so the code changes when it does). Also in the game: System > Party "
+    "a temporary privacy address where Windows has one, so the code changes when it does). Also in the game: System > Party Settings > Party "
     "network. Default: off (BB_PARTY_IPV6=1/0).")
 
 
@@ -2107,21 +2107,21 @@ PARTY_OPEN_TIP = (
     "ZeroTier, the Nightwatch VPN) can then join with just your address, like 192.168.1.5:9307: no party "
     "code, no password. Anyone on those networks can join, and the party's key is not secret there, so use it "
     "only on networks you trust. Strangers on the internet still cannot join. A password turns this off. "
-    "Off by default (bbport.ini party_open; in the game: System > Party access).")
+    "Off by default (bbport.ini party_open; in the game: System > Party Settings > Party access).")
 
 
 PARTY_OPEN_ANY_LEVEL_TIP = (
     "Host only. An open game (no password, a plain address join) is normally held to the game's co-op level range: a "
     "host at level 100 takes players from 60 to 140. On: any level can join your open game, and none is removed "
     "later. Password and party-code joins never had a range; invaders keep theirs. Your own setting. Off by default "
-    "(bbport.ini party_open_any_level, env BB_PARTY_OPEN_ANY_LEVEL; in the game: System > Party access > Any level can join).")
+    "(bbport.ini party_open_any_level, env BB_PARTY_OPEN_ANY_LEVEL; in the game: System > Party Settings > Party access > Any level can join).")
 
 
 PARTY_MAX_INVADERS_CHOICES = ["1", "2"]
 PARTY_MAX_INVADERS_TIP = (
     "Host only, with Allow invaders on: how many invaders may be in your world at once, 1 or 2. They count against Max "
     "players and the game's four player slots (host + guests + invaders). Default 1 (bbport.ini party_max_invaders, env "
-    "BB_PARTY_MAX_INVADERS; in the game: System > Party access > Max invaders).")
+    "BB_PARTY_MAX_INVADERS; in the game: System > Party Settings > Party access > Max invaders).")
 PARTY_LARGE_TIP = (
     "Offer 5 and 6 players in Max players (the host and four or five others; an invader takes one of the seats). Experimental: "
     "the game was made for 4. 5 players use the game's five seats as they are; 6 patch the game's player tables when it starts "
@@ -2133,7 +2133,7 @@ PARTY_INVADERS_TIP = (
     "the Nightwatch VPN lobby): they need no password, you and your guests are told, one invader at a time, never in a "
     "boss fight, a loading screen or a cutscene, and never when your party is full (4 players). You can block an "
     "invader for the session from the game. Off by default: nobody can invade you and the lists do not offer your game "
-    "for invasions (bbport.ini party_invaders, env BB_PARTY_INVADERS; in the game: System > Party access > Allow invaders).")
+    "for invasions (bbport.ini party_invaders, env BB_PARTY_INVADERS; in the game: System > Party Settings > Party access > Allow invaders).")
 
 
 def party_open_available(mode: str, password: str) -> bool:
@@ -2508,7 +2508,7 @@ def anti_lag_label(ini: dict) -> str:
 
 
 # Native HDR output (docs/party/ERSC_PARITY.md I4): game settings in bbport.ini (hdr,
-# hdr_peak_nits, hdr_paper_white; also System > HDR in the game), off by default; on/off applies
+# hdr_peak_nits, hdr_paper_white; also System > Game Settings > HDR in the game), off by default; on/off applies
 # at the next start, the curve live. (label, value)
 HDR_PEAK_CHOICES = [("Auto (display)", "auto"), ("400 nits", "400"), ("600 nits", "600"),
                     ("800 nits", "800"), ("1000 nits", "1000"), ("1500 nits", "1500"),
@@ -3778,7 +3778,7 @@ class BloodborneLauncher(tk.Tk):
         self.vpn_adapters = []  # detect_vpn_adapters(), filled by a thread (refresh_vpn)
         self.party_vpn_var = tk.StringVar(value=vpn_choice_label(read_ini(bbport_ini_path()).get("party_vpn", "auto")))
         self.party_vpn_addr_var = tk.StringVar(value="")
-        # 0.7.5 party discovery (bbport.ini party_discovery, also System > Party network): the Join list
+        # 0.7.5 party discovery (bbport.ini party_discovery, also System > Party Settings > Party network): the Join list
         self.party_discovery = tk.BooleanVar(value=ini_flag(bbport_ini_path(), "party_discovery"))
         self.discovery_book = DiscoveryBook(own_ips=discovery_own_ips())
         self.discovery_listener = None
@@ -3930,7 +3930,7 @@ class BloodborneLauncher(tk.Tk):
                         "NVIDIA RTX GPU and NVIDIA's library (below). The launcher cannot check the GPU, "
                         "so every choice is listed: at start the game checks and uses FSR 3.1 instead of "
                         "one this GPU lacks (its menu then greys that choice out). A game setting "
-                        "(bbport.ini upscaler; in game: System > Display and the Insert overlay), used "
+                        "(bbport.ini upscaler; in game: System > Game Settings > Display and the Insert overlay), used "
                         "at the next start. Default: on, FSR 3.1.")
         up_row = ttk.Frame(sec, style="Card.TFrame")
         up_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=2)
@@ -3948,7 +3948,7 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Object motion vectors", self.feat_object_motion,
                     "Exact motion vectors for animated characters and objects, so the upscaler smears less "
                     "on moving things. Small GPU cost. A game setting (bbport.ini object_motion; in game: "
-                    "System > Upscaler > Character motion), used at the next start.",
+                    "System > Game Settings > Upscaler > Character motion), used at the next start.",
                     command=lambda: self.save_game_settings("object_motion"))
         aniso_tip = ("Sharper textures at grazing angles (floors, roads). "
                      + "; ".join(f"{label}: {desc[0].lower() + desc[1:]}" for label, _, desc in ANISO_CHOICES)
@@ -3965,7 +3965,7 @@ class BloodborneLauncher(tk.Tk):
             "Resolution of the game's motion blur buffers (half resolution in the game): 2x pixels / "
             "Full resolution give the blur of moving characters finer edges, some GPU cost. Smoke and "
             "mist are full resolution already. A game setting (bbport.ini volumetric_res; in game: "
-            "System > Display).", width=18)
+            "System > Game Settings > Display).", width=18)
         volumetric_combo.bind("<<ComboboxSelected>>", lambda e: self.save_game_settings("volumetric_res"))
         # Upstream 0.51: NVIDIA's DLSS library chosen by the player (vk_dlss.cpp looks in
         # <user>/dlss first, then next to bbport.exe; the bridge bbport_dlss.dll stays next to it).
@@ -4016,7 +4016,7 @@ class BloodborneLauncher(tk.Tk):
         anti_lag_tip = ("AMD's low-latency mode (VK_AMD_anti_lag, Anti-Lag 2): the driver paces the CPU so the "
                         "game reads input as late as the GPU allows. AMD GPUs with a current driver. Auto turns "
                         "it on for an AMD GPU whose driver has it. A game setting (bbport.ini anti_lag, also in "
-                        "the in-game menu: System > Latency), used at the next start. Default: Auto.")
+                        "the in-game menu: System > Game Settings > Latency), used at the next start. Default: Auto.")
         anti_lag_combo = self._combo(sec, "AMD Anti-Lag 2:", self.anti_lag_var, [c[0] for c in ANTI_LAG_CHOICES],
                                      anti_lag_tip, width=14)
         anti_lag_combo.bind("<<ComboboxSelected>>", lambda e: self.save_frame_generation())
@@ -4025,17 +4025,17 @@ class BloodborneLauncher(tk.Tk):
                     "when a frame arrives, and the frame rate is held just under the display's refresh "
                     "(60 -> 59, 120 -> 116, 144 -> 138) so nothing tears at the top. With Live FPS the target "
                     "above that runs at the cap. Off by default: a game cannot tell whether VRR is on. A game "
-                    "setting (bbport.ini vrr, also System > Latency), used at the next start.",
+                    "setting (bbport.ini vrr, also System > Game Settings > Latency), used at the next start.",
                     command=lambda: self.save_game_settings("vrr"))
         self._check(sec, "Low-latency frame pacing", self.feat_ll_pacing,
                     "The game starts a frame only when at most one finished frame is still waiting for the "
                     "display. Without it frames pile up (up to 3 frames, 48 ms at 60 FPS) and the controls "
                     "feel late. Frame rate and game speed are unchanged. A game setting (bbport.ini "
-                    "ll_pacing, also System > Latency), live. Default: on.",
+                    "ll_pacing, also System > Game Settings > Latency), live. Default: on.",
                     command=lambda: self.save_game_settings("ll_pacing"))
         self._check(sec, "Fresh gamepad read", self.feat_pad_fresh,
                     "The gamepad is read from the device at the moment the game asks for it instead of up to "
-                    "2 ms earlier. A game setting (bbport.ini pad_fresh, also System > Latency), live. "
+                    "2 ms earlier. A game setting (bbport.ini pad_fresh, also System > Game Settings > Latency), live. "
                     "Default: on.",
                     command=lambda: self.save_game_settings("pad_fresh"))
         texture_combo = self._combo(
@@ -4052,14 +4052,14 @@ class BloodborneLauncher(tk.Tk):
                     "mid-tones at paper white and only its highlights are expanded towards the peak. Needs "
                     "HDR on in Windows (Settings > Display > Use HDR); without it the game stays SDR. "
                     "Works with every upscaler and frame generation. Peak, paper white, highlights, "
-                    "saturation and a calibration pattern are in the game's System > HDR. A game setting "
+                    "saturation and a calibration pattern are in the game's System > Game Settings > HDR. A game setting "
                     "(bbport.ini hdr, BB_HDR), used at the next start. Default: off.",
                     command=self.save_hdr)
         hdr_peak = self._combo(sec, "HDR peak brightness:", self.hdr_peak_var,
                                [c[0] for c in HDR_PEAK_CHOICES],
                                "The brightest the HDR picture gets. Auto: what the display reports to "
                                "Windows (1000 nits when it reports nothing). Fine-tune it with the "
-                               "calibration pattern in System > HDR (bbport.ini hdr_peak_nits, "
+                               "calibration pattern in System > Game Settings > HDR (bbport.ini hdr_peak_nits, "
                                "BB_HDR_PEAK).", width=18, indent=True)
         hdr_peak.bind("<<ComboboxSelected>>", lambda e: self.save_hdr())
         hdr_paper = self._combo(sec, "HDR paper white:", self.hdr_paper_var,
@@ -4106,20 +4106,20 @@ class BloodborneLauncher(tk.Tk):
                     "Compiles a new pipeline of a pass drawn every frame in the background and skips drawing "
                     "that object for a frame or two instead of stuttering; brief pop-in is possible. Loading "
                     "screens, one-time renders, the final frame, the UI and compute work are never skipped. "
-                    "A game setting (bbport.ini async_pipelines; in game: System > Shaders > Async "
+                    "A game setting (bbport.ini async_pipelines; in game: System > Game Settings > Shaders > Async "
                     "shaders, live). Default: on.",
                     command=lambda: self.save_game_settings("async_pipelines"))
         self._check(sec, "Graphics pipeline library (GPL)", self.feat_gpl,
                     "Compiles shader parts ahead of time (startup and loading screens) and links them quickly "
                     "at draw time. Needs driver support (NVIDIA/AMD; falls back automatically). Restart "
-                    "required. A game setting (bbport.ini gpl; in game: System > Shaders > Pipeline "
+                    "required. A game setting (bbport.ini gpl; in game: System > Game Settings > Shaders > Pipeline "
                     "libraries). Default: off.",
                     command=lambda: self.save_game_settings("gpl"))
         self._check(sec, "NaN guard (white flash from bloom)", self.feat_nan_guard,
                     "Pixel shaders write black instead of a NaN / Inf colour, so one bad pixel cannot be "
                     "spread by bloom into a white-out frame (seen for a frame or two in the Forbidden "
                     "Woods). Costs nothing measurable. Shaders are built again once. A game setting "
-                    "(bbport.ini nan_guard; in game: System > Advanced: Shaders > NaN guard). Restart required. "
+                    "(bbport.ini nan_guard; in game: System > Game Settings > Advanced: Shaders > NaN guard). Restart required. "
                     "Default: off.",
                     command=lambda: self.save_game_settings("nan_guard"))
         self._check(sec, "Precompile shaders at startup", self.feat_shader_precompile,
@@ -4216,7 +4216,7 @@ class BloodborneLauncher(tk.Tk):
         self._check(sec, "Auto-hide HUD", self.feat_auto_hud,
                     "Like Elden Ring's HUD: Auto. The game's bars, item slots and echoes counter fade out while "
                     "nothing happens and come back on damage, stamina use, a fight, a lock-on, an item or weapon "
-                    "change or a menu; the boss bar and prompts stay. Also in game (System > Game HUD). "
+                    "change or a menu; the boss bar and prompts stay. Also in game (System > Game Settings > Game HUD). "
                     "A game setting (bbport.ini auto_hide_hud). Default: off.",
                     command=lambda: self.save_game_settings("auto_hide_hud"))
         self._check(sec, "In-game map (Hunter's Atlas)", self.feat_map,
@@ -4224,7 +4224,7 @@ class BloodborneLauncher(tk.Tk):
                     "its floors, the lit lamps, you and your party; click a lamp to travel to it (the party travel "
                     "rules apply). The map is made from YOUR game files once (button below); nothing of it is "
                     "shipped. By MikeTat1988 (Hunter's Atlas, GPL-2.0-or-later). Also in game (Insert > Controls, "
-                    "System > Map). A game setting (bbport.ini map_enabled). Default: off.",
+                    "System > Game Settings > Map). A game setting (bbport.ini map_enabled). Default: off.",
                     command=self.on_map_toggle)
         map_row = ttk.Frame(sec, style="Card.TFrame")
         map_row.grid(row=sec.next_row, column=0, columnspan=2, sticky="w", pady=(0, 4), padx=(22, 0))
@@ -4614,7 +4614,7 @@ class BloodborneLauncher(tk.Tk):
                     "host and the launcher shows a party code to give to your friends. Join a party: "
                     "enter the host's code. Off: the game starts single-player; a party game can then "
                     "be started or joined in the game itself (title screen: Party, after New Game, or "
-                    "System > Party; it restarts into party mode on its own and remembers the host "
+                    "System > Party Settings > Party; it restarts into party mode on its own and remembers the host "
                     "address and password in user\\party.json). Party mode uses the game's online "
                     "title path and always the party saves. Default: Off (BB_PARTY=host|join, unset = off).")
         self.party_mode_combo = self._combo(sec, "Mode:", self.party_mode_var, [m[0] for m in PARTY_MODES],
@@ -4658,7 +4658,7 @@ class BloodborneLauncher(tk.Tk):
                               "game backs up the party save at every party start and every 10 minutes "
                               "(user\\save_backups, newest 10 kept, both changeable in the My Party tab; "
                               "README.txt there explains restoring). Party games can also be started in "
-                              "the game: System > Party on the title screen (or Party after New Game).",
+                              "the game: System > Party Settings > Party on the title screen (or Party after New Game).",
                               command=self.save_settings)
         save_cb.configure(state="disabled")
         copy_btn = ttk.Button(sec, text="Copy single-player save to party save", style="Secondary.TButton",
@@ -4756,7 +4756,7 @@ class BloodborneLauncher(tk.Tk):
         vpn_tip = ("Host: put your VPN address (Radmin VPN, Hamachi, ZeroTier, Tailscale) into the party "
                    "code, so friends in the same VPN network join with it. Auto (default): when such an "
                    "adapter is up; otherwise nothing changes. Off: never. Or pick one adapter by name. "
-                   "The host's choice, read when the game starts. Also in the game: System > Party "
+                   "The host's choice, read when the game starts. Also in the game: System > Party Settings > Party "
                    "network. bbport.ini party_vpn=auto|off|<adapter name>, BB_PARTY_VPN.")
         vpn_lbl = ttk.Label(sec, text="Host over a VPN:", style="Card.TLabel")
         vpn_lbl.grid(row=sec.next_row, column=0, sticky="w", pady=3, padx=(0, 8))
@@ -4831,7 +4831,7 @@ class BloodborneLauncher(tk.Tk):
         new_code_btn.pack(side="left", padx=(6, 0))
         Tooltip(new_code_btn, "Your party code stays the same every time you host, so friends can keep "
                               "it. New code makes a new one (the old one stops working; friends need the "
-                              "new code). While the game hosts, use System > Party mode > New party code in "
+                              "new code). While the game hosts, use System > Party Settings > Party mode > New party code in "
                               "the game instead. Setting or removing a password also gives a new code "
                               "once.")
         lan_tip = (f"Your party code for players on the same network (same router), like "
@@ -5483,7 +5483,7 @@ class BloodborneLauncher(tk.Tk):
                     "ZeroTier) and LAN adapters only, never the Internet. Joining: this list shows the "
                     "parties heard; Tailscale passes no broadcasts, so its peers come from the tailscale "
                     "command when it is installed. Default: on (bbport.ini party_discovery; in the game: "
-                    "System > My party: Look & notices).", command=self.on_discovery_toggle)
+                    "System > Party Settings > My party: Look & notices).", command=self.on_discovery_toggle)
         cols = ("name", "level", "players", "area", "password", "build")
         heads = {"name": "Host", "level": "Lvl", "players": "Slots", "area": "Area", "password": "Pass",
                  "build": "Build"}
@@ -5535,7 +5535,7 @@ class BloodborneLauncher(tk.Tk):
                     "Off by default. On the Nightwatch VPN (your 10.8.0.x address), hosting with a password "
                     "shows your character name, slots and version to the other VPN players, and this list shows "
                     "theirs. Nobody sees an address, a password or an account name. Needs the VPN connected "
-                    "(bbport.ini party_vpn_lobby; in the game: System > Party access).",
+                    "(bbport.ini party_vpn_lobby; in the game: System > Party Settings > Party access).",
                     command=self.on_vpn_lobby_toggle)
         cols = ("name", "players", "area", "password", "build")
         heads = {"name": "Hunter", "players": "Slots", "area": "Area", "password": "Pass", "build": "Build"}
@@ -5911,7 +5911,7 @@ class BloodborneLauncher(tk.Tk):
         if (self.proc is not None and self.proc.poll() is None) or running_instances():
             messagebox.showinfo(
                 "New party code",
-                "The game is running. To change the code while hosting, use System > Party > "
+                "The game is running. To change the code while hosting, use System > Party Settings > Party > "
                 "New party code in the game: the old code stops working at once.")
             return
         if not messagebox.askyesno(

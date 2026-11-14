@@ -1,6 +1,6 @@
 # Auto-hide HUD (0.7.8, CL-7d51fe)
 
-Setting **Auto-hide HUD**, off by default: `System > Game HUD`, the launcher (Advanced game settings), `auto_hide_hud` in
+Setting **Auto-hide HUD**, off by default: `System > Game Settings > Game HUD`, the launcher (Advanced game settings), `auto_hide_hud` in
 `bbport.ini`, `BB_AUTO_HUD=0/1` over it. Live; local to this player (solo and party alike). Code:
 `gpu/shim/party/auto_hud_rules.h` (the rules, pure), `auto_hud.cpp` (the game side), unit test `tests/test_auto_hud.cpp`
 (`auto-hud-test`).

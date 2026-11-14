@@ -3,7 +3,7 @@
 Back to the [README](../README.md). Reflex's own page: [FG_REFLEX.md](FG_REFLEX.md).
 
 Five things shorten the way from a button press to the picture. Each has a switch (launcher, `bbport.ini`,
-and the game's *System > Latency* page or, for Reflex, *System > Frame generation*).
+and the game's *System > Game Settings > Latency* page or, for Reflex, *System > Game Settings > Frame generation*).
 
 | What | Default | `bbport.ini` / env | When it applies |
 | --- | --- | --- | --- |

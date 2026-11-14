@@ -460,16 +460,16 @@ RULES_INI_RESET = ["party_chat", "party_rot", "party_guest_revive_inplace", "par
 
 
 def rules_walk_to_first():
-    """Options > System, then Up from the top (wrapping: Exit Game, Network, Brightness, then the
-    port's pages from the last) to the first rules page, Cross. Read from bbport_game_menu_pages.cpp."""
+    """Options > System (Game Settings, Party Settings, Exit Game), Up, Up from the top (wrapping: Exit Game,
+    Party Settings), Cross; then Down to the first rules page among the party pages (those with "party" in
+    their name, in order), Cross. Read from bbport_game_menu_pages.cpp."""
     src = (REPO / "gpu" / "shim" / "bbport_game_menu_pages.cpp").read_text(encoding="utf-8", errors="replace")
-    pages = re.findall(r'AddPage\("([^"]+)"', src)
+    pages = [p for p in re.findall(r'AddPage\("([^"]+)"', src) if "party" in p.lower()]
     first = pages.index(RULES_PAGES[0][0])
-    # the walk steps page to page with Down: a page added to the System menu must be listed in RULES_PAGES
+    # the walk steps page to page with Down: a page added to the Party Settings list must be listed in RULES_PAGES
     # (the 2026-10-30 misses: My party: Bosses and the VPN lobby row were not), so fail fast here
-    assert pages[first:first + len(RULES_PAGES)] == [pg[0] for pg in RULES_PAGES],         "RULES_PAGES out of step with the System menu pages: %s" % pages[first:first + len(RULES_PAGES) + 2]
-    ups = 3 + (len(pages) - pages.index(RULES_PAGES[0][0]) - 1) + 1
-    return "options/right/right/cross/" + "/".join(["up"] * ups) + "/cross"
+    assert pages[first:first + len(RULES_PAGES)] == [pg[0] for pg in RULES_PAGES],         "RULES_PAGES out of step with the Party Settings pages: %s" % pages[first:first + len(RULES_PAGES) + 2]
+    return "options/right/right/cross/up/up/cross/" + "/".join(["down"] * first) + ("/" if first else "") + "cross"
 
 
 def phase_ss(only):

@@ -513,7 +513,7 @@ died was sent to the Hunter's Dream and could not get back in until the host res
 * **A guest's death (C, live)**: outside a boss fight a dead guest went to its OWN last lamp (the Dream:
   an alone load) and stayed apart; a dungeon is entered only by the summon, its game's send-home is dropped
   while apart, and the host's travels into the dungeon are "not followed", so nothing brought it back. Now
-  (bbport.ini `party_chalice_rejoin`, System > Party rules: Travel, launcher; default on) it gets up beside the
+  (bbport.ini `party_chalice_rejoin`, System > Party Settings > Party rules: Travel, launcher; default on) it gets up beside the
   nearest living member, no load (`guest: died in the host's Chalice Dungeon ...: up again beside the nearest
   living member`); and `ChaliceApartTick`: a guest still in the session but apart in a map outside area 29
   while the host's roster map is in area 29. **User decision (option b)**, `deathrules::PlanChaliceApart`:
@@ -698,7 +698,7 @@ Not covered: the game's own sign/summon message (the sign path) still carries th
 
 ## 11. The glyph pick list at the Ritual Altar (glyph078, CL-420d9f, 0.7.8)
 
-Switch `party_glyph_list` (System > My party: Chalice, launcher My Party tab, env BB_PARTY_GLYPH_LIST), off by default, the host's own UI setting.
+Switch `party_glyph_list` (System > Party Settings > My party: Chalice, launcher My Party tab, env BB_PARTY_GLYPH_LIST), off by default, the host's own UI setting.
 * **List** (`party_chalice_glyphs.h`, built by `HostGlyphList` every 3 s): the host's 7 slots go on the board with their FormData (`OwnDungeons`), the guests' dungeons come over the `chalice_form` event (new field `cur`:0 for slots other than the current one; every 60 s; in load mode 1 the flag store is the host's, so the slot's ritual helper object is read), the data file `patches/chalice_glyphs.json` adds entries that carry their own `form`. Order: yours, the guests', curated; label `<family>, depth N - owner` (family and depth from the chalice goods id inside the FormData).
 * **UI**: `ImeChoices` / `ImeClosed` hooks in the ImeDialog (runtime_services.c, bbgpu.h): the altar's glyph box (8 characters, menu item 262002 shown within 20 s) opens the overlay text box with the list (window.cpp, bbport_overlay.cpp TextPrompt). Up / Down / D-pad set the text to the glyph, Enter / Cross confirm, typing clears the pick.
 * **Entry**: the glyph goes through the game's own search; the answer comes from the party board (`word_search`), never FROM's server, so it works offline. The remaining prompts are the one-press autopilot (BB_PARTY_ALTAR_AUTO). Guests follow by the existing summon / quick join (cae path), same layout.
@@ -713,7 +713,7 @@ The 16 bytes at record +736 (helper +0x140, FormData +0x58) hold the creator's n
 
 ## 13. Community Chalice glyphs (glyphdb081, 0.8.1)
 
-Switch `chalice_glyphdb` (System > My party: Chalice, launcher My Party tab, env BB_CHALICE_GLYPHDB), off by default. Noxde's list (Nexus mod 121, gist a29f699f4175bf315d9bd4baeebefb66) as a pick list at the Ritual Altar, solo or as a party host.
+Switch `chalice_glyphdb` (System > Party Settings > My party: Chalice, launcher My Party tab, env BB_CHALICE_GLYPHDB), off by default. Noxde's list (Nexus mod 121, gist a29f699f4175bf315d9bd4baeebefb66) as a pick list at the Ritual Altar, solo or as a party host.
 * **The record is the FormData.** A list entry is the save's altar slot, 124 bytes of big-endian dwords (Dungeons-CLI: slot n at inv + 88328 + 0x7d * (n-1)): w0 a copy of w3, w1 / w2 ChannelId low / high, w3 the map (+96, helper +0xe0, 0x1d...), w4 the chalice goods id (+128, +0xe8), w5..w22 the nine layout pairs (+160, +0xf8), w23..w26 the creator's name field (+736, +0x140), the rest of the name. FormData version 4 (0x7c bytes, reader 0x1a9c490; `OwnDungeons` / `SlotFormData` build the same from the flag store) is `{4, 0x7c, w3, w4, w5..w22, 0...}` as little-endian dwords: a field-for-field copy, only the byte order differs. `RecordToFormData` in `party_chalice_glyphdb.h`; the ChannelId is not carried over (the board derives the id and the glyph from the FormData, and answers the list's own glyph for it, as for a curated entry). The save's per-slot flag block (Dungeons-CLI `setFlag`, inv + 102704) is not needed on this path: the game writes its own slot state when it joins the dungeon.
 * **Entry**: pick or type the glyph; `GlyphClosed` puts the row's FormData on the board (`adopt` with the list's glyph, owner "curated"), the game's own `word_search` finds it on the party board (HLE answers offline, no party needed) and the ritual helper's Join writes the slot, as in section 11.
 * **Solo**: no `PartyInit`, so `InstallSolo` (bbgpu.cpp) installs the menu hooks and `SoloTick` (lamp_travel.cpp's main-thread tick) builds the list; BB_LAMP_TRAVEL=0 (which removes that tick) turns it off too.
@@ -726,7 +726,7 @@ Switch `chalice_glyphdb` (System > My party: Chalice, launcher My Party tab, env
 
 ## 12. A guest at the Dream's Ritual Altar (altar079, CL-13f7d1, 0.7.9)
 
-Switch `party_guest_altar` (System > My party: Chalice, launcher My Party tab, env BB_PARTY_GUEST_ALTAR), off by default, the guest's own setting.
+Switch `party_guest_altar` (System > Party Settings > My party: Chalice, launcher My Party tab, env BB_PARTY_GUEST_ALTAR), off by default, the guest's own setting.
 * **Cause**: the Dream's altar talk scripts t210050..t210110 ask `IsClientPlayer()` (a summoned guest = client) and `IsMultiplayerInProgress()`. The second was already answered 0 for the host (0.6.2); the first kept every guest's altar silent (the prompt "First Ritual Altar", the Cross, nothing). With the switch on, `IsClientFilter` (party_guestsvc.cpp) answers 0 for those scripts on a client; `MultiFilter` answers the other for a client too. Nothing else was needed: the altar object (SprjDungeonGateIns) and its helpers are the guest's own game's; a summoned guest's FrpgNetMan is online (+0x9f6 / +0x9f8 / +0xa50 clear), every gate object idles in mode 1 / state 1.
 * **Proven (loopback, live, smoke `cag`)**: a guest summoned into the host's Dream is given the Pthumeru Chalice (6109) and Ritual Blood by the test aid goods=; it walks to the altar, "Use the Ritual Altar", "Search by Chalice Glyph", "Select chalice to use", "Rite materials", the question, YES: "The ritual is finished, and a chalice rests upon the altar." The session stays up (cooperators 1). `chalice: dungeon 1110692594440089: FormData of slot 1 (124 bytes) for the host's board`. The guest's save on disk (decoded): slot 1 holds the dungeon record (ChannelId, map 0x1d...), no other slot changed, chalice 6109 x1 (a fixed chalice is not used up), Ritual Blood 9 -> 7, echoes -1000.
 * **Test aids** added: director `in_host` (place= / approach= wait until the player is a summoned guest; a `place=` on a guest would leave the party), `approach_join=N` (approach waits for this player's Nth party join). A probe of the 7 altar objects' mode / state (SprjDungeonGateIns +0x364 / +0x36c, helper +0x25c) showed every slot idle in mode 1 / state 1 for the guest before the ritual; it was not kept (no launcher box).

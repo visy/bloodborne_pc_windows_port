@@ -57,7 +57,7 @@ One host and two guests, from nothing to playing together. Do the steps in this 
    in *Parties found* and the game also starts with the host's other party options).
 4. Click **Launch Bloodborne** **after** the host's game is already running.
 5. Play the start of the game (the prologue) in your own world. After that the host's game summons you
-   automatically. Short of time? The host can turn on *Skip the prologue* (*System > Party rules:
+   automatically. Short of time? The host can turn on *Skip the prologue* (*System > Party Settings > Party rules:
    Phantoms* or the launcher's Party Rules tab): a brand-new character then starts at the Central
    Yharnam lamp with the Saw Cleaver, the Hunter Pistol and Iosefka's Blood Vial, ready to be summoned.
    Characters past the clinic are never touched.
@@ -86,9 +86,9 @@ One host and two guests, from nothing to playing together. Do the steps in this 
   full VPN address. `BB_PARTY_VPN_FULL_CODE=0` brings the short code back.
   Hateful player names (slurs, hate codes, hostile phrases about groups of people) are shown as *Hunter* and a short
   code, in the games lists, the party list, the name tags and the notices (*Hide offensive names*, **on** by default:
-  launcher Party tab, or *System > My party: Names*). The Nightwatch VPN lobby does the same for everyone.
+  launcher Party tab, or *System > Party Settings > My party: Names*). The Nightwatch VPN lobby does the same for everyone.
   A host with **no password** can be joined by plain address, with no party code, by players on its own LAN or VPN
-  (*Open party*, off by default: launcher Party tab checkbox, or *System > Party access*). Anyone on that network can
+  (*Open party*, off by default: launcher Party tab checkbox, or *System > Party Settings > Party access*). Anyone on that network can
   join, so use it only on networks you trust; a listed game marked *open* in the lists is joined without any password. A player who joins an open party outside the host's
   level range (`floor(level * 0.8 - 20)` to `floor(level * 1.2 + 20)`; host level 100: 60 to 140) is refused with the range named
   (0.7.9); a party code or password ignores the range.
@@ -110,15 +110,15 @@ Nothing to set up outside the game, and later sessions are a single press.
 |---|---|---|
 | 1 | Title screen → **Party** → set a **Password** (optional, gives a shorter code) | Title screen → **Party** → **Host address**: paste the host's party code (**Ctrl+V**, e.g. `BBP3-NJR0-E43N-WWN9-2C2P`) → **Password** (the host's, if it set one) |
 | 2 | **New party game** (first time: new character) or **Continue party game** | **Join party game** (first time) or **Continue party game**, once the host's game is running |
-| 3 | Allow the Windows Firewall prompt once; copy your code (*System → Party → Copy Internet code*) and send it | The game restarts into party mode and puts you beside the host |
+| 3 | Allow the Windows Firewall prompt once; copy your code (*System → Party Settings → Party → Copy Internet code*) and send it | The game restarts into party mode and puts you beside the host |
 
 Code and password are remembered, so later sessions are just *Continue party game* for everyone
 (the options that restart the game ask for a second press). The host's party code stays the
-same every time it hosts, so friends can keep it; *System → Party mode → New party code* (or **New
+same every time it hosts, so friends can keep it; *System → Party Settings → Party mode → New party code* (or **New
 code** in the launcher's Party tab) makes a new one and the old one stops working. Setting or
 removing a password also changes the code once. *Continue party game* shows whenever
 the party saves hold a character, also if you started party games from the launcher.
-Settings: *System → Party* pages in the game's menu.
+Settings: *System → Party Settings → Party* pages in the game's menu.
 
 ## Start from the launcher
 
@@ -155,9 +155,9 @@ the party's version check: players with and without it can play together.
   for the whole session (where no Chalice summon works) (0.7.9).
 - **Host in a boss fight or cutscene?** Your join waits in your own world until it is over (the
   Party status says why), then puts you beside the host with one loading screen.
-- **Leave any time.** *System → Party → Leave the party* takes a guest home at once and it keeps
+- **Leave any time.** *System → Party Settings → Party → Leave the party* takes a guest home at once and it keeps
   playing online alone; the host's *Leave* sends every guest home (one loading screen, no "Session
-  lost"). A guest can rejoin at any time, also right after a boss kill (*System → Party mode → Join
+  lost"). A guest can rejoin at any time, also right after a boss kill (*System → Party Settings → Party mode → Join
   party*; *Host party* and *Single player* are there too).
 - **The session never ends by itself.** Boss kills, area clears, deaths and travel don't send
   anyone home.
@@ -183,25 +183,25 @@ the party's version check: players with and without it can play together.
 - **Travel from any lamp to any lamp.** A lamp offers the headstones' list (the Hunter's Dream and
   every lit lamp) and takes you straight there with one loading screen (launcher: "Direct lamp
   travel", on by default).
-- **The map shows the party and travels.** With the in-game map on (*System > Map*), **M** shows every party member on your map as a named dot, and a click on a lit lamp travels there like a lamp's own list: the host's trip asks "Travel with the party?", a guest's moves only the guest.
+- **The map shows the party and travels.** With the in-game map on (*System > Game Settings > Map*), **M** shows every party member on your map as a named dot, and a click on a lit lamp travels there like a lamp's own list: the host's trip asks "Travel with the party?", a guest's moves only the guest.
 - **Travel together or alone.** Lamps, headstones and the Hunter's Mark ask "Travel with the party?".
   *Yes* moves the whole party with one loading screen; *No* moves only you. The question closes by
   itself after 30 s. A guest's own save keeps its own spot for solo play later. A guest who travels
   alone into a map the host is not in has that map's enemies awake: the guest's own game runs them
   (they used to stand still until the host came).
-- **Vote on travel** (host's switch, off by default: *Party votes on travel* on *System → Party rules:
+- **Vote on travel** (host's switch, off by default: *Party votes on travel* on *System → Party Settings → Party rules:
   World*, or the launcher). The party then travels only when everyone agrees: after *Yes* to
   "Travel with the party?" every other player gets the game's *Yes* / *No* question with who wants
   to go and where. One *No*, or no answer within 20 s, cancels the trip for everyone, and the notice
   says who said no or didn't answer. A guest's own *Yes* is a vote too (the host and the other
   guests are asked). Travelling alone never needs a vote.
-- **Gather the party.** The host's *System → Party → Gather the party* (or hold the touchpad and
+- **Gather the party.** The host's *System → Party Settings → Party → Gather the party* (or hold the touchpad and
   press L3; Xbox pads: hold Back, press L3; keyboard: `H`) brings every guest to the host. Each guest is asked first (*Yes* / *No*): in the host's map you appear beside the host with
   no loading screen; from another map (the Hunter's Dream, say) it is one loading screen. A guest
   who is dead, in a menu, in a cutscene or in a boss fight is not moved (both see why); the host
   cannot gather during its own boss fight or cutscene, on a ladder or in mid-air, and only once every
   30 s. If there is no ground beside the host, the guest comes with one loading screen instead. The host can turn
-  gathering off (*Host can gather* on *System → Party rules: World*).
+  gathering off (*Host can gather* on *System → Party Settings → Party rules: World*).
 - **No loading screen inside the same map for the host.** A host's lamp or Hunter's Mark to a spot
   in its current map is an instant warp, for the whole party too. Alone (no one to travel with),
   lamps, headstones and the Hunter's Mark work exactly as in single player.
@@ -215,12 +215,12 @@ the party's version check: players with and without it can play together.
 - **Kidnapped by a Snatcher?** Whoever is grabbed, host or guest, the whole party wakes up together
   in the Hypogean Gaol (Yahar'gul) after one loading screen, and everyone watches the waking scene
   (+1 Insight each). Only the first kidnap does this, as in the game. The host can turn off
-  *Anyone can be abducted* (*System > Party rules: Deaths*): then only a grabbed host takes the party
+  *Anyone can be abducted* (*System > Party Settings > Party rules: Deaths*): then only a grabbed host takes the party
   there and a grabbed guest just dies. A kidnap never follows a guest home into its own world.
 - **Any level can play together.** Nobody is turned away for their level. As in the game's own co-op, a
   hunter far above the host's level is scaled down while in the host's world (less health, stamina and
   defence, a blue icon by the name on the game's own name plate), and everyone who joins has 30 % less
-  maximum health. The host can turn both off (*System > Party rules: Phantoms*: *Level sync*, *Phantom
+  maximum health. The host can turn both off (*System > Party Settings > Party rules: Phantoms*: *Level sync*, *Phantom
   health cut*), then everyone keeps full stats. Both are on by default.
 - **Chalice dungeons together.** Guests join the host's dungeon; levers, doors, the layer boss, its
   loot (for each player) and the lifts work for the whole party, layer after layer. Any player can
@@ -228,7 +228,7 @@ the party's version check: players with and without it can play together.
   between all players (Root Chalices, which a ritual uses up, stay each player's own). The dungeon's Bath Messengers (the shop) show for every guest, also one with a Chalice Dungeon of their own. The dungeon's
   lamps work with a party (back to the Dream, and from the altar to any lamp you lit). A Cursed dungeon halves every member's maximum health, guests too, whatever the Phantom health cut rule says. A guest who played the host's dungeon takes it home: it shows at the guest's own altar with the lamps and shortcuts the party reached (with Shared lamps on). A guest whose game is offline (no online login) stays in the host's world with the notice "This game is in offline mode" (restart the game and wait at the title until it goes online) instead of being sent home, and follows the host out of the dungeon. A guest who dies
   in the dungeon gets up beside the party; a guest pulled out by a death or a forced trip is summoned
-  back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party rules: Travel).
+  back in automatically, one who chose to leave returns with *Party > Rejoin* (System > Party Settings > Party rules: Travel).
 
 **Bosses, cutscenes and endings**
 
@@ -252,7 +252,7 @@ the party's version check: players with and without it can play together.
   blood-drunk Eileen, Valtr and the DLC hunters are there for everyone in the host's world:
   anyone can hurt them, and their death and the quest step after it count for every player's own
   save. A hunter that turns on the host turns on the guests too (*NPC hunters fight all*, a host
-  setting on *System → Party rules: World*, on by default). Covenant outcomes, such as the host's Alfred
+  setting on *System → Party Settings → Party rules: World*, on by default). Covenant outcomes, such as the host's Alfred
   killing Annalise, stay each player's own. A hunter summoned with the Old Hunter Bell goes into the
   boss arena with the party even when a guest goes through the fog first. Brador and the Fishing Hamlet's hunters
   should show for guests too, but that is not tried in a real session yet.
@@ -279,63 +279,63 @@ the party's version check: players with and without it can play together.
   never reach another player's save (in the host's world the covenant leaders still show your own
   state, so you can talk to Valtr and join after the host did). A guest can kneel to Queen Annalise in the host's world and swear the Vileblood oath, in their own save (0.7.9): after her greeting stand in the circle before her throne and press the action button; the Caryll rune is the guest's own, once per player. A covenant
   rune an NPC hands you (Valtr's Impurity, for example) is yours, in your own save. A host setting,
-  on by default (*Covenants per player* on *System → Party rules: World*).
+  on by default (*Covenants per player* on *System → Party Settings → Party rules: World*).
 - **The host's world is shared live, both ways.** A door, lever or shortcut opened by anyone is
   open for everyone, in the host's world and in each guest's own save; a lift ridden or a ladder
   lowered by anyone is in the same place for everyone, also for a player who was far away. Guests open gates with their
   own keys (e.g. the Cathedral Ward gate with the Hunter Chief Emblem).
-- **Bosses share their attention.** A boss in a party fight turns on every player within reach in turn (about every eight seconds), not only the nearest one or the host. The host's rule *Bosses share attention* (*System → My party: Bosses*, the launcher, `party_boss_share`), on by default.
+- **Bosses share their attention.** A boss in a party fight turns on every player within reach in turn (about every eight seconds), not only the nearest one or the host. The host's rule *Bosses share attention* (*System → Party Settings → My party: Bosses*, the launcher, `party_boss_share`), on by default.
 - **Boss drops for guests.** The item a boss drops for the host (Kin Coldblood from Rom, ...) is also given to every guest
   who is there when it dies, once per kill, in their own save (like the Chalice Dungeon boss rewards). The host's rule *Boss item
-  drops for guests* (*System → Party rules: Rewards*, on by default); guests see it read-only.
+  drops for guests* (*System → Party Settings → Party rules: Rewards*, on by default); guests see it read-only.
 - **Key items are never lost.** A summoned guest sees its own key items in the host's world too
   (the game alone shows a visiting hunter an empty Key Items tab). Key items a guest earns in the
   host's world (Oedon Tomb Key, badges, workshop tools, chalices, umbilical cords) are given at once,
   and checked again when its own world loads and given again if missing; one you already hold is
   never handed out twice, and one you used up (the Gold Pendant, the Tear Stone) never comes back.
-  Both are your own switches on *System → My party: Your items* (*Own key items as guest*, *Key items at once*).
+  Both are your own switches on *System → Party Settings → My party: Your items* (*Own key items as guest*, *Key items at once*).
   Keys, tools and quest items found lying around (the daughter's ribbons and brooch, the Orphanage Key,
   the Hunter Badges) go to the whole party, so nobody is locked out of a door or a questline.
   The Bath Messenger's badge rows open with your own badges (also one you get while summoned in the host's world: the row opens at once and stays), and the Eye of a Blood-drunk Hunter (the DLC entry)
   comes from the party only once your own world has reached night; Amygdala's grab takes only the player who
   holds the Eye.
-- **Chalice glyph list.** With *Chalice glyph list* on (*System -> My party: Chalice*, the launcher's My Party tab, `party_glyph_list`, off by default) the Ritual Altar's *Search by Chalice Glyph* opens with a list of the party's glyphs to pick from (your dungeons, the guests', and `patches/chalice_glyphs.json`) above the code keyboard; pick one and the whole party enters that dungeon together. An unknown code gets a clear notice. See docs/party/chalice.md 11.
-- **Community Chalice glyphs (Noxde's list).** With *Community Chalice glyphs (Noxde's list)* on (*System -> My party: Chalice*, the launcher's My Party tab, `chalice_glyphdb`, off by default; works solo and as the party's host) the Ritual Altar's *Search by Chalice Glyph* lists about 200 community glyphs under category tabs (Blood gems, Equipment, Farming, Testing; blood gems sorted by gem type) with Noxde's descriptions, above the code keyboard (Left / Right or L1 / R1 switch the tab, PageUp / PageDown or D-pad Left / Right jump ten rows). Take as long as you like in the box; a list entry the game's data cannot build (its chalice is not in the game) is left out instead of crashing the dungeon. Pick one, or type its glyph, and the game makes and enters that dungeon its own way, offline; in a party the guests follow like into any dungeon of the host. The launcher downloads the list from Noxde's gist while the setting is on (when missing or a week old) and keeps it in your user folder; without internet the last download is used, and without one nothing changes. Nothing of the list ships with bbport. With no Chalice in the inventory the altar still opens (see docs/party/chalice.md 13). Credit: Noxde (docs/CREDITS.md). See docs/party/chalice.md 13.
-- **Ritual Altar as a guest.** With *Ritual Altar as a guest* on (*System -> My party: Chalice*, the launcher's My Party tab, `party_guest_altar`, off by default, your own setting) the Ritual Altar in the host's Hunter's Dream answers you while you are a guest: conduct a Chalice ritual with your own chalice and materials. The dungeon is made in your own save (a free slot), the host's altar offers it as *Enter the party's dungeon*, and you follow the host in.
-- **Chalice layer travel.** With the host's rule *Chalice layer travel* (*System -> Party rules: PvP & lamps*, the launcher's Party Rules tab, `party_layer_travel`, off by default) the host's Chalice Dungeon lamp lists the dungeon's other lit lamps (the layers) next to the Hunter's Dream, and the host's choice takes the party along (a guest with a dungeon of its own is summoned back in next to the host; a guest without one is carried too, by the summon or by the same lamp warp on its own game). Not for guests staying in their own world. See docs/party/chalice_layers.md.
-- **Guests can gather the party.** With the host's rule *Guests can gather* (*System -> Party rules: Travel*, the launcher's Party Rules tab, `party_guest_gather`, off by default) a guest sees *System -> Party -> Gather the party*: it asks the host and the other guests to come to it (each is asked and may say no; an in-world warp beside the guest, only players in the same map, never a loading screen). Same refusals and 30 s pause as the host's gather; not while the guest stays in its own world. See docs/party/guest_gather.md.
-- **Any level can join my open game.** An open game (no password, a plain address join) is held to the game's co-op level range (host 100: 60 to 140). With *Any level can join* on (*System -> Party access*, the launcher's Party tab, `party_open_any_level`, env `BB_PARTY_OPEN_ANY_LEVEL`, off by default, the host's own setting, live) every level joins and none is removed later. Password and party-code joins never had a range; invaders keep theirs.
-- **Room for a rejoining guest.** A guest that restarts its game and rejoins from the title (Fast rejoin off) used to find the host's room already closed, because the game closes an empty room after about 5 s. The host now holds an empty room 10 s more while that guest joins (*System -> My party: Your save*, the launcher's My Party tab, `party_title_room_hold`, env `BB_PARTY_TITLE_ROOM_HOLD`, on by default).
-- **Invasions into open public games.** The host decides: *Allow invaders* (*System -> Party access*, the launcher's Party tab,
+- **Chalice glyph list.** With *Chalice glyph list* on (*System -> Party Settings -> My party: Chalice*, the launcher's My Party tab, `party_glyph_list`, off by default) the Ritual Altar's *Search by Chalice Glyph* opens with a list of the party's glyphs to pick from (your dungeons, the guests', and `patches/chalice_glyphs.json`) above the code keyboard; pick one and the whole party enters that dungeon together. An unknown code gets a clear notice. See docs/party/chalice.md 11.
+- **Community Chalice glyphs (Noxde's list).** With *Community Chalice glyphs (Noxde's list)* on (*System -> Party Settings -> My party: Chalice*, the launcher's My Party tab, `chalice_glyphdb`, off by default; works solo and as the party's host) the Ritual Altar's *Search by Chalice Glyph* lists about 200 community glyphs under category tabs (Blood gems, Equipment, Farming, Testing; blood gems sorted by gem type) with Noxde's descriptions, above the code keyboard (Left / Right or L1 / R1 switch the tab, PageUp / PageDown or D-pad Left / Right jump ten rows). Take as long as you like in the box; a list entry the game's data cannot build (its chalice is not in the game) is left out instead of crashing the dungeon. Pick one, or type its glyph, and the game makes and enters that dungeon its own way, offline; in a party the guests follow like into any dungeon of the host. The launcher downloads the list from Noxde's gist while the setting is on (when missing or a week old) and keeps it in your user folder; without internet the last download is used, and without one nothing changes. Nothing of the list ships with bbport. With no Chalice in the inventory the altar still opens (see docs/party/chalice.md 13). Credit: Noxde (docs/CREDITS.md). See docs/party/chalice.md 13.
+- **Ritual Altar as a guest.** With *Ritual Altar as a guest* on (*System -> Party Settings -> My party: Chalice*, the launcher's My Party tab, `party_guest_altar`, off by default, your own setting) the Ritual Altar in the host's Hunter's Dream answers you while you are a guest: conduct a Chalice ritual with your own chalice and materials. The dungeon is made in your own save (a free slot), the host's altar offers it as *Enter the party's dungeon*, and you follow the host in.
+- **Chalice layer travel.** With the host's rule *Chalice layer travel* (*System -> Party Settings -> Party rules: PvP & lamps*, the launcher's Party Rules tab, `party_layer_travel`, off by default) the host's Chalice Dungeon lamp lists the dungeon's other lit lamps (the layers) next to the Hunter's Dream, and the host's choice takes the party along (a guest with a dungeon of its own is summoned back in next to the host; a guest without one is carried too, by the summon or by the same lamp warp on its own game). Not for guests staying in their own world. See docs/party/chalice_layers.md.
+- **Guests can gather the party.** With the host's rule *Guests can gather* (*System -> Party Settings -> Party rules: Travel*, the launcher's Party Rules tab, `party_guest_gather`, off by default) a guest sees *System -> Party Settings -> Party -> Gather the party*: it asks the host and the other guests to come to it (each is asked and may say no; an in-world warp beside the guest, only players in the same map, never a loading screen). Same refusals and 30 s pause as the host's gather; not while the guest stays in its own world. See docs/party/guest_gather.md.
+- **Any level can join my open game.** An open game (no password, a plain address join) is held to the game's co-op level range (host 100: 60 to 140). With *Any level can join* on (*System -> Party Settings -> Party access*, the launcher's Party tab, `party_open_any_level`, env `BB_PARTY_OPEN_ANY_LEVEL`, off by default, the host's own setting, live) every level joins and none is removed later. Password and party-code joins never had a range; invaders keep theirs.
+- **Room for a rejoining guest.** A guest that restarts its game and rejoins from the title (Fast rejoin off) used to find the host's room already closed, because the game closes an empty room after about 5 s. The host now holds an empty room 10 s more while that guest joins (*System -> Party Settings -> My party: Your save*, the launcher's My Party tab, `party_title_room_hold`, env `BB_PARTY_TITLE_ROOM_HOLD`, on by default).
+- **Invasions into open public games.** The host decides: *Allow invaders* (*System -> Party Settings -> Party access*, the launcher's Party tab,
   `party_invaders`, off by default, live) lets other players join a game from the launcher's lists as a hostile phantom
   (**Invade**, next to Join, no password): you and your guests are told, fight it, and it goes home when it dies or when the host
   dies. An invader takes one loading screen and a few seconds to arrive, also one that starts in another map (the Hunter's
   Dream, say) than the host (0.7.9), and is put away from you at a lamp the host lit, 30 to 250 m off in the same map, like a vanilla
   invader (beside the host where there is none, e.g. in the Hunter's Dream or a Chalice Dungeon) (0.7.9). Only players within
   the host's level range can invade, `floor(level * 0.8 - 20)` to `floor(level * 1.1 + 10)` (host level 100: 60 to 120); the refused
-  player is told the range (0.7.9). One invader at a time, or two with the host's *Max invaders* (*System -> Party access*, the
+  player is told the range (0.7.9). One invader at a time, or two with the host's *Max invaders* (*System -> Party Settings -> Party access*, the
   launcher's Party tab, `party_max_invaders`, 1 or 2, default 1, live) (0.7.9); never in a boss
   fight, a loading screen or a cutscene (such a refusal is not final: the invader waits, the party status says
   "Waiting for the host's world", and it asks again by itself; a final refusal reads "Can't invade: ...") (0.8.1), never into a full game (every seat taken: 4 players, 5 or 6 with *Large parties*); you can block the invaders
-  for the session (*System -> Party -> Block the invader*). An invasion that cannot get into the host's world (no world snapshot within 45 s) ends with a notice and the invader goes home; it is never turned into a co-op phantom (0.7.9). The invader is drawn with the game's red phantom glow, and the game's own
+  for the session (*System -> Party Settings -> Party -> Block the invader*). An invasion that cannot get into the host's world (no world snapshot within 45 s) ends with a notice and the invader goes home; it is never turned into a co-op phantom (0.7.9). The invader is drawn with the game's red phantom glow, and the game's own
   rewards are paid on each player's own game: an invader that defeats the host gets Blood Echoes and +1 Insight, the host and
   guests get Blood Echoes for defeating it. The host's *Full health in PvP* rule also covers an invasion: with it on (the
   default) the invader is not cut to 70 % maximum health (0.7.9). See docs/party/invasions.md.
 - **Stay in my world.** As a guest you can pause the automatic joining without leaving the party, e.g. for your own
-  Chalice ritual or shopping: *System -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
+  Chalice ritual or shopping: *System -> Party Settings -> Party -> Stay in my world* (a guest's row; the launcher's My Party tab,
   `party_stay`, off by default, live). You ring no bell, are not gathered and not asked to vote; the host does not wait
   for you and sees *Staying home*. Turn it off and you join again at the next opportunity. See docs/party/stay_home.md.
 - **Splitscreen mode.** For several game windows on one screen (the Nucleus Co-op splitscreen mod): one switch,
-  *Splitscreen mode* (*System -> My party: Splitscreen*, the launcher's My Party tab, `party_splitscreen`, off by
+  *Splitscreen mode* (*System -> Party Settings -> My party: Splitscreen*, the launcher's My Party tab, `party_splitscreen`, off by
   default, your own setting) makes the party HUD show only the compass (a direction arrow and the distance per
   companion), hides the name tags above the companions and cuts party messages to errors. *Party messages* (same
   page, `party_messages`: All / Errors only / Off) works on its own too. See docs/party/splitscreen.md.
-- **Give items to a party member.** *Give items to the party* (*System -> My party: Giving*, the launcher's My Party
+- **Give items to a party member.** *Give items to the party* (*System -> Party Settings -> My party: Giving*, the launcher's My Party
   tab, `party_give_items`, off by default, your own setting and your consent to receive) adds *Give* to the command menu of an
   item in the game's own inventory (Use / Discard / Give): pick a hunter, then an amount. Consumables and materials (the blood
   stones too), never key, unique or story items; nothing moves while loading, in a cutscene, a boss fight or a travel; the giver loses the items only
   when the receiver has them, and a broken link puts them back. See docs/party/give_items.md.
-- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> My party: Giving*, the launcher's My
+- **Give weapons and armor to a party member (0.7.9).** *Give weapons and armor* (*System -> Party Settings -> My party: Giving*, the launcher's My
   Party tab, `party_give_gear`, off by default, your own setting and your consent to receive; separate from *Give items to the
   party*) adds *Give* to a weapon's or armor's command menu in the inventory: pick a hunter. A weapon keeps its upgrade level and its
   blood gems, armor moves as it is. Not worn gear, and not the gear the party shares anyway (story and unique weapons, Gascoigne's
@@ -343,7 +343,7 @@ the party's version check: players with and without it can play together.
   puts it back with its gems. See docs/party/give_items.md section 5.
 - **What is shared, what is yours.** Whoever picks it up or lands the kill, a shared item reaches every member
   of the party once - also a member who joins later or reconnects - and a short notice on every screen says so
-  ("Living String: shared with the party"; *Shared item notices* on *System -> My party: Your items*, the launcher's My
+  ("Living String: shared with the party"; *Shared item notices* on *System -> Party Settings -> My party: Your items*, the launcher's My
   Party tab, `party_item_notices`, on by default, shown while the party notices are on, at most one every few
   seconds, never for your own pickups).
 
@@ -387,12 +387,12 @@ the party's version check: players with and without it can play together.
   (a feature the game left unfinished, restored as in bbhost), in single player and for every party
   member; the others see your new look at once. Launcher switch "Hunter's Dream mirror", on by
   default; everyone in a party needs the same setting.
-  *Share look changes* (System > My party > Names, off by default) also sends a look changed any other way
+  *Share look changes* (System > Party Settings > My party > Names, off by default) also sends a look changed any other way
   (the editor opened without its frame, for example) once it has held for 1.5 s.
 
 **Map markers**
 
-- *Shared map markers* (System > My party > Chat & markers, launcher Party tab, off by default; needs the in-game map): with
+- *Shared map markers* (System > Party Settings > My party > Chat & markers, launcher Party tab, off by default; needs the in-game map): with
   the map open, a right click (P with the pointer on it, R3 on a pad) puts your marker on that spot; every member with
   the setting on sees it on their map as a pin in your party colour with your name. One per player (a new one
   replaces it; a click on your own pin takes it down; it goes when you leave).
@@ -403,14 +403,14 @@ Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch t
 
 | Switch | Where | What it does |
 |---|---|---|
-| *Share look changes* | System > My party > Names, launcher Party tab, `party_look_sync` | A look changed in any editor reaches the others without a reload |
-| *Shared map markers* | System > My party > Chat & markers, launcher Party tab, `party_map_marks` | A right click / P / R3 on the open map sets your marker for every member (needs the in-game map) |
-| *Rot: stamina recovery* (*Death may slow stamina recovery*), *host* | System > Party rules: Rot, launcher Party Rules tab, `party_rot_extra` | The death debuff may also take -15% of the stamina you get back per stack |
-| *Load with the host* | System > My party: Loading, launcher My Party tab, `party_parallel_follow` | On the host's party travel to a lamp (the Dream, a headstone, a Hunter's Mark) your game loads the same lamp at once, in parallel with the host, behind one loading screen, and puts you beside the host once it is in (before: your load started only after the host's). A death, a boss fight or a Chalice Dungeon keeps the old way. *On by default* (0.8.1) |
-| *Hold the screen until smooth* | System > My party: Loading, launcher My Party tab, `party_settled_drop` | In a party the loading screen stays up after a load until the frames have run under 50 ms for 1 s without a break (at most 3 s more), so the first heavy frames after a load are not seen as a frozen world. *On by default* (0.8.2) |
-| *Arrive beside the host* | System > My party: Loading, launcher My Party tab, `party_load_beside` | When your game follows the host's party travel, its load puts you beside the host itself: no jump to the host's side right after the loading screen; the position is written into the load itself (not a warp after it), so the screen no longer waits for a move. If the load cannot take it (a spot far from the lamp) the screen is held and the move hidden, as before. *On by default* (0.8.1) |
-| *Rejoin in place* | System > My party: Loading, launcher My Party tab, `party_quick_rejoin` | *Party > Rejoin* pressed while you are in the host's world reloads you beside the host with one loading screen, instead of *Leave* (a load into your own world) and *Rejoin* (a second load); a member that has not reappeared is asked for its record with the game's own request. *On by default* (0.8.1) |
-| *Allow direct connection (lower ping, party members see your IP)* | System > My party: Loading, launcher My Party tab, `party_nw_direct` | Over the Nightwatch VPN only: when you and another member both allow it, the game tests a direct connection for 3 s and uses it only if it is clearly faster than the tunnel (once, at a loading screen; back to the tunnel for the session if it drops). The other member sees your public IP. Off: everything stays on the tunnel |
+| *Share look changes* | System > Party Settings > My party > Names, launcher Party tab, `party_look_sync` | A look changed in any editor reaches the others without a reload |
+| *Shared map markers* | System > Party Settings > My party > Chat & markers, launcher Party tab, `party_map_marks` | A right click / P / R3 on the open map sets your marker for every member (needs the in-game map) |
+| *Rot: stamina recovery* (*Death may slow stamina recovery*), *host* | System > Party Settings > Party rules: Rot, launcher Party Rules tab, `party_rot_extra` | The death debuff may also take -15% of the stamina you get back per stack |
+| *Load with the host* | System > Party Settings > My party: Loading, launcher My Party tab, `party_parallel_follow` | On the host's party travel to a lamp (the Dream, a headstone, a Hunter's Mark) your game loads the same lamp at once, in parallel with the host, behind one loading screen, and puts you beside the host once it is in (before: your load started only after the host's). A death, a boss fight or a Chalice Dungeon keeps the old way. *On by default* (0.8.1) |
+| *Hold the screen until smooth* | System > Party Settings > My party: Loading, launcher My Party tab, `party_settled_drop` | In a party the loading screen stays up after a load until the frames have run under 50 ms for 1 s without a break (at most 3 s more), so the first heavy frames after a load are not seen as a frozen world. *On by default* (0.8.2) |
+| *Arrive beside the host* | System > Party Settings > My party: Loading, launcher My Party tab, `party_load_beside` | When your game follows the host's party travel, its load puts you beside the host itself: no jump to the host's side right after the loading screen; the position is written into the load itself (not a warp after it), so the screen no longer waits for a move. If the load cannot take it (a spot far from the lamp) the screen is held and the move hidden, as before. *On by default* (0.8.1) |
+| *Rejoin in place* | System > Party Settings > My party: Loading, launcher My Party tab, `party_quick_rejoin` | *Party > Rejoin* pressed while you are in the host's world reloads you beside the host with one loading screen, instead of *Leave* (a load into your own world) and *Rejoin* (a second load); a member that has not reappeared is asked for its record with the game's own request. *On by default* (0.8.1) |
+| *Allow direct connection (lower ping, party members see your IP)* | System > Party Settings > My party: Loading, launcher My Party tab, `party_nw_direct` | Over the Nightwatch VPN only: when you and another member both allow it, the game tests a direct connection for 3 s and uses it only if it is clearly faster than the tunnel (once, at a loading screen; back to the tunnel for the session if it drops). The other member sees your public IP. Off: everything stays on the tunnel |
 | *Large parties* (experimental) | Launcher Party tab, `party_large` | *Max players* may be set to 5 or 6; six games on one PC need about 24 GB of memory; 6-player travel and boss fights are not yet tested |
 | *Allow invaders* (*host*), *Party chat*, *Coloured name tags*, *Auto-hide HUD* | described in this guide | Earlier optional features, also off by default |
 
@@ -436,15 +436,15 @@ Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch t
   game's own menus are open; party messages are centred in their box.
 - **Companions look like normal hunters.** Summoned hunters are drawn without the game's blue,
   glowing phantom look (they are still cooperators for the game). Each player chooses for their own
-  screen: *No companion glow* on *System → My party: Look & notices* or *Companions without glow* on the launcher's *My Party* tab (on by
+  screen: *No companion glow* on *System → Party Settings → My party: Look & notices* or *Companions without glow* on the launcher's *My Party* tab (on by
   default; switches at once, also while playing).
 - **Pings.** Hold the touchpad and press R3 (Xbox pads: hold Back, press R3; keyboard: `Tab` + `Q`,
   or just `V`) to mark a spot: everyone in your world sees it through walls for 10 seconds, with your
   name and its distance. *Show party through walls* puts a small marker on every companion. Both on
-  *System → My party: Display* and the launcher's *My Party* tab.
-- **Coloured name tags** (off by default, your own setting: *System → My party: Display → Coloured name tags* or the launcher's *My Party* tab): the name above each companion in that hunter's party colour (the colour of the party panel and the chat), with a dark outline.
-- **Auto-hide HUD** (off by default, your own setting, solo too: *System → Game HUD* or the launcher's game settings): the game's HP and stamina bars, item slots and echoes counter fade out while nothing happens and return on damage, stamina use, a fight or lock-on, an equipment change or a menu, like Elden Ring's *HUD: Auto*. Details: docs/auto_hud.md.
-- **Party text chat** (off by default, your own setting: *System → My party: Chat & markers → Party chat* or the launcher's *My Party* tab). Press
+  *System → Party Settings → My party: Display* and the launcher's *My Party* tab.
+- **Coloured name tags** (off by default, your own setting: *System → Party Settings → My party: Display → Coloured name tags* or the launcher's *My Party* tab): the name above each companion in that hunter's party colour (the colour of the party panel and the chat), with a dark outline.
+- **Auto-hide HUD** (off by default, your own setting, solo too: *System → Game Settings → Game HUD* or the launcher's game settings): the game's HP and stamina bars, item slots and echoes counter fade out while nothing happens and return on damage, stamina use, a fight or lock-on, an equipment change or a menu, like Elden Ring's *HUD: Auto*. Details: docs/auto_hud.md.
+- **Party text chat** (off by default, your own setting: *System → Party Settings → My party: Chat & markers → Party chat* or the launcher's *My Party* tab). Press
   `T` (change it with `party_chat_key=<key name>` in `bbport.ini`), type a line (up to 120 characters) and press Enter; on a pad hold
   the touchpad (Xbox pads: `Back`) and press `L1` to pick a short line (*Help!*, *Follow me*, *Wait*, *Boss here*, *Thanks*,
   *Going to the Dream*) with the d-pad and Cross. Lines of every member (also from one guest to another) show for a few seconds at the
@@ -452,11 +452,11 @@ Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch t
   *Show others' chat* mutes the other hunters for you only. With *Hide offensive names* on (the default) offensive words in
   other players' lines are replaced by asterisks. Chat text is never written to the logs. Details: docs/party/chat.md.
 - **Friendly fire / PvP** (host's switch, off by default): party members can hurt each other, both
-  ways, like invaders (*System → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
+  ways, like invaders (*System → Party Settings → Party rules: PvP & lamps*). A party kill is a normal party death; the killer
   gets no Echoes or Insight. While it is on, hunters who joined keep their full maximum health for the duel
   (*Full health in PvP*, on by default, same page; the 30 % phantom health cut returns when friendly fire goes
   off, each hunter's health kept at the same fraction)). Only the player hunters can hurt each other: a summoned NPC hunter stays the friend of everyone.
-- **Connection warnings.** When the Windows Firewall, the router or a wrong address keeps your party from working (nobody reaches a host without an open port, a guest's game is not heard, a guest cannot reach the host), the game shows a notice with the shortest fix and logs it; at most once per cause per session (*System > Party members > Connection warnings*, on by default).
+- **Connection warnings.** When the Windows Firewall, the router or a wrong address keeps your party from working (nobody reaches a host without an open port, a guest's game is not heard, a guest cannot reach the host), the game shows a notice with the shortest fix and logs it; at most once per cause per session (*System > Party Settings > Party members > Connection warnings*, on by default).
 - **Party HUD.** Party members and events in a small HUD; each companion's ping in ms after the name (green / yellow / red; *My party: Look & notices > Ping in the party list*, on by default).
 - **Every party setting in the game's own menu, in two groups.** *Party rules* holds what the host
   decides for the whole party: *Party rules: World* (enemies the party killed stay dead, gathering the
@@ -505,7 +505,7 @@ Each is a System menu row, a launcher setting and a `bbport.ini` key; a switch t
 |---|---|
 | A guest | Gets up again at its own lamp, with no loading screen when that lamp is in the loaded area (a lamp in another area: a short respawn loading screen); its Blood Echoes wait in a bloodstain where it fell (an on-screen marker for it: *System → Pings → Bloodstain marker*, off by default); the others keep playing. **A fall** (off a ledge, or out of the world): it gets up at its own lamp, or at the host's lamp when its own is in another area, with no loading screen when that lamp is in the area, never in the Hunter's Dream; its Blood Echoes wait on the last solid ground before the fall, never under the map |
 | The host | Gets up again at its lamp with no loading screen while the guests play on (a lamp in another area: the host alone loads it); the host's echoes stay in a bloodstain. After a fall (off a ledge or out of the world) it also gets up at its lamp (no loading screen when the lamp is in the area, never in the Hunter's Dream); its echoes wait on the last solid ground before the fall. A death that takes the host somewhere else by the story (a Snatcher's kidnap to the Hypogean Gaol) takes the whole party there instead: one loading screen for everyone, the guests wake beside the host. In a boss fight the guests kill: the host gets up in the arena (see below). `BB_PARTY_B2_HOST_REVIVE=0`: everyone gets one respawn loading screen at the host's lamp and the world resets, as in the original game |
-| Anyone, during a boss fight | The boss turns to the hunters still standing (it no longer stands over a dead hunter). Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the host is down and the last hunter still fighting leaves the fight (Hunter's Mark, a lamp, its death, *Leave* or a lost connection), that counts as everyone dying: the whole party gets the respawn loading screen at the host's lamp. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (after a fall: on the last solid ground before it, where their bloodstain is; or beside a living hunter), never under the map, no load, their echoes still in their bloodstain. the host's *System → Party rules: Deaths → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
+| Anyone, during a boss fight | The boss turns to the hunters still standing (it no longer stands over a dead hunter). Watches a living party member fight, with the camera following them as in normal play (the right stick turns it; press Cross to watch the next one) until the boss dies, everyone dies, or someone travels. When the host is down and the last hunter still fighting leaves the fight (Hunter's Mark, a lamp, its death, *Leave* or a lost connection), that counts as everyone dying: the whole party gets the respawn loading screen at the host's lamp. When the boss is killed, everyone who died in the fight - the host and the guests alike, also one still in its death animation when the boss fell - gets up right there in the arena, where they fell (after a fall: on the last solid ground before it, where their bloodstain is; or beside a living hunter), never under the map, no load, their echoes still in their bloodstain. the host's *System → Party Settings → Party rules: Deaths → Up after boss kill* off: the host's death takes the party's respawn load and a guest gets up at the host's lamp instead |
 | Everyone | Everyone respawns together at the host's lamp with one loading screen; the session stays. Also when the last hunter falls long after the others (the ones already down wait for it, however long the fight goes on); its echoes wait in a bloodstain where it fell |
 
 A death (host or guest) brings no enemies back; a rest at a lamp (anyone's) or a party wipe resets them.
@@ -555,7 +555,7 @@ Features marked (0.7.9) are on the development build and come with the next rele
 The host needs port 9307 (UDP and TCP) reachable. Most routers open it automatically (UPnP);
 otherwise forward it by hand. Allow the Windows Firewall prompt once. Guests need nothing.
 
-The host gets two party codes (launcher, *System → Party*):
+The host gets two party codes (launcher, *System → Party Settings → Party*):
 
 | Code | For |
 |---|---|
@@ -567,7 +567,7 @@ A guest on the host's network with the Internet code finds the host on the LAN b
 No UPnP and no port forward? Each guest copies its **guest code** (`BBG1-...`, *Party* page) and
 sends it to the host, who presses *Add a guest code*: the game then punches through both routers.
 To skip the code, turn on *Find each other through the public DHT* (launcher *Party* tab or
-*System > Party network*) on **both** PCs: the guest's address is then exchanged through the public
+*System > Party Settings > Party network*) on **both** PCs: the guest's address is then exchanged through the public
 BitTorrent DHT under a hash only the party knows. It is off by default because DHT nodes see your
 IP address, as with any torrent client.
 If the guest's game gets no UDP answer from the host ("UDP to the guest is blocked" /
@@ -576,7 +576,7 @@ then starts by itself.
 If the host cannot be reached at all but another member can, a guest joins **through that member**:
 it copies the member's guest code and presses *Join through a member* on its *Party* page (with the
 DHT option on, members are found by themselves); this is on by default. **IPv6** is off by default:
-turned on on both PCs (launcher *Party* tab, *System > Party network*), the party tries it before any
+turned on on both PCs (launcher *Party* tab, *System > Party Settings > Party network*), the party tries it before any
 relay, and a host without an open port then has a longer code that **contains its IPv6 address** (a
 temporary privacy address where Windows has one, so the code changes when Windows rotates it).
 The *Party* page's *Network* line says which NAT you have, what to do about it and which path the

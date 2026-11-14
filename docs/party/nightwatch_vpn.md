@@ -204,7 +204,7 @@ other's games. `tools/vpn/lobby/nwlobby.py` is a tiny in-memory lobby on the VPN
 `tests/test_launcher_vpnlobby.py`, `test_vpnlobby()` in `tests/test_party_net.cpp`.
 
 Off by default: the setting `party_vpn_lobby` (bbport.ini; launcher checkbox *Nightwatch VPN lobby*; in the
-game *System > Party access > Nightwatch VPN lobby*, host's row; env `BB_PARTY_VPN_LOBBY`).
+game *System > Party Settings > Party access > Nightwatch VPN lobby*, host's row; env `BB_PARTY_VPN_LOBBY`).
 
 ### How a join works
 

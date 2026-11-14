@@ -50,16 +50,16 @@ story progress, key items, rewards and cutscenes are carried over into each play
 
 The launcher's Party tab is optional: a party game can be started, joined and continued from the
 game's own title screen. The title menu has a **Party** item right after *New Game* (the same page
-as *System > Party*). Rows are pressed with left/right; the ones that restart the game need a
+as *System > Party Settings > Party*). Rows are pressed with left/right; the ones that restart the game need a
 second press.
 
 **The first session (fresh characters for everyone):**
 
 - **Host**: *Party > New party game*. The game restarts by itself (a few seconds) into the party
   game: the party saves (`user\savedata_party`), the online title, hosting. Choose **New Game** and
-  make your hunter. The party code is under *System > Party > Copy party code* (and in
+  make your hunter. The party code is under *System > Party Settings > Party > Copy party code* (and in
   `user\party_code.txt`); send it to your friends. It stays the same in later sessions and
-  launches until the host makes a new one (*System > Party mode > New party code*, or **New code** in
+  launches until the host makes a new one (*System > Party Settings > Party mode > New party code*, or **New code** in
   the launcher's Party tab while the game is closed); setting or removing a password also gives a
   new code once.
 - **Friends**: *Party > Host address* (type the host's party code; **Ctrl+V** pastes; Enter
@@ -73,7 +73,7 @@ second press.
 your party character by itself and hosts or joins (your last role) with the saved address and
 password; the summons follow automatically.
 
-**In the world** (party game), *System > Party* also has **Host party** / **Join party** (switch
+**In the world** (party game), *System > Party Settings > Party* also has **Host party** / **Join party** (switch
 role: a quick restart, your character continues) and **Single player** (back to the
 single-player game and saves). With a single-player character loaded there are no party actions:
 party games always start from the title screen, so co-op can never write into a single-player save.
@@ -108,7 +108,7 @@ The code stays the same when the game restarts after a crash and from one launch
 changes when your public address or port changes, when you make a new code, or once when you set
 or remove a password.
 
-**Skip the prologue.** The host rule *Skip the prologue* (*System > Party rules: Phantoms*, or the
+**Skip the prologue.** The host rule *Skip the prologue* (*System > Party Settings > Party rules: Phantoms*, or the
 launcher's Party Rules tab) lets a brand-new character start at the Central Yharnam lamp with the
 Saw Cleaver, the Hunter Pistol and Iosefka's Blood Vial, ready to be summoned. A character that
 already left the clinic is never touched.
@@ -143,7 +143,7 @@ a thin HP bar (stamina under it), their ping in ms (green under 80, yellow under
 and, while they are on the same map, how far away they are and an arrow pointing their way.
 Companions who are not in your world (at home, loading, in their prologue, disconnected) are
 greyed and say where they are. Companions in your world also get a name tag above their head
-(with level, health, deaths or ping, as you choose). Switch it in the game (**System > My party:
+(with level, health, deaths or ping, as you choose). Switch it in the game (**System > Party Settings > My party:
 Display > Party HUD**, and *Name tags*), the overlay's Party tab or the launcher's My Party tab
 (on by default; never shown in single player).
 
@@ -180,7 +180,7 @@ Another port adds 3 characters.
   so send the new one.
 - Five wrong passwords within a minute: the host ignores that address for a while.
 
-**Two codes.** The host has two codes (`user\party_code.txt`, the launcher, *System > Party* and
+**Two codes.** The host has two codes (`user\party_code.txt`, the launcher, *System > Party Settings > Party* and
 the overlay's Party tab):
 
 | Code | Holds | Use it for |
@@ -240,11 +240,11 @@ the party is started again from the title screen's *Party* page.
   link switches to UDP when TCP gets no answer. Works with most home routers; not with a strict
   NAT. Details: [party/network_robustness.md](party/network_robustness.md).
   This can also happen **by itself**, opt-in: with *Find each other through the public DHT* on
-  (launcher *Party* tab or *System > Party network*; **both** host and guest must turn it on), a
+  (launcher *Party* tab or *System > Party Settings > Party network*; **both** host and guest must turn it on), a
   guest that cannot reach the host leaves its address in the public BitTorrent DHT under a hash
   only the party can compute, and the host finds it there and opens the way. It is **off by
   default**: DHT nodes see your IP address, as with any torrent client.
-- **IPv6** (off by default; *Party* tab or *System > Party network*, both PCs): the party tries it
+- **IPv6** (off by default; *Party* tab or *System > Party Settings > Party network*, both PCs): the party tries it
   before any relay, and a host without an open port then has a longer code that contains its IPv6
   address.
 - **Through a member**: if the host cannot be reached but another member can, a guest can join
@@ -256,7 +256,7 @@ the party is started again from the title screen's *Party* page.
 
 1. Everyone installs the same VPN and joins the same VPN network.
 2. **Host:** start the game as usual. With *Host over a VPN* on **Auto** (default; launcher
-   *Party* tab, *System > Party network*), the game finds the VPN adapter by itself (Radmin VPN,
+   *Party* tab, *System > Party Settings > Party network*), the game finds the VPN adapter by itself (Radmin VPN,
    Hamachi, ZeroTier, Tailscale; commercial VPNs such as NordVPN are never picked in Auto, only
    by name). The launcher shows *Hosting over Radmin VPN: 26.x.y.z* and a **VPN address** line
    with **Copy** (always `address:port`). The **LAN code** now holds the VPN address.
@@ -292,7 +292,7 @@ the password only if the party has one, and starts the game as a guest. Tailscal
 broadcasts: with Tailscale up, its online friends are listed from the `tailscale` command (when it
 is installed) as "maybe hosting". Hosting without a password over Radmin VPN or Hamachi shows a
 warning in the launcher, because strangers can be in those networks. Switch it off with *Party
-discovery* (launcher, or *System > My party: Look & notices*).
+discovery* (launcher, or *System > Party Settings > My party: Look & notices*).
 
 ### Joining takes the host's options
 
@@ -311,7 +311,7 @@ read when the game starts, so they cannot change while it runs). Since 0.7.8 a g
 ### Nightwatch VPN games
 
 On the Nightwatch VPN (opt-in, see docs/party/nightwatch_vpn.md) a host with a password can list the game
-for other VPN players: turn on *Nightwatch VPN lobby* (launcher Party tab, or *System > Party access*).
+for other VPN players: turn on *Nightwatch VPN lobby* (launcher Party tab, or *System > Party Settings > Party access*).
 The launcher's **Nightwatch VPN games** list shows the host's character name, slots, password flag and
 version, never an address; **Join** asks for the password (not for an *open* game, see below) and starts the game as a guest. Off by default.
 
@@ -319,7 +319,7 @@ version, never an address; **Join** asks for the password (not for an *open* gam
 
 A host with no password can let players on its own network join by plain address (`192.168.1.5:9307`, a Radmin or
 Tailscale address), without a party code. Turn on *Open party* (launcher Party tab, host only and greyed out while a
-password is set, or *System > Party access > Open party (no password)*, live; bbport.ini `party_open`, `BB_PARTY_OPEN`).
+password is set, or *System > Party Settings > Party access > Open party (no password)*, live; bbport.ini `party_open`, `BB_PARTY_OPEN`).
 Off by default. The host accepts a plain-address join only from a peer on the subnet of one of its private or VPN
 adapters; a public address, the router itself and relayed guests are refused. A password always wins: with one, the
 open party is off. Everyone on those networks can join and holds the same link key, so the encryption does not protect
@@ -366,7 +366,7 @@ for example from a command window: `net_doctor.bat --redactnames --redactips hos
    then travels only when everyone agrees, and one *No* or no answer within 20 seconds cancels it.
    **Resting** at a lamp resets the world for the party (enemies respawn; everyone's HP, vials
    and bullets refill).
-5. **Gather the party.** The host's *System > Party > Gather the party* (or the hotkey above)
+5. **Gather the party.** The host's *System > Party Settings > Party > Gather the party* (or the hotkey above)
    brings every guest to the host after the guest says *Yes*: no loading screen in the host's map,
    one from another map. A guest who is dead, in a menu, in a cutscene or in a boss fight is not
    moved, and the host cannot gather in its own boss fight or cutscene, on a ladder, in mid-air,
@@ -471,12 +471,12 @@ visit counts as over once the host is out of the Dream, so the party can summon 
 The launcher's **Party** tab is for hosting, joining and the connection. The party's settings
 are on two more tabs, and on the same pages of the game's *System* menu:
 
-- **Party rules** (*System > Party rules: ...*, launcher *Party Rules* tab): what the **host**
+- **Party rules** (*System > Party Settings > Party rules: ...*, launcher *Party Rules* tab): what the **host**
   decides for the whole party. They apply when you host; as a guest you follow the host's and the
   game shows them **read-only**, so the whole party plays one way. A few rules are read only when
   the game starts and must match the host's, otherwise the host refuses the join with *"set ...
   like the host"*.
-- **My party** (*System > My party: ...*, launcher *My Party* tab): what **each player** chooses
+- **My party** (*System > Party Settings > My party: ...*, launcher *My Party* tab): what **each player** chooses
   for itself.
 
 The defaults are the recommended settings; hover any option in the launcher for details.
@@ -506,7 +506,7 @@ The defaults are the recommended settings; hover any option in the launcher for 
 
 Also on your side: **Party starts** (*After the prologue*, or *Right away*, experimental; keep it
 the same for everyone), **Back up every (min)** (10) and **Backups to keep** (10), **Restart the
-game after a crash** (on), **Connection warnings** (*System > Party members*, on). Party tab
+game after a crash** (on), **Connection warnings** (*System > Party Settings > Party members*, on). Party tab
 options: **Automatic summoning**, **Seamless party rules** (off: the normal game's co-op rules; the
 host's setting counts), **Separate party saves** (always on), **Max players**, and the connection
 settings. The environment variables behind each option are listed in
@@ -562,7 +562,7 @@ settings. The environment variables behind each option are listed in
   where they stood once the network is back. After a longer one a guest goes home and is
   brought back by itself (it reconnects after 1, 2, 4, 8 seconds, then every 8 seconds).
 - Progress made while someone was away is caught up when they are back.
-- *System > Party* (or the overlay's Party tab) has **Rejoin** (try again now) and **Leave** (stop;
+- *System > Party Settings > Party* (or the overlay's Party tab) has **Rejoin** (try again now) and **Leave** (stop;
   the game no longer reconnects). A kicked player cannot rejoin that session.
 
 ## Four players
@@ -577,12 +577,12 @@ a player who joins takes the host's value by itself. With 4 players there is no 
 guests: it names the cause and the fix for most connection problems. The game also shows a
 **connection warning** (in the middle of the screen, with the shortest fix) when the firewall,
 the router or a wrong address keeps the party from working. The launcher log (and `launcher.log`)
-shows the game's `Party:` lines; *System > Party* shows the state and the last error.
+shows the game's `Party:` lines; *System > Party Settings > Party* shows the state and the last error.
 
 When the host refuses a guest (wrong or missing password, old code, full party, different
 version), the guest gets one message box saying why and what to do, and its game stays online
-alone in its own world. Fix the cause, then *System > Party > Rejoin the host*: it sends the
-password currently set in *System > Party > Password*. A changed party code or address still
+alone in its own world. Fix the cause, then *System > Party Settings > Party > Rejoin the host*: it sends the
+password currently set in *System > Party Settings > Party > Password*. A changed party code or address still
 needs *Join party* (restart).
 
 | Message / symptom | Cause | Fix |
@@ -610,7 +610,7 @@ needs *Join party* (restart).
 | *UDP to the guest is blocked* / *UDP to the host is blocked* | The guest's game has no public UDP address yet | Nothing at first: it retries every 40 s and the join then starts by itself. If it stays blocked, restart the guest's game, or use a VPN. |
 | *Failed to acquire Bloodborne server information* when joining a host on the same network with the Internet code | The router cannot loop back to its own public address | Use the host's **LAN code**, or update (the guest then finds the host on the LAN by itself). |
 | Friends on a VPN cannot join, or see each other frozen | The game uses the home address instead of the VPN one | Update to 0.7.6, or set `BB_PARTY_LOCAL_IP` ([steps](#hosting-over-a-vpn-radmin-vpn-hamachi-zerotier-tailscale)). |
-| Connected, but never brought in | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight / cutscene | Finish the prologue (or host turns on *Skip the prologue*); wait; use *Rejoin* (*System > Party*). |
+| Connected, but never brought in | The guest is still in the prologue, in a menu, or the host is in a loading screen / boss fight / cutscene | Finish the prologue (or host turns on *Skip the prologue*); wait; use *Rejoin* (*System > Party Settings > Party*). |
 | Brought in, but the worlds look different ("Your save is in NG+..." notice) | Players are in different New Game+ cycles | Normal: you play the host's world at its cycle; see [New Game+](#after-an-ending-new-game). |
 | No code under *Internet code* / *LAN code* | The game has not started hosting yet | Wait until the game is at the title screen; check the log for `Party:` errors. |
 | Save looks wrong after a session | - | Use *Undo last party session*, or restore a backup ([above](#saves-and-backups)), and report it with the logs. |
