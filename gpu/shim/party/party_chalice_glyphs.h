@@ -154,6 +154,26 @@ struct Entry {
     std::string source;         ///< "own", "member", "curated"
     bool form_on_board = true;  ///< false: a curated entry whose FormData the board must take first
     std::string form;           ///< curated: the FormData to put on the board
+    std::string cat;            ///< the list's tab ("Blood gems", "Equipment"...); "" for the party's own rows
+};
+
+/// "The list was offered in this glyph box" (replaces a 20 s window that made a slow pick answer "no dungeons found"):
+/// set when the altar's box opened with the list, cleared when that box closes or any other text box opens.
+/// Pure state so a pick after any wait is testable.
+class GlyphBox {
+public:
+    void Offer() { offered_ = true; }
+    void Clear() { offered_ = false; }
+    bool Offered() const { return offered_; }
+    /// The box closes: whether it was the offered one (and the flag is cleared either way).
+    bool Close() {
+        const bool was = offered_;
+        offered_ = false;
+        return was;
+    }
+
+private:
+    bool offered_ = false;
 };
 
 inline std::string KindText(std::uint32_t goods, int depth) {
@@ -207,11 +227,12 @@ inline std::vector<Entry> BuildList(const std::string& me, std::vector<BoardItem
     return out;
 }
 
-/// The choices as the text box takes them: one "glyph<TAB>label" per line.
+/// The choices as the text box takes them: one "glyph<TAB>label[<TAB>tab name]" per line (rows with a tab name
+/// are shown under category tabs).
 inline std::string EncodeChoices(const std::vector<Entry>& list) {
     std::string s;
     for (const Entry& e : list) {
-        s += e.glyph + "\t" + e.label + "\n";
+        s += e.glyph + "\t" + e.label + (e.cat.empty() ? std::string() : "\t" + e.cat) + "\n";
     }
     return s;
 }
