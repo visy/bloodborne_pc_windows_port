@@ -6,13 +6,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <mutex>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <boost/container/small_vector.hpp>
 #include <xxhash.h>
 
+#include "bbport_settings.h"
+#include "game_profile.h"
 #include "common/serdes.h"
 #include "common/assert.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_discard_frag.h"
@@ -26,6 +30,73 @@
 namespace Vulkan {
 
 using Shader::Backend::SPIRV::AuxShaderType;
+
+// bbport: the game's screen-space reflections (bbport.ini effect_ssr: a community patch turns on
+// FromSoftware's unfinished effect) march a fixed number of steps for every pixel of a target
+// half the scene's size, and the march costs more per pixel the larger the scene: 5.0 ms a frame
+// at native 4K on an RTX 5080 (Supermedo, bloodborne_pc 6085365d, 2026-11-13). With SSR on the
+// pass shades blocks of pixels once (VK_KHR_fragment_shading_rate), by the scene's size at
+// start: 2x2 from 6 megapixels (4K), 2x1 from 3 megapixels (1440p, 3440x1440), every pixel
+// below. The scene size is BB_RENDER_RES, else the output size divided by the upscaler preset's
+// scale (the scene is the game's 1080p with the upscaler off). BB_SSR_VRS=0 turns it off;
+// BB_SSR_SHADING_RATE=2x2, 2x1, 1x2 or 1x1 (every pixel) chooses the block instead.
+vk::Extent2D ReflectionShadingRate() {
+    static const vk::Extent2D rate = [] {
+        const char* off = std::getenv("BB_SSR_VRS");
+        if (off && off[0] == '0') {
+            return vk::Extent2D{1, 1};
+        }
+        const auto& settings = BbSettings::Get();
+        bool ssr = false;
+        for (int e = 0; e < BbSettings::EffectCount; ++e) {
+            if (std::string_view{BbSettings::Effects[e].key} == "effect_ssr") {
+                ssr = settings.startup_effects[e];
+            }
+        }
+        if (!ssr) {
+            return vk::Extent2D{1, 1};
+        }
+        const char* env = std::getenv("BB_SSR_SHADING_RATE");
+        const std::string_view text = env && env[0] ? env : "auto";
+        if (text == "2x2") {
+            return vk::Extent2D{2, 2};
+        }
+        if (text == "2x1") {
+            return vk::Extent2D{2, 1};
+        }
+        if (text == "1x2") {
+            return vk::Extent2D{1, 2};
+        }
+        if (text != "auto") {
+            return vk::Extent2D{1, 1};
+        }
+        int width = 1920, height = 1080;
+        const char* scene = std::getenv("BB_RENDER_RES");
+        if (scene && scene[0]) {
+            if (std::sscanf(scene, "%dx%d", &width, &height) != 2) {
+                width = 1920;
+                height = 1080;
+            }
+        } else if (settings.startup_upscaler != BbSettings::UpscalerOff &&
+                   settings.startup_output_res >= 0 &&
+                   settings.startup_output_res < BbSettings::OutputCount) {
+            const float scale = BbSettings::PresetScale(settings.startup_preset);
+            width = int(BbSettings::OutputWidths[settings.startup_output_res] / scale);
+            height = int(BbSettings::OutputHeights[settings.startup_output_res] / scale);
+        }
+        const double pixels = double(width) * double(height);
+        const vk::Extent2D chosen = pixels >= 6.0e6   ? vk::Extent2D{2, 2}
+                                    : pixels >= 3.0e6 ? vk::Extent2D{2, 1}
+                                                      : vk::Extent2D{1, 1};
+        if (chosen.width > 1) {
+            std::printf("Reflections (SSR): scene %dx%d, the reflection pass shades %ux%u pixel "
+                        "blocks once (BB_SSR_VRS=0: every pixel)\n",
+                        width, height, chosen.width, chosen.height);
+        }
+        return chosen;
+    }();
+    return rate;
+}
 
 static constexpr std::array LogicalStageToStageBit = {
     vk::ShaderStageFlagBits::eFragment,
@@ -71,6 +142,10 @@ struct GraphicsPipelineState {
     std::array<vk::SampleCountFlagBits, AmdGpu::NUM_COLOR_BUFFERS> color_samples{};
     vk::AttachmentSampleCountInfoAMD mixed_samples{};
     vk::PipelineRenderingCreateInfo pipeline_rendering_ci{};
+    /// The screen-space reflection pass shades blocks of pixels (ReflectionShadingRate): such a
+    /// pipeline is built whole (the fragment shading rate state is not part of the libraries).
+    bool coarse_shading = false;
+    vk::PipelineFragmentShadingRateStateCreateInfoKHR shading_rate_ci{};
     std::array<vk::PipelineColorBlendAttachmentState, AmdGpu::NUM_COLOR_BUFFERS> attachments{};
     vk::PipelineColorBlendStateCreateInfo color_blending{};
     // Required by spec unless VK_EXT_extended_dynamic_state3 is supported.
@@ -236,6 +311,27 @@ void BuildState(const Instance& instance, const GraphicsPipelineKey& key,
                                        ? st.depth_format
                                        : vk::Format::eUndefined,
     };
+
+    {
+        const Shader::Info* fragment = infos[u32(Shader::SwStage::Fragment)];
+        const vk::Extent2D rate = ReflectionShadingRate();
+        const u64 reflection = Game::ReflectionShader();
+        st.coarse_shading = instance.IsPipelineShadingRateEnabled() && fragment && reflection &&
+                            fragment->pgm_hash == reflection && (rate.width > 1 || rate.height > 1);
+        if (st.coarse_shading) {
+            st.shading_rate_ci = vk::PipelineFragmentShadingRateStateCreateInfoKHR{
+                .pNext = &st.pipeline_rendering_ci,
+                .fragmentSize = rate,
+                .combinerOps = std::array{vk::FragmentShadingRateCombinerOpKHR::eKeep,
+                                          vk::FragmentShadingRateCombinerOpKHR::eKeep},
+            };
+            static std::atomic_flag said = ATOMIC_FLAG_INIT;
+            if (!quiet && !said.test_and_set()) {
+                std::printf("Reflections (SSR): pass built with %ux%u blocks\n", rate.width,
+                            rate.height);
+            }
+        }
+    }
 
     // Port of Mrsuss60 0a71dd17 (shadPS4 c5dd8b8b): min/max blend factors zero/one on UNORM/sRGB
     // targets are rewritten to an equivalent ADD, for color and alpha. BB_BLEND_MINMAX_NORM=0
@@ -662,7 +758,7 @@ GraphicsPipeline::GraphicsPipeline(
 
     vk::UniquePipeline pipe;
     vk::Result result = vk::Result::eErrorUnknown;
-    if (gpl) {
+    if (gpl && !state.coarse_shading) {
         result = CreateFromLibraries(state, *gpl, pipe);
         if (result != vk::Result::eSuccess) {
             ++gpl->num_failures;
@@ -767,7 +863,8 @@ void GraphicsPipeline::FillSerializationSupport(
 vk::Result GraphicsPipeline::CreateMonolithic(GraphicsPipelineState& st, vk::UniquePipeline& out) {
     const auto shader_stages = StageInfos(instance, st, vk::ShaderStageFlagBits::eAll);
     const vk::GraphicsPipelineCreateInfo pipeline_info = {
-        .pNext = &st.pipeline_rendering_ci,
+        .pNext = st.coarse_shading ? static_cast<const void*>(&st.shading_rate_ci)
+                                   : static_cast<const void*>(&st.pipeline_rendering_ci),
         .stageCount = static_cast<u32>(shader_stages.size()),
         .pStages = shader_stages.data(),
         .pVertexInputState =

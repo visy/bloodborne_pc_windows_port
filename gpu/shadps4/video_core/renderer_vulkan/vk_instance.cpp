@@ -267,7 +267,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
         vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT,
         vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
-        vk::PhysicalDeviceFaultFeaturesEXT>();
+        vk::PhysicalDeviceFaultFeaturesEXT,
+        vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -470,6 +471,16 @@ bool Instance::CreateDevice() {
     if (compute_shader_derivatives) {
         compute_shader_derivatives_features =
             feature_chain.get<vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
+    }
+    // bbport: pipeline shading rates, only when the reflection pass asks for one
+    // (vk_graphics_pipeline.cpp ReflectionShadingRate); otherwise the extension stays off.
+    if (ReflectionShadingRateWanted()) {
+        pipeline_shading_rate =
+            feature_chain.get<vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>()
+                .pipelineFragmentShadingRate &&
+            add_extension(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME);
+        LOG_INFO(Render_Vulkan, "Reflection shading rate: {}",
+                 pipeline_shading_rate ? "available" : "not supported by this GPU");
     }
     shader_clock = add_extension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
     if (shader_clock) {
@@ -785,6 +796,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceAntiLagFeaturesAMD{
             .antiLag = true,
         },
+        vk::PhysicalDeviceFragmentShadingRateFeaturesKHR{
+            .pipelineFragmentShadingRate = true,
+        },
     };
     if (!device_fault) {
         device_chain.unlink<vk::PhysicalDeviceFaultFeaturesEXT>();
@@ -794,6 +808,9 @@ bool Instance::CreateDevice() {
     }
     if (!anti_lag_supported) {
         device_chain.unlink<vk::PhysicalDeviceAntiLagFeaturesAMD>();
+    }
+    if (!pipeline_shading_rate) {
+        device_chain.unlink<vk::PhysicalDeviceFragmentShadingRateFeaturesKHR>();
     }
 
     if (!custom_border_color) {
