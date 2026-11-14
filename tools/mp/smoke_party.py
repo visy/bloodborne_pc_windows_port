@@ -13265,7 +13265,8 @@ def check_kd(v, L):
     for i in (1, 2):
         mi = need(v, L, "kd guest %d in the Gaol (m28_00)" % i, i, r"map .*-> m28_00", hd)
         if mi is not None:
-            need(v, L, "kd guest %d beside the host" % i, i, r"placed beside the host", mi)
+            need(v, L, "kd guest %d beside the host" % i, i,
+                 r"placed beside the host|arrival warp skipped: the load itself put this guest .* beside the host", mi)
             # kidnapall: the waking scene for every member (user decision 2026-10-22); a guest that saw
             # it at guest 1's grab earlier in this run keeps only its flags now (seen once, as in the game)
             if L.find(i, r"remo 2800[01]010 mode", 0, hd) is None:
