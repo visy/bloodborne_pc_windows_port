@@ -1960,22 +1960,22 @@ void DefineAll() {
         "Выкл. по умолчанию. При смене вашей внешности остальные видят её сразу, без перезагрузки");
 
     // ---- My party: Loading (0.8.1 seam081): a smoother join and party travel (party_seam.cpp,
-    // research/reseam081.md 3). Each player's own, off by default; any glitch falls back to today's screens. ----
+    // research/reseam081.md 3). Each player's own, on by default since 0.8.2; any glitch falls back to today's screens. ----
     AddPage("My party: Loading", "Моя группа: загрузка",
             "Yours: shorter, smoother loading screens on party travel and joins (bbport)",
             "Ваше: короче и плавнее экраны загрузки при переходах и входе в группу (bbport)");
     own(&Values::party_parallel_follow, "Load with the host", "Загрузка с хостом",
-        "Off by default. On the host's party lamp travel your game loads at once, not after the host's load",
-        "Выкл. по умолчанию. При переходе хоста к фонарю ваша игра грузится сразу, а не после хоста");
+        "On by default. On the host's party lamp travel your game loads at once, not after the host's load",
+        "Вкл. по умолчанию. При переходе хоста к фонарю ваша игра грузится сразу, а не после хоста");
     own(&Values::party_settled_drop, "Hold screen till smooth", "Экран до плавности",
-        "Off by default. In a party the loading screen stays up until the world runs smoothly (at most 3 s)",
-        "Выкл. по умолчанию. В группе экран загрузки держится, пока мир не пойдёт плавно (до 3 с)");
+        "On by default. In a party the loading screen stays up until the world runs smoothly (at most 3 s)",
+        "Вкл. по умолчанию. В группе экран загрузки держится, пока мир не пойдёт плавно (до 3 с)");
     own(&Values::party_load_beside, "Arrive beside the host", "Сразу рядом с хостом",
-        "Off by default. A party travel's load puts you beside the host, no jump after the screen",
-        "Выкл. по умолчанию. Загрузка при переходе ставит вас рядом с хостом, без прыжка после экрана");
+        "On by default. A party travel's load puts you beside the host, no jump after the screen",
+        "Вкл. по умолчанию. Загрузка при переходе ставит вас рядом с хостом, без прыжка после экрана");
     own(&Values::party_quick_rejoin, "Rejoin in place", "Возврат на месте",
-        "Off by default. Party > Rejoin in the host's world: one loading screen beside the host, no trip home",
-        "Выкл. по умолчанию. Группа > Вернуться в мире хоста: один экран загрузки рядом с хостом");
+        "On by default. Party > Rejoin in the host's world: one loading screen beside the host, no trip home",
+        "Вкл. по умолчанию. Группа > Вернуться в мире хоста: один экран загрузки рядом с хостом");
 
     // 0.8.1 (CL-4a20f7): the opt-in direct path between Nightwatch VPN members (party/party_nwdirect.h); on this page
     // with the other connection-timing choices.

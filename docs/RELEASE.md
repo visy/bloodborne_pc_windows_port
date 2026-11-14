@@ -53,6 +53,8 @@ elcloneXYZ` with `git clone --no-tags`, then tags from the
 - [ ] `python tools/mp/smoke_party.py --build <repo> --only <groups of the late fixes>` on the **release** exe
       (a handful of phases is enough here; the full gate ran on master before, `docs/RELEASE_CHECKLIST.md` section 2).
       Look at the screenshots. `bbport.exe --version` says `X.Y.Z`.
+- [ ] One two-PC session with the seamless loading switches on (the 0.8.2 defaults: `party_parallel_follow`, `party_settled_drop`,
+      `party_load_beside`, `party_quick_rejoin`): lamp travel, a death follow, Party > Rejoin; look at both screens.
 
 ## 4. Merge and push
 
