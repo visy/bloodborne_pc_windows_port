@@ -5102,6 +5102,10 @@ void PartyDirector::ConfigureFromEnv() {
                 // host_pick=N: the altar's glyph box picks the N-th row of the pick list (Down, Enter)
                 chalice::SetTestPick(std::atoi(item.c_str() + 10));
                 Log("BB_PARTY_DIRECTOR_TEST: host_pick %d", std::atoi(item.c_str() + 10));
+            } else if (item.rfind("host_tabs=", 0) == 0) {
+                chalice::SetTestTabs(std::atoi(item.c_str() + 10));  // N tab switches before the pick
+            } else if (item.rfind("host_wait=", 0) == 0) {
+                chalice::SetTestWait(std::atoi(item.c_str() + 10));  // the test keys come N seconds after the box opened
             } else if (item.rfind("prompt=", 0) == 0) {
                 st.test.ap_prompt = item.substr(7);
             } else if (item.rfind("face=", 0) == 0) {
