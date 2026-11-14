@@ -179,20 +179,43 @@ class IniSync(unittest.TestCase):
         L = self.L
         self.assertIsNone(L.migrate_ini_rev(self.ini))  # no bbport.ini: nothing to do
         self.ini.write_text("party_rot=1\nupscaler=dlss\n", encoding="utf-8")
-        self.assertEqual(L.migrate_ini_rev(self.ini), {"settings_rev": "1", "party_rot": "0"})
+        self.assertEqual(L.migrate_ini_rev(self.ini), {"settings_rev": "2", "party_rot": "0"})
         ini = L.read_ini(self.ini)
-        self.assertEqual((ini["party_rot"], ini["settings_rev"], ini["upscaler"]), ("0", "1", "dlss"))
+        self.assertEqual((ini["party_rot"], ini["settings_rev"], ini["upscaler"]), ("0", "2", "dlss"))
         L.update_ini(self.ini, {"party_rot": "1"})  # turned on again by the player
         self.assertIsNone(L.migrate_ini_rev(self.ini))
         self.assertEqual(L.read_ini(self.ini)["party_rot"], "1")
-        # the game did it first (settings_rev=1 written): the launcher leaves it
-        self.ini.write_text("party_rot=1\nsettings_rev=1\n", encoding="utf-8")
+        # the game did it first (settings_rev=2 written): the launcher leaves it
+        self.ini.write_text("party_rot=1\nsettings_rev=2\n", encoding="utf-8")
         self.assertIsNone(L.migrate_ini_rev(self.ini))
         # a bbport.ini the launcher creates starts at the current revision
         self.ini.unlink()
         L.update_ini(self.ini, {"party_rot": "1"})
         self.assertIsNone(L.migrate_ini_rev(self.ini))
         self.assertEqual(L.read_ini(self.ini)["party_rot"], "1")
+
+    def test_settled_drop_migration_once(self):
+        """0.8.2 settings_rev 2: an old party_settled_drop=0 goes to 1 once; a v2 ini's 0 stays."""
+        L = self.L
+        self.ini.write_text("party_settled_drop=0\nsettings_rev=1\nupscaler=dlss\n", encoding="utf-8")
+        self.assertEqual(L.migrate_ini_rev(self.ini), {"settings_rev": "2", "party_settled_drop": "1"})
+        self.assertEqual(L.read_ini(self.ini)["party_settled_drop"], "1")
+        L.update_ini(self.ini, {"party_settled_drop": "0"})  # turned off again by the player
+        self.assertIsNone(L.migrate_ini_rev(self.ini))
+        self.assertEqual(L.read_ini(self.ini)["party_settled_drop"], "0")
+        # old ini with 1 (or no key): only the revision moves
+        self.ini.write_text("party_settled_drop=1\nsettings_rev=1\n", encoding="utf-8")
+        self.assertEqual(L.migrate_ini_rev(self.ini), {"settings_rev": "2"})
+        self.assertEqual(L.read_ini(self.ini)["party_settled_drop"], "1")
+        # the game did it first (v2 written): the launcher leaves a 0
+        self.ini.write_text("party_settled_drop=0\nsettings_rev=2\n", encoding="utf-8")
+        self.assertIsNone(L.migrate_ini_rev(self.ini))
+        # a fresh bbport.ini starts at v2 and keeps the setting
+        self.ini.unlink()
+        L.update_ini(self.ini, {"party_settled_drop": "0"})
+        self.assertIsNone(L.migrate_ini_rev(self.ini))
+        self.assertEqual(L.read_ini(self.ini)["party_settled_drop"], "0")
+        self.assertEqual(L.read_ini(self.ini)["settings_rev"], "2")
 
     def test_party_switches_migrate_once(self):
         L = self.L

@@ -2774,7 +2774,9 @@ def effect_patches_ini(names) -> dict:
 # (bbport_settings.h kSettingsRev; whichever starts first does them, once).
 #   1 (0.7.2): party_rot = 0 once (rot became off by default; 0.6.0 - 0.7.1 games wrote their default
 #              party_rot=1 at every settings save, chosen or not). A later explicit 1 stays.
-INI_SETTINGS_REV = 1
+#   2 (0.8.2): party_settled_drop = 1 once when it was saved as 0 (it became on by default; every save
+#              before wrote the explicit 0). A later explicit 0 stays.
+INI_SETTINGS_REV = 2
 
 
 def migrate_ini_rev(ini_path: Path):
@@ -2791,6 +2793,8 @@ def migrate_ini_rev(ini_path: Path):
     values = {"settings_rev": str(INI_SETTINGS_REV)}
     if rev < 1:
         values["party_rot"] = "0"
+    if rev < 2 and str(ini.get("party_settled_drop", "")).strip() == "0":
+        values["party_settled_drop"] = "1"
     update_ini(ini_path, values)
     return values
 

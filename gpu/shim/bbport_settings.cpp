@@ -499,10 +499,14 @@ void Load() {
         const int was = v.settings_rev.load();
         if (was < 1) v.party_rot = false;  // rev 1 (0.7.2): rot off by default, the old saved 1 was the old default
         v.settings_rev = kSettingsRev;
+        // rev 2 (0.8.2): Hold the screen until smooth became on by default; the saves before wrote
+        // an explicit 0 for everyone. Turn it on once; a later 0 stays.
+        if (was < 2 && !v.party_settled_drop) v.party_settled_drop = true;
         WriteBindingLines({{"party_rot", std::string(v.party_rot ? "1" : "0")},
+                           {"party_settled_drop", std::string(v.party_settled_drop ? "1" : "0")},
                            {"settings_rev", std::to_string(kSettingsRev)}});
-        std::printf("Settings: bbport.ini settings_rev %d -> %d (rot off by default: party_rot=0 once)\n", was,
-                    kSettingsRev);
+        std::printf("Settings: bbport.ini settings_rev %d -> %d (one-time defaults: party_rot, party_settled_drop)\n",
+                    was, kSettingsRev);
     }
     NoteFileTime();
     // Environment overrides (scripts, A/B tests).

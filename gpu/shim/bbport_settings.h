@@ -543,7 +543,7 @@ extern const PartySwitch PartySwitches[];
 ///   1 (0.7.2): party_rot = 0 once. Rot became off by default, and 0.6.0 - 0.7.1 games wrote their
 ///              default party_rot=1 at every settings save, chosen or not (coordinator decision
 ///              2026-10-22: turn it off once; a later explicit 1 stays).
-constexpr int kSettingsRev = 1;
+constexpr int kSettingsRev = 2;
 extern const int PartySwitchCount;
 /// party_guest_insight's ini / env values by index (parity, full, 0).
 const char* GuestInsightName(int mode);
