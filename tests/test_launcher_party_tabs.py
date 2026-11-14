@@ -124,7 +124,7 @@ class Window(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         cls.ini = root / "bbport.ini"
-        cls.ini.write_text("party_rot=1\nsettings_rev=1\nparty_toasts=0\n", encoding="utf-8")
+        cls.ini.write_text("party_rot=1\nsettings_rev=2\nparty_toasts=0\n", encoding="utf-8")
         cls.settings = root / "launcher_settings.json"
         cls.settings.write_text(json.dumps({"ini_sync_rev": 2, "check_updates": False}), encoding="utf-8")
         L = cls.L

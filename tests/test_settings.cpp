@@ -237,19 +237,43 @@ int main() {
         assert(!s.party_rot && s.settings_rev == BbSettings::kSettingsRev);
         std::string text = Read(path);
         assert(text.find("party_rot=0\n") != std::string::npos && text.find("party_rot=1") == std::string::npos &&
-               text.find("settings_rev=1\n") != std::string::npos && text.find("show_fps=1\n") != std::string::npos);
+               text.find("settings_rev=2\n") != std::string::npos && text.find("show_fps=1\n") != std::string::npos);
         s.party_rot = true;  // the player turns it on again
         BbSettings::Save();
         BbSettings::Load();
         assert(s.party_rot && s.settings_rev == BbSettings::kSettingsRev);  // once only
         text = Read(path);
-        assert(text.find("party_rot=1\n") != std::string::npos && text.find("settings_rev=1\n") != std::string::npos);
+        assert(text.find("party_rot=1\n") != std::string::npos && text.find("settings_rev=2\n") != std::string::npos);
         std::remove(path);
         BbSettings::Load();  // no file: nothing to migrate (rot as it was), the revision is current
         assert(s.party_rot && s.settings_rev == BbSettings::kSettingsRev);
         BbSettings::Save();
         BbSettings::Load();
-        assert(s.party_rot && Read(path).find("settings_rev=1\n") != std::string::npos);
+        assert(s.party_rot && Read(path).find("settings_rev=2\n") != std::string::npos);
+    }
+    // 0.8.2 settings_rev 2: Hold the screen until smooth is on by default; an old explicit 0 goes to 1
+    // once, a v2 file's 0 stays, an old 1 or a missing key stays on, a new file starts at v2.
+    {
+        const char v1_zero[] = "party_settled_drop=0\nsettings_rev=1\n";
+        assert(bb_test_write_file(path, v1_zero, sizeof(v1_zero) - 1) == 0);
+        BbSettings::Load();
+        assert(s.party_settled_drop && s.settings_rev == 2);
+        assert(Read(path).find("party_settled_drop=1\n") != std::string::npos);
+        s.party_settled_drop = false;  // the player turns it off again
+        BbSettings::Save();
+        BbSettings::Load();
+        assert(!s.party_settled_drop && Read(path).find("settings_rev=2\n") != std::string::npos);
+        const char none_zero[] = "party_settled_drop=0\n";  // no revision at all
+        assert(bb_test_write_file(path, none_zero, sizeof(none_zero) - 1) == 0);
+        BbSettings::Load();
+        assert(s.party_settled_drop);
+        const char v1_one[] = "party_settled_drop=1\nsettings_rev=1\n";
+        assert(bb_test_write_file(path, v1_one, sizeof(v1_one) - 1) == 0);
+        BbSettings::Load();
+        assert(s.party_settled_drop && s.settings_rev == 2);
+        std::remove(path);
+        BbSettings::Load();  // fresh: default on, current revision
+        assert(s.party_settled_drop && s.settings_rev == 2);
     }
     std::remove(path);
     std::puts("PASS: settings save keeps other keys, menu position, DHT rendezvous opt-in, poise clamp, 0.7.1 party switches, key binding lines, model detail -2 read as 0, 0.7.2 rot migration");
