@@ -24,6 +24,14 @@ namespace Vulkan {
 /// be). Logged once per kind ("image", "buffer"). From Supermedo/bloodborne_pc 44e7644.
 void NoteOverBudget(const char* what);
 
+/// bbport: the shading rate of the game's screen-space reflection pass (vk_graphics_pipeline.cpp);
+/// {1, 1} = every pixel.
+vk::Extent2D ReflectionShadingRate();
+inline bool ReflectionShadingRateWanted() {
+    const vk::Extent2D rate = ReflectionShadingRate();
+    return rate.width > 1 || rate.height > 1;
+}
+
 class Instance {
 public:
     explicit Instance(bool validation = false, bool crash_diagnostic = false);
@@ -189,6 +197,12 @@ public:
     }
 
     /// Returns true if VK_EXT_attachment_feedback_loop_layout is supported
+    /// bbport: a pipeline may shade blocks of pixels once (VK_KHR_fragment_shading_rate,
+    /// pipelineFragmentShadingRate); enabled only when the reflection pass asks for it.
+    bool IsPipelineShadingRateEnabled() const {
+        return pipeline_shading_rate;
+    }
+
     /// bbport: NVIDIA Reflex runs this session (chosen at start and supported; vk_reflex.h).
     bool IsReflexSupported() const {
         return reflex_supported;
@@ -665,6 +679,7 @@ private:
     bool image_2d_view_of_3d{};
     bool image_view_min_lod{};
     bool shader_clock{};
+    bool pipeline_shading_rate{};
     bool compute_shader_derivatives{};
     bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
     bool reflex_supported{};        // bbport: NVIDIA Reflex this session

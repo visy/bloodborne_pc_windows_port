@@ -40,6 +40,9 @@ struct Profile {
     /// A compute shader (GCN program hash) that only copies buffers, into memory the translator
     /// reads on the CPU: its stores go through to the game's memory; 0 = none known.
     std::uint64_t buffer_copy_shader = 0;
+    /// The fragment shader (GCN program hash) of the game's screen-space reflection pass
+    /// (bbport.ini effect_ssr); 0 = none known. The renderer may shade that pass coarser.
+    std::uint64_t reflection_shader = 0;
 };
 
 /// Chooses the profile for the game by its TITLE_ID (bbgpu_init). BB_GAME_PROFILE=none runs the
@@ -53,6 +56,12 @@ const Profile* Active();
 inline std::uint64_t BufferCopyShader() {
     const Profile* profile = Active();
     return profile ? profile->buffer_copy_shader : 0;
+}
+
+/// The active profile's screen-space reflection fragment shader, or 0.
+inline std::uint64_t ReflectionShader() {
+    const Profile* profile = Active();
+    return profile ? profile->reflection_shader : 0;
 }
 
 /// Whether guest_rip is in code the active profile knows to write per-frame data.

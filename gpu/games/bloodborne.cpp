@@ -46,6 +46,9 @@ extern const Profile BloodborneProfile = {
     .redzone_writers = RedzoneWriters,
     // The game's buffer-copy compute shader (not the export-stage copy shader).
     .buffer_copy_shader = 0xfefebf9f,
+    // The fragment shader of the screen-space reflection pass (effect_ssr), as a reference for the
+    // renderer's coarse shading of that pass. Found by Supermedo (bloodborne_pc 6085365d).
+    .reflection_shader = 0x6c2323c2,
 };
 
 } // namespace Game
