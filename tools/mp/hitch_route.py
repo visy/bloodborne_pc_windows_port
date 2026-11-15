@@ -18,7 +18,14 @@ in one game session (a hitch that is gone on the second pass was a first-use cos
 
 report: every frame over --ms from OUT/frames.csv (BB_FRAME_LOG) with the player's position at that time (the
 director's log_pos lines), the leg, and the "Stall probe:" line that covers it; hitches are grouped by place
-(4 m cells) across passes.
+(4 m cells) across passes. "arrival per load": the frames between the game's InGameStart and the loading screen's
+drop (under the screen when the settled drop holds it) and the 5 s after the drop (what the player sees).
+run --arrival-shots: screenshots right after every InGameStart and every settled drop (costs frames: not for
+numbers).
+
+  python tools/mp/hitch_route.py solo   --out DIR [--env K=V ...]
+A game without party mode (no BB_PARTY, no director): Cross through the pad file until the save is in the world,
+12 s there, out; prints the loading screen's seam lines and the long frames around them, with screenshots.
 """
 import argparse, bisect, csv, os, re, subprocess, sys, time
 from collections import defaultdict
@@ -87,8 +94,12 @@ def run(a):
         cmd += ["--env", e]
     (root / "pad0.txt").write_text("lx=128 ly=128\n")
     env = dict(os.environ, BB_MP_LEASE=str(secs + 300))
-    shooter = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(out / "shots"),
-                                "--tag", "hitch", "--every", "20", "--grey", "--seconds", str(secs)],
+    shots = [sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(out / "shots"),
+             "--tag", "hitch", "--every", "20", "--grey", "--seconds", str(secs)]
+    if a.arrival_shots:   # what is on screen in the arrival frames (each shot costs the game a frame copy: not for numbers)
+        shots += ["--repeat", "--watch", r"InGameStart: (the loading screen stays up until|loading screen dropped \(vanilla)=igs@0.1,0.4,0.8",
+                  "--watch", r"Party seam: loading screen dropped \((settled|cap)=drop@0.1,0.5,1.5"]
+    shooter = subprocess.Popen(shots,
                                stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
     try:
@@ -107,8 +118,75 @@ def run(a):
     report(a)
 
 
+def solo(a):
+    """A game WITHOUT party mode (no BB_PARTY, no director): Cross is pressed through the pad file until the save's
+    world is up (the title's Continue), then 12 s in the world and out. Shows what a solo player's load does with
+    the loading screen: the seam lines, the long frames around them, screenshots at InGameStart and at the drop."""
+    import threading
+    root = Path(a.root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    secs = 150
+    (root / "noreap").write_text(str(secs + 120))
+    p = root / "inst0" / "run.log"
+    start = (p.stat().st_ino, p.stat().st_size) if p.exists() else (None, 0)
+    igs = r"InGameStart: (the loading screen stays up|loading screen dropped)|Fast loading: load 1 "
+    cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "1", "--fresh-saves", "--timestamps",
+           "--idle", "0", "--seconds", str(secs), "--root", str(root), "--build", str(a.build), "--game", str(a.game),
+           "--fps", a.fps, "--vram", str(a.vram), "--reserve", "2", "--label", "hitch solo",
+           "--env", "BB_FRAME_STATS=1", "--env", "BB_FRAME_LOG=%s" % (out / "frames.csv"), "--env", "BB_STALL_PROBE=%d" % a.probe_ms,
+           "--env", "BB_PAD_FILE=%s" % (root / "pad{i}.txt"), "--until", igs, "--until-hold", "12"]
+    for e in a.env or []:
+        cmd += ["--env", e]
+    pad = root / "pad0.txt"
+    pad.write_text("lx=128 ly=128\n")
+    done = threading.Event()
+
+    def presser():   # Cross on / off every 0.4 s from 8 s in until the load's InGameStart is in the log
+        t0, on = time.time(), False
+        while not done.wait(0.4):
+            if time.time() - t0 < 8:
+                continue
+            try:
+                txt = p.read_text(errors="replace")[start[1]:] if p.exists() else ""
+            except OSError:
+                txt = ""
+            if re.search(igs, txt):
+                break
+            on = not on
+            pad.write_text("lx=128 ly=128%s\n" % (" cross" if on else ""))
+        pad.write_text("lx=128 ly=128\n")
+
+    th = threading.Thread(target=presser, daemon=True)
+    shooter = subprocess.Popen([sys.executable, str(HERE / "shot.py"), "--root", str(root), "--out", str(out / "shots"),
+                                "--tag", "solo", "--seconds", str(secs), "--repeat",
+                                "--watch", r"InGameStart: (the loading screen stays up until|loading screen dropped \(vanilla)=igs@0.1,0.4,0.8",
+                                "--watch", r"Party seam: loading screen dropped \((settled|cap)=drop@0.1,0.5,1.5"],
+                               stdout=open(out / "shot.log", "w"), stderr=subprocess.STDOUT)
+    th.start()
+    try:
+        r = subprocess.run(cmd, env=dict(os.environ, BB_MP_LEASE=str(secs + 120)), stdout=open(out / "harness.log", "w"),
+                           stderr=subprocess.STDOUT)
+    finally:
+        done.set()
+        shooter.terminate()
+    print("[hitch] solo harness exit %d" % r.returncode, flush=True)
+    if p.exists():
+        with open(p, "rb") as f:
+            f.seek(start[1] if os.fstat(f.fileno()).st_ino == start[0] else 0)
+            (out / "inst0.log").write_bytes(f.read())
+    try:
+        (root / "noreap").unlink()
+    except OSError:
+        pass
+    for line in (out / "inst0.log").read_text(errors="replace").splitlines():
+        if re.search(r"Party seam: (InGameStart|loading screen dropped)|\] Stall: |Fast loading: load|Texture pre-registration: o", line):
+            print(line[:230])
+
+
 TS = re.compile(r"^\[\+\s*(\d+(?:\.\d+)?)\]\s?(.*)$")
-POS = re.compile(r"pos area \w+ \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)")
+POS =re.compile(r"pos area \w+ \((-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\)")
 STEP = re.compile(r"test: travel step (\d+)/\d+: (\w+)")
 
 
@@ -226,13 +304,53 @@ def report(a):
             lines.append("  ALL %-5s %5.0f s: %5d frames, over 25 ms %3d, over 45 ms %3d, over 60 ms %3d, worst %6.1f ms; %5d images registered, %5d evicted"
                          % (name, tot[name + "s"], tot[name + "frames"], tot[name + "o25"], tot[name + "o45"], tot[name + "o60"],
                             tot[name + "worst"], tot[name + "reg"], tot[name + "ev"]))
+    # Arrival: per load, the frames between the game's InGameStart (the vanilla drop of the loading screen) and the
+    # drop that happened (a settled drop keeps the screen up: those frames are under it), and the 5 s after the
+    # drop (what the player sees).
+    arr, t0 = [], None
+    for line in log:
+        m = TS.match(line)
+        if not m:
+            continue
+        t, s = float(m.group(1)), m.group(2)
+        if "InGameStart: the loading screen stays up" in s:
+            t0 = t
+        elif "InGameStart: loading screen dropped (vanilla)" in s:
+            arr.append((t, t))
+            t0 = None
+        elif "loading screen dropped (" in s and t0 is not None:
+            arr.append((t0, t))
+            t0 = None
+    if arr:
+        lines.append("")
+        lines.append("arrival per load (held = InGameStart - 0.1 s .. the screen's drop; seen = the 5 s after the drop):")
+        tot = defaultdict(float)
+        for i, (a0, b0) in enumerate(arr):
+            parts = []
+            for name, lo, hi in (("held", a0 - 0.1, b0), ("seen", b0, b0 + 5.0)):
+                ms = sorted(f[1] for f in fr if lo < f[0] <= hi)
+                if not ms:
+                    parts.append("%s: -" % name)
+                    continue
+                over = lambda x: sum(1 for m_ in ms if m_ > x)  # noqa: E731
+                parts.append("%s %4.2f s: over 25 ms %2d, over 45 ms %2d, over 60 ms %2d, worst %6.1f ms"
+                             % (name, hi - lo, over(25), over(45), over(60), ms[-1]))
+                for k, x in (("o25", over(25)), ("o45", over(45)), ("o60", over(60)), ("s", hi - lo), ("n", 1)):
+                    tot[name + k] += x
+                tot[name + "worst"] = max(tot[name + "worst"], ms[-1])
+            lines.append("  load %d @%.1f s: screen up %4.0f ms past InGameStart; %s" % (i + 1, a0, (b0 - a0) * 1000.0, "; ".join(parts)))
+        for name in ("held", "seen"):
+            if tot[name + "n"]:
+                lines.append("  ALL %s %5.1f s (%d loads): over 25 ms %3d, over 45 ms %3d, over 60 ms %3d, worst %6.1f ms"
+                             % (name, tot[name + "s"], tot[name + "n"], tot[name + "o25"], tot[name + "o45"], tot[name + "o60"],
+                                tot[name + "worst"]))
     (out / "hitches.txt").write_text("\n".join(lines) + "\n")
-    print("\n".join(lines[-30:]))
+    print("\n".join(lines[-48:]))
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["run", "report", "chain"])
+    ap.add_argument("cmd", choices=["run", "report", "chain", "solo"])
     ap.add_argument("--out", default=str(AGENT_ROOT / "hitch" / "run"))
     ap.add_argument("--root", default=str(AGENT_ROOT / "hitchroot"))
     ap.add_argument("--build", default=str(REPO))
@@ -246,6 +364,8 @@ def main():
                     help="BB_VRAM_LIMIT_MB (the harness default 1792 keeps the texture collector under pressure, which players' cards are not)")
     ap.add_argument("--ms", type=float, default=45.0)
     ap.add_argument("--env", action="append")
+    ap.add_argument("--arrival-shots", action="store_true",
+                    help="run: screenshots 0.1 / 0.4 / 0.8 s after every InGameStart and 0.1 / 0.5 / 1.5 s after every settled drop")
     ap.add_argument("--stacks", action="store_true",
                     help="also BB_STALL_PROBE_DUMP=OUT/stacks.txt (for tools/party/hitch_stacks.py / hitch_classify.py)")
     a = ap.parse_args()
@@ -253,6 +373,8 @@ def main():
         print(chain(a.legs.split(","), a.passes, a.wait)[0])
     elif a.cmd == "run":
         run(a)
+    elif a.cmd == "solo":
+        solo(a)
     else:
         report(a)
 

@@ -111,6 +111,11 @@ std::size_t Take(Entry* out, std::size_t max, u32 now_frame, u32 quiet_frames) {
     return n;
 }
 
+std::size_t Queued() {
+    std::scoped_lock lk{g_mutex};
+    return g_queue.size();
+}
+
 bool LoadingScreenUp() {
     unsigned char requested = 0;
     return coop::Image() && coop::SafeGet(coop::Guest(kNowLoadingRequested), &requested) && requested != 0;
@@ -135,6 +140,10 @@ void Report() {
                 (unsigned long long)g_other_format.load(), (unsigned long long)g_dropped.load(),
                 (unsigned long long)g_registered.load(), (unsigned long long)(g_registered_bytes.load() >> 20),
                 (unsigned long long)g_already.load(), (unsigned long long)g_rejected.load(), queued);
+    // hitch082b: the protection changes so far and what the trap batches joined (BB_PROTECT_BATCH).
+    std::printf("Image trap batches: %llu run(s) set as %llu; %llu protection change(s), %llu page(s) in all\n",
+                (unsigned long long)BbStats::trap_batch_runs.load(), (unsigned long long)BbStats::trap_batch_joined.load(),
+                (unsigned long long)BbStats::protect_calls.load(), (unsigned long long)BbStats::protect_pages.load());
 }
 
 } // namespace BbTexPrereg

@@ -237,6 +237,8 @@ inline std::atomic<std::uint64_t> gpu_sys_us{0}, gpu_user_us{0}, gpu_invol_switc
 /// Protection faults (signals) taken by the GPU thread itself.
 inline std::atomic<std::uint64_t> gpu_signal_faults{0};
 /// Protection changes: calls and pages, those removing write access (TLB shootdowns) apart.
+/// hitch082b: image trap runs collected by PageManager's trap batches, and the joined runs they were set as.
+inline std::atomic<std::uint64_t> trap_batch_runs{0}, trap_batch_joined{0};
 inline std::atomic<std::uint64_t> protect_calls{0}, protect_pages{0}, protect_revoke_calls{0},
     protect_revoke_pages{0};
 } // namespace BbStats
