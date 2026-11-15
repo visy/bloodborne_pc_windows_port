@@ -2117,8 +2117,9 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
     timeBeginPeriod(1);
     if (!runtime_win_has_fsgsbase()) {
-        fprintf(stderr, "Info: this CPU lacks FSGSBASE (wrfsbase/rdfsbase): guest TLS reads go "
-                        "through the Windows TLS slot.\n");
+        fprintf(stderr, "Info: %s: guest TLS reads go through the Windows TLS slot.\n",
+                runtime_win_under_wine() ? "running under Wine / Proton, FS stays glibc's (BB_FSGSBASE=1 forces wrfsbase)"
+                                         : "this CPU lacks FSGSBASE (wrfsbase/rdfsbase)");
     }
     SYSTEM_INFO system_info; GetSystemInfo(&system_info); page_size = system_info.dwPageSize;
     AddVectoredExceptionHandler(1, win_veh_handler);
