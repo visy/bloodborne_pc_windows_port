@@ -337,3 +337,34 @@ def test_triage_queue_lists_new_bugs_whatever_the_auto_tag(tmp_path):
     c.update_bug(p, status="open")
     ids = {x["id"] for x in js(db, "vlad", "triage-queue")["bugs"]}
     assert {n, g, p} <= ids and d not in ids
+
+
+def test_dev_post_cli(tmp_path):
+    db = tmp_path / "c.db"
+    text = b"PR opened: fix/lamp-area-fallback https://github.com/vladtepes22/NightwatchCoop/pull/1"
+    assert run(db, "vlad", "dev-post", "--mention", "vladtepes22", stdin=text)[0] == 1   # visy only
+    rc, out = run(db, "visy", "dev-post", "--mention", "@VladTepes22", stdin=text)
+    assert rc == 0
+    q = json.loads(out)
+    assert q["channel"] == "development" and q["mention"] == "@VladTepes22"
+    c = cs.Clinic(db)
+    p = cli.clinic_devpost.pending(c)
+    assert len(p) == 1 and p[0]["mention"] == "vladtepes22" and p[0]["text"] == text.decode()
+    assert run(db, "visy", "dev-post", stdin=b"   ")[0] != 0                       # no text
+    assert run(db, "visy", "dev-post", stdin=b"hi @everyone")[0] != 0              # no mass ping
+    assert run(db, "visy", "dev-post", "--channel", "dev elop", stdin=b"x")[0] != 0  # bad channel
+    assert run(db, "visy", "dev-post", stdin=b"x" * 1801)[0] != 0                   # too long
+    rc, out = run(db, "visy", "dev-post", "--cancel", str(q["queued"]))
+    assert rc == 0 and cli.clinic_devpost.pending(c) == []
+    assert run(db, "visy", "dev-post", "--cancel", str(q["queued"]))[0] != 0        # not pending any more
+    rc, out = run(db, "visy", "dev-post", "--list")
+    assert rc == 0 and json.loads(out)["posts"][0]["cancelled"]
+
+
+def test_dev_post_resolve_id(tmp_path):
+    c = cs.Clinic(tmp_path / "c.db")
+    c.db.execute("INSERT INTO nw_messages (message_id, author_id, author_name, created) VALUES (1, 42, '.VladTepes22', 5)")
+    c.db.commit()
+    assert cli.clinic_devpost.resolve_id(c, "vladtepes22") == 42
+    assert cli.clinic_devpost.resolve_id(c, "@.vladtepes22") == 42
+    assert cli.clinic_devpost.resolve_id(c, "someoneelse") is None

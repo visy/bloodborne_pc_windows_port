@@ -29,6 +29,7 @@ import clinic_changes  # noqa: E402
 import clinic_health  # noqa: E402
 import clinic_vpn  # noqa: E402
 import clinic_vpnmaint  # noqa: E402
+import clinic_devpost  # noqa: E402
 import clinic_outbox  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_cl  # noqa: E402
@@ -36,7 +37,7 @@ from clinic_logic import mask_ips  # noqa: E402
 
 STATUSES = ("new", "open", "analysing", "waiting-logs", "fixed", "closed", "duplicate")
 CLOSED = ("fixed", "closed", "duplicate")
-VISY_ONLY = ("export", "confirm-export", "import", "vpn-maint")
+VISY_ONLY = ("export", "confirm-export", "import", "vpn-maint", "dev-post")
 DEVS_ONLY = ("vpn-profile", "staff-audit")  # how to enroll on the Nightwatch VPN (address + pin): only the two devs
 DEVS = ("visy", "vlad")
 BUG_RX = re.compile(r"^NW-[0-9a-f]{7}$")
@@ -93,6 +94,11 @@ def build_parser():
     s = add("staff-audit")   # who used the /clinic staff commands (names and ids only, no contents)
     s.add_argument("--since", type=float, default=0.0, help="unix time")
     s.add_argument("--limit", type=int, default=100)
+    s = add("dev-post")   # a message in a dev channel (clinic_devpost), text on stdin; --list / --cancel ID
+    s.add_argument("--channel", default="development")
+    s.add_argument("--mention", default="", help="Discord user name to ping, e.g. vladtepes22")
+    s.add_argument("--list", action="store_true")
+    s.add_argument("--cancel", type=int)
     s = add("vpn-maint")   # VPN maintenance announcement (clinic_vpnmaint): schedule | list | cancel ID | preview
     s.add_argument("action", choices=("schedule", "list", "cancel", "preview"))
     s.add_argument("id", nargs="?", type=int)
@@ -591,7 +597,7 @@ def _run(argv, who, out, db, stdin):
         raise CliError("--as wants a short lowercase name")
     a = build_parser().parse_args([_norm_ids(x) for x in argv])
     if not a.cmd:
-        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile, vpn-status, vpn-maint)")
+        raise CliError("no command (new, triage-queue, health, title, move, list, show, files, note, status, tag, assign, share, merge, nd, cl, vpn-profile, vpn-status, vpn-maint, dev-post)")
     if a.cmd in VISY_ONLY and who != "visy":
         raise CliError(f"{a.cmd} is for visy only", 1)
     if a.cmd in DEVS_ONLY and who not in DEVS:
@@ -777,6 +783,23 @@ def _run(argv, who, out, db, stdin):
     if a.cmd == "vpn-profile":
         out.write(_vpn_profile())
         return 0
+    if a.cmd == "dev-post":
+        try:
+            if a.list:
+                rs = clinic_devpost.rows(c)
+                for r in rs:
+                    for k in ("created", "sent", "cancelled"):
+                        r[k] = _iso(r[k]) if r[k] else None
+                return emit({"posts": rs})
+            if a.cancel is not None:
+                clinic_devpost.cancel(c, a.cancel)
+                return emit({"cancelled": a.cancel})
+            body = stdin.read().decode("utf-8", "replace") if stdin is not None else ""
+            pid = clinic_devpost.queue(c, a.channel, body, a.mention, who)
+            return emit({"queued": pid, "channel": a.channel, "mention": a.mention or None,
+                         "posted_by": "the bot, within a minute"})
+        except ValueError as e:
+            raise CliError(str(e))
     if a.cmd == "vpn-maint":
         try:
             if a.action == "schedule":

@@ -58,6 +58,7 @@ import clinic_discord as cd  # noqa: E402
 import clinic_health as hl  # noqa: E402
 import clinic_vpn  # noqa: E402
 import clinic_vpnmaint  # noqa: E402
+import clinic_devpost  # noqa: E402
 import clinic_logic  # noqa: E402
 import clinic_store  # noqa: E402
 import iosefka_voice as voice  # noqa: E402
@@ -1162,6 +1163,7 @@ def main():
                     first = False
                     hl.record_job(CTX.clinic, "sweep")
                 await send_outbox(CTX)
+                await post_devposts(guilds)
                 hl.record_job(CTX.clinic, "outbox")
                 if time.time() >= next_backup:
                     next_backup = time.time() + seconds_until(4)
@@ -1205,6 +1207,33 @@ def main():
                 print(f"health loop: {type(e).__name__}: {e}", flush=True)
             # a VPN maintenance pending (or just run): sample and post every minute instead of every 5
             await asyncio.sleep(60 if clinic_vpnmaint.soon(CTX.clinic) else 300)
+
+    async def post_devposts(guilds):
+        """visy's dev-channel messages (clinic_devpost): each pending row once, pinging only its named member."""
+        for p in clinic_devpost.pending(CTX.clinic):
+            place = next((c for g in guilds for c in g.text_channels if c.name == p["channel"]), None)
+            if place is None:
+                print(f"dev post {p['id']}: no channel #{p['channel']}", flush=True)
+                continue
+            text, am = p["text"], cd.AllowedMentions.none()
+            if p["mention"]:
+                g = place.guild
+                want = p["mention"].lstrip(".")
+                member = g.get_member_named(p["mention"]) or next(
+                    (m for m in g.members if (m.name or "").lower().lstrip(".") == want), None)
+                uid = member.id if member is not None else clinic_devpost.resolve_id(CTX.clinic, p["mention"])
+                if not uid:
+                    print(f"dev post {p['id']}: no member named {p['mention']}", flush=True)
+                    continue
+                text = f"<@{uid}> " + text
+                am = cd.AllowedMentions(users=[discord.Object(id=uid)], everyone=False, roles=False)
+            try:
+                await place.send(text[:DISCORD_LIMIT], allowed_mentions=am)
+            except Exception as e:
+                print(f"dev post {p['id']}: not posted ({type(e).__name__})", flush=True)
+                continue
+            clinic_devpost.mark_sent(CTX.clinic, p["id"])
+            print(f"dev post {p['id']}: posted in #{p['channel']}", flush=True)
 
     async def post_vpn_maint():
         """Announce / remind / back / cancel for a scheduled VPN maintenance (clinic_vpnmaint), in its channel."""
