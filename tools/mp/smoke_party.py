@@ -2944,7 +2944,8 @@ def phase_pr(only):
     return dict(
         name="pr", seconds=int(os.environ.get("PR_SECONDS", "300")), count=2, headless=0,
         env=env,
-        ienv=["0:BB_PARTY_PROGRESS_TEST_CLEAR=" + PR_FLAG, "0:BB_PARTY_DIRECTOR_TEST=god,log_state,host_flag=%s@%s" % (PR_FLAG, os.environ.get("PR_WAIT", "60")),
+        ienv=["0:BB_PARTY_PROGRESS_TEST_CLEAR=" + PR_FLAG + ",12100105",  # 12100105 (the Doll awake) alone makes the start Ready (ClassifyStart): cleared too
+              "0:BB_PARTY_DIRECTOR_TEST=god,log_state,host_flag=12100105@%s" % os.environ.get("PR_WAIT", "60"),
               "1:BB_PARTY_DIRECTOR_TEST=god"],
         args=["--stagger", os.environ.get("PR_STAGGER", "35")],   # the guest starts after the host's test clear of the flag (else the host reads ready for a second first)
         watch=["--watch", r"refused.*prologue=refused@1,2,6", "--watch", r"join: arrived [0-9.]+ m from the host=arrive@1,4"],
@@ -8873,7 +8874,9 @@ def phase_eh(only):
         "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01", "host_kill=2410202@1%m24_01",
     ] + ["host_press=0@20%m24_01!"] * 12)
     g1 = ",".join(
-        ["echoes=15000", "guest_chr=2410247@3%m24_01"] + ["guest_press=0x800@1.5%m24_01!"] * 2 +
+        ["echoes=15000", "guest_chr=2410247@14%m24_01"]  # after the host has killed the neighbours (host_kill steps ~40-46 s; 2410202 killed the guest first at 3 s)
+         + ["guest_press=0@1.5%m24_01!"] * 2 +   # no damaging press (0x800 killed the enemy before it killed the guest, 0.8.2 smoke)
+        
         ["guest_press=0@8%m24_01", "guest_press=0@8%m24_01"] +      # killed beside it (two draws only: three killed IT in eh r1 / r4)
         ["guest_move=%s@3%%m24_01" % RT_LAMP,                        # up at the lamp (invincible from here)
          "guest_press=0@20%m24_01!",                                 # the enemy takes the echoes
