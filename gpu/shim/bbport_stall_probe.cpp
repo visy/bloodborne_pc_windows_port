@@ -435,6 +435,72 @@ void SamplerMain() {
 
 } // namespace
 
+void NoteTsharp(const void* tsharp32, std::uint64_t address, unsigned width) {
+    static const int want = [] {
+        const char* e = std::getenv("BB_TSHARP_FIND");
+        return e ? std::atoi(e) : 0;
+    }();
+    if (want <= 0) return;
+#ifdef _WIN32
+    static const u64 t0 = NowNs();
+    static std::atomic<int> done{0};
+    static std::atomic<u64> seen[64];
+    if (width < 256 || NowNs() - t0 < 40'000'000'000ull || done.load() >= want) return;
+    for (auto& a : seen) {
+        u64 v = a.load(std::memory_order_relaxed);
+        if (v == address) return;
+        if (v == 0) {
+            if (a.compare_exchange_strong(v, address)) break;
+            if (v == address) return;
+        }
+    }
+    if (done.fetch_add(1) >= want) return;
+    unsigned char pat[32];
+    std::memcpy(pat, tsharp32, 32);
+    u64 q[4];
+    std::memcpy(q, pat, 32);
+    std::printf("T# find: texture %#llx width %u: %016llx %016llx %016llx %016llx\n", (unsigned long long)address,
+                width, (unsigned long long)q[0], (unsigned long long)q[1], (unsigned long long)q[2],
+                (unsigned long long)q[3]);
+    static unsigned char* buf = static_cast<unsigned char*>(std::malloc(1 << 20));
+    int hits = 0;
+    const HANDLE self = GetCurrentProcess();
+    for (u64 a = 0x800000000ull; a < 0x2000000000ull && hits < 24;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<const void*>(a), &mbi, sizeof mbi)) break;
+        const u64 base = reinterpret_cast<u64>(mbi.BaseAddress), end = base + mbi.RegionSize;
+        const DWORD prot = mbi.Protect & 0xFF;
+        if (mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) &&
+            (prot == PAGE_READWRITE || prot == PAGE_READONLY || prot == PAGE_WRITECOPY)) {
+            for (u64 at = std::max(a, base); at < end && hits < 24; at += (1 << 20) - 64) {
+                const SIZE_T n = SIZE_T(std::min<u64>(1 << 20, end - at));
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(self, reinterpret_cast<const void*>(at), buf, n, &got) || got < 16) continue;
+                for (SIZE_T i = 0; i + 16 <= got; i += 4) {
+                    if (std::memcmp(buf + i, pat, 16) != 0) continue;
+                    const u64 hit = at + i;
+                    std::printf("T# find:   hit at %#llx (full 32 bytes %s):", (unsigned long long)hit,
+                                i + 32 <= got && !std::memcmp(buf + i, pat, 32) ? "equal" : "differ");
+                    u64 w[20] = {};
+                    SIZE_T g2 = 0;
+                    ReadProcessMemory(self, reinterpret_cast<const void*>(hit - 96), w, sizeof w, &g2);
+                    for (int k = 0; k < 20; ++k) std::printf(" %s%llx", k == 12 ? "| " : "", (unsigned long long)w[k]);
+                    std::printf("\n");
+                    ++hits;
+                }
+            }
+        }
+        a = end;
+    }
+    std::printf("T# find: %d hit(s)\n", hits);
+    std::fflush(stdout);
+#else
+    (void)tsharp32;
+    (void)address;
+    (void)width;
+#endif
+}
+
 bool InstallFrameEnd() {
     if (g_end_hooked) return true;
     if (!coop::Image()) return false;
