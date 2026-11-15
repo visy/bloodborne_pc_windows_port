@@ -70,8 +70,17 @@ class TierTests(unittest.TestCase):
 
         def areas(names):
             return {smoke_tiers.area_of(g) for g, ps in smoke.GROUPS.items() if set(ps.split(",")) & set(names)}
-        self.assertEqual(areas(rel), areas(smoke.PHASES))
+        # an area whose phases all start 5+ games is nightly-only (HUGE_COUNT)
+        small = [n for n in smoke.PHASES if smoke.PHASES[n](set()).get("count", 3) < smoke_tiers.HUGE_COUNT]
+        self.assertEqual(areas(rel), areas(small))
         self.assertLessEqual(set(smoke.FAST_PHASES.split(",")), set(rel))
+
+    def test_release_has_no_phase_with_five_or_more_games(self):
+        import smoke_tiers
+        rel = smoke.tier_lists({})[0]
+        counts = {p: smoke.PHASES[p](set()).get("count", 3) for p in smoke.PHASES}
+        self.assertEqual([p for p in rel if counts[p] >= smoke_tiers.HUGE_COUNT], [])
+        self.assertLessEqual(max(counts[p] for p in rel), 4)  # fp (4 games) stays; the 4-player fourp area needs it
 
     def test_release_leaves_out_big_and_flaky_phases_unless_an_area_needs_them(self):
         import smoke_tiers

@@ -21,6 +21,8 @@ from pathlib import Path
 RELEASE_BUDGET_S = int(5.8 * 3600)   # under the 6 h cap with room for the spread of measured times
 FLAKY_EXPIRE_CLEAN = 3   # clean runs in a row after which a phase leaves the flaky set
 BIG_COUNT = 4            # a phase that starts this many games or more is nightly
+HUGE_COUNT = 5          # a phase that starts this many games or more is NEVER in release (32 GB RAM filled): the
+                         # area step and `must` do not bring it back; an area with only such phases is nightly-only
 
 
 def area_of(group):
@@ -63,9 +65,10 @@ def build(phases, groups, counts, times, flaky, skip, must=(), budget=RELEASE_BU
     gof = {p: [g for g, ps in groups.items() if p in ps.split(",")] for p in phases}
     aof = {p: {area_of(g) for g in gof[p]} for p in phases}
     big = {p for p in phases if counts.get(p, 3) >= BIG_COUNT}
+    huge = {p for p in phases if counts.get(p, 3) >= HUGE_COUNT}
     out = set(big) | set(flaky) | set(skip)
     pool = [p for p in phases if p not in out]
-    chosen = [p for p in phases if p in set(must)]
+    chosen = [p for p in phases if p in set(must) and p not in huge]
     areas = set().union(*[aof[p] for p in chosen]) if chosen else set()
     grps = {g for p in chosen for g in gof[p]}
     # 1. every area: the cheapest stable phase of it (an area with only nightly phases gets its cheapest one back,
@@ -74,7 +77,9 @@ def build(phases, groups, counts, times, flaky, skip, must=(), budget=RELEASE_BU
     for a in sorted(all_areas):
         if a in areas:
             continue
-        mem = [p for p in phases if a in aof[p]]
+        mem = [p for p in phases if a in aof[p] and p not in huge]
+        if not mem:
+            continue
         stable = [p for p in mem if p in pool]
         best = min(stable or mem, key=lambda p: (p in out, t[p], phases.index(p)))
         if best not in chosen:
