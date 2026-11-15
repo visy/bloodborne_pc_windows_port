@@ -130,6 +130,27 @@ int main() {
         assert(f.TickFramesAgo(15) == 9000);
     }
 
+    // hitch082: the cache cap is compared with the cached textures, the device usage with the
+    // device's own marks; the higher level wins.
+    {
+        const Marks device = MarksFor(7000 * MiB); // an 8 GB card
+        const Marks cap = MarksFor(1536 * MiB);
+        // 2.2 GiB of device memory with 0.5 GiB of textures in it: nothing to collect (before:
+        // the device usage against the cap = Over, every frame).
+        assert(LevelFor(2200 * MiB, cap) == Level::Over);
+        assert(LevelWithCap(2200 * MiB, device, 500 * MiB, cap) == Level::None);
+        // The textures past the cap's marks: the cap's levels.
+        assert(LevelWithCap(2200 * MiB, device, cap.trigger, cap) == Level::Idle);
+        assert(LevelWithCap(2200 * MiB, device, cap.soft, cap) == Level::Soft);
+        assert(LevelWithCap(2200 * MiB, device, cap.hard, cap) == Level::Hard);
+        assert(LevelWithCap(2200 * MiB, device, cap.budget, cap) == Level::Over);
+        // Real VRAM pressure still counts, whatever the textures hold.
+        assert(LevelWithCap(device.hard, device, 100 * MiB, cap) == Level::Hard);
+        assert(LevelWithCap(device.budget, device, cap.soft, cap) == Level::Over);
+        // No cap (a small card, BB_GC_BUDGET_CAP=0): the device level alone.
+        assert(LevelWithCap(2200 * MiB, device, 5000 * MiB, Marks{}) == Level::None);
+    }
+
     std::printf("gc-policy-test: ok\n");
     return 0;
 }

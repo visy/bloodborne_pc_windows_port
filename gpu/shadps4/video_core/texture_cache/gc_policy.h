@@ -83,6 +83,26 @@ constexpr Level LevelFor(u64 used, const Marks& m) {
     return used >= m.soft ? Level::Soft : Level::Idle;
 }
 
+/// hitch082: the level with the cache cap (BB_GC_BUDGET_CAP_MB, leak081c). The cap exists to stop
+/// the texture cache growing by an area's stale textures on a card whose own marks never fire; it
+/// was applied to the budget the DEVICE usage is compared with. That usage holds everything we
+/// allocate (the VRAM copies of the game's memory, buffers, render and upscaler targets, the
+/// swapchain: 1.7-2.5 GiB on the Central Yharnam route with only ~0.5 GiB of textures in it), so
+/// the usage sat above the 1.5 GiB cap for good, the level was Over in 97 % of the frames and the
+/// Over rule (everything not used in the last 8 frames goes) ran all the time: 40-140 textures a
+/// second were freed and made again as soon as the camera turned back to them, hundreds within one
+/// frame at fixed places (a doorway, a corner). The cap is a limit on the textures, so it is
+/// compared with the textures: the device usage against the device's marks, the cached image
+/// bytes against the cap's marks, the higher level wins. cap.budget == 0: no cap.
+constexpr Level LevelWithCap(u64 device_used, const Marks& device, u64 image_bytes, const Marks& cap) {
+    const Level a = LevelFor(device_used, device);
+    if (cap.budget == 0) {
+        return a;
+    }
+    const Level b = LevelFor(image_bytes, cap);
+    return a > b ? a : b;
+}
+
 struct Rule {
     u32 idle_seconds;     ///< unused for at least this long (wall clock)
     u32 protect_frames;   ///< and not used in this many last frames
