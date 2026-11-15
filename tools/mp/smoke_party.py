@@ -8874,7 +8874,8 @@ def phase_eh(only):
         "host_kill=2410249@3%m24_01", "host_kill=2410250@1%m24_01", "host_kill=2410202@1%m24_01",
     ] + ["host_press=0@20%m24_01!"] * 12)
     g1 = ",".join(
-        ["echoes=15000", "guest_chr=2410247@3%m24_01"] + ["guest_press=0@1.5%m24_01!"] * 2 +   # no damaging press (0x800 killed the enemy before it killed the guest, 0.8.2 smoke)
+        ["echoes=15000", "guest_chr=2410247@14%m24_01"]  # after the host has killed the neighbours (host_kill steps ~40-46 s; 2410202 killed the guest first at 3 s)
+         + ["guest_press=0@1.5%m24_01!"] * 2 +   # no damaging press (0x800 killed the enemy before it killed the guest, 0.8.2 smoke)
         
         ["guest_press=0@8%m24_01", "guest_press=0@8%m24_01"] +      # killed beside it (two draws only: three killed IT in eh r1 / r4)
         ["guest_move=%s@3%%m24_01" % RT_LAMP,                        # up at the lamp (invincible from here)
