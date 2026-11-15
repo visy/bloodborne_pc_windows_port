@@ -160,12 +160,32 @@ void runtime_win_set_tcb(void *tcb) { TlsSetValue(runtime_win_tls_slot(), tcb); 
  * Mrsuss60/bloodborne_pc_windows_port 336bacc). Cached: asked on every guest stack switch.
  * `used`: probe.c also calls it from inline asm, which LTO does not see (GCC 16 discarded it:
  * "defined in discarded section" when linking the release build). */
+/* Running under Wine / Proton: ntdll exports wine_get_version. */
+int runtime_win_under_wine(void) {
+    static volatile int under_wine = -1;
+    int v = under_wine;
+    if (v < 0) {
+        HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+        v = nt && GetProcAddress(nt, "wine_get_version") ? 1 : 0;
+        under_wine = v;
+    }
+    return v;
+}
+
+/* Under Wine on Linux FS is not free: glibc keeps its thread block there, and Wine's unix side (every
+ * signal handler, so every fault the engine takes) reads it. A wrfsbase to the guest TCB made the
+ * first fault kill the process (SIGSEGV in ntdll.so before any crash report). The guest's own
+ * `mov rax, fs:[0]` is rewritten to the TEB TLS slot by the loader, so under Wine the TLS-slot path is used
+ * (as on a CPU without FSGSBASE). BB_FSGSBASE=1 forces the wrfsbase path, =0 forces it off anywhere. */
 __attribute__((used)) int runtime_win_has_fsgsbase(void) {
     static volatile int has_fsgsbase = -1;
     int v = has_fsgsbase;
     if (v < 0) {
         unsigned a = 0, b = 0, c = 0, d = 0;
         v = __get_cpuid_count(7, 0, &a, &b, &c, &d) && (b & 1) ? 1 : 0;
+        const char *force = getenv("BB_FSGSBASE");
+        if (force && (force[0] == '0' || force[0] == '1')) v = force[0] == '1' ? v : 0;
+        else if (v && runtime_win_under_wine()) v = 0;
         has_fsgsbase = v;
     }
     return v;
