@@ -28,14 +28,15 @@ TITLE_TO_PARTY = "~down@New Game/cross/!~mark=page@Host address"
 
 
 def to_party_page():
-    """The in-world walk from the Options grid to System > Party: Right, Right, Cross (System), then
-    Up from the top (wrapping to the bottom: Exit Game, Network, Brightness, then the port's pages
-    after Party, read from bbport_game_menu_pages.cpp so a new page does not break the walks), Cross."""
+    """The in-world walk from the Options grid to System > Party Settings > Party: Right, Right, Cross
+    (System: Game Settings, Party Settings, Exit Game), Up, Up from the top (wrapping: Exit Game, then
+    Party Settings), Cross, then Cross on the list's first item, Party (the party pages are the ones with
+    "party" in their name, in the order of bbport_game_menu_pages.cpp: read from there)."""
     import re as _re
     src = (REPO / "gpu" / "shim" / "bbport_game_menu_pages.cpp").read_text(encoding="utf-8", errors="replace")
-    pages = _re.findall(r'AddPage\("([^"]+)"', src)
-    after = len(pages) - pages.index("Party") - 1
-    return "options/right/right/cross/" + "/".join(["up"] * (3 + after + 1)) + "/cross"
+    pages = [p for p in _re.findall(r'AddPage\("([^"]+)"', src) if "party" in p.lower()]
+    assert pages and pages[0] == "Party", pages
+    return "options/right/right/cross/up/up/cross/cross"
 
 
 def scripts(phase, port0):
@@ -83,8 +84,8 @@ def main():
         host, guest = ["-", "-"], ["-", "-"]
     host = [("title 5 " + l) if l != "-" else l for l in host]
     guest = [("title 5 " + l) if l != "-" else l for l in guest]
-    # The party process after the restart: an in-world walk (Options > System > Party ...).
-    # {PARTY} in a walk: Options > System > Party (to_party_page).
+    # The party process after the restart: an in-world walk (Options > System > Party Settings > Party ...).
+    # {PARTY} in a walk: Options > System > Party Settings > Party (to_party_page).
     a.host_world = a.host_world.replace("{PARTY}", to_party_page())
     a.guest_world = a.guest_world.replace("{PARTY}", to_party_page())
     if a.host_world:

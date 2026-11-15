@@ -295,7 +295,7 @@ class PingsSettings(unittest.TestCase):
             self.assertFalse(self.L.ini_flag(ini, "party_pings"))
             self.assertTrue(self.L.ini_flag(ini, "party_through_walls", False))
         src = (Path(self.L.__file__).read_text(encoding="utf-8"))
-        self.assertIn("System > My party: Display", src)
+        self.assertIn("System > Party Settings > My party: Display", src)
 
 
 class FriendlyFireSetting(unittest.TestCase):
@@ -318,7 +318,7 @@ class FriendlyFireSetting(unittest.TestCase):
             self.L.update_ini(ini, {"party_friendly_fire": "0"})
             self.assertFalse(self.L.ini_flag(ini, "party_friendly_fire", False))
         src = Path(self.L.__file__).read_text(encoding="utf-8")
-        self.assertIn("System > Party rules: PvP & lamps", src)
+        self.assertIn("System > Party Settings > Party rules: PvP & lamps", src)
         # the host's rule: a row of the Party Rules tab
         self.assertIn('("check", "party_friendly_fire", "Friendly fire / PvP",', src)
 

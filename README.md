@@ -59,7 +59,7 @@ Direct connection, your single-player save is never touched. Everyone needs the 
 
 | | |
 |---|---|
-| Host | Title screen, **Party**, **New party game**; send the party code (*System > Party > Copy Internet code*) |
+| Host | Title screen, **Party**, **New party game**; send the party code (*System > Party Settings > Party > Copy Internet code*) |
 | Guest | Title screen, **Party**, paste the code, **Join party game** (after the host is running) |
 | Later | **Continue party game**: code and password are remembered |
 | Network | Host needs port 9307 UDP + TCP (UPnP is automatic); behind CGNAT use a VPN (Radmin, Tailscale, ZeroTier) |

@@ -103,7 +103,7 @@ class Tables(unittest.TestCase):
                     continue  # launch options, not in the game's menus
                 tip = row[4] if row[0] == "combo" else row[3]
                 self.assertIn(prefix + title, pages, (title, row[1]))
-                self.assertIn("System > " + prefix + title, tip, row[1])
+                self.assertIn("System > Party Settings > " + prefix + title, tip, row[1])
 
     def test_no_dialog_any_more(self):
         src = (ROOT / "launcher.py").read_text(encoding="utf-8")

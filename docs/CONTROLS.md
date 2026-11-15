@@ -5,7 +5,7 @@ Back to the [README](../README.md). All settings: [SETTINGS.md](SETTINGS.md).
 Gamepads work out of the box. The keyboard always works too, also next to a connected gamepad.
 There are two keyboard layouts: the **classic layout** (keyboard only, camera on IJKL) and
 **mouse & keyboard mode** (mouse camera and attacks; turn it on in the launcher's *Input & Audio*
-tab or *System > Mouse & keyboard* in game).
+tab or *System > Game Settings > Mouse & keyboard* in game).
 
 | Action | Gamepad | Classic keyboard | Mouse & keyboard mode |
 |---|---|---|---|
@@ -34,7 +34,7 @@ In mouse & keyboard mode the side buttons are L1 (`X1`) and R2 (`X2`).
 
 **Button prompts** follow the device you used last: your keys and mouse buttons, Xbox letters or
 Nintendo letters (PlayStation pads keep the game's icons). Launcher *Input & Audio > Button
-prompts* (or *System > Mouse & keyboard* in game) picks a set, e.g. *Nintendo* for an 8BitDo pad
+prompts* (or *System > Game Settings > Mouse & keyboard* in game) picks a set, e.g. *Nintendo* for an 8BitDo pad
 in X-input mode; what each button does never changes.
 
 Mouse sensitivity, free camera, debug menu and more: [docs/SETTINGS.md](SETTINGS.md).

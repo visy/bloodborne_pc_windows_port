@@ -40,7 +40,7 @@ The static FPS++ path (`BB_FRAME_HOOKS=0`) gets only the wind stub; the blink, w
 |---|---|
 | `live_fps` (bbport.ini), `BB_LIVE_FPS` (wins) | the live clock on / off; read at start by `run.bat` -> `scripts/patches.py` (`live_fps_wanted`) and the game (`LiveWanted`), which must agree. Never at `BB_FPS=30` or `BB_FPS_PATCH=0` |
 | `BB_FPS`, `BB_FPS_LIMIT` | the starting target (60, 90, uncap, or uncap + limit N for 120 / 144); the launcher's *Frame rate target* now offers 120 and 144 this way |
-| `target_fps` (bbport.ini, 30..239, `uncap`) | the target, changed live in System > Live FPS |
+| `target_fps` (bbport.ini, 30..239, `uncap`) | the target, changed live in System > Game Settings > Live FPS |
 | `max_dt_hz` / `BB_MAX_DT_HZ` | the physics step's upper clamp (default 30: 1/30 s, as the game) |
 | Launcher | Graphics > Frame rate > *Live FPS clock (experimental)*; the Performance Patch is greyed out and off while it is on |
 | System menu | *Live FPS*: *Live FPS clock* (after a restart), *Target frame rate* (at once) |
