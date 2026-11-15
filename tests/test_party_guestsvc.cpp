@@ -100,6 +100,8 @@ int main() {
     // Headstones (lamp part).
     assert(HeadstoneTalk(210000) && HeadstoneTalk(210003) && HeadstoneTalk(210721));
     assert(!HeadstoneTalk(210004) && !HeadstoneTalk(210720) && !HeadstoneTalk(210304));
+    assert(GuestHeadstoneOverride(true, 210721) && GuestHeadstoneOverride(true, 210002));
+    assert(!GuestHeadstoneOverride(false, 210721) && !GuestHeadstoneOverride(true, 210720));
     assert(LampTalk(241000) && LampTalk(241003) && LampTalk(210001) && LampTalk(361002) && LampTalk(242000));
     assert(LampLitFlagAllowed(12417830) && LampLitFlagAllowed(12417831) && LampLitFlagAllowed(72410201));
     assert(!LampLitFlagAllowed(12417820) && !LampLitFlagAllowed(12417832) && !LampLitFlagAllowed(12416830) &&

@@ -95,6 +95,8 @@ bool GehrmanLastEvent(bool f1028, bool f1029, bool f1030);
 /// Dream headstones and warp menus whose multiplayer / client tests the lamp part lifts:
 /// 210000-210003 (headstones), 210721 (warp menu with StartWarpMenuInit).
 bool HeadstoneTalk(std::uint32_t talk);
+/// The guest's IsClientPlayer override for a headstone: the party lamps on and a headstone talk (the DLC's t210721 too).
+bool GuestHeadstoneOverride(bool lamps_on, std::uint32_t talk);
 /// Lamp talk scripts: tAAB000-tAAB003 of a map (m24_01 -> t241000..t241003; the Dream's are its
 /// headstones t210000..t210003). Their talk tests IsMultiplayerInProgress / IsClientPlayer keep a
 /// lamp shut while a session is up; the party lifts them (host: party mode, guest: BB_PARTY_GUEST_LAMPS).

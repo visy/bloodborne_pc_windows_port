@@ -99,6 +99,10 @@ bool HeadstoneTalk(std::uint32_t talk) {
     return (talk >= 210000 && talk <= 210003) || talk == 210721;
 }
 
+bool GuestHeadstoneOverride(bool lamps_on, std::uint32_t talk) {
+    return lamps_on && HeadstoneTalk(talk);
+}
+
 bool LampTalk(std::uint32_t talk) {
     const std::uint32_t map = talk / 1000;  // area * 10 + block
     return map >= 210 && map <= 369 && map % 10 <= 2 && talk % 1000 <= 3;
@@ -540,12 +544,12 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // The talk script id (t210304 -> 210304; the case-19 environment is valid here: the game
     // just read +0x25).
     const std::uint32_t talk = *reinterpret_cast<const std::uint32_t*>(env + 0x10);
-    // Headstones (t210000-t210003) on a guest with the party lamps on: their warp list comes from
+    // Headstones (t210000-t210003 and the DLC t210721) on a guest with the party lamps on: their warp list comes from
     // the lamp flags of the host-world overlay, which the host-world mirror (party_progress) now
     // fills (before it, choosing an area crashed the guest: the list indexed past its end). The
     // choice sets the lamp's flag; m21's event 12107000 (client end skipped, LampSkipRules) warps,
     // which becomes the guest's lamp request to the host (the party follows the host's warp).
-    const bool headstone = g_lamps.load(std::memory_order_relaxed) && talk >= 210000 && talk <= 210003;
+    const bool headstone = GuestHeadstoneOverride(g_lamps.load(std::memory_order_relaxed), talk);
     const bool gehrman = talk == kGehrmanTalk && g_gehrman_talk.load(std::memory_order_relaxed);
     if (!headstone && !gehrman && !GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
