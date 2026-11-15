@@ -54,6 +54,15 @@ public:
     template <bool track, bool is_read = false>
     void UpdatePageWatchersForRegion(VAddr base_addr, RegionBits& mask) const;
 
+    /// bbport hitch082b: between Begin and End the calling thread's new write watches of
+    /// UpdatePageWatchers<true> (the pages under images tracked for the first time; their image
+    /// traps too, where those are in use) are collected instead of protected one image at a
+    /// time; End protects them over the sorted, joined page runs: one protection change per run
+    /// of neighbouring images instead of one per image. The caller reads no image contents in
+    /// between (a write there is not seen until End) and holds the texture cache's mutex.
+    void BeginTrapBatch() const;
+    void EndTrapBatch() const;
+
     /// Returns page aligned address.
     static constexpr VAddr GetPageAddr(VAddr addr) {
         return Common::AlignDown(addr, PM_PAGE_SIZE);

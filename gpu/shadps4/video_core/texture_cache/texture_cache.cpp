@@ -1451,6 +1451,38 @@ void TextureCache::TrackImage(ImageId image_id) {
     image.tail_hash = 0;
 }
 
+bool TextureCache::TrackBatching() {
+    // Off by default: measured (research/hitch082.md 10.5), it joins the runs about 2:1 but
+    // texture tracking is under 1 % of the protection changes of a session (the per-frame tracking of
+    // buffers is the rest), so no frame got shorter. Kept for the buffer side.
+    static const bool batch = [] {
+        const char* env = std::getenv("BB_PROTECT_BATCH");
+        return env && env[0] == '1';
+    }();
+    return batch;
+}
+
+void TextureCache::TrackImages(std::span<const ImageId> image_ids) {
+    if (!TrackBatching() || image_ids.size() < 2) {
+        return;
+    }
+    // The mutex is held for the tracking only (a game thread's write fault waits for it).
+    // Nothing reads the images' bytes before the protections are set. An image with edge hashes
+    // compares them in TrackImage: left to UpdateImage.
+    std::scoped_lock lock{mutex};
+    tracker.BeginTrapBatch();
+    for (const ImageId image_id : image_ids) {
+        if (!image_id || !slot_images.is_allocated(image_id)) {
+            continue; // replaced since the caller found it
+        }
+        Image& image = slot_images[image_id];
+        if (!image.IsTracked() && image.head_hash == 0 && image.tail_hash == 0) {
+            TrackImage(image_id);
+        }
+    }
+    tracker.EndTrapBatch();
+}
+
 void TextureCache::TrackImageHead(ImageId image_id) {
     auto& image = slot_images[image_id];
     if (!(image.flags & ImageFlagBits::Registered)) {
