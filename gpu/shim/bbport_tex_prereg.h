@@ -37,6 +37,9 @@ bool Enabled();
 /// (the game may still be filling a texture it just made), oldest first. Returns how many.
 std::size_t Take(Entry* out, std::size_t max, std::uint32_t now_frame, std::uint32_t quiet_frames);
 
+/// Descriptors in the queue (due or not).
+std::size_t Queued();
+
 /// The game asked for its loading screen (NowLoading requested, 0x556286b).
 bool LoadingScreenUp();
 

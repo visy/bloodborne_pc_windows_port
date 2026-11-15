@@ -3529,11 +3529,14 @@ void Rasterizer::PreregisterTextures(u32 frame) {
     const u64 budget = loading ? (256ull << 20) : world_budget;
     u64 used = 0, registered = 0, registered_bytes = 0, already = 0, rejected = 0;
     BbTexPrereg::Entry batch[32];
+    boost::container::small_vector<VideoCore::ImageId, 32> update_ids;
+    const bool track_batching = VideoCore::TextureCache::TrackBatching();
     while (used < budget) {
         const std::size_t n = BbTexPrereg::Take(batch, std::size(batch), frame, quiet);
         if (n == 0) {
             break;
         }
+        update_ids.clear();
         for (std::size_t i = 0; i < n; ++i) {
             AmdGpu::Image tsharp;
             static_assert(sizeof(tsharp) == sizeof(batch[i].sharp));
@@ -3562,10 +3565,24 @@ void Rasterizer::PreregisterTextures(u32 frame) {
                 ++already;
                 continue;
             }
-            texture_cache.UpdateImage(image_id);
+            // hitch082b (BB_PROTECT_BATCH=1 only): the batch's textures are tracked together
+            // (neighbours in memory: one protection change for the run), then updated one by
+            // one. A later FindImage of this batch may have replaced an earlier image: ids
+            // that are gone are skipped. Without it: updated at once, as before.
+            if (track_batching) {
+                update_ids.push_back(image_id);
+            } else {
+                texture_cache.UpdateImage(image_id);
+            }
             ++registered;
             registered_bytes += desc.info.guest_size;
             used += desc.info.guest_size;
+        }
+        texture_cache.TrackImages({update_ids.data(), update_ids.size()});
+        for (const VideoCore::ImageId image_id : update_ids) {
+            if (texture_cache.IsAllocated(image_id)) {
+                texture_cache.UpdateImage(image_id);
+            }
         }
     }
     if (registered | already | rejected) {
@@ -3788,6 +3805,26 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         }
 
         image_descriptor_array_sizes.push_back(num_bindings);
+    }
+
+    // bbport hitch082b: the draw's textures that are not tracked yet (first drawn here) get their
+    // page protections together (TextureCache::TrackImages); FindTexture's UpdateImage below
+    // then only uploads them.
+    if (!on_helper && image_bindings.size() > 1 && VideoCore::TextureCache::TrackBatching()) {
+        u32 untracked = 0;
+        for (const auto& [image_id, desc_ptr] : image_bindings) {
+            untracked += image_id && texture_cache.IsUntracked(image_id);
+        }
+        if (untracked > 1) {
+            boost::container::small_vector<VideoCore::ImageId, 32> track_ids;
+            for (const auto& [image_id, desc_ptr] : image_bindings) {
+                if (image_id && texture_cache.IsUntracked(image_id) &&
+                    !texture_cache.GetImage(image_id).binding.needs_rebind) {
+                    track_ids.push_back(image_id);
+                }
+            }
+            texture_cache.TrackImages({track_ids.data(), track_ids.size()});
+        }
     }
 
     // Second pass to re-bind images that were updated after binding

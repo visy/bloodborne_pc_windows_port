@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <boost/container/small_vector.hpp>
 #include <queue>
+#include <span>
 #include <vector>
 #include <tsl/robin_map.h>
 
@@ -186,6 +187,27 @@ public:
         WatchImage(image, "update image (slow path)");
         TouchImage(image);
         RefreshImage(image);
+    }
+
+    /// bbport hitch082b: the images of the list no page of which is tracked yet (new ones: the
+    /// textures of one draw, a batch of pre-registered ones) are tracked together, their page
+    /// protections set in one pass over their sorted, joined page runs
+    /// (PageManager::BeginTrapBatch): neighbouring textures (a texture file's are loaded one
+    /// after another) share one protection change instead of one each. Nothing is read or
+    /// uploaded here: UpdateImage does that afterwards, as before. Opt-in (BB_PROTECT_BATCH=1;
+    /// no measured gain, see TrackBatching): without it UpdateImage tracks each image by itself.
+    void TrackImages(std::span<const ImageId> image_ids);
+    [[nodiscard]] static bool TrackBatching(); ///< BB_PROTECT_BATCH=1
+
+    /// The id still names an image (the rasterizer's lists of ids across FindImage calls).
+    [[nodiscard]] bool IsAllocated(ImageId image_id) const {
+        return image_id && slot_images.is_allocated(image_id);
+    }
+
+    /// No page of the image is tracked (unlocked read: TrackImages checks again).
+    [[nodiscard]] bool IsUntracked(ImageId image_id) const {
+        const Image& image = slot_images[image_id];
+        return image.track_addr == 0 && image.track_addr_end == 0;
     }
 
     /// Resolves overlap between existing cache image and pending merged image

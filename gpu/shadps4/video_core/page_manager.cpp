@@ -20,6 +20,8 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 #include <fmt/format.h>
 #include "common/bb_host_compat.h"
 #include "core/signals.h"
@@ -242,6 +244,13 @@ static bool ImageTraps() {
     return on;
 }
 
+namespace {
+/// bbport hitch082b (PageManager::BeginTrapBatch): this thread's collected runs (first page, pages).
+thread_local bool trap_batching = false;
+thread_local std::vector<std::pair<u64, u64>> trap_batch;  ///< image traps (ImageTraps)
+thread_local std::vector<std::pair<u64, u64>> watch_batch; ///< write watches (page protection)
+} // namespace
+
 struct PageManager::Impl {
     struct PageState {
         u8 num_write_watchers : 7;
@@ -372,8 +381,13 @@ struct PageManager::Impl {
         const auto release_pending = [&] {
             if (range_bytes > 0) {
                 RENDERER_TRACE;
-                // Perform pending (un)protect action
-                Protect(range_begin << PM_PAGE_BITS, range_bytes, perms);
+                if (track && !is_read && trap_batching) {
+                    // bbport hitch082b: protected by FlushWatchBatch, from the pages' state then
+                    watch_batch.emplace_back(range_begin, range_bytes >> PM_PAGE_BITS);
+                } else {
+                    // Perform pending (un)protect action
+                    Protect(range_begin << PM_PAGE_BITS, range_bytes, perms);
+                }
                 range_bytes = 0;
                 potential_range_bytes = 0;
             }
@@ -528,8 +542,12 @@ struct PageManager::Impl {
         u64 run_begin = 0, run_pages = 0;
         const auto flush = [&] {
             if (run_pages != 0) {
-                BbLayer::WriteTraps::Set(run_begin << PM_PAGE_BITS, run_pages << PM_PAGE_BITS,
-                                         BbLayer::WriteTraps::Image, track);
+                if (track && trap_batching) {
+                    trap_batch.emplace_back(run_begin, run_pages); // set by FlushTrapBatch
+                } else {
+                    BbLayer::WriteTraps::Set(run_begin << PM_PAGE_BITS, run_pages << PM_PAGE_BITS,
+                                             BbLayer::WriteTraps::Image, track);
+                }
                 run_pages = 0;
             }
         };
@@ -554,6 +572,85 @@ struct PageManager::Impl {
             }
         }
         flush();
+    }
+    /// The collected watch runs, sorted and joined; each joined run is protected as its pages'
+    /// state says now, under their locks: a page whose watcher went meanwhile (another thread's
+    /// write fault untracked its image and unprotected it then) is left alone.
+    void FlushWatchBatch() {
+        auto& runs = watch_batch;
+        if (runs.empty()) {
+            return;
+        }
+        std::sort(runs.begin(), runs.end());
+        u64 joined = 0;
+        for (size_t i = 0; i < runs.size();) {
+            const u64 begin = runs[i].first;
+            u64 end = begin + runs[i].second;
+            for (++i; i < runs.size() && runs[i].first <= end; ++i) {
+                end = std::max(end, runs[i].first + runs[i].second);
+            }
+            ++joined;
+            const auto lock_start = locks.begin() + (begin / PAGES_PER_LOCK);
+            const auto lock_end = locks.begin() + Common::DivCeil(end, PAGES_PER_LOCK);
+            Common::RangeLockGuard lk(lock_start, lock_end);
+            u64 run_begin = 0, run_pages = 0;
+            auto run_perms = Core::MemoryPermission::ReadWrite;
+            for (u64 page = begin; page <= end; ++page) {
+                const auto perms =
+                    page != end ? cached_pages[page].Perms() : Core::MemoryPermission::ReadWrite;
+                if (run_pages != 0 && perms != run_perms) {
+                    Protect(run_begin << PM_PAGE_BITS, run_pages << PM_PAGE_BITS, run_perms);
+                    run_pages = 0;
+                }
+                if (perms != Core::MemoryPermission::ReadWrite) {
+                    if (run_pages == 0) {
+                        run_begin = page;
+                        run_perms = perms;
+                    }
+                    ++run_pages;
+                }
+            }
+        }
+        BbStats::trap_batch_runs.fetch_add(runs.size(), std::memory_order_relaxed);
+        BbStats::trap_batch_joined.fetch_add(joined, std::memory_order_relaxed);
+        runs.clear();
+    }
+
+    /// The collected runs, sorted and joined; of each joined run the pages that still hold an
+    /// image are trapped (an image untracked meanwhile by another thread's write fault took its
+    /// count away and its trap was never set: nothing to do for those pages).
+    void FlushTrapBatch() {
+        auto& runs = trap_batch;
+        if (runs.empty()) {
+            return;
+        }
+        std::sort(runs.begin(), runs.end());
+        u64 joined = 0;
+        for (size_t i = 0; i < runs.size();) {
+            const u64 begin = runs[i].first;
+            u64 end = begin + runs[i].second;
+            for (++i; i < runs.size() && runs[i].first <= end; ++i) {
+                end = std::max(end, runs[i].first + runs[i].second);
+            }
+            ++joined;
+            const auto lock_start = locks.begin() + (begin / PAGES_PER_LOCK);
+            const auto lock_end = locks.begin() + Common::DivCeil(end, PAGES_PER_LOCK);
+            Common::RangeLockGuard lk(lock_start, lock_end);
+            u64 run_begin = 0, run_pages = 0;
+            for (u64 page = begin; page <= end; ++page) {
+                if (page != end && image_watchers[page] != 0) {
+                    run_begin = run_pages ? run_begin : page;
+                    ++run_pages;
+                } else if (run_pages != 0) {
+                    BbLayer::WriteTraps::Set(run_begin << PM_PAGE_BITS, run_pages << PM_PAGE_BITS,
+                                             BbLayer::WriteTraps::Image, true);
+                    run_pages = 0;
+                }
+            }
+        }
+        BbStats::trap_batch_runs.fetch_add(runs.size(), std::memory_order_relaxed);
+        BbStats::trap_batch_joined.fetch_add(joined, std::memory_order_relaxed);
+        runs.clear();
     }
     u16* image_watchers = nullptr;
     std::once_flag image_watchers_once;
@@ -786,6 +883,18 @@ void PageManager::UpdatePageWatchers(VAddr addr, u64 size) const {
     // bbport: only the texture cache comes here (the buffer cache: UpdatePageWatchersForRegion).
     if (ImageTraps()) {
         impl->UpdateImageTraps<track>(addr, size);
+    }
+}
+
+void PageManager::BeginTrapBatch() const {
+    trap_batching = true;
+}
+
+void PageManager::EndTrapBatch() const {
+    if (trap_batching) {
+        trap_batching = false;
+        impl->FlushWatchBatch();
+        impl->FlushTrapBatch();
     }
 }
 
