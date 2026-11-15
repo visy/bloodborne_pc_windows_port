@@ -51,7 +51,18 @@ constexpr std::size_t kFlagsOff = 0xd4;   // DisplayInfo.VarsSet (u16)
 constexpr std::uint16_t kFlagAlpha = 0x20;
 
 std::atomic<u64> g_view{0};
-Machine g_machine;
+Tuning MakeTuning() {
+    Tuning t;
+    const char* e = std::getenv("BB_AUTO_HUD_FLOOR");  // kill switch: 0 = the old fully transparent hidden level
+    t.min_alpha = e && e[0] == '0' ? 0.0 : kHiddenFloor;
+    return t;
+}
+Machine g_machine{MakeTuning()};
+LoadGate g_gate;
+bool LoadGateOn() {
+    static const char* e = std::getenv("BB_AUTO_HUD_LOADGATE");  // kill switch: 0 = no load gate
+    return !(e && e[0] == '0');
+}
 bool g_on = false;
 bool g_applied_any = false;
 double g_world_since = -1;
@@ -246,10 +257,26 @@ void Install() {
     Log("%s", g_on ? "installed (setting Auto-hide HUD; off by default)" : "NOT installed: the code differs from 1.09");
 }
 
+static bool last_a_reset = false;
+
 void Tick() {
     if (!g_on) return;
     const bool enabled = Enabled();
     const double now = Now();
+    if (LoadGateOn()) {
+        // No HUD writes while a map loads (the view is rebuilt) or for a few seconds after: the render thread faulted
+        // seconds after a fade started in a load (NW-c679fc2). The rebuilt clip starts at full alpha, so nothing to restore.
+        const GameSnapshot gs = ReadGameState(false);
+        if (!g_gate.Step(gs.world_up, gs.loading, gs.map_id != 0xffffffffu, now)) {
+            if (g_applied_any || g_world_since >= 0) {
+                g_applied_any = false;
+                g_world_since = -1;
+                g_machine.Reset();
+                last_a_reset = true;
+            }
+            return;
+        }
+    }
     Inputs in;
     in.now = now;
     const u64 comp = Component();
@@ -271,9 +298,10 @@ void Tick() {
         return;
     }
     const double a = g_machine.Update(in);
-    static double last_a = -1;
+    static double last_a = 1.0;
+    if (last_a_reset) { last_a = 1.0; last_a_reset = false; }
     static unsigned last_r = ~0u;
-    if (std::fabs(a - last_a) > 1e-3 || !g_applied_any) {
+    if (std::fabs(a - last_a) > 1e-3 || (!g_applied_any && a < 0.999)) {
         double read = -1;
         if (SetAlpha(comp, a, &read)) {
             g_applied_any = true;
