@@ -2,7 +2,7 @@
 """Fixed-place hitch route (hitch082): one scripted, unattended solo walk through the places where players
 report a 70-140 ms hitch at the same spot every run, with the frame log and the stall probe on.
 
-  python tools/mp/hitch_route.py run    --out DIR [--fps 60] [--passes 2] [--env K=V ...] [--legs clinic,tomb,ward]
+  python tools/mp/hitch_route.py run    --out DIR [--fps 60] [--passes 2] [--env K=V ...] [--legs clinic,tomb,ward] [--stacks]
   python tools/mp/hitch_route.py report --out DIR [--ms 45]
 
 Legs (all by the in-process director; lamp warp = the game's own loading screen, the walks by the pad stick over
@@ -10,6 +10,9 @@ the navmesh, coordinates = lamp spots / navmesh points computed from the player'
   clinic  1st Floor Sickroom lamp -> down the clinic, out, up to the Central Yharnam lamp
   tomb    Tomb of Oedon lamp -> the stairs east of it -> towards the chapel tower
   ward    Cathedral Ward lamp (Oedon Chapel) -> out of the chapel -> up the Cathedral Ward stairs
+  pingpong  (not in the default set) the sickroom -> the next rooms and back, three times: places seen again
+The run holds both game slots (--reserve 2: no other agent's game shares the GPU; another agent's build still
+does, check tools/mp/game_queue.py status and the build queue before trusting frame times).
 Each leg waits WAIT s after its load (default 12) so load warm-up is not counted, and --passes repeats the legs
 in one game session (a hitch that is gone on the second pass was a first-use cost, one that stays is streaming).
 
@@ -31,6 +34,11 @@ LEGS = {
                "-198.4:-50.6:170.6/-198.4:-50.6:161.7/-197.6:-50.6:154.5/-193.9:-50.6:146.2/-190.1:-50.7:139.5/"
                "-189.1:-50.7:131.5/-189.4:-47.4:123.4/-189.9:-47.6:115.0/-190.5:-47.7:105.1/-184.4:-46.7:99.6/"
                "-186.9:-45.5:90.5/-187.9:-44.2:84.4/-187.0:-33.6:74.6/-191.9:-28.6:71.4/-192.3:-28.6:69.4"),
+    # In and out of the sickroom three times: a place seen again within the same visit (the textures of the next room
+    # leave the view on the way back and come back into it on the way out).
+    "pingpong": (LAMP_SICKROOM, "m24_01",
+                 "/".join(["-198.4:-50.6:170.6/-198.4:-50.6:161.7/-197.6:-50.6:154.5/-198.4:-50.6:161.7/-198.4:-50.6:170.6/"
+                           "-199.2:-50.7:176.0"] * 3) + "/-198.4:-50.6:170.6/-198.4:-50.6:161.7/-197.6:-50.6:154.5"),
     "tomb": (LAMP_TOMB, "m24_01", "-24.0:-40.8:88.0/-14.0:-35.5:93.0/-12.0:-31.0:98.5"),
     "ward": (LAMP_WARD, "m24_0",
              "8.9:-10.2:107.8/3.4:-11.0:109.5/-3.9:-9.9:115.2/-10.8:-10.4:120.5/-10.2:-11.1:128.3/-6.1:-9.3:137.1/"
@@ -67,12 +75,14 @@ def run(a):
     frames = out / "frames.csv"
     cmd = [sys.executable, str(HERE / "instances.py"), "run", "--count", "1", "--fresh-saves", "--timestamps",
            "--idle", "0", "--seconds", str(secs), "--root", str(root), "--build", str(a.build), "--game", str(a.game),
-           "--fps", a.fps, "--vram", str(a.vram), "--label", "hitch route", "--party",
+           "--fps", a.fps, "--vram", str(a.vram), "--reserve", "2", "--label", "hitch route", "--party",
            "--env", "BB_FRAME_STATS=1", "--env", "BB_FRAME_LOG=%s" % frames, "--env", "BB_STALL_PROBE=%d" % a.probe_ms,
-           "--env", "BB_STALL_PROBE_DUMP=%s" % (out / "stacks.txt"),
+
            "--env", "BB_PAD_FILE=%s" % (root / "pad{i}.txt"), "--env", "BB_PARTY_DIRECTOR_TEST_SOLO=1",
            "--ienv", "0:BB_PARTY_DIRECTOR_TEST=" + ch,
            "--until", r"test: travel step %d/%d: host_lamp" % (n, n), "--until-hold", "25"]
+    if a.stacks:   # 1 ms stack samples of six threads: costs frame time (about +2 ms mean), not for before/after numbers
+        cmd += ["--env", "BB_STALL_PROBE_DUMP=%s" % (out / "stacks.txt")]
     for e in a.env or []:
         cmd += ["--env", e]
     (root / "pad0.txt").write_text("lx=128 ly=128\n")
@@ -236,6 +246,8 @@ def main():
                     help="BB_VRAM_LIMIT_MB (the harness default 1792 keeps the texture collector under pressure, which players' cards are not)")
     ap.add_argument("--ms", type=float, default=45.0)
     ap.add_argument("--env", action="append")
+    ap.add_argument("--stacks", action="store_true",
+                    help="also BB_STALL_PROBE_DUMP=OUT/stacks.txt (for tools/party/hitch_stacks.py / hitch_classify.py)")
     a = ap.parse_args()
     if a.cmd == "chain":
         print(chain(a.legs.split(","), a.passes, a.wait)[0])

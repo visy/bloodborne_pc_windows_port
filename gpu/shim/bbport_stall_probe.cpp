@@ -6,6 +6,7 @@
 #include "bbport_stall_probe.h"
 #include "bbport_stall_probe_rules.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -203,7 +204,8 @@ bool SampleThread(HANDLE th, SampleTable& t) {
 
 // ---- raw stack dump (BB_STALL_PROBE_DUMP=<file>, hitch082) ----
 // With the dump file set the sampler samples the main thread (M), the game's render thread (R), our GPU
-// command thread (G) and the draw pipe's recording thread (B, bb:DrawRec) every ms all the time (not only once a frame runs long) into a ring, and writes the
+// command thread (G), the draw pipe's recording thread (B, bb:DrawRec), the first Vulkan recorder thread
+// (V, bb:VkRecorder) and the first guest copy thread (C, bb:Copy0) every ms all the time (not only once a frame runs long) into a ring, and writes the
 // samples of every reported frame to the file: per sample the instruction pointer, the return
 // addresses into our exe and into the game image found on the stack (values that follow a call
 // instruction, in stack order: innermost first). tools/party/hitch_stacks.py symbolizes and sums them.
@@ -213,7 +215,7 @@ struct RawSample {
     u64 exe[16] = {};
     u64 guest[8] = {};
 };
-constexpr int kRawRing = 4 * 4096;
+constexpr int kRawRing = 6 * 4096;
 RawSample* g_raw = nullptr;
 u64 g_raw_n = 0;
 std::FILE* g_dump = nullptr;
@@ -262,7 +264,9 @@ void SampleRaw(HANDLE th, int thread) {
     r.rip = c.Rip;
     r.thread = std::uint8_t(thread);
     r.n_exe = r.n_guest = 0;
-    const u64 lo = reinterpret_cast<u64>(coop::Image()), hi = lo + coop::ImageSize();
+    // Guest return addresses: the code segment only (it ends at 0x50d96dc). A stack value that points into
+    // the game's data may sit on a page the GPU side read-protected: AfterCall reading it crashed the game.
+    const u64 lo = reinterpret_cast<u64>(coop::Image()), hi = lo + std::min<u64>(coop::ImageSize(), 0x50d9000);
     for (SIZE_T i = 0; i < got / 8; ++i) {
         const u64 v = stack[i];
         if (v >= g_text_lo + 8 && v < g_text_hi) {
@@ -282,7 +286,7 @@ void DumpFrame(u64 from, u64 to, double total_ms, double main_ms, double end_ms)
     for (u64 i = first; i < n; ++i) {
         const RawSample& r = g_raw[i % kRawRing];
         if (r.t < from || r.t > to) continue;
-        std::fprintf(g_dump, "%c %.2f ", "MRGB"[r.thread % 4], double(r.t - from) / 1e6);
+        std::fprintf(g_dump, "%c %.2f ", "MRGBVC"[r.thread % 6], double(r.t - from) / 1e6);
         if (r.rip >= g_text_lo && r.rip < g_text_hi) {
             std::fprintf(g_dump, "e%llx", static_cast<unsigned long long>(r.rip - exe));
         } else if (r.rip >= lo && r.rip < hi) {
@@ -350,7 +354,7 @@ void SamplerMain() {
     const u64 sample_after_ns = u64(std::min(50, g_threshold_ms / 4)) * 1'000'000ull;
     u64 seen = g_frames.load(std::memory_order_acquire);
 #ifdef _WIN32
-    HANDLE main_th = nullptr, gx_th = nullptr, gpu_th = nullptr, rec_th = nullptr;
+    HANDLE main_th = nullptr, gx_th = nullptr, gpu_th = nullptr, rec_th = nullptr, vk_th = nullptr, copy_th = nullptr;
     // Unknown host modules land in the last name slot.
     g_module_names[kMaxModules - 1] = "?";
 #endif
@@ -405,6 +409,14 @@ void SamplerMain() {
                 rec_th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, BbStats::drawrec_tid.load());
             }
             if (rec_th) SampleRaw(rec_th, 3);
+            if (!vk_th && BbStats::recorder_tid.load()) {
+                vk_th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, BbStats::recorder_tid.load());
+            }
+            if (vk_th) SampleRaw(vk_th, 4);
+            if (!copy_th && BbStats::copy_tid.load()) {
+                copy_th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, BbStats::copy_tid.load());
+            }
+            if (copy_th) SampleRaw(copy_th, 5);
         }
         const u64 last = g_last_exit.load(std::memory_order_relaxed);
         if (!last || NowNs() - last < sample_after_ns) continue;
@@ -459,7 +471,7 @@ void Install() {
         FindExeText();
         g_raw = new RawSample[kRawRing];
         g_dump = g_text_hi ? std::fopen(path, "w") : nullptr;
-        std::printf("Stall probe: raw stacks of the main, render, GPU and draw-recording threads %s %s (BB_STALL_PROBE_DUMP)\n",
+        std::printf("Stall probe: raw stacks of the main, render, GPU, draw-recording, Vulkan recorder and copy threads %s %s (BB_STALL_PROBE_DUMP)\n",
                     g_dump ? "go to" : "NOT written to", path);
     }
 #endif

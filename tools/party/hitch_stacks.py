@@ -99,7 +99,7 @@ def main():
 
     def show(title, fs):
         print(title)
-        for th, name in (("M", "main thread"), ("R", "render thread"), ("G", "GPU thread"), ("B", "draw recording thread")):
+        for th, name in (("M", "main thread"), ("R", "render thread"), ("G", "GPU thread"), ("B", "draw recording thread"), ("V", "Vulkan recorder thread"), ("C", "copy thread 0")):
             leaf, stack = Counter(), Counter()
             n = 0
             for f in fs:
