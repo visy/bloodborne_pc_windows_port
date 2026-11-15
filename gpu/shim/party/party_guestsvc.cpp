@@ -99,8 +99,8 @@ bool HeadstoneTalk(std::uint32_t talk) {
     return (talk >= 210000 && talk <= 210003) || talk == 210721;
 }
 
-bool GuestHeadstoneOverride(bool lamps_on, std::uint32_t talk) {
-    return lamps_on && HeadstoneTalk(talk);
+bool GuestHeadstoneOverride(bool lamps_on, std::uint32_t talk, bool dlc_stage) {
+    return lamps_on && HeadstoneTalk(talk) && (talk != kDlcHeadstoneTalk || dlc_stage);
 }
 
 bool LampTalk(std::uint32_t talk) {
@@ -425,6 +425,7 @@ std::atomic<int> g_lamp_requests_made{0}; // guest: lamp warps turned into reque
 std::atomic<bool> g_gate{false};
 // Gehrman's ordinary talk for a guest (the tick: the gate is open and his last event is not up).
 std::atomic<bool> g_gehrman_talk{false};
+std::atomic<bool> g_dlc_headstone{false};  ///< flag kDlcHeadstoneFlag of the world the guest is in: t210721 is the headstone
 // The Memory Altar (t210699) for a guest: the Rune Workshop Tool is held (shared with the party when the host picks
 // it up). BB_PARTY_ALTAR_GATE=0 keeps the old always-open altar.
 std::atomic<bool> g_altar_ok{true};
@@ -549,7 +550,10 @@ std::uint64_t BB_COOP_SYSV IsClientFilter(std::uint64_t env, std::uint64_t value
     // fills (before it, choosing an area crashed the guest: the list indexed past its end). The
     // choice sets the lamp's flag; m21's event 12107000 (client end skipped, LampSkipRules) warps,
     // which becomes the guest's lamp request to the host (the party follows the host's warp).
-    const bool headstone = GuestHeadstoneOverride(g_lamps.load(std::memory_order_relaxed), talk);
+    // t210721 is two scripts in one: the Beckoning Bell messenger until m21's flag 12105034 (a DLC lamp is lit), the DLC
+    // headstone after it; only the headstone is lifted (GuestHeadstoneOverride).
+    const bool headstone = GuestHeadstoneOverride(g_lamps.load(std::memory_order_relaxed), talk,
+                                                  g_dlc_headstone.load(std::memory_order_relaxed));
     const bool gehrman = talk == kGehrmanTalk && g_gehrman_talk.load(std::memory_order_relaxed);
     if (!headstone && !gehrman && !GuestServiceTalkAllowed(talk, g.extra)) {
         return value;
@@ -1086,6 +1090,16 @@ bool StandAt(const GameSnapshot& s, std::uint64_t chr, float dist, int side, flo
     float d[4] = {}, r[4] = {};
     if (!chr || !s.player || !SafeRead(chr + 0xc0, d, sizeof d) || !SafeRead(chr + 0xd0, r, sizeof r)) {
         return false;
+    }
+    // A chr an event short-warped away from its placement (the DLC headstone's messenger 2100231: m21 event 12105004
+    // moves it to region 2102305 when the first Hunter's Nightmare lamp is lit) keeps the old spot at +0xC0: stand
+    // at the body.
+    float live[3] = {};
+    if (balance::ChrPosition(chr, live) &&
+        (live[0] - d[0]) * (live[0] - d[0]) + (live[1] - d[1]) * (live[1] - d[1]) + (live[2] - d[2]) * (live[2] - d[2]) > 4.0f) {
+        d[0] = live[0];
+        d[1] = live[1];
+        d[2] = live[2];
     }
     const float a = r[1] + turn + (side == 1 ? 3.14159265f : side == 2 ? 1.5707963f : side == 3 ? -1.5707963f : 0.0f);
     alignas(16) float pos[4] = {d[0] - dist * std::sin(a), d[1], d[2] - dist * std::cos(a), 1.0f};
@@ -3160,6 +3174,16 @@ void GuestServicesTick(const GameSnapshot& s, party::PartyLink* link) {
                 talk ? "a guest may talk to him (his ordinary lines)"
                      : "kept vanilla for a guest (his last event: the ending choice is the host's)",
                 int(f1028), int(f1029), int(f1030));
+        }
+    }
+    {
+        // The DLC headstone (t210721, GuestHeadstoneOverride): its headstone stage is m21's flag 12105034 in the host's world.
+        bool f = false;
+        const bool stage = open && ReadEventFlag(kDlcHeadstoneFlag, &f) && f;
+        if (stage != g_dlc_headstone.exchange(stage, std::memory_order_relaxed) && open) {
+            Log("DLC headstone (t210721): %s (flag %u %d)",
+                stage ? "its headstone stage is up: a guest may use it" : "still the Beckoning Bell messenger: kept vanilla for a guest",
+                kDlcHeadstoneFlag, int(f));
         }
     }
     const double now = Now();

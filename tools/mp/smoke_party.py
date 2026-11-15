@@ -4488,7 +4488,11 @@ def phase_hs(only):
 
 # Phase hsd (headstone_dlc, ~4 min, 2 players, group `headstone_dlc`; 0.8.x player report "can't teleport with the DLC
 # headstone as a guest"): the guest uses the DLC headstone t210721 (the Hunter's Nightmare lamps) in the host's Dream
-# and picks the first lit entry; the party travels (host-led) to that lamp.
+# and picks the first lit entry; the party travels (host-led) to that lamp. t210721 (chr 2100231) is the Beckoning Bell
+# messenger until m21 flag 12105034 (a DLC lamp is lit) and the headstone after it (m21 event 12105004 then moves the
+# chr to region 2102305 beside the workshop), so the host's world gets the first Hunter's Nightmare lamp by test aid
+# (lamp object flag 13407810 + lit flag 73400200; the default save has no DLC lamp, and without one nobody has a DLC
+# headstone). The guest stands at the chr's body (guesttalk's StandAt follows a short-warped chr).
 HSD_UNTIL = [r"0:host travel: arrived|0:no load within 60 s|0:test: levelup: FAILED|1:test: levelup: FAILED"]
 
 
@@ -4496,9 +4500,10 @@ def phase_hsd(only):
     return dict(
         name="hsd", seconds=300, count=2, headless=0,
         env=["BB_PARTY_GUEST_LAMPS=1"],
-        ienv=["0:BB_PARTY_TEST_START_LAMP=2102950", "0:BB_PARTY_DIRECTOR_TEST=god",
+        ienv=["0:BB_PARTY_TEST_START_LAMP=2102950",
+              "0:BB_PARTY_DIRECTOR_TEST=god,log_flag=12105034/13407810/72103400,host_flag=13407810@4%m21_00,host_flag=73400200@4%m21_00",
               "0:BB_PARTY_TRAVEL_CHOICE=party",
-              "1:BB_PARTY_DIRECTOR_TEST=god",
+              "1:BB_PARTY_DIRECTOR_TEST=god,log_flag=12105034/13407810/72103400",
               "1:BB_PARTY_GUESTSVC_TEST=guesttalk=210721;needprompt;hsdelay=12;" + HS_KEYS,
               "1:BB_PARTY_TRAVEL_CHOICE=party"],
         watch=["--watch", r"test: guest headstone: starting=hsdstart@1,4",
@@ -14946,8 +14951,13 @@ def check_hs(v, L):
 
 def check_hsd(v, L):
     j = need(v, L, "hsd join: the guest is in the host's Dream", 1, r"open: guest in the host's m21_00_00_00")
+    need(v, L, "hsd the host's world has a Hunter's Nightmare lamp (test aid)", 0, r"test: host_flag 13407810: 0 -> 1")
+    need(v, L, "hsd the guest's t210721 is in its headstone stage (flag 12105034)", 1,
+         r"DLC headstone \(t210721\): its headstone stage is up", j or 0)
     st = need(v, L, "hsd the guest uses the DLC headstone t210721", 1, r"test: guest headstone: starting", j or 0)
-    g = need(v, L, "hsd the guest picks a Hunter's Nightmare lamp (its flag set)", 1, r"lamp flag (\d+) set by this game", st or 0)
+    need(v, L, "hsd the headstone's prompt and menu on the guest", 1, r"test: levelup: no talk list: the menu was requested", st or 0)
+    g = need(v, L, "hsd the guest picks a Hunter's Nightmare lamp (its flag set)", 1, r"lamp flag (72103\d+) set by this game", st or 0)
+    need(v, L, "hsd the guest's warp (m21 event 12107000) becomes a request to the host", 1, r"lamp: request 34\d+ sent to the host", g or 0)
     need(v, L, "hsd the party warps to the Hunter's Nightmare", 0, r"host travel: arrived", g or 0)
     need(v, L, "hsd the guest arrives in m34_00", 1, r"map .*-> m34_00", g or 0)
     none_of(v, L, "hsd no stuck warp", r"no load within 60 s", insts=(0, 1))
