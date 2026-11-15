@@ -3,6 +3,7 @@
 #   proton_bbport.sh <engine-dir> <game-dir> <log-dir> [seconds=300] [save-dir]
 # Test-harness environment (silent, windowed, no launcher settings). The pad file is written by this
 # script: Continue (cross) is tapped every 3 s once the log shows the title, until the world is up.
+# TITLE_RE / WORLD_RE: log patterns (grep -E) that start the Continue presses / end the run (defaults need a Boot: line).
 # Console output of run.bat goes to <log-dir>/game.log. Run it while holding a game slot
 # (tools/linux/with_game_slot.py). EXTRA_ENV="A=1 B=2" adds game / Proton variables; PREFIX picks the wine prefix;
 # WINEDEBUG / PROTON_WINEDEBUG go to proton_run.sh.
@@ -39,10 +40,10 @@ RUNPID=$!
 t0=$(date +%s); pressed=0
 while kill -0 $RUNPID 2>/dev/null; do
   sleep 3
-  if grep -qs "Boot: .*title" "$GAMELOG" && [[ $pressed -lt 200 ]]; then
+  if grep -qEs "${TITLE_RE:-Boot: .*title}" "$GAMELOG" && [[ $pressed -lt 200 ]]; then
     echo cross > "$PAD"; sleep 0.25; : > "$PAD"; pressed=$((pressed+1))
   fi
-  if grep -qs "Boot: .*in the world" "$GAMELOG"; then
+  if grep -qEs "${WORLD_RE:-Boot: .*in the world}" "$GAMELOG"; then
     echo "[proton_bbport] world reached after $(( $(date +%s)-t0 )) s"; sleep 20
     pkill -TERM -P $RUNPID 2>/dev/null; break
   fi
