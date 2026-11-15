@@ -200,6 +200,8 @@ void Liverpool::Process(std::stop_token stoken) {
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0) {
         BbStats::gpu_thread_clock.store(static_cast<int>(clock));
     }
+#else
+    BbStats::gpu_tid.store(GetCurrentThreadId());
 #endif
     gpu_id = std::this_thread::get_id();
 #ifdef __linux__

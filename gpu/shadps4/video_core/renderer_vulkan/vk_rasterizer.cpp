@@ -11,6 +11,8 @@
 #include "bbport_timeline.h"
 #include "bbport_frame_state.h"
 #include "bbport_sections.h"
+#include "bbport_stall_probe.h"
+#include "bbport_tex_prereg.h"
 #include "game_profile.h"
 #include "bbport_ce_stats.h"
 #include "bbport_headless.h"
@@ -1743,6 +1745,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             return (env ? std::strtoull(env, nullptr, 10) : 16ull) << 20;
         }();
         buffer_cache.Preupload(budget);
+        PreregisterTextures(frame);
     }
     const auto& regs = Regs();
     // bbport: volumetric effects resolution: its level and newly classified images apply at
@@ -3498,6 +3501,78 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
     }
 }
 
+// bbport hitch082 (bbport_tex_prereg.h): textures the game created are registered here, ahead of their
+// first draw, so a doorway does not bring hundreds of first-use registrations into one frame. Once a
+// frame, on the thread that binds textures. Everything that is due while the loading screen is up (at
+// most 256 MiB a frame, so the screen keeps animating); BB_TEX_PREREGISTER_MB (12) a frame in the world.
+// A descriptor waits BB_TEX_PREREGISTER_QUIET frames (20) after the game built it: the texture's bytes
+// may still be on their way. Registering early is safe either way (the image write-protects its pages; a
+// later write marks it dirty and the first draw refreshes it), only wasted.
+void Rasterizer::PreregisterTextures(u32 frame) {
+    if (!BbTexPrereg::Enabled()) {
+        return;
+    }
+    static const u64 world_budget = [] {
+        const char* env = std::getenv("BB_TEX_PREREGISTER_MB");
+        return (env && *env ? std::strtoull(env, nullptr, 10) : 12ull) << 20;
+    }();
+    static const u32 quiet = [] {
+        const char* env = std::getenv("BB_TEX_PREREGISTER_QUIET");
+        return env && *env ? u32(std::strtoul(env, nullptr, 10)) : 20u;
+    }();
+    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
+    if (stats && frame - prereg_report_frame >= 600) {
+        prereg_report_frame = frame;
+        BbTexPrereg::Report();
+    }
+    const bool loading = BbTexPrereg::LoadingScreenUp();
+    const u64 budget = loading ? (256ull << 20) : world_budget;
+    u64 used = 0, registered = 0, registered_bytes = 0, already = 0, rejected = 0;
+    BbTexPrereg::Entry batch[32];
+    while (used < budget) {
+        const std::size_t n = BbTexPrereg::Take(batch, std::size(batch), frame, quiet);
+        if (n == 0) {
+            break;
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            AmdGpu::Image tsharp;
+            static_assert(sizeof(tsharp) == sizeof(batch[i].sharp));
+            std::memcpy(&tsharp, batch[i].sharp, sizeof(tsharp));
+            const auto data_fmt = tsharp.GetDataFmt();
+            const auto num_fmt = tsharp.GetNumberFmt();
+            if (!tsharp.Valid() || tsharp.Address() == 0 || !IsKnownFormat(data_fmt, num_fmt) ||
+                !memory->IsValidGpuMapping(tsharp.Address(), 0)) {
+                ++rejected; // freed since, or not GPU memory
+                continue;
+            }
+            const Shader::ImageResource res{};
+            VideoCore::TextureCache::ImageDesc desc{tsharp, res};
+            if (desc.info.guest_size == 0 ||
+                !memory->IsValidGpuMapping(tsharp.Address() + desc.info.guest_size - 1, 0)) {
+                ++rejected;
+                continue;
+            }
+            const u64 generation = texture_cache.RegistryGeneration();
+            const VideoCore::ImageId image_id = texture_cache.FindImage(desc);
+            if (!image_id) {
+                ++rejected;
+                continue;
+            }
+            if (texture_cache.RegistryGeneration() == generation && texture_cache.IsUpToDate(image_id)) {
+                ++already;
+                continue;
+            }
+            texture_cache.UpdateImage(image_id);
+            ++registered;
+            registered_bytes += desc.info.guest_size;
+            used += desc.info.guest_size;
+        }
+    }
+    if (registered | already | rejected) {
+        BbTexPrereg::Count(registered, registered_bytes, already, rejected);
+    }
+}
+
 Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::Image& sharp,
                                                                    const Shader::ImageResource& res,
                                                                    u64 hash) {
@@ -3631,6 +3706,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                                      !image_desc.needs_native && !image_desc.is_written &&
                                      mip_fallback_mode == Shader::MipStorageFallbackMode::None;
 
+        if (static const bool tfind = std::getenv("BB_TSHARP_FIND") != nullptr; tfind && !on_helper) {
+            BbStallProbe::NoteTsharp(&tsharp, tsharp.Address(), u32(tsharp.width) + 1); // RE aid (hitch082)
+        }
         auto& desc_entry =
             prepared ? CachedImageDescEntry(tsharp, image_desc, prepared->image_hashes[image_index])
                      : CachedImageDescEntry(tsharp, image_desc);

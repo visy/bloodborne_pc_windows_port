@@ -138,6 +138,10 @@ inline std::atomic<std::uint64_t> image_upload_bytes{0};
 inline std::atomic<std::uint64_t> image_gpu_copy_bytes{0}; ///< refreshes from the GPU's own buffer copy
 inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
 inline std::atomic<int> gpu_thread_clock{-1}; ///< clockid_t of the GPU command thread
+inline std::atomic<unsigned long> gpu_tid{0}; ///< Windows thread id of the GPU command thread (stall probe dump)
+inline std::atomic<unsigned long> drawrec_tid{0}; ///< and of the draw pipe's recording thread (bb:DrawRec)
+inline std::atomic<unsigned long> recorder_tid{0}; ///< and of the first Vulkan recorder thread (bb:VkRecorder)
+inline std::atomic<unsigned long> copy_tid{0}; ///< and of the first guest copy thread (bb:Copy0)
 inline std::atomic<std::uint64_t> draws{0}, dispatches{0}, submissions{0}, flips{0};
 /// Frames the GPU command thread has started (display pass), for per-frame diagnostics.
 inline std::atomic<std::uint64_t> gpu_frames{0};

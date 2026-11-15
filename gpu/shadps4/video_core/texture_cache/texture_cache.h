@@ -496,6 +496,9 @@ private:
     /// this frame may still evict, the effective usage last measured (once a frame), and bytes
     /// of images freed but not destroyed yet (DeleteImage's deferred EraseImage).
     GcPolicy::Marks gc_marks{};
+    /// hitch082: the cache cap's marks, compared with the cached image bytes (budget 0: no cap, or
+    /// the cap is applied to the device budget as before, BB_GC_CAP_IMAGES=0).
+    GcPolicy::Marks gc_cap_marks{};
     GcPolicy::FrameTicks<> gc_frame_ticks{};
     GcPolicy::FrameQuota gc_quota{};
     u32 gc_measured_frame = ~0u;

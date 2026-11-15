@@ -13,6 +13,7 @@
 
 #include <cstdlib>
 #include "bbport_threads.h"
+#include "bbport_toggles.h"
 #include "bbport_sections.h"
 
 #include <array>
@@ -200,6 +201,7 @@ private:
         BbSections::recording_thread = true;
 #ifdef _WIN32
         stage_b_tid.store(static_cast<u32>(GetCurrentThreadId()), std::memory_order_release);
+        BbStats::drawrec_tid.store(GetCurrentThreadId()); // stall probe dump
 #else
         stage_b_tid.store(static_cast<u32>(gettid()), std::memory_order_release);
 #endif

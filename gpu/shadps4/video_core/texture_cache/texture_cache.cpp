@@ -1723,8 +1723,21 @@ void TextureCache::GarbageCollectImages() {
                             "BB_GC_BUDGET_CAP=0 off)\n", (unsigned long long)mib);
                 return mib << 20;
             }();
+            // hitch082: the cap limits the cached textures (GcPolicy::LevelWithCap), not the budget
+            // all of our device memory is compared with: that kept the collector at its Over rule
+            // for good (textures unused for 8 frames freed, then made again: fixed-place hitches).
+            // BB_GC_CAP_IMAGES=0 restores the cap on the device budget.
+            static const bool cap_images = [] {
+                const char* e = std::getenv("BB_GC_CAP_IMAGES");
+                return !(e && e[0] == '0');
+            }();
+            gc_cap_marks = {};
             if (!forced && budget_cap != 0 && !instance.IsIntegrated() && base > budget_cap) {
-                base = budget_cap;
+                if (cap_images) {
+                    gc_cap_marks = GcPolicy::MarksFor(budget_cap);
+                } else {
+                    base = budget_cap;
+                }
             }
             gc_marks = GcPolicy::MarksFor(GcPolicy::BudgetFor(
                 base, forced || instance.IsIntegrated() ? 0 : local_mem));
@@ -1766,7 +1779,12 @@ void TextureCache::GarbageCollectImages() {
     if (BbToggle::Disabled(BbToggle::TextureCollector)) {
         return;
     }
-    GcPolicy::Level level = GcPolicy::LevelFor(total_used_memory, gc_marks);
+    const auto level_now = [this] {
+        return GcPolicy::LevelWithCap(total_used_memory, gc_marks,
+                                      BbStats::live_image_bytes.load(std::memory_order_relaxed),
+                                      gc_cap_marks);
+    };
+    GcPolicy::Level level = level_now();
     // VRAM ran out lately (a guest memory copy found none, or the usage near the driver's
     // budget): at least the hard rule for a while.
     if (level >= GcPolicy::Level::Soft && level < GcPolicy::Level::Hard && VramShort()) {
@@ -1937,21 +1955,27 @@ void TextureCache::GarbageCollectImages() {
         BbStats::gc_freed_bytes_total.fetch_add(bytes, std::memory_order_relaxed);
         FreeImage(image_id);
         // Below the mark this rule started at: the rest waits for the next pass and its rule.
-        return level >= GcPolicy::Level::Soft &&
-               GcPolicy::LevelFor(total_used_memory, gc_marks) < level;
+        return level >= GcPolicy::Level::Soft && level_now() < level;
     });
     // bbport: evictions under memory pressure, at most every 5 s (BB_FRAME_STATS or not).
     if (level >= GcPolicy::Level::Soft || gc_downloads != 0) {
         const auto now = std::chrono::steady_clock::now();
         if (now - gc_report_time >= std::chrono::seconds(5)) {
-            std::printf("Texture cache: memory pressure, %llu of %llu MiB budget (gradual from "
+            // hitch082: the measure that put the collector at this level (the cached textures
+            // against the cache cap, or all device memory against the device's budget).
+            const bool by_cap = gc_cap_marks.budget != 0 &&
+                                GcPolicy::LevelFor(BbStats::live_image_bytes.load(), gc_cap_marks) >=
+                                    GcPolicy::LevelFor(total_used_memory, gc_marks);
+            const GcPolicy::Marks& shown = by_cap ? gc_cap_marks : gc_marks;
+            std::printf("Texture cache: memory pressure, %llu of %llu MiB %s (gradual from "
                         "%llu, hard %llu): %llu images evicted (%llu MiB), %llu written back, "
                         "%llu old GPU-written tiled dropped, %llu GPU-written kept since the last "
                         "report\n",
-                        (unsigned long long)(total_used_memory >> 20),
-                        (unsigned long long)(gc_marks.budget >> 20),
-                        (unsigned long long)(gc_marks.soft >> 20),
-                        (unsigned long long)(gc_marks.hard >> 20),
+                        (unsigned long long)((by_cap ? BbStats::live_image_bytes.load() : total_used_memory) >> 20),
+                        (unsigned long long)(shown.budget >> 20),
+                        by_cap ? "texture cache cap" : "budget",
+                        (unsigned long long)(shown.soft >> 20),
+                        (unsigned long long)(shown.hard >> 20),
                         (unsigned long long)gc_evictions,
                         (unsigned long long)(gc_freed_bytes >> 20),
                         (unsigned long long)gc_downloads, (unsigned long long)gc_dropped,

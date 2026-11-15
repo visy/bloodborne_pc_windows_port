@@ -675,6 +675,9 @@ private:
     bool pipeline_is_compute = false; ///< bbport: the bound pipeline of BindResources
     bool scene_debug_frame = false; ///< BB_SCENE_DEBUG: this frame's passes are printed
     u32 preupload_frame = ~0u; ///< bbport: frame of the last background pre-upload
+    u32 prereg_report_frame = 0; ///< bbport: frame of the last texture pre-registration report
+    /// bbport hitch082: registers textures the game created ahead of their first draw (bbport_tex_prereg.h).
+    void PreregisterTextures(u32 frame);
     bool PendingWriteOverlaps(VAddr address, u64 size);
     /// Stage B: the ring bindings of the stages of the packet being recorded.
     struct RingStage {
