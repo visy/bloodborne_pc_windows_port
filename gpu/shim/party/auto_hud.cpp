@@ -7,7 +7,7 @@
 //   The component is a Scaleform value wrapper (vtable 0x5399F90): +0x38 the object interface, +0x40 the value
 //     type (& 0x8f == 10: a display object), +0x48 the display object. 0x1ACB760 (value, visible) shows the
 //     interface's use: GetDisplayInfo is vtable +0xE0, SetDisplayInfo +0xE8 (pdata, DisplayInfo*). We set only
-//     the alpha (flag 0x20) so nothing else of the clip changes.
+//     the alpha (flag 0x20) and, at 0, the visibility (flag 0x40) so nothing else of the clip changes.
 #include "auto_hud.h"
 
 #include "auto_hud_rules.h"
@@ -48,19 +48,26 @@ constexpr u64 kInfoGet = 0xe0, kInfoSet = 0xe8;
 constexpr std::size_t kInfoSize = 0x100;
 constexpr std::size_t kAlphaOff = 0x28;   // DisplayInfo.Alpha (double, 0..100); checked live (the log line)
 constexpr std::size_t kFlagsOff = 0xd4;   // DisplayInfo.VarsSet (u16)
-constexpr std::uint16_t kFlagAlpha = 0x20;
+constexpr std::size_t kVisibleOff = 0xd6; // DisplayInfo.Visible (bool; as 0x1ACB760 writes it, flag 0x40)
+constexpr std::uint16_t kFlagAlpha = 0x20, kFlagVisible = 0x40;
 
 std::atomic<u64> g_view{0};
+u64 g_hidden_comp = 0;  // the clip we made invisible (alpha 0); 0 = none
+double g_last_a = 1.0;  // the last alpha we wrote
 Tuning MakeTuning() {
     Tuning t;
-    const char* e = std::getenv("BB_AUTO_HUD_FLOOR");  // kill switch: 0 = the old fully transparent hidden level
-    t.min_alpha = e && e[0] == '0' ? 0.0 : kHiddenFloor;
+    const char* e = std::getenv("BB_AUTO_HUD_FLOOR");  // 1 = opt-in: hide at 0.02, never gone (the visibility hide below makes it unneeded)
+    t.min_alpha = e && e[0] == '1' ? kHiddenFloor : 0.0;  // opt-in fallback: never fully transparent
     return t;
 }
 Machine g_machine{MakeTuning()};
 LoadGate g_gate;
 bool LoadGateOn() {
     static const char* e = std::getenv("BB_AUTO_HUD_LOADGATE");  // kill switch: 0 = no load gate
+    return !(e && e[0] == '0');
+}
+bool VisibleHideOn() {
+    static const char* e = std::getenv("BB_AUTO_HUD_VISIBLE_HIDE");  // kill switch: 0 = the old alpha 0 write
     return !(e && e[0] == '0');
 }
 bool g_on = false;
@@ -123,6 +130,9 @@ void InitInfo(u8* info) {
 }
 
 /// Sets the clip's alpha (0..1); false when the interface refuses. `read_back`: the alpha as read first.
+/// At 0 the clip is made invisible instead, the game's own way to hide a clip (0x1ACB760): a visible clip at
+/// alpha 0 crashed the game's UI mask clear with no pixel shader bound (+0x33e2b0 -> +0x109a992; NW-c679fc2,
+/// NW-38b6c6f, NW-cdb2308). Visibility is given back only if we took it. From Nightwatch 52bd3d51c (vladtepes22).
 bool SetAlpha(u64 comp, double a01, double* read_back) {
     const u64 iface = Rd(comp + kIface), pdata = Rd(comp + kPdata);
     const u64 get = Rd(Rd(iface) + kInfoGet), set = Rd(Rd(iface) + kInfoSet);
@@ -134,9 +144,28 @@ bool SetAlpha(u64 comp, double a01, double* read_back) {
     double alpha = 0;
     std::memcpy(&alpha, info + kAlphaOff, 8);
     if (read_back) *read_back = alpha;
-    const double want = a01 * 100.0;
-    std::memcpy(info + kAlphaOff, &want, 8);
-    std::memcpy(info + kFlagsOff, &kFlagAlpha, 2);
+    const bool visible = info[kVisibleOff] != 0;
+    std::uint16_t flags = 0;
+    if (a01 <= 0 && VisibleHideOn()) {
+        if (!visible) { g_hidden_comp = comp; return true; }  // hidden already
+        info[kVisibleOff] = 0;  // the alpha stays at the fade's last, non-zero value
+        flags = kFlagVisible;
+        g_hidden_comp = comp;
+        Log("alpha 0: the clip made invisible");
+    } else {
+        const double want = a01 * 100.0;
+        std::memcpy(info + kAlphaOff, &want, 8);
+        flags = kFlagAlpha;
+        if (g_hidden_comp == comp) {
+            if (!visible) {
+                info[kVisibleOff] = 1;
+                flags |= kFlagVisible;
+                Log("the clip made visible again");
+            }
+            g_hidden_comp = 0;
+        }
+    }
+    std::memcpy(info + kFlagsOff, &flags, 2);
     reinterpret_cast<Fn>(set)(iface, pdata, info);
     return true;
 }
@@ -257,7 +286,6 @@ void Install() {
     Log("%s", g_on ? "installed (setting Auto-hide HUD; off by default)" : "NOT installed: the code differs from 1.09");
 }
 
-static bool last_a_reset = false;
 
 void Tick() {
     if (!g_on) return;
@@ -272,7 +300,7 @@ void Tick() {
                 g_applied_any = false;
                 g_world_since = -1;
                 g_machine.Reset();
-                last_a_reset = true;
+                g_last_a = g_hidden_comp ? 0.0 : 1.0;  // a clip we hid must be shown again once the gate opens
             }
             return;
         }
@@ -286,10 +314,11 @@ void Tick() {
         g_machine.Update(in);
         return;
     }
+    if (g_hidden_comp && g_hidden_comp != comp) g_hidden_comp = 0;  // the view was rebuilt: a new, visible clip
     if (g_world_since < 0) g_world_since = now;
     RunScript(now - g_world_since);
     if (!enabled) {
-        if (g_applied_any) {  // switched off: the HUD back to full
+        if (g_applied_any || g_hidden_comp) {  // switched off: the HUD back to full
             SetAlpha(comp, 1.0, nullptr);
             g_applied_any = false;
             g_machine.Reset();
@@ -298,8 +327,7 @@ void Tick() {
         return;
     }
     const double a = g_machine.Update(in);
-    static double last_a = 1.0;
-    if (last_a_reset) { last_a = 1.0; last_a_reset = false; }
+    double& last_a = g_last_a;
     static unsigned last_r = ~0u;
     if (std::fabs(a - last_a) > 1e-3 || (!g_applied_any && a < 0.999)) {
         double read = -1;

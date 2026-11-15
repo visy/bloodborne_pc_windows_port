@@ -184,7 +184,13 @@ int main() {
             assert(reached > 0.15 && reached < 0.3);
         }
     }
-    // The game side's hidden floor: never fully transparent.
+    // The default hides fully (the game side then makes the clip invisible instead of writing alpha 0).
+    {
+        Machine m;
+        Run(m, Idle(0), 0, 10.0);
+        assert(m.alpha() == 0.0);
+    }
+    // The opt-in hidden floor (BB_AUTO_HUD_FLOOR=1): never fully transparent.
     {
         Tuning t;
         t.min_alpha = kHiddenFloor;
