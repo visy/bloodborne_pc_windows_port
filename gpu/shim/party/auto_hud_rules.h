@@ -54,11 +54,12 @@ struct Tuning {
     double fade_in_s = 0.2;      // hidden -> shown
     double fade_out_s = 1.0;     // shown -> hidden
     double low_hp_fraction = 0.5;
-    double min_alpha = 0.0;      // the hidden level (0 = gone); the game side runs with kHiddenFloor
+    double min_alpha = 0.0;      // the hidden level (0 = gone, the default; the game hides the clip by visibility at 0)
 };
 
 inline constexpr double kEnemyRadiusM = 8.0;
-// The game side never makes the clip fully transparent (BB_AUTO_HUD_FLOOR=0 restores the old 0).
+// Opt-in fallback (BB_AUTO_HUD_FLOOR=1): the game side never makes the clip fully transparent. Off by default:
+// at 0 the clip is made invisible instead (Nightwatch 52bd3d51c).
 inline constexpr double kHiddenFloor = 0.02;
 
 class Machine {
