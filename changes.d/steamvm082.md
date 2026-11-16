@@ -1,0 +1,3 @@
+### Fixed
+
+- **Starts under Proton / Wine (Linux, Steam Deck) instead of stopping at once:** the default mod (Dream mirror) is applied as an overlay of the game folder made of directory links, and Wine has no directory links (symlinks are a stub, junctions make nothing), so the overlay had no `sce_module` folder and `run.bat` ended with `boot image failed: sce_module/libc.prx is missing` in a console that closes by itself (Steam went green, then blue). `run.bat` / `mods.py` now tests that directory links work and, where they do not, starts without the mod overlay and says so. `BB_WINE_MODS_OVERLAY=1` keeps the old behaviour.
