@@ -388,6 +388,17 @@ def remove_overlay(path, game=None, top=None):
     os.rmdir(path)
 
 
+def under_wine():
+    """Running under Wine / Proton: ntdll exports wine_get_version (as the engine checks, win32_compat.c)."""
+    if sys.platform != 'win32':
+        return False
+    try:
+        import ctypes
+        return hasattr(ctypes.WinDLL('ntdll'), 'wine_get_version')
+    except (OSError, AttributeError):
+        return False
+
+
 def dir_links_work(out):
     """Whether a directory link (symlink or junction) in `out` really lists its target. Wine / Proton has neither:
     CreateSymbolicLinkW is a stub there and _winapi.CreateJunction leaves an empty or missing folder, so an overlay
@@ -428,7 +439,9 @@ def build_overlay(game, out, mods):
         return game
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    if sys.platform == 'win32' and not dir_links_work(out):
+    # Only under Wine: on real Windows a drive without junctions (exFAT / FAT32) raises from make_link below
+    # and build_view builds the overlay on an NTFS fallback folder instead.
+    if sys.platform == 'win32' and under_wine() and not dir_links_work(out):
         print('Mods: this system cannot make directory links (Wine / Proton): starting without the mod overlay '
               '(BB_WINE_MODS_OVERLAY=1 forces it)', file=sys.stderr)
         return game
