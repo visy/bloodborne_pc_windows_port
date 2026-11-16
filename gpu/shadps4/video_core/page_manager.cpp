@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include "bbport_door_diag.h"
 #include "bbport_toggles.h"
 #include "bblayer_write_traps.h"
 #include "bbport_threads.h"
@@ -840,6 +841,16 @@ struct SignalImpl : public PageManager::Impl {
         auto& impl = memory->GetAddressSpace();
         ASSERT_MSG(perms != Core::MemoryPermission::Write,
                    "Attempted to protect region as write-only which is not a valid permission");
+        if (BbDoor::On()) [[unlikely]] {
+            const auto start = std::chrono::steady_clock::now();
+            impl.Protect(address, size, perms);
+            const u64 ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               std::chrono::steady_clock::now() - start)
+                               .count();
+            BbDoor::NoteProtect(address, (size + 4095) >> 12, True(perms & Core::MemoryPermission::Write),
+                                ns, rasterizer->IsGpuSideThread());
+            return;
+        }
         impl.Protect(address, size, perms);
     }
 
@@ -879,6 +890,7 @@ void PageManager::OnGpuUnmap(VAddr address, size_t size) {
 
 template <bool track>
 void PageManager::UpdatePageWatchers(VAddr addr, u64 size) const {
+    BbDoor::OriginScope origin{1};
     impl->UpdatePageWatchers<track, false>(addr, size);
     // bbport: only the texture cache comes here (the buffer cache: UpdatePageWatchersForRegion).
     if (ImageTraps()) {
@@ -893,6 +905,7 @@ void PageManager::BeginTrapBatch() const {
 void PageManager::EndTrapBatch() const {
     if (trap_batching) {
         trap_batching = false;
+        BbDoor::OriginScope origin{1};
         impl->FlushWatchBatch();
         impl->FlushTrapBatch();
     }
@@ -900,6 +913,7 @@ void PageManager::EndTrapBatch() const {
 
 template <bool track, bool is_read>
 void PageManager::UpdatePageWatchersForRegion(VAddr base_addr, RegionBits& mask) const {
+    BbDoor::OriginScope origin{2};
     impl->UpdatePageWatchersForRegion<track, is_read>(base_addr, mask);
 }
 

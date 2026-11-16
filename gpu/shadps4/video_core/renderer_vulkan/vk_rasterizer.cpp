@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstring>
 #include <map>
+#include "bbport_door_diag.h"
 #include "common/bb_host_compat.h"
 #include <unordered_set>
 #include <xxhash.h>
@@ -13,6 +14,7 @@
 #include "bbport_sections.h"
 #include "bbport_stall_probe.h"
 #include "bbport_tex_prereg.h"
+#include "bbport_buf_prereg.h"
 #include "game_profile.h"
 #include "bbport_ce_stats.h"
 #include "bbport_headless.h"
@@ -1746,6 +1748,11 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         }();
         buffer_cache.Preupload(budget);
         PreregisterTextures(frame);
+        PreuploadBuffers(frame);
+        JoinArenasAhead(frame);
+        if (BbDoor::On()) [[unlikely]] {
+            BbDoor::FrameTick(frame);
+        }
     }
     const auto& regs = Regs();
     // bbport: volumetric effects resolution: its level and newly classified images apply at
@@ -2962,6 +2969,7 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
     // Map buffers for merged ranges
     for (auto& range : ranges_merged) {
         const u64 size = memory->ClampRangeSize(range.base_address, range.GetSize());
+        BbDoor::KindScope door_kind{BbDoor::Vertex};
         std::tie(range.buffer, range.offset) =
             buffer_cache.ObtainBuffer(range.base_address, size, false);
         needs_barrier |= runtime.IsBufferAccessed(range.buffer, range.offset, size);
@@ -3035,6 +3043,7 @@ void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
     vk::Buffer index_buffer{};
     u64 buffer_offset{};
     if (index_buffer_size != 0) {
+        BbDoor::KindScope door_kind{BbDoor::Index};
         const auto [buffer, offset] =
             buffer_cache.ObtainBuffer(index_address, index_buffer_size, false);
         needs_barrier |= runtime.IsBufferAccessed(buffer, offset, index_buffer_size);
@@ -3466,6 +3475,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     LOG_ERROR(Render, "Clamped size from {} to {} for stage {:#x}",
                               vsharp.GetSize(), size, stage.pgm_hash);
                 }
+                BbDoor::KindScope door_kind{BbDoor::Shader};
                 const auto [buffer, offset] = buffer_cache.ObtainBuffer(
                     vsharp.base_address, size, desc.is_written, desc.is_formatted);
                 TraceShaderBinding(stage, vsharp.base_address, size, desc.is_written, buffer_cache);
@@ -3587,6 +3597,116 @@ void Rasterizer::PreregisterTextures(u32 frame) {
     }
     if (registered | already | rejected) {
         BbTexPrereg::Count(registered, registered_bytes, already, rejected);
+    }
+}
+
+// bbport door082: the buffer cache's arena is one sparse buffer per 4 GiB of guest addresses. The
+// first binding that crosses a boundary between two of them makes GetArena join them ("Migrating
+// arena": a new sparse buffer over both, every resident range bound again): one frame of 60-80 ms
+// with no draw in it, once a session, wherever the player is when the game first draws (or the
+// buffer pre-upload first copies) a buffer lying across 0x1100000000. Here the join is made while
+// the game's loading screen is requested, for every boundary inside a guest GPU mapping that has
+// an arena on at least one side. BB_ARENA_JOIN_AHEAD=0 off.
+void Rasterizer::JoinArenasAhead(u32 frame) {
+    static const bool on = [] {
+        const char* env = std::getenv("BB_ARENA_JOIN_AHEAD");
+        return !(env && env[0] == '0');
+    }();
+    // Twice a second while the loading screen is up (the mappings are a handful of intervals).
+    if (!on || frame % 16 != 0 || !BbTexPrereg::LoadingScreenUp()) {
+        return;
+    }
+    boost::container::small_vector<std::pair<VAddr, VAddr>, 16> ranges;
+    {
+        Common::RecursiveSharedLock lock{mapped_ranges_mutex};
+        for (const auto& range : mapped_ranges) {
+            ranges.emplace_back(range.lower(), range.upper());
+        }
+    }
+    for (const auto& [begin, end] : ranges) {
+        buffer_cache.JoinArenasAhead(begin, end);
+    }
+}
+
+// bbport door082 (bbport_buf_prereg.h): vertex and index buffers the game created with their data
+// are copied into the arena here, ahead of their first draw, once a frame beside the texture
+// pre-registration: up to 256 MiB a frame while the game's loading screen is requested,
+// BB_BUF_PREUPLOAD_MB (3) a frame in the world, a large buffer in parts over several frames (a
+// frame with 16 MiB of it took 4-6 ms longer and missed its flip every third time). The copy is
+// what the buffer's first binding would make (new arena memory, the upload, write protection of
+// its pages): a buffer the game writes later is uploaded again at its next binding, as always,
+// and one drawn before its turn here is copied by that draw.
+void Rasterizer::PreuploadBuffers(u32 frame) {
+    if (!BbBufPrereg::Enabled()) {
+        return;
+    }
+    static const u64 world_budget = [] {
+        const char* env = std::getenv("BB_BUF_PREUPLOAD_MB");
+        return (env && *env ? std::strtoull(env, nullptr, 10) : 3ull) << 20;
+    }();
+    static const u32 quiet = [] {
+        const char* env = std::getenv("BB_BUF_PREUPLOAD_QUIET");
+        return env && *env ? u32(std::strtoul(env, nullptr, 10)) : 2u;
+    }();
+    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
+    BbBufPrereg::Entry batch[64];
+    // Buffers the game freed: their copies may go idle.
+    for (std::size_t n; (n = BbBufPrereg::TakeFreed(batch, std::size(batch))) != 0;) {
+        for (std::size_t i = 0; i < n; ++i) {
+            buffer_cache.ReleaseKeptBuffer(batch[i].address, batch[i].size);
+            if (batch[i].address == bufprereg_address) {
+                bufprereg_address = 0; // freed half way: the rest is not copied
+            }
+        }
+    }
+    if (VideoCore::GuestInPlace()) {
+        // The GPU reads the game memory itself: nothing to copy, the queue is emptied.
+        while (BbBufPrereg::Take(batch, std::size(batch), frame, 0) != 0) {
+        }
+        return;
+    }
+    const bool paused = buffer_cache.BufferPreuploadPaused();
+    if (stats && frame - bufprereg_report_frame >= 600) {
+        bufprereg_report_frame = frame;
+        BbBufPrereg::Report(buffer_cache.KeptBufferBytes(), paused);
+    }
+    if (paused) {
+        return; // the queue waits (a buffer drawn meanwhile is copied by its draw)
+    }
+    const u64 budget = BbTexPrereg::LoadingScreenUp() ? (256ull << 20) : world_budget;
+    u64 used = 0, uploaded_buffers = 0, uploaded_bytes = 0, bound_bytes = 0, rejected = 0;
+    while (used < budget) {
+        if (bufprereg_address == 0) {
+            if (BbBufPrereg::Take(batch, 1, frame, quiet) == 0) {
+                break;
+            }
+            const VAddr address = batch[0].address;
+            const u64 size = batch[0].size;
+            if (!memory->IsValidGpuMapping(address, 0) || !memory->IsValidGpuMapping(address + size - 1, 0) ||
+                memory->ClampRangeSize(address, size) != size) {
+                ++rejected; // not GPU memory (the game's CPU heap), or unmapped since
+                continue;
+            }
+            bufprereg_address = address;
+            bufprereg_size = size;
+            bufprereg_done = 0;
+            buffer_cache.KeepBuffer(address, size);
+            ++uploaded_buffers;
+            bound_bytes += size;
+        }
+        // The part that fits the frame's budget, in whole 64 KiB steps (at least one).
+        const u64 part = std::min(bufprereg_size - bufprereg_done,
+                                  std::max<u64>(Common::AlignDown(budget - used, 64_KB), 64_KB));
+        const u64 uploaded = buffer_cache.PreuploadBuffer(bufprereg_address + bufprereg_done, part);
+        uploaded_bytes += uploaded;
+        used += std::max<u64>(uploaded, 16_KB); // a part in VRAM already still costs the walk
+        bufprereg_done += part;
+        if (bufprereg_done >= bufprereg_size) {
+            bufprereg_address = 0;
+        }
+    }
+    if (uploaded_buffers | rejected) {
+        BbBufPrereg::Count(uploaded_buffers, uploaded_bytes, bound_bytes, rejected);
     }
 }
 
