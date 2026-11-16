@@ -388,6 +388,28 @@ def remove_overlay(path, game=None, top=None):
     os.rmdir(path)
 
 
+def dir_links_work(out):
+    """Whether a directory link (symlink or junction) in `out` really lists its target. Wine / Proton has neither:
+    CreateSymbolicLinkW is a stub there and _winapi.CreateJunction leaves an empty or missing folder, so an overlay
+    built from such links has no sce_module folder and the boot image fails ('sce_module/libc.prx is missing').
+    BB_WINE_MODS_OVERLAY=1 skips the probe (the old behaviour)."""
+    if os.environ.get('BB_WINE_MODS_OVERLAY') == '1':
+        return True
+    probe = Path(tempfile.mkdtemp(prefix='mod-probe-', dir=out))
+    try:
+        target = probe / 'target'
+        target.mkdir()
+        (target / 'f').write_text('x', encoding='utf-8')
+        link = probe / 'link'
+        try:
+            make_link(link, target, target_is_directory=True)
+            return (link / 'f').is_file()
+        except (OSError, ValueError):
+            return False
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
+
+
 def build_overlay(game, out, mods):
     game = Path(game).resolve(strict=True)
     replacements = []
@@ -406,6 +428,10 @@ def build_overlay(game, out, mods):
         return game
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    if sys.platform == 'win32' and not dir_links_work(out):
+        print('Mods: this system cannot make directory links (Wine / Proton): starting without the mod overlay '
+              '(BB_WINE_MODS_OVERLAY=1 forces it)', file=sys.stderr)
+        return game
     # One overlay per (game, mod files): reused while nothing changed, so a launch neither builds
     # it again nor changes the game path (scripts/boot_image.py keys its cache on that path).
     key = hashlib.sha256(str(game).casefold().encode())
