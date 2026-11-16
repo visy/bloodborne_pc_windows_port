@@ -11,6 +11,7 @@
 #include "bbport_fast_loading.h"
 #include "bbport_load_speed.h"
 #include "bbport_tex_prereg.h"
+#include "bbport_buf_prereg.h"
 #include "bbport_parts_budget.h"
 #include "core/libraries/videoout/video_out.h"
 #include "video_core/renderer_vulkan/vk_antilag.h"
@@ -442,6 +443,7 @@ extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbLoadTrace::Install();  // BB_LOAD_TRACE: the map load step by step with IO / GPU / CPU counters (diagnostic)
     BbLoadSpeed::Install();  // BB_LOAD_WORKERS / BB_FAST_INFLATE: more resource post-processor threads, zlib-ng inflate
     bbport::fastload::Install();  // 0.8.1 unpaced loading screens that keep animating (BB_FAST_LOADING=0 off), fast fades
+    BbBufPrereg::Install();  // door082: vertex / index buffers copied to VRAM when the game creates them (BB_BUF_PREUPLOAD=0 off)
     BbTexPrereg::Install();  // hitch082: textures registered when the game creates them (BB_TEX_PREREGISTER=0 off)
     BbPartsBudget::Install();  // BB_LOAD_PARTS_BUDGET: more map parts per frame while the loading screen is up (cwprof081)
     coop::seam::Install();  // 0.8.1 seamless join: held / settled loading screen drop, frame-end quiet point (toggles off)

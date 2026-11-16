@@ -186,6 +186,25 @@ public:
     /// bbport (BB_PREUPLOAD): uploads up to `budget` bytes of that memory which the CPU changed and
     /// then left alone for a few frames into the arena, ahead of its use (draw recording thread).
     void Preupload(u64 budget);
+    /// bbport door082 (bbport_buf_prereg.h): copies a buffer the game created (or a part of it)
+    /// into the arena ahead of its first draw, as a read binding of it would (draw recording
+    /// thread). Returns the bytes that were uploaded.
+    u64 PreuploadBuffer(VAddr addr, u64 size);
+    /// bbport door082: a guest GPU mapping [begin, end) that crosses an arena page boundary (4 GiB)
+    /// with an arena on one side only, or two arenas: they are joined now. GetArena joins them
+    /// ("Migrating arena": a new sparse buffer, every resident range bound again; one frame of
+    /// 60-80 ms) at the first binding that crosses the boundary, in the world. Called while the
+    /// loading screen is up. Returns whether it joined any.
+    bool JoinArenasAhead(VAddr begin, VAddr end);
+    /// Keeps the copies of that buffer from going idle until ReleaseKeptBuffer.
+    void KeepBuffer(VAddr addr, u64 size);
+    /// The game freed that buffer: its copy goes idle like any other.
+    void ReleaseKeptBuffer(VAddr addr, u64 size);
+    /// VRAM is short of the texture collector's first mark: no copies ahead, and kept copies go idle.
+    bool BufferPreuploadPaused();
+    u64 KeptBufferBytes() const {
+        return kept_buffer_bytes;
+    }
     /// bbport (BB_GPU_WRITE_TWINS): forgets the twins of unmapped guest memory.
     void DropTwins(VAddr addr, u64 size);
 
@@ -377,7 +396,11 @@ private:
     void ProcessIdleBlocks();
     /// The copies model: VRAM copies unused for `idle_seconds` without GPU-written data leave
     /// VRAM (at most `limit`); a later use uploads them again. Returns how many.
-    u64 EvictIdleCopies(u32 idle_seconds, u64 limit);
+    u64 EvictIdleCopies(u32 idle_seconds, u64 limit, bool keep_live = false);
+    /// bbport door082: live buffers copied ahead of their first draw (start -> end), disjoint.
+    std::map<VAddr, VAddr> kept_buffers;
+    u64 kept_buffer_bytes = 0;
+    bool KeptBufferOverlaps(VAddr begin, VAddr end) const;
     /// Residency chunks empty for 5 s go back to the driver.
     void FreeEmptyChunks(u32 now);
     /// A VRAM slot of a block that left it: reused by the next move to VRAM.
@@ -502,6 +525,8 @@ private:
     std::mutex preupload_mutex;               ///< the map hooks come from guest threads
     std::map<VAddr, VAddr> preupload_ranges; ///< start -> end of pre-uploaded guest memory
     VAddr preupload_cursor = 0;
+    u32 preupload_pause_second = ~0u; ///< door082: BufferPreuploadPaused's last check
+    bool preupload_paused = false;
     u64 preupload_first_bytes = 0, preupload_again_bytes = 0; ///< BB_FRAME_STATS report
     Vulkan::Semaphore memory_semaphore;
     /// bbport BB_LAYER_MEMORY: mirrors by start address, retired ones with the tick to wait for.

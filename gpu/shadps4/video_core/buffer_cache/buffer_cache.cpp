@@ -9,6 +9,7 @@
 #include <bit>
 #include <cstdlib>
 #include <magic_enum/magic_enum.hpp>
+#include "bbport_door_diag.h"
 #include "bbport_copy.h"
 #include "bbport_toggles.h"
 #include "bbport_sections.h"
@@ -1354,6 +1355,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
 }
 
 std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_addr, u32 size) {
+    BbDoor::KindScope door_kind{BbDoor::Image};
     // bbport BB_GUEST_IN_PLACE: texture data is read by the GPU from the game's memory itself:
     // through the arena where it is bound in place, else (BB_CHUNK_TEXTURES) from its guest
     // memory chunk.
@@ -1586,6 +1588,9 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         vram_blocks += range.end - range.start;
     }
 
+    if (vram_blocks != 0 && BbDoor::On()) [[unlikely]] {
+        BbDoor::NoteResident(vram_blocks << block_shift);
+    }
     if (vram_blocks != 0) {
         // bbport: the slots of blocks that left VRAM first, block by block. A request of several
         // blocks only ever took new space, and the free slots piled up while new 64 MiB chunks
@@ -1941,16 +1946,136 @@ void BufferCache::EvictVramBlock(u64 block) {
     BbStats::vram_unmapped_bytes.fetch_add(block_size, std::memory_order_relaxed);
 }
 
-u64 BufferCache::EvictIdleCopies(u32 idle_seconds, u64 limit) {
+bool BufferCache::JoinArenasAhead(VAddr begin, VAddr end) {
+    if (LayerMode() || end <= begin) {
+        return false; // the layer's memory module has no sparse arena
+    }
+    bool joined = false;
+    u32 boundaries = 0;
+    for (VAddr boundary = Common::AlignUp(begin + 1, ARENA_PAGE_SIZE);
+         boundary < end && boundaries < 2; boundary += ARENA_PAGE_SIZE, ++boundaries) {
+        const u64 page = boundary >> ARENA_PAGE_BITS;
+        if (page == 0 || page >= address_space.size() || address_space[page - 1] == address_space[page]) {
+            continue; // one arena over both already, or the area is not in use (no arena yet)
+        }
+        const u64 block = boundary >> block_shift;
+        GetArena(block - 1, block);
+        joined = true;
+        std::printf("Guest memory: the arenas at %#llx joined ahead, under the loading screen "
+                    "(BB_ARENA_JOIN_AHEAD=0 off)\n", (unsigned long long)boundary);
+    }
+    return joined;
+}
+
+bool BufferCache::KeptBufferOverlaps(VAddr begin, VAddr end) const {
+    // Disjoint ranges: the last one starting before `end` is the only one that can reach in.
+    auto it = kept_buffers.lower_bound(end);
+    return it != kept_buffers.begin() && std::prev(it)->second > begin;
+}
+
+u64 BufferCache::PreuploadBuffer(VAddr addr, u64 size) {
+    if (GuestInPlace() || size == 0 || size > std::numeric_limits<u32>::max()) {
+        return 0; // in place: the GPU reads the game's memory itself
+    }
+    BbDoor::KindScope door_kind{BbDoor::Preupload};
+    const u64 before = BbStats::buffer_upload_bytes.load(std::memory_order_relaxed);
+    const u64 first_block = addr >> block_shift;
+    const u64 last_block = (addr + size - 1) >> block_shift;
+    // What a read binding of the whole buffer does (ObtainBuffer's VRAM path).
+    const auto* arena = GetArena(first_block, last_block);
+    EnsureResident(arena, first_block, last_block);
+    SynchronizeMemory(arena, addr, static_cast<u32>(size), false, false);
+    return BbStats::buffer_upload_bytes.load(std::memory_order_relaxed) - before;
+}
+
+void BufferCache::KeepBuffer(VAddr addr, u64 size) {
+    // Kept from going idle while the game keeps the buffer. A stale range under it (a free that
+    // was not seen) gives way.
+    for (auto it = kept_buffers.lower_bound(addr + size); it != kept_buffers.begin();) {
+        --it;
+        if (it->second <= addr) {
+            break;
+        }
+        kept_buffer_bytes -= it->second - it->first;
+        it = kept_buffers.erase(it);
+    }
+    kept_buffers[addr] = addr + size;
+    kept_buffer_bytes += size;
+}
+
+void BufferCache::ReleaseKeptBuffer(VAddr addr, u64 size) {
+    if (const auto it = kept_buffers.find(addr); it != kept_buffers.end()) {
+        kept_buffer_bytes -= it->second - it->first;
+        kept_buffers.erase(it);
+    }
+}
+
+bool BufferCache::BufferPreuploadPaused() {
+    // Copies made ahead must not push the texture collector to work: they stop a margin short of
+    // its first mark (where it starts freeing idle textures), and of 85 % of the driver's budget
+    // where there are no marks. Checked at most once a second (the query goes to the driver).
+    static const u64 margin = [] {
+        const char* env = std::getenv("BB_BUF_PREUPLOAD_MARGIN_MB");
+        return (env && *env ? std::strtoull(env, nullptr, 10) : 256ull) << 20;
+    }();
+    // Cards under 5 GiB keep the old behaviour (copies at first draw, idle ones leave after a
+    // minute): not measured there, and 0.5 GiB of geometry ahead is a large share of such a card.
+    // BB_BUF_PREUPLOAD_MIN_VRAM_MB sets the limit (0: any card).
+    static const u64 min_vram = [] {
+        const char* env = std::getenv("BB_BUF_PREUPLOAD_MIN_VRAM_MB");
+        return (env && *env ? std::strtoull(env, nullptr, 10) : 5120ull) << 20;
+    }();
+    static const bool small_card = [this] {
+        const u64 total = instance.GetTotalMemoryBudget();
+        const bool small = total != 0 && total < min_vram;
+        if (small) {
+            std::printf("Buffer pre-upload: off on this card (%llu MiB of video memory, under %llu; "
+                        "BB_BUF_PREUPLOAD_MIN_VRAM_MB=0 turns it on)\n",
+                        (unsigned long long)(total >> 20), (unsigned long long)(min_vram >> 20));
+        }
+        return small;
+    }();
+    if (small_card) {
+        return true;
+    }
+    const u32 second = BbStats::coarse_second.load(std::memory_order_relaxed);
+    if (second != preupload_pause_second) {
+        preupload_pause_second = second;
+        bool paused = TextureCache::VramShort();
+        if (!paused && instance.CanReportMemoryUsage()) {
+            const u64 usage = instance.GetDeviceMemoryUsage();
+            const u64 trigger = BbStats::gc_trigger_bytes.load(std::memory_order_relaxed);
+            const u64 budget = instance.GetDeviceMemoryBudgetNow();
+            paused = trigger != 0 ? usage + margin >= trigger
+                                  : budget != 0 && usage * 100 > budget * 85;
+        }
+        if (paused != preupload_paused) {
+            static std::atomic<u32> told{0};
+            if (told.fetch_add(1, std::memory_order_relaxed) < 6) {
+                std::printf("Buffer pre-upload: %s\n",
+                            paused ? "VRAM is short: no copies ahead for now, kept copies may go idle"
+                                   : "VRAM has room again");
+            }
+        }
+        preupload_paused = paused;
+    }
+    return preupload_paused;
+}
+
+u64 BufferCache::EvictIdleCopies(u32 idle_seconds, u64 limit, bool keep_live) {
     const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);
     std::vector<u64> idle;
+    // door082: the copies of live buffers made ahead of their first draw stay (the place they
+    // belong to may be a minute's walk away), unless VRAM is short.
+    keep_live = keep_live && !kept_buffers.empty() && !BufferPreuploadPaused();
     for (const auto& range : resident_ranges) {
         if (!residency_chunks.contains(static_cast<VkDeviceMemory>(range.memory))) {
             continue;
         }
         for (u64 block = range.start; block < range.end && idle.size() < limit; ++block) {
             if (now - group_use[(block << block_shift) >> USE_GROUP_BITS] >= idle_seconds &&
-                !IsRegionGpuModified(block << block_shift, block_size)) {
+                !IsRegionGpuModified(block << block_shift, block_size) &&
+                !(keep_live && KeptBufferOverlaps(block << block_shift, (block + 1) << block_shift))) {
                 idle.push_back(block);
             }
         }
@@ -1991,7 +2116,7 @@ void BufferCache::ProcessIdleBlocks() {
         if (TextureCache::VramShort()) {
             EvictIdleCopies(5, ~u64{0});
         } else if (small_vram) {
-            EvictIdleCopies(VramIdleSeconds(), ~u64{0});
+            EvictIdleCopies(VramIdleSeconds(), ~u64{0}, true);
         }
         FreeEmptyChunks(now);
         return;
@@ -3294,6 +3419,17 @@ bool BufferCache::IsInPlace(VAddr addr, u64 size) const {
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,
                                     bool is_written, bool is_texel_buffer) {
+    struct DoorNote { // BB_DOOR_DIAG
+        VAddr addr;
+        u32 size;
+        u64 before = BbStats::buffer_upload_bytes.load(std::memory_order_relaxed);
+        ~DoorNote() {
+            if (BbDoor::On()) [[unlikely]] {
+                BbDoor::NoteSync(addr, size,
+                                 BbStats::buffer_upload_bytes.load(std::memory_order_relaxed) - before);
+            }
+        }
+    } door_note{device_addr, size};
     boost::container::small_vector<std::pair<vk::Buffer, vk::BufferCopy>, 4> chunk_copies;
     // bbport BB_GUEST_IN_PLACE: the arena is the game's memory there: nothing to upload, no
     // write tracking, and GPU writes need no readback. Images aliasing it still sync.
@@ -3629,6 +3765,7 @@ void BufferCache::Preupload(u64 budget) {
         return;
     }
     const bool full = PreuploadMode() == 2;
+    BbDoor::KindScope door_kind{BbDoor::Preupload};
     // BB_FRAME_STATS: what the pre-upload put into the arena: regions for the first time, or again
     // (rewritten by the game since).
     static u32 report_frame = 0;
