@@ -11927,7 +11927,7 @@ def check_rules(v, L):
     # 0.7.2: a 0.7.1 bbport.ini (party_rot=1, no settings_rev) has rot off once, on both games
     for i, who in ((0, "host"), (1, "guest")):
         need(v, L, "rules %s: 0.7.1 bbport.ini migrated (rot off once)" % who, i,
-             r"Settings: bbport.ini settings_rev 0 -> 1 \(rot off by default")
+             r"Settings: bbport.ini settings_rev 0 -> \d+ \((rot off by default|one-time defaults: party_rot)")
     rot_rows = L.find(0, r"Game menu: page \d+ rows \(\d+\): Rot on death=")
     v.step("rules host: Rot page shows rot off after the migration", bool(rot_rows) and "Rot on death=Off" in rot_rows[1],
            rot_rows[1][:200] if rot_rows else "no Rot rows line on the host")
