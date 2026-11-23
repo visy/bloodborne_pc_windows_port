@@ -47,6 +47,16 @@ Mods label (0.7.8): what the host's game loaded, so a guest sees it before joini
 The lobby only stores and relays the label (it never interprets it); it lives as long as the entry, like type 7. A
 client asks 11, then 8, then 2. A client uses a label only as a key (a curated mod's id and version looked up in its own
 built-in list); it never builds a path or an address from it.
+Start-up rules: what a guest must match to join (party_link identity_mismatch), so its launcher starts with them.
+  type 13 announce rules  (host -> lobby, right after type 1/7/10; ignored without a live entry)
+                   flags u8 (bit0 Guests use lamps, bit1 Hunter's Mark, bit2 Full rewards for guests, bit3 Party
+                   starts right away, bit4 Key items for every player), insight u8 (0 same as the host, 1 full,
+                   2 the game's own)                                            -- 2 body bytes, strict
+  type 14 list4    offset u16                      (as type 11, asks for the reply with the rules)
+  type 15 reply4   as type 12, each entry followed by rules: flags u8 (bit7 known, bits 0-4 as type 13; 0 when the
+                   host sent none), insight u8
+The lobby stores and relays the two bytes (it never interprets them); they live as long as the entry. A client asks
+14, then 11, 8 and 2.
 The area id is a map id and nothing else (no coordinates); the client turns it into words (scripts/party_where.py
 holds the table the launcher uses: "Currently in: Yahar'gul (Blood Moon), NG").
 An announce is not answered; a list request is answered with one reply page. Anything malformed is
@@ -67,6 +77,8 @@ VERSION = 1
 T_ANNOUNCE, T_LIST, T_REPLY, T_BYE, T_STATS, T_STATS_REPLY = 1, 2, 3, 4, 5, 6
 T_ANNOUNCE_EXT, T_LIST2, T_REPLY2 = 7, 8, 9
 T_ANNOUNCE_MODS, T_LIST3, T_REPLY3 = 10, 11, 12
+T_ANNOUNCE_RULES, T_LIST4, T_REPLY4 = 13, 14, 15
+RULES_KNOWN = 0x80         # type 15: the host sent its start-up rules
 F_PASSWORD, F_SELF = 1, 2
 F_INVADERS, F_BOSS = 4, 8   # type 9 only; type 3 never carries them
 
@@ -217,6 +229,21 @@ def encode_announce_mods(label: str) -> bytes:
     return MAGIC + bytes([VERSION, T_ANNOUNCE_MODS, len(b)]) + b
 
 
+def parse_announce_rules(body: bytes):
+    """(flags, insight) or None. Strict: 2 bytes, flags only bits 0-4, insight 0..2."""
+    if len(body) != 2 or body[0] & ~31 or body[1] > 2:
+        return None
+    return body[0], body[1]
+
+
+def encode_announce_rules(flags: int, insight: int) -> bytes:
+    return MAGIC + bytes([VERSION, T_ANNOUNCE_RULES, flags & 31, insight])
+
+
+def encode_list4(offset: int = 0) -> bytes:
+    return MAGIC + bytes([VERSION, T_LIST4, (offset >> 8) & 255, offset & 255])
+
+
 def encode_list3(offset: int = 0) -> bytes:
     return MAGIC + bytes([VERSION, T_LIST3, (offset >> 8) & 255, offset & 255])
 
@@ -288,6 +315,14 @@ def parse_reply(data: bytes):
     return total, offset, out
 
 
+def parse_reply4(data: bytes):
+    """(total, offset, [entry dict]) of a type 15 reply or None. Entry: as parse_reply3 plus rules ((flags, insight),
+    None when the host sent none)."""
+    if len(data) < 9 or data[:2] != MAGIC or data[2] != VERSION or data[3] != T_REPLY4:
+        return None
+    return _parse_rows2(data, labels=True, rules=True)
+
+
 def parse_reply3(data: bytes):
     """(total, offset, [entry dict]) of a type 12 reply or None. Entry: as parse_reply2 plus mods (the label, "" for none)."""
     if len(data) < 9 or data[:2] != MAGIC or data[2] != VERSION or data[3] != T_REPLY3:
@@ -302,7 +337,7 @@ def parse_reply2(data: bytes):
     return _parse_rows2(data, labels=False)
 
 
-def _parse_rows2(data: bytes, labels: bool):
+def _parse_rows2(data: bytes, labels: bool, rules: bool = False):
     total, offset, count = (data[4] << 8) | data[5], (data[6] << 8) | data[7], data[8]
     pos = 9
     out = []
@@ -337,6 +372,14 @@ def _parse_rows2(data: bytes, labels: bool):
             if n and not LABEL_RE.fullmatch(label):
                 return None
             row["mods"] = label.decode("ascii")
+        if rules:
+            if pos + 2 > len(data):
+                return None
+            rf, ri = data[pos], data[pos + 1]
+            pos += 2
+            if rf & 0x60 or ri > 2 or (not rf & RULES_KNOWN and (rf or ri)):
+                return None
+            row["rules"] = (rf & 31, ri) if rf & RULES_KNOWN else None
         out.append(row)
     if pos != len(data):
         return None
@@ -355,6 +398,7 @@ class Lobby:
         self.buckets = {}   # ip -> (tokens, last)
         self.ext = {}       # ip -> (expiry, flags, area, phase, ng): the 0.7.8 extension (type 7)
         self.mods = {}      # ip -> (expiry, label): the mods label (type 10)
+        self.rules = {}     # ip -> (expiry, flags, insight): the start-up rules (type 13)
 
     def allowed(self, ip: str) -> bool:
         try:
@@ -382,6 +426,8 @@ class Lobby:
             del self.ext[ip]
         for ip in [k for k, e in self.mods.items() if e[0] <= now or k not in self.entries]:
             del self.mods[ip]
+        for ip in [k for k, e in self.rules.items() if e[0] <= now or k not in self.entries]:
+            del self.rules[ip]
         # forget idle rate buckets (full again anyway)
         if len(self.buckets) > 2 * self.max_entries:
             self.buckets = {k: v for k, v in self.buckets.items() if now - v[1] < 10.0}
@@ -423,16 +469,24 @@ class Lobby:
             if label is not None and ip in self.entries:   # only a live host; the label is relayed, never interpreted
                 self.mods[ip] = (now + self.ttl, label)
             return None
+        if kind == T_ANNOUNCE_RULES:
+            p = parse_announce_rules(body)
+            self.expire(now)
+            if p is not None and ip in self.entries:   # only a live host; relayed, never interpreted
+                self.rules[ip] = (now + self.ttl,) + p
+            return None
         if kind == T_BYE:
             if len(body) == 0:
                 self.entries.pop(ip, None)
                 self.ext.pop(ip, None)
                 self.mods.pop(ip, None)
+                self.rules.pop(ip, None)
             return None
-        if kind in (T_LIST, T_LIST2, T_LIST3):
+        if kind in (T_LIST, T_LIST2, T_LIST3, T_LIST4):
             if len(body) != 2:
                 return None
-            return self.page((body[0] << 8) | body[1], ip, now, extended=kind != T_LIST, labels=kind == T_LIST3)
+            return self.page((body[0] << 8) | body[1], ip, now, extended=kind != T_LIST,
+                             labels=kind in (T_LIST3, T_LIST4), rules=kind == T_LIST4)
         return None
 
     def stats(self, data: bytes, now: float):
@@ -454,7 +508,8 @@ class Lobby:
              "free_slots": sum(max(0, e[4] - e[3]) for e in open_rows), "sizes": sizes, "builds": top}
         return MAGIC + bytes([VERSION, T_STATS_REPLY]) + json.dumps(d, separators=(",", ":"), sort_keys=True).encode()
 
-    def page(self, offset: int, requester: str, now: float, extended: bool = False, labels: bool = False) -> bytes:
+    def page(self, offset: int, requester: str, now: float, extended: bool = False, labels: bool = False,
+             rules: bool = False) -> bytes:
         self.expire(now)
         rows = sorted(self.entries.items(), key=lambda kv: (kv[1][6].casefold(), kv[0]))
         total = len(rows)
@@ -473,6 +528,9 @@ class Lobby:
                     m = self.mods.get(ip)
                     lb = m[1].encode("ascii") if m else b""
                     ent += bytes([len(lb)]) + lb
+                if rules:
+                    r = self.rules.get(ip)
+                    ent += bytes([RULES_KNOWN | r[1], r[2]]) if r else b"\x00\x00"
             else:   # the v1 row: an old client's strict parser accepts only the password and own bits
                 ent = (bytes(int(x) for x in ip.split(".")) + bytes([port >> 8, port & 255,
                        flags | own, players, maxp, len(nb)]) + nb + bytes([len(bb)]) + bb)
@@ -480,7 +538,7 @@ class Lobby:
                 break
             chunk += ent
             count += 1
-        kind = T_REPLY3 if labels else T_REPLY2 if extended else T_REPLY
+        kind = T_REPLY4 if rules else T_REPLY3 if labels else T_REPLY2 if extended else T_REPLY
         return (MAGIC + bytes([VERSION, kind, total >> 8, total & 255, (offset >> 8) & 255, offset & 255,
                                count]) + bytes(chunk))
 

@@ -965,12 +965,16 @@ def parse_discovery_rules(data: bytes):
         return None
     if data[0] != 0xFA or data[1] != 0x52 or data[2] != 1 or data[7] & ~31 or data[8] > 2:
         return None
-    f = data[7]
-    env = {"BB_PARTY_GUEST_LAMPS": "1" if f & 1 else "0", "BB_PARTY_GUEST_MARK": "1" if f & 2 else "0",
-           "BB_PARTY_FULL_REWARDS": "1" if f & 4 else "0",
-           "BB_PARTY_START": "immediate" if f & 8 else "prologue_solo", "BB_PARTY_ITEMS": "1" if f & 16 else "0",
-           "BB_PARTY_GUEST_INSIGHT": {1: "full", 2: "0"}.get(data[8], "parity")}
-    return {"id": int.from_bytes(data[3:7], "big"), "env": env}
+    return {"id": int.from_bytes(data[3:7], "big"), "env": startup_rules_env(data[7], data[8])}
+
+
+def startup_rules_env(flags: int, insight: int) -> dict:
+    """The start-up rule bits (discovery 'R', lobby type 15) as the BB_PARTY_* values of a guest's launch."""
+    return {"BB_PARTY_GUEST_LAMPS": "1" if flags & 1 else "0", "BB_PARTY_GUEST_MARK": "1" if flags & 2 else "0",
+            "BB_PARTY_FULL_REWARDS": "1" if flags & 4 else "0",
+            "BB_PARTY_START": "immediate" if flags & 8 else "prologue_solo",
+            "BB_PARTY_ITEMS": "1" if flags & 16 else "0",
+            "BB_PARTY_GUEST_INSIGHT": {1: "full", 2: "0"}.get(insight, "parity")}
 
 
 def party_where_module():
@@ -1299,6 +1303,7 @@ LOBBY_MAX_PAGES = 20
 LOBBY_MAGIC = b"\xfaL"
 LOBBY_FLAG_PASSWORD, LOBBY_FLAG_OWN = 1, 2
 LOBBY_FLAG_INVADERS, LOBBY_FLAG_BOSS = 4, 8   # type 9 (extended) rows only
+LOBBY_LABEL_RE = re.compile(rb"[a-z0-9@._:+-]{1,255}")   # type 15's mods label (nwlobby.py LABEL_RE)
 
 
 LOBBY_NET = "10.8.0.0/22"   # 0.7.8: room for 1021 players once the server widens its pool (was /24)
@@ -1329,9 +1334,11 @@ def lobby_target():
     return (LOBBY_ADDR, LOBBY_PORT), False
 
 
-def lobby_list_request(offset: int = 0, extended: bool = False) -> bytes:
-    """Type 2 (the v1 list) or, extended, type 8 (rows with the invader flag and where the host is)."""
-    return LOBBY_MAGIC + bytes([1, 8 if extended else 2, (offset >> 8) & 255, offset & 255])
+def lobby_list_request(offset: int = 0, extended: bool = False, rules: bool = False) -> bytes:
+    """Type 2 (the v1 list), extended type 8 (rows with the invader flag and where the host is), or with rules
+    type 14 (type 8's rows plus the host's mods label and start-up rules)."""
+    kind = 14 if rules else 8 if extended else 2
+    return LOBBY_MAGIC + bytes([1, kind, (offset >> 8) & 255, offset & 255])
 
 
 def lobby_parse_reply2(data: bytes):
@@ -1339,8 +1346,9 @@ def lobby_parse_reply2(data: bytes):
     type 3 keys plus invaders, boss, area (map id), phase, ng."""
     if not isinstance(data, (bytes, bytearray)) or not 9 <= len(data) <= 1024:
         return None
-    if data[:2] != LOBBY_MAGIC or data[2] != 1 or data[3] != 9:
+    if data[:2] != LOBBY_MAGIC or data[2] != 1 or data[3] not in (9, 15):
         return None
+    with_rules = data[3] == 15   # type 15: each row is followed by the mods label and the start-up rules
     total, offset, count = (data[4] << 8) | data[5], (data[6] << 8) | data[7], data[8]
     pos = 9
     out = []
@@ -1372,10 +1380,25 @@ def lobby_parse_reply2(data: bytes):
         name = "".join(ch for ch in name if ch.isprintable())[:16]
         if not name:
             return None
+        rules = None
+        if with_rules:
+            if pos >= len(data) or pos + 1 + data[pos] + 2 > len(data):
+                return None
+            n = data[pos]
+            if n and not LOBBY_LABEL_RE.fullmatch(bytes(data[pos + 1:pos + 1 + n])):
+                return None
+            pos += 1 + n
+            rf, ri = data[pos], data[pos + 1]
+            pos += 2
+            if rf & 0x60 or ri > 2 or (not rf & 0x80 and (rf or ri)):
+                return None
+            rules = startup_rules_env(rf, ri) if rf & 0x80 else None
         out.append({"ip": ip, "port": port, "password": bool(flags & LOBBY_FLAG_PASSWORD),
                     "own": bool(flags & LOBBY_FLAG_OWN), "invaders": bool(flags & LOBBY_FLAG_INVADERS),
                     "boss": bool(flags & LOBBY_FLAG_BOSS), "players": players, "max": maxp, "area": area,
                     "phase": phase, "ng": ng, "name": name, "build": raw.decode("ascii")})
+        if with_rules:
+            out[-1]["rules"] = rules   # the BB_PARTY_* values, None when the host sent none
     return (total, offset, out) if pos == len(data) else None
 
 
@@ -1425,14 +1448,15 @@ def lobby_fetch(target, bind_ip: str = "", timeout: float = 1.0):
     """The lobby's games as a list of entry dicts (all pages), or None when it does not answer."""
     import socket
     entries, offset = [], 0
-    extended = True   # type 8 first (0.7.8 lobbies); a lobby that does not answer it gets the v1 type 2 list
+    # type 14 first (rules), then type 8 (0.7.8 lobbies); a lobby that answers neither gets the v1 type 2 list
+    rules, extended = True, True
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(timeout)
             if bind_ip:
                 sock.bind((bind_ip, 0))
             for _ in range(LOBBY_MAX_PAGES):
-                sock.sendto(lobby_list_request(offset, extended), target)
+                sock.sendto(lobby_list_request(offset, extended, rules), target)
                 try:
                     while True:  # only the lobby's own answer counts
                         data, addr = sock.recvfrom(2048)
@@ -1440,12 +1464,14 @@ def lobby_fetch(target, bind_ip: str = "", timeout: float = 1.0):
                             break
                 except socket.timeout:
                     if extended and offset == 0:
-                        extended = False
+                        rules, extended = False, rules   # 14 -> 8 -> 2
                         continue
                     raise
                 parsed = lobby_parse_reply2(data) if extended else lobby_parse_reply(data)
+                if parsed is not None and extended and (data[3] == 15) != rules:
+                    parsed = None   # not the reply type asked for
                 if parsed is None and extended and offset == 0:
-                    extended = False   # an answer we cannot read: ask the v1 way
+                    rules, extended = False, rules   # an answer we cannot read: ask the older way
                     continue
                 if parsed is None or parsed[1] != offset:
                     return None if not entries else entries
@@ -1473,7 +1499,7 @@ def lobby_rows(entries: list, my_version: str, hide_bad_names: bool = True) -> l
                      "password": "yes" if e["password"] else "open", "build": e["build"],
                      "address": host_address_text(e["ip"], e["port"]), "password_set": e["password"],
                      "ok": discovery_build_matches(e["build"], my_version),
-                     "adopt": discovery_adopt_env({"max": e["max"]})})  # the lobby tells only the slots
+                     "adopt": discovery_adopt_env({"max": e["max"], "rules": e.get("rules")})})  # slots and rules
     return rows
 
 

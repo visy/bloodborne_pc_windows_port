@@ -86,8 +86,10 @@ class Client(unittest.TestCase):
         for r in rows.values():
             self.assertNotIn("10.8.0", r["name"] + r["area"] + r["where"] + r["players"])
 
-    def serve(self, lobby, answer_ext):
-        """A loopback lobby; answer_ext False behaves like the 0.7.7 server (drops types 7-9)."""
+    def serve(self, lobby, answer_ext, answer_rules=True):
+        """A loopback lobby; answer_ext False behaves like the 0.7.7 server (drops the list types 8, 11 and 14),
+        answer_rules False like a lobby before the start-up rules (drops type 14)."""
+        drop = ({8, 11, 14} if not answer_ext else set()) | ({14} if not answer_rules else set())
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind(("127.0.0.1", 0))
         sock.settimeout(0.2)
@@ -101,7 +103,7 @@ class Client(unittest.TestCase):
                     continue
                 except OSError:
                     break
-                if len(data) >= 4 and data[3] == 8 and not answer_ext:
+                if len(data) >= 4 and data[3] in drop:
                     continue
                 reply = lobby.handle(data, "10.8.0.99", 1)
                 if reply:
@@ -129,6 +131,52 @@ class Client(unittest.TestCase):
         self.assertFalse(any(e.get("invaders") for e in got))       # an old lobby never offers an invasion
         rows = self.L.lobby_rows(got, "0.7.8")
         self.assertFalse(any(r["invadable"] for r in rows))
+
+    def test_fetch_reads_the_hosts_start_up_rules(self):
+        lob = self.lobby()
+        lob.handle(nw.encode_announce_rules(2 | 8 | 16, 1), "10.8.0.10", 0)   # Alice; Bob and Cy send none
+        sock, stop, t = self.serve(lob, True)
+        try:
+            got = {e["name"]: e for e in self.L.lobby_fetch(sock.getsockname(), "", 1.0)}
+        finally:
+            stop.set(), t.join(2), sock.close()
+        self.assertEqual(got["Alice"]["rules"], {"BB_PARTY_GUEST_LAMPS": "0", "BB_PARTY_GUEST_MARK": "1",
+                                                 "BB_PARTY_FULL_REWARDS": "0", "BB_PARTY_START": "immediate",
+                                                 "BB_PARTY_ITEMS": "1", "BB_PARTY_GUEST_INSIGHT": "full"})
+        self.assertIsNone(got["Bob"]["rules"])
+        self.assertTrue(got["Alice"]["invaders"])
+        rows = {r["name"]: r for r in self.L.lobby_rows(list(got.values()), "0.7.8")}
+        self.assertEqual((rows["Alice"]["adopt"]["BB_PARTY_MAX"], rows["Alice"]["adopt"]["BB_PARTY_ITEMS"]), ("4", "1"))
+        self.assertEqual(list(rows["Bob"]["adopt"]), ["BB_PARTY_MAX"])   # no rules heard: only the slots
+
+    def test_fetch_falls_back_to_type_8_on_a_lobby_without_rules(self):
+        lob = self.lobby()
+        lob.handle(nw.encode_announce_rules(16, 0), "10.8.0.10", 0)
+        sock, stop, t = self.serve(lob, True, answer_rules=False)
+        try:
+            got = self.L.lobby_fetch(sock.getsockname(), "", 0.5)
+        finally:
+            stop.set(), t.join(2), sock.close()
+        self.assertEqual({e["name"] for e in got}, {"Alice", "Bob", "Cy"})
+        self.assertTrue(next(e for e in got if e["name"] == "Alice")["invaders"])   # still the extended list
+        self.assertFalse(any("rules" in e for e in got))
+
+    def test_reply4_parser_matches_server_and_is_strict(self):
+        lob = self.lobby()
+        lob.handle(nw.encode_announce_mods("nocturne@1.0"), "10.8.0.10", 0)
+        lob.handle(nw.encode_announce_rules(31, 2), "10.8.0.10", 0)
+        raw = lob.handle(nw.encode_list4(0), "10.8.0.99", 1)
+        self.assertEqual(raw[3], 15)
+        got, ref = self.L.lobby_parse_reply2(raw), nw.parse_reply4(raw)
+        self.assertEqual(got[0:2], ref[0:2])
+        self.assertEqual([e["name"] for e in got[2]], [e["name"] for e in ref[2]])
+        alice = next(e for e in got[2] if e["name"] == "Alice")
+        self.assertEqual((alice["rules"]["BB_PARTY_START"], alice["rules"]["BB_PARTY_GUEST_INSIGHT"]), ("immediate", "0"))
+        for bad in (raw[:-1], raw + b"\x00"):
+            self.assertIsNone(self.L.lobby_parse_reply2(bad))
+        evil = bytearray(raw)
+        evil[-2] = 0x40   # the last row's rules byte: a bit the server never sets
+        self.assertIsNone(self.L.lobby_parse_reply2(bytes(evil)))
 
     def test_old_client_parser_still_reads_the_new_servers_v1_reply(self):
         raw = self.lobby().handle(nw.encode_list(0), "10.8.0.99", 1)
