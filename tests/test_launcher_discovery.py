@@ -212,6 +212,34 @@ class Discovery(unittest.TestCase):
         self.assertEqual(len(snap), 1)
         self.assertEqual(snap[0]["name"], "Hunter_One")
 
+    def test_startup_rules_datagram(self):
+        # [0xfa]['R'][1] id u32 flags insight (party_discovery.h): the host's start-up rules, kept with its row and
+        # told to a list join's launch, so the host's join check does not refuse the guest for them.
+        def rules(pid=0xDEADBEEF, flags=2 | 8 | 16, insight=2):
+            return bytes([0xFA, 0x52, 1]) + pid.to_bytes(4, "big") + bytes([flags, insight])
+        got = self.L.parse_discovery_rules(rules())
+        self.assertEqual(got["id"], 0xDEADBEEF)
+        self.assertEqual(got["env"], {"BB_PARTY_GUEST_LAMPS": "0", "BB_PARTY_GUEST_MARK": "1",
+                                      "BB_PARTY_FULL_REWARDS": "0", "BB_PARTY_START": "immediate",
+                                      "BB_PARTY_ITEMS": "1", "BB_PARTY_GUEST_INSIGHT": "0"})
+        for bad in (rules(flags=32), rules(insight=3), rules()[:8], rules() + bytes([0]), bytes([0xFA, 0x52, 2]) + rules()[3:]):
+            self.assertIsNone(self.L.parse_discovery_rules(bad))
+        self.assertIsNone(self.L.parse_discovery_packet(rules()))
+        self.assertIsNone(self.L.parse_discovery_ext(rules()))
+        book = self.L.DiscoveryBook()
+        self.assertTrue(book.feed(packet(), "192.168.1.30", 100.0))
+        self.assertTrue(book.feed(rules(), "192.168.1.30", 100.1))
+        self.assertTrue(book.feed(packet(pid=5, name="Other"), "192.168.1.31", 100.1))
+        self.assertFalse(book.feed(rules(flags=64), "192.168.1.30", 100.2))
+        snap = {e["name"]: e for e in book.snapshot(100.3)}
+        self.assertEqual(snap["Hunter_One"]["rules"]["BB_PARTY_ITEMS"], "1")
+        self.assertIsNone(snap["Other"]["rules"])  # another address and id: none heard
+        env = self.L.discovery_adopt_env(snap["Hunter_One"])
+        self.assertEqual((env["BB_PARTY_MAX"], env["BB_PARTY_START"], env["BB_PARTY_GUEST_INSIGHT"]), ("4", "immediate", "0"))
+        self.assertNotIn("BB_PARTY_ITEMS", self.L.discovery_adopt_env(snap["Other"]))
+        self.assertIn("Party starts right away (yours after the prologue)",
+                      self.L.adopt_summary(env, {"BB_PARTY_START": "prologue_solo"}))
+
     def test_book_rate_limit_and_cap(self):
         book = self.L.DiscoveryBook()
         ok = sum(book.feed(packet(pid=i), "10.0.0.5", 50.2) for i in range(100))

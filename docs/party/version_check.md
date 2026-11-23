@@ -29,7 +29,7 @@ when a newer release is out (below), so players can update before they meet.
 flag capture `progress: ...` and `story capture ...`). A guest with `BB_PARTY_PROGRESS=0` / `BB_PARTY_STORY=0` still joins a host
 that has them on (it just does not receive them; player report CL-aa5a64, same build both sides). When the hook sets still differ,
 the refusal names each known option in plain words with both values (`hook_option_label`: Guest lamps, Headstones, Guest
-services, Shared enemy drop roll, 4-player rules): `party options differ (Guest lamps (BB_PARTY_GUEST_LAMPS): host ON, you OFF):
+services, Shared enemy drop roll, 4-player rules, Key items for every player): `party options differ (Guest lamps (BB_PARTY_GUEST_LAMPS): host ON, you OFF):
 change it in System > Party Settings > Party or the launcher so it matches the host`; a difference with an unknown hook keeps the old list of names.
 
 ### Invaders (0.7.8)
@@ -69,6 +69,20 @@ Tests: `party-link-test` "host-owned options" (text/parse strictness, prefix rou
 line "Max players (4-player party): host 4, you 3", a refused guest reads the host's options over the wire),
 `party-net-test` (announcement bits), `tests/test_launcher_discovery.py` (parser, rows, `parse_party_adopt`,
 `apply_host_options`), smoke `vm` (`VM_MODE=maxadopt`: host 4, three guests 3, all join; `VM_MODE=refuse`).
+
+### Start-up rules on LAN discovery
+
+The start-up rules a host compares with every guest (`JoinRulesTag`: Guests use lamps, Guests can use Hunter's Mark, Full
+rewards for guests, Insight for bosses, Party starts, and Key items for every player) go out on LAN / VPN discovery as their
+own datagram after the mods label: `0xfa 'R' 1, id u32, flags u8 (bit 0 lamps, 1 Hunter's Mark, 2 full rewards, 3 party
+starts right away, 4 key items), insight u8 (0 same as the host, 1 full, 2 the game's own)`, 9 bytes. An old listener drops
+it. The launcher keeps it with the host's row (`DiscoveryBook`) and a join from the list starts with those values
+(`discovery_adopt_env`, this launch only), so the guest is not refused for them. The VPN lobby carries the same two bytes: the host sends them as type 13 after type 1/7/10, `nwlobby.py` relays them in
+type 15 (type 12 rows plus flags with bit 7 "known", and insight; answered to type 14, older list types unchanged), and a
+join from the lobby list starts with them too. A code join still gets the refusal.
+
+Key items for every player (`BB_PARTY_ITEMS`) is a start-up rule because it decides the `item award` hook, which is part of
+the party patches set: before, a guest with another value was refused with an unnamed "party patches differ".
 
 ### The host's mods label (0.7.9)
 

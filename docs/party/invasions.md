@@ -224,6 +224,8 @@ drops it as junk (wrong second byte); a new one pairs it with the announcement o
 The `Area` column shows the area and phase when the extension is there, the announcement's own area name otherwise.
 0.7.9: a host with gameplay mods sends a third datagram, its mods label (`0xfa 'M' 1, id u32, u8 len + label`;
 docs/party/version_check.md "The host's mods label"); old listeners drop it the same way.
+Then the start-up rules (`0xfa 'R' 1, id u32, flags u8, insight u8`; docs/party/version_check.md "Start-up rules on LAN
+discovery"), so a join from the list starts with the host's values.
 
 ### The words (`scripts/party_where.py`, the same table for the Nightwatch launcher)
 

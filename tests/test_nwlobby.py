@@ -548,6 +548,82 @@ class ModsLabel(unittest.TestCase):
         self.assertIsNotNone(nw.parse_reply2(lob.handle(nw.encode_list2(), C, 2)))
 
 
+class StartupRules(unittest.TestCase):
+    """Types 13-15: the host's start-up rules, relayed as two bytes; older list types unchanged."""
+
+    def lobby(self):
+        lob = nw.Lobby()
+        lob.handle(ann(name="Alice", pw=False), A, 0)
+        lob.handle(ann(name="Bob", pw=False), B, 0)
+        lob.handle(nw.encode_announce_mods("nocturne@1.0"), A, 0)
+        lob.handle(nw.encode_announce_rules(2 | 8 | 16, 1), A, 0)
+        return lob
+
+    def test_encoding_matches_the_game(self):
+        # tests/test_party_net.cpp encode_announce_rules: flags 2|8|16, insight 1
+        self.assertEqual(nw.encode_announce_rules(2 | 8 | 16, 1), bytes([0xFA, 0x4C, 0x01, 0x0D, 0x1A, 0x01]))
+
+    def test_reply4_carries_the_rules(self):
+        raw = self.lobby().handle(nw.encode_list4(), C, 1)
+        self.assertEqual(raw[3], nw.T_REPLY4)
+        total, off, (a, b) = nw.parse_reply4(raw)
+        self.assertEqual((total, off), (2, 0))
+        self.assertEqual((a["name"], a["mods"], a["rules"]), ("Alice", "nocturne@1.0", (26, 1)))
+        self.assertEqual((b["name"], b["mods"], b["rules"]), ("Bob", "", None))   # no type 13: none
+
+    def test_older_lists_unchanged(self):
+        lob = self.lobby()
+        self.assertTrue(all("rules" not in e for e in nw.parse_reply3(lob.handle(nw.encode_list3(), C, 1))[2]))
+        self.assertTrue(all("rules" not in e for e in nw.parse_reply2(lob.handle(nw.encode_list2(), C, 2))[2]))
+        self.assertIsNotNone(nw.parse_reply(lob.handle(nw.encode_list(), C, 3)))
+
+    def test_strict_and_needs_a_live_entry(self):
+        for body in (b"", b"\x01", b"\x20\x00", b"\x01\x03", b"\x01\x00\x00"):
+            self.assertIsNone(nw.parse_announce_rules(body), body)
+        self.assertEqual(nw.parse_announce_rules(b"\x1f\x02"), (31, 2))
+        lob = nw.Lobby()
+        lob.handle(nw.encode_announce_rules(1, 0), A, 0)   # no type 1 yet
+        self.assertEqual(lob.rules, {})
+        lob.handle(ann(), A, 1)
+        lob.handle(nw.MAGIC + bytes([1, nw.T_ANNOUNCE_RULES, 0x40, 0]), A, 2)
+        self.assertEqual(lob.rules, {})
+        lob.handle(nw.encode_announce_rules(4, 2), A, 3)
+        self.assertEqual(lob.rules[A][1:], (4, 2))
+
+    def test_expires_and_bye_clears_them(self):
+        lob = self.lobby()
+        self.assertEqual(nw.parse_reply4(lob.handle(nw.encode_list4(), C, nw.TTL + 1))[2], [])
+        self.assertEqual(lob.rules, {})
+        lob = self.lobby()
+        lob.handle(nw.encode_bye(), A, 1)
+        self.assertEqual(lob.rules, {})
+
+    def test_reply4_parser_strict_and_paging_with_long_labels(self):
+        lob = nw.Lobby()
+        for i in range(30):
+            ip = f"10.8.0.{20 + i}"
+            lob.handle(ann(name="H" * 16, pw=False, build="b" * 32), ip, 0)
+            lob.handle(nw.encode_announce_mods(f"mods:{i:0250d}"), ip, 0)
+            lob.handle(nw.encode_announce_rules(31, 2), ip, 0)
+        seen, off, good = 0, 0, None
+        for k in range(40):
+            raw = lob.handle(nw.encode_list4(off), C, 1 + k)
+            good = good or raw
+            self.assertLessEqual(len(raw), nw.MAX_REPLY)
+            _, _, ents = nw.parse_reply4(raw)
+            if not ents:
+                break
+            self.assertTrue(all(e["rules"] == (31, 2) for e in ents))
+            seen += len(ents)
+            off += len(ents)
+        self.assertEqual(seen, 30)
+        self.assertIsNone(nw.parse_reply4(good[:-1]))
+        self.assertIsNone(nw.parse_reply4(good + b"x"))
+        evil = bytearray(good)
+        evil[-2] = 0x1f   # rules without the known bit
+        self.assertIsNone(nw.parse_reply4(bytes(evil)))
+
+
 if __name__ == "__main__":
     unittest.main()
 
