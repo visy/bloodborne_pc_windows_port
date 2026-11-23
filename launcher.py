@@ -955,6 +955,24 @@ def parse_discovery_ext(data: bytes):
             "area_id": int.from_bytes(data[8:12], "big"), "phase": data[12], "ng": data[13]}
 
 
+def parse_discovery_rules(data: bytes):
+    """The host's start-up rules datagram ([0xfa]['R'][1] id u32 flags u8 insight u8, 9 bytes; flags bit 0 Guests use
+    lamps, 1 Hunter's Mark, 2 Full rewards, 3 Party starts right away, 4 Key items for every player; insight 0 same as
+    the host, 1 full, 2 the game's own) as {'id', 'env'}: the BB_PARTY_* values a guest's launch needs so the host's
+    join check (party_link identity_mismatch) does not refuse it. None for anything else (untrusted input: strict,
+    same rules as gpu/shim/net/party_discovery.cpp parse_rules)."""
+    if not isinstance(data, (bytes, bytearray)) or len(data) != 9:
+        return None
+    if data[0] != 0xFA or data[1] != 0x52 or data[2] != 1 or data[7] & ~31 or data[8] > 2:
+        return None
+    f = data[7]
+    env = {"BB_PARTY_GUEST_LAMPS": "1" if f & 1 else "0", "BB_PARTY_GUEST_MARK": "1" if f & 2 else "0",
+           "BB_PARTY_FULL_REWARDS": "1" if f & 4 else "0",
+           "BB_PARTY_START": "immediate" if f & 8 else "prologue_solo", "BB_PARTY_ITEMS": "1" if f & 16 else "0",
+           "BB_PARTY_GUEST_INSIGHT": {1: "full", 2: "0"}.get(data[8], "parity")}
+    return {"id": int.from_bytes(data[3:7], "big"), "env": env}
+
+
 def party_where_module():
     """scripts/party_where.py (the area / phase / NG words); None when it cannot be loaded."""
     try:
@@ -980,15 +998,22 @@ def where_words(area_id: int, phase: int, ng: int, boss: bool) -> tuple:
 # host's for that launch instead of being refused at the handshake. Mirrors gpu/shim/party/party_options.cpp.
 PARTY_ADOPT_KEYS = {"BB_PARTY_MAX": ("2", "3", "4", "5", "6"), "BB_PARTY_GUEST_LAMPS": ("0", "1"),
                     "BB_PARTY_HEADSTONES": ("0", "1"), "BB_PARTY_GUEST_TALK": ("0", "1"),
-                    "BB_PARTY_SHARED_DROP_ROLL": ("0", "1")}
+                    "BB_PARTY_SHARED_DROP_ROLL": ("0", "1"),
+                    # the start-up rules (parse_discovery_rules): the host compares them with every guest's
+                    "BB_PARTY_GUEST_MARK": ("0", "1"), "BB_PARTY_FULL_REWARDS": ("0", "1"), "BB_PARTY_ITEMS": ("0", "1"),
+                    "BB_PARTY_START": ("immediate", "prologue_solo"), "BB_PARTY_GUEST_INSIGHT": ("parity", "full", "0")}
 PARTY_ADOPT_LABELS = {"BB_PARTY_MAX": "Max players", "BB_PARTY_GUEST_LAMPS": "Guest lamps",
                       "BB_PARTY_HEADSTONES": "Headstones", "BB_PARTY_GUEST_TALK": "Guest services",
-                      "BB_PARTY_SHARED_DROP_ROLL": "Shared enemy drop roll"}
+                      "BB_PARTY_SHARED_DROP_ROLL": "Shared enemy drop roll",
+                      "BB_PARTY_GUEST_MARK": "Guests can use Hunter's Mark", "BB_PARTY_FULL_REWARDS": "Full rewards for guests",
+                      "BB_PARTY_ITEMS": "Key items for every player", "BB_PARTY_START": "Party starts",
+                      "BB_PARTY_GUEST_INSIGHT": "Insight for bosses"}
 PARTY_ADOPT_MAX_AGE_S = 2 * 86400
 
 
 def discovery_adopt_env(entry: dict) -> dict:
-    """The host's options of a heard announcement as BB_PARTY_* values for this launch (only what it tells)."""
+    """The host's options of a heard announcement, and its start-up rules when heard ('rules'), as BB_PARTY_*
+    values for this launch (only what it tells)."""
     env = {}
     try:
         if 2 <= int(entry.get("max", 0)) <= 6:
@@ -1000,6 +1025,9 @@ def discovery_adopt_env(entry: dict) -> dict:
         for key, name in (("BB_PARTY_GUEST_LAMPS", "lamps"), ("BB_PARTY_HEADSTONES", "headstones"),
                           ("BB_PARTY_GUEST_TALK", "talk"), ("BB_PARTY_SHARED_DROP_ROLL", "droproll")):
             env[key] = "1" if opts.get(name) else "0"
+    rules = entry.get("rules")
+    if isinstance(rules, dict):
+        env.update({k: v for k, v in rules.items() if v in PARTY_ADOPT_KEYS.get(k, ())})
     return env
 
 
@@ -1020,7 +1048,8 @@ def parse_party_adopt(text: str) -> dict:
 def adopt_summary(adopt: dict, base: dict) -> str:
     """'Max players 4 (yours 3), Headstones on (yours off)' for the keys that change something; '' when none."""
     def word(v):
-        return "on" if v == "1" else "off"
+        return {"1": "on", "0": "off", "immediate": "right away", "prologue_solo": "after the prologue",
+                "parity": "same as the host", "full": "full bonus"}.get(v, v)
     parts = []
     for key, val in adopt.items():
         mine = base.get(key)
@@ -1029,7 +1058,7 @@ def adopt_summary(adopt: dict, base: dict) -> str:
         if key == "BB_PARTY_MAX":
             parts.append(f"Max players {val}" + (f" (yours {mine})" if mine else ""))
         else:
-            parts.append(f"{PARTY_ADOPT_LABELS[key]} {word(val)}" + (f" (yours {word(mine)})" if mine in ("0", "1") else ""))
+            parts.append(f"{PARTY_ADOPT_LABELS[key]} {word(val)}" + (f" (yours {word(mine)})" if mine else ""))
     return ", ".join(parts)
 
 
@@ -1048,6 +1077,7 @@ class DiscoveryBook:
         self.ttl = ttl
         self._entries = {}
         self._ext = {}      # (ip, id) -> (seen, extension dict)
+        self._rules = {}    # (ip, id) -> (seen, start-up rules env)
         self._rate = {}
         self._lock = threading.Lock()
 
@@ -1071,6 +1101,13 @@ class DiscoveryBook:
                 if (ip, ext["id"]) in self._entries or len(self._ext) < DISCOVERY_MAX_ENTRIES:
                     self._ext[(ip, ext["id"])] = (now, ext)
                 return True
+            if len(data) == 9 and data[:2] == b"\xfaR":   # the host's start-up rules
+                rules = parse_discovery_rules(data)
+                if rules is None:
+                    return False
+                if (ip, rules["id"]) in self._entries or len(self._rules) < DISCOVERY_MAX_ENTRIES:
+                    self._rules[(ip, rules["id"])] = (now, rules["env"])
+                return True
             info = parse_discovery_packet(data)
             if info is None:
                 return False
@@ -1089,6 +1126,8 @@ class DiscoveryBook:
             del self._entries[key]
         for key in [k for k, e in self._ext.items() if now - e[0] > self.ttl or k not in self._entries]:
             del self._ext[key]
+        for key in [k for k, e in self._rules.items() if now - e[0] > self.ttl or k not in self._entries]:
+            del self._rules[key]
 
     def snapshot(self, now: float) -> list:
         with self._lock:
@@ -1100,6 +1139,8 @@ class DiscoveryBook:
                 row.update({"invaders": False, "boss": False, "area_id": 0, "phase": 0, "ng": 255})
                 if ext:
                     row.update({k: v for k, v in ext[1].items() if k != "id"})
+                rules = self._rules.get(key)
+                row["rules"] = dict(rules[1]) if rules else None
                 out.append(row)
             return sorted(out, key=lambda e: (e["name"].lower(), e["ip"]))
 

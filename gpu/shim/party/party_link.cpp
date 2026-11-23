@@ -624,6 +624,7 @@ std::string hook_option_label(const std::string& name) {
         {"talk IsClientPlayer", "Guest services (BB_PARTY_GUEST_TALK)"},
         {"enemy drop roll", "Shared enemy drop roll (BB_PARTY_SHARED_DROP_ROLL)"},
         {"4p ", "4-player rules (BB_PARTY_FOURP, BB_PARTY_FOURP_SCALING)"},
+        {"item award", "Key items for every player (BB_PARTY_ITEMS)"},
     };
     for (const auto& [frag, label] : kOptions)
         if (name.find(frag) != std::string::npos) return label;
